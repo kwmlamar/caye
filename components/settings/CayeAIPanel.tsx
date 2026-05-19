@@ -44,33 +44,90 @@ function parseTopics(raw: string | null): EscalationTopic[] {
   return []
 }
 
+interface Stats {
+  conversations: number
+  autoReplies: number
+  escalated: number
+  loading: boolean
+}
+
 export default function CayeAIPanel() {
   const { workspace, workspaceId } = useWorkspace()
   const [form, setForm] = useState<AiForm>(DEFAULT_FORM)
   const [orig, setOrig] = useState<AiForm>(DEFAULT_FORM)
   const [isSaving, setIsSaving] = useState(false)
   const [newTopic, setNewTopic] = useState('')
+  const [stats, setStats] = useState<Stats>({ conversations: 0, autoReplies: 0, escalated: 0, loading: true })
 
   useEffect(() => {
     async function load() {
       const supabase = getSupabase()
-      const { data } = await supabase
-        .from('workspace_ai_config')
-        .select('tone, system_prompt, escalation_rules, never_say')
-        .eq('workspace_id', workspaceId)
-        .maybeSingle()
+
+      const [aiRes, accountsRes] = await Promise.all([
+        supabase
+          .from('workspace_ai_config')
+          .select('tone, system_prompt, escalation_rules, never_say')
+          .eq('workspace_id', workspaceId)
+          .maybeSingle(),
+        supabase
+          .from('connected_accounts')
+          .select('id')
+          .eq('user_id', workspaceId),
+      ])
 
       const initial: AiForm = {
         autoReply: workspace.auto_reply_enabled ?? true,
         holdHours: true,
-        tone: data?.tone || 'friendly',
+        tone: aiRes.data?.tone || 'friendly',
         delay: '60',
-        systemPrompt: data?.system_prompt || '',
-        neverSay: data?.never_say || '',
-        topics: parseTopics(data?.escalation_rules),
+        systemPrompt: aiRes.data?.system_prompt || '',
+        neverSay: aiRes.data?.never_say || '',
+        topics: parseTopics(aiRes.data?.escalation_rules),
       }
       setForm(initial)
       setOrig(initial)
+
+      const accountIds = (accountsRes.data ?? []).map((a: { id: string }) => a.id)
+      if (accountIds.length === 0) {
+        setStats({ conversations: 0, autoReplies: 0, escalated: 0, loading: false })
+        return
+      }
+
+      const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
+
+      const [convsRes, escalatedRes] = await Promise.all([
+        supabase
+          .from('unified_conversations')
+          .select('id, human_agent_enabled')
+          .in('connected_account_id', accountIds)
+          .gte('last_message_at', since),
+        supabase
+          .from('unified_conversations')
+          .select('id', { count: 'exact', head: true })
+          .in('connected_account_id', accountIds)
+          .eq('human_agent_enabled', true)
+          .gte('last_message_at', since),
+      ])
+
+      const convIds = (convsRes.data ?? []).map((c: { id: string }) => c.id)
+      let autoReplies = 0
+      if (convIds.length > 0) {
+        const { count } = await supabase
+          .from('unified_messages')
+          .select('id', { count: 'exact', head: true })
+          .in('conversation_id', convIds)
+          .eq('sender_type', 'business')
+          .eq('metadata->>is_automated', 'true')
+          .gte('sent_at', since)
+        autoReplies = count ?? 0
+      }
+
+      setStats({
+        conversations: convsRes.data?.length ?? 0,
+        autoReplies,
+        escalated: escalatedRes.count ?? 0,
+        loading: false,
+      })
     }
     load()
   }, [workspaceId, workspace.auto_reply_enabled])
@@ -148,16 +205,23 @@ export default function CayeAIPanel() {
       <div className="caye-banner">
         <div className="cb-mark">C</div>
         <div className="cb-body">
-          <div className="cb-title">Caye handled 142 conversations this week</div>
+          <div className="cb-title">
+            {stats.loading ? 'Loading…' : `Caye handled ${stats.conversations} conversation${stats.conversations !== 1 ? 's' : ''} this week`}
+          </div>
           <div className="cb-desc">
-            She drafted 87 replies you sent without edits, booked 11 tours autonomously, and escalated 9 to you. Average handle time: 3m 12s.
+            {stats.loading
+              ? ''
+              : stats.conversations === 0
+              ? 'No conversations yet this week. Caye is ready to reply as soon as guests reach out.'
+              : `She sent ${stats.autoReplies} auto-repl${stats.autoReplies !== 1 ? 'ies' : 'y'} and escalated ${stats.escalated} to you.`}
           </div>
-          <div className="cb-stat">
-            <div className="cb-stat-item"><b>94%</b>autonomous</div>
-            <div className="cb-stat-item"><b>11</b>booked</div>
-            <div className="cb-stat-item"><b>9</b>escalated</div>
-            <div className="cb-stat-item"><b>3m 12s</b>avg handle</div>
-          </div>
+          {!stats.loading && stats.conversations > 0 && (
+            <div className="cb-stat">
+              <div className="cb-stat-item"><b>{stats.conversations}</b>conversations</div>
+              <div className="cb-stat-item"><b>{stats.autoReplies}</b>auto-replies</div>
+              <div className="cb-stat-item"><b>{stats.escalated}</b>escalated</div>
+            </div>
+          )}
         </div>
       </div>
 
