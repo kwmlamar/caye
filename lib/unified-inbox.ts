@@ -42,7 +42,6 @@ export async function getUnifiedConversations(
     .from('connected_accounts')
     .select('id')
     .eq('user_id', customerId)
-    .eq('is_active', true)
 
   if (!accounts || accounts.length === 0) return { data: [], error: null }
 
