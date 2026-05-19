@@ -260,9 +260,12 @@ export async function GET(req: NextRequest) {
       const folders: Record<string, unknown>[] = Array.isArray(foldersData?.data)
         ? foldersData.data
         : []
-      const inboxFolder = folders.find(
-        (f) => String(f.folderName || f.name || '').toLowerCase() === 'inbox'
-      )
+      console.log(`[email/poll] folders sample:`, JSON.stringify(folders[0] ?? {}))
+      const inboxFolder = folders.find((f) => {
+        const type = String(f.folderType || '').toLowerCase()
+        const name = String(f.folderName || f.name || f.path || '').toLowerCase()
+        return type === 'inbox' || name === 'inbox'
+      })
       if (inboxFolder) inboxFolderId = String(inboxFolder.folderId || inboxFolder.id || '')
 
       // Fetch latest messages — folderId if resolved, else all recent
