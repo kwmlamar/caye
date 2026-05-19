@@ -54,10 +54,15 @@ export async function generateEmailReply(
 ): Promise<string> {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
+  const fullSystem = systemPrompt +
+    '\n\nWrite only the reply body — no "To:", "Subject:", or any header lines. ' +
+    'Do not use markdown formatting (no **bold**, no bullet hyphens, no headers). ' +
+    'Plain prose only. Sign off naturally without wrapping your name in asterisks.'
+
   const response = await client.messages.create({
     model: 'claude-sonnet-4-6',
     max_tokens: 1000,
-    system: systemPrompt,
+    system: fullSystem,
     messages: [
       {
         role: 'user',

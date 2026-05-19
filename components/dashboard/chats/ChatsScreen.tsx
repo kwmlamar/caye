@@ -500,7 +500,7 @@ export default function ChatsScreen({ openCaye }: { openCaye: () => void }) {
                             {emailSubject}
                           </div>
                         )}
-                        <div className={'bubble ' + side}>{msg.content || ''}</div>
+                        <div className={'bubble ' + side} style={{ whiteSpace: 'pre-wrap' }}>{msg.content || ''}</div>
                         <div className="msg-time">
                           {formatTime(msg.sent_at)}
                           {msg.status === 'sending' && ' · sending…'}
