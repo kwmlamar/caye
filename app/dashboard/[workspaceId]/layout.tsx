@@ -4,7 +4,6 @@ import { useEffect, useState, use } from "react"
 import { useRouter } from "next/navigation"
 import Sidebar from "@/components/dashboard/Sidebar"
 import CayePanel from "@/components/dashboard/CayePanel"
-import CayeFab from "@/components/dashboard/CayeFab"
 import { getSession, getSupabase } from "@/lib/supabase"
 import { WorkspaceProvider, type WorkspaceMembership } from "@/lib/workspace-context"
 import { DashboardProvider, useDashboard } from "@/lib/dashboard-context"
@@ -42,7 +41,6 @@ function DashboardShell({ children, workspace, workspaceId, workspaces, isOwner 
             {children}
           </div>
           <CayePanel open={cayeOpen} onClose={() => setCayeOpen(false)} />
-          {!cayeOpen && <CayeFab onClick={() => setCayeOpen(true)} />}
         </div>
       </div>
     </WorkspaceProvider>
