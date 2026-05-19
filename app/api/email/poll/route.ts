@@ -230,7 +230,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ accounts: 0, processed: 0, skipped: 0, errors: 0 })
   }
 
-  const summary = { accounts: accounts.length, processed: 0, skipped: 0, errors: 0 }
+  const summary = { accounts: accounts.length, processed: 0, skipped: 0, errors: 0, detail: [] as string[] }
 
   for (const account of accounts) {
     try {
@@ -265,10 +265,11 @@ export async function GET(req: NextRequest) {
       )
       if (inboxFolder) inboxFolderId = String(inboxFolder.folderId || inboxFolder.id || '')
 
-      // Fetch latest unread messages — use folderId if resolved, otherwise fetch all unread
+      // Fetch latest messages — folderId if resolved, else all recent
+      // No status=unread filter: Zoho doesn't reliably support it; dedup handles re-processing
       const listUrl = inboxFolderId
-        ? `${base}/api/accounts/${accountId}/messages/view?limit=25&sortby=date&sortorder=desc&folderId=${inboxFolderId}&status=unread`
-        : `${base}/api/accounts/${accountId}/messages/view?limit=25&sortby=date&sortorder=desc&status=unread`
+        ? `${base}/api/accounts/${accountId}/messages/view?limit=25&sortby=date&sortorder=desc&folderId=${inboxFolderId}`
+        : `${base}/api/accounts/${accountId}/messages/view?limit=25&sortby=date&sortorder=desc`
 
       const listRes = await fetch(listUrl, {
         headers: { Authorization: `Zoho-oauthtoken ${accessToken}` },
@@ -277,6 +278,10 @@ export async function GET(req: NextRequest) {
       const messages: Record<string, unknown>[] = Array.isArray(listData?.data)
         ? listData.data
         : []
+
+      const detail = `account=${accountId} folderId=${inboxFolderId ?? 'none'} messages=${messages.length} zohoStatus=${listData?.status?.code ?? listData?.status}`
+      console.log(`[email/poll] ${detail}`)
+      ;(summary.detail as string[]).push(detail)
 
       for (const msg of messages) {
         const result = await processMessage(supabase, account, msg, accessToken, base)
