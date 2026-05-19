@@ -257,10 +257,10 @@ export async function GET(req: NextRequest) {
         headers: { Authorization: `Zoho-oauthtoken ${accessToken}` },
       })
       const foldersData = await foldersRes.json()
+      console.log(`[email/poll] folders raw: status=${foldersRes.status} body=${JSON.stringify(foldersData).slice(0, 400)}`)
       const folders: Record<string, unknown>[] = Array.isArray(foldersData?.data)
         ? foldersData.data
         : []
-      console.log(`[email/poll] folders sample:`, JSON.stringify(folders[0] ?? {}))
       const inboxFolder = folders.find((f) => {
         const type = String(f.folderType || '').toLowerCase()
         const name = String(f.folderName || f.name || f.path || '').toLowerCase()
