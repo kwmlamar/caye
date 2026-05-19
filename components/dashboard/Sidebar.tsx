@@ -10,9 +10,9 @@ import { useWorkspace } from '@/lib/workspace-context'
 import type { Screen } from '@/lib/types'
 
 const SCREENS = [
-  { id: 'chats' as Screen, label: 'Chats', count: 4, icon: 'chat' },
+  { id: 'chats' as Screen, label: 'Chats', count: null, icon: 'chat' },
   { id: 'contacts' as Screen, label: 'Contacts', count: null, icon: 'contacts' },
-  { id: 'calendar' as Screen, label: 'Calendar', count: 14, icon: 'cal' },
+  { id: 'calendar' as Screen, label: 'Calendar', count: null, icon: 'cal' },
 ]
 
 const NavIcon = ({ name, size = 18 }: { name: string; size?: number }) => {
