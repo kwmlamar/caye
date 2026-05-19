@@ -479,10 +479,27 @@ export default function ChatsScreen({ openCaye }: { openCaye: () => void }) {
               ) : (
                 messages.map((msg) => {
                   const side = msg.sender_type === 'customer' ? 'in' : 'out'
+                  const isEmail = selectedConv?.channel_type === 'email'
+                  const meta = (msg.metadata || {}) as Record<string, string>
+                  const emailSubject = isEmail && meta.subject ? meta.subject : null
                   return (
                     <div key={msg.id} className={'msg-row ' + side}>
                       {side === 'in' && <Avatar name={selName} size={28} />}
                       <div className="msg-stack">
+                        {emailSubject && (
+                          <div style={{
+                            fontSize: 10.5,
+                            fontWeight: 600,
+                            color: 'var(--tc-ink-mute)',
+                            letterSpacing: '.04em',
+                            textTransform: 'uppercase',
+                            marginBottom: 3,
+                            paddingLeft: side === 'in' ? 2 : 0,
+                            textAlign: side === 'out' ? 'right' : 'left',
+                          }}>
+                            {emailSubject}
+                          </div>
+                        )}
                         <div className={'bubble ' + side}>{msg.content || ''}</div>
                         <div className="msg-time">
                           {formatTime(msg.sent_at)}

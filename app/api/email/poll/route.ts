@@ -106,7 +106,13 @@ async function processMessage(
     { headers: { Authorization: `Zoho-oauthtoken ${accessToken}` } }
   )
   const contentData = await contentRes.json()
-  const rawContent = String(contentData?.data?.content || contentData?.data?.htmlContent || '')
+  const rawContent = String(
+    contentData?.data?.content ||
+    contentData?.data?.htmlContent ||
+    contentData?.data?.textContent ||
+    contentData?.data?.summary ||
+    ''
+  )
   const body = rawContent.includes('<') ? htmlToPlainText(rawContent) : rawContent.trim()
 
   // Fetch workspace AI prompt

@@ -96,7 +96,7 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
   ).trim()
   const fromName = String(payload.from_name || payload.fromName || fromRaw)
   const bodyRaw = String(
-    payload.content || payload.body || payload.htmlBody || payload.summary || ''
+    payload.content || payload.textContent || payload.body || payload.htmlBody || payload.summary || ''
   )
   const body = bodyRaw.includes('<') ? htmlToPlainText(bodyRaw) : bodyRaw.trim()
   const sentAt = payload.received_time
