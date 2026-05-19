@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import Avatar from '@/components/ui/Avatar'
+import CayeMark from '@/components/ui/CayeMark'
 import { useDashboard } from '@/lib/dashboard-context'
 import { useWorkspace } from '@/lib/workspace-context'
 import type { Screen } from '@/lib/types'
@@ -32,7 +33,7 @@ const NavIcon = ({ name, size = 18 }: { name: string; size?: number }) => {
     case 'cal':
       return <svg width={s} height={s} viewBox="0 0 20 20" {...st}><rect x="3" y="4.5" width="14" height="12" rx="2" /><path d="M3 8h14M7 3v3M13 3v3" /></svg>
     case 'settings':
-      return <svg width={s} height={s} viewBox="0 0 20 20" {...st}><circle cx="10" cy="10" r="2.4" /><path d="M10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M4.7 15.3l1.4-1.4M13.9 6.1l1.4-1.4" /></svg>
+      return <svg width={s} height={s} viewBox="0 0 20 20" {...st}><path d="M8.2 2.5h3.6l.5 2a5.7 5.7 0 0 1 1.6.9l1.9-.8 1.8 3-1.5 1.4a5.8 5.8 0 0 1 0 1.9l1.5 1.4-1.8 3-1.9-.8a5.7 5.7 0 0 1-1.6.9l-.5 2H8.2l-.5-2a5.7 5.7 0 0 1-1.6-.9l-1.9.8-1.8-3 1.5-1.4a5.8 5.8 0 0 1 0-1.9L2.4 8.6l1.8-3 1.9.8a5.7 5.7 0 0 1 1.6-.9l.5-2z" /><circle cx="10" cy="10" r="2.5" /></svg>
     case 'check':
       return <svg width={s} height={s} viewBox="0 0 20 20" {...st}><path d="m5 10.5 3 3 7-7" /></svg>
     case 'chevron':
@@ -174,7 +175,7 @@ interface SidebarProps {
 export default function Sidebar({ workspaceId }: SidebarProps) {
   const pathname = usePathname()
   const router = useRouter()
-  const { screen, setScreen, sidebarExpanded, setSidebarExpanded } = useDashboard()
+  const { screen, setScreen, sidebarExpanded, setSidebarExpanded, cayeOpen, setCayeOpen } = useDashboard()
   const { workspace, workspaces } = useWorkspace()
   const [switcherOpen, setSwitcherOpen] = useState(false)
   const userButtonRef = useRef<HTMLButtonElement>(null)
@@ -256,6 +257,15 @@ export default function Sidebar({ workspaceId }: SidebarProps) {
         </div>
 
         <div className="sb-bottom">
+          <button
+            className={'sb-item' + (cayeOpen ? ' active' : '')}
+            onClick={() => setCayeOpen(v => !v)}
+            title="Ask Caye"
+          >
+            <span className="sb-icon"><CayeMark size={18} /></span>
+            <span className="sb-label">Caye</span>
+          </button>
+
           <Link
             href={`/dashboard/${workspaceId}/settings`}
             className={'sb-item' + (isSettings ? ' active' : '')}
