@@ -233,26 +233,6 @@ export default function Sidebar({ workspaceId }: SidebarProps) {
             ))}
           </div>
 
-          <div className="sb-section">
-            <span className="sb-section-label">Today</span>
-            <div className="sb-day-card">
-              <div className="sb-day-row">
-                <span className="sb-day-pip confirmed"></span>
-                <span className="sb-day-num">2</span>
-                <span className="sb-day-k">confirmed tours</span>
-              </div>
-              <div className="sb-day-row">
-                <span className="sb-day-pip pending"></span>
-                <span className="sb-day-num">1</span>
-                <span className="sb-day-k">pending</span>
-              </div>
-              <div className="sb-day-row">
-                <span className="sb-day-pip caye"></span>
-                <span className="sb-day-num">11</span>
-                <span className="sb-day-k">handled by Caye</span>
-              </div>
-            </div>
-          </div>
         </div>
 
         <div className="sb-bottom">
