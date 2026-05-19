@@ -5,7 +5,6 @@ import { createPortal } from 'react-dom'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import Avatar from '@/components/ui/Avatar'
-import CayeMark from '@/components/ui/CayeMark'
 import { useDashboard } from '@/lib/dashboard-context'
 import { useWorkspace } from '@/lib/workspace-context'
 import type { Screen } from '@/lib/types'
@@ -175,7 +174,7 @@ interface SidebarProps {
 export default function Sidebar({ workspaceId }: SidebarProps) {
   const pathname = usePathname()
   const router = useRouter()
-  const { screen, setScreen, sidebarExpanded, setSidebarExpanded, cayeOpen, setCayeOpen } = useDashboard()
+  const { screen, setScreen, sidebarExpanded, setSidebarExpanded } = useDashboard()
   const { workspace, workspaces } = useWorkspace()
   const [switcherOpen, setSwitcherOpen] = useState(false)
   const userButtonRef = useRef<HTMLButtonElement>(null)
@@ -257,15 +256,6 @@ export default function Sidebar({ workspaceId }: SidebarProps) {
         </div>
 
         <div className="sb-bottom">
-          <button
-            className={'sb-item' + (cayeOpen ? ' active' : '')}
-            onClick={() => setCayeOpen(v => !v)}
-            title="Ask Caye"
-          >
-            <span className="sb-icon"><CayeMark size={18} /></span>
-            <span className="sb-label">Caye</span>
-          </button>
-
           <Link
             href={`/dashboard/${workspaceId}/settings`}
             className={'sb-item' + (isSettings ? ' active' : '')}
