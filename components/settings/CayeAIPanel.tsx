@@ -66,7 +66,7 @@ export default function CayeAIPanel() {
       const [aiRes, accountsRes] = await Promise.all([
         supabase
           .from('workspace_ai_config')
-          .select('tone, system_prompt, escalation_rules, never_say')
+          .select('tone, system_prompt, escalation_rules, never_say, hold_hours, reply_delay')
           .eq('workspace_id', workspaceId)
           .maybeSingle(),
         supabase
@@ -77,9 +77,9 @@ export default function CayeAIPanel() {
 
       const initial: AiForm = {
         autoReply: workspace.auto_reply_enabled ?? true,
-        holdHours: true,
+        holdHours: aiRes.data?.hold_hours ?? true,
         tone: aiRes.data?.tone || 'friendly',
-        delay: '60',
+        delay: aiRes.data?.reply_delay || '60',
         systemPrompt: aiRes.data?.system_prompt || '',
         neverSay: aiRes.data?.never_say || '',
         topics: parseTopics(aiRes.data?.escalation_rules),
@@ -172,6 +172,8 @@ export default function CayeAIPanel() {
           {
             workspace_id: workspaceId,
             tone: form.tone,
+            reply_delay: form.delay,
+            hold_hours: form.holdHours,
             system_prompt: form.systemPrompt,
             escalation_rules: JSON.stringify(form.topics),
             never_say: form.neverSay,
