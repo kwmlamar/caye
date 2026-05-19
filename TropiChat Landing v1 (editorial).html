@@ -1,0 +1,1662 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>TropiChat — Meet Caye, your Caribbean AI receptionist</title>
+<meta name="description" content="A unified inbox and AI receptionist for Caribbean small businesses. Caye reads the booking emails, checks the calendar, and writes back in your voice — even on Fridays." />
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Hanken+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js"></script>
+
+<style>
+  :root{
+    /* paper + ink */
+    --paper:        #f4e9d2;   /* warm sand cream */
+    --paper-deep:   #ecdcbb;   /* shadow paper */
+    --paper-soft:   #f8f1df;
+    --ink:          #0d2b3e;   /* deep ocean ink */
+    --ink-soft:     #1a3a4f;
+    --ink-mute:     #4b6678;
+    /* accents */
+    --coral:        #d9543d;   /* terracotta */
+    --coral-deep:   #b8412d;
+    --sea:          #6b9b86;   /* sea glass green */
+    --sun:          #e8b545;   /* sun yellow */
+    --line:         rgba(13,43,62,0.18);
+    --line-soft:    rgba(13,43,62,0.10);
+  }
+
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html,body{background:var(--paper); color:var(--ink); -webkit-font-smoothing:antialiased;}
+  body{
+    font-family:'Hanken Grotesk', system-ui, sans-serif;
+    font-weight:400;
+    font-size:17px;
+    line-height:1.55;
+    overflow-x:hidden;
+    position:relative;
+  }
+
+  /* Paper grain overlay */
+  body::before{
+    content:"";
+    position:fixed; inset:0;
+    pointer-events:none;
+    z-index:1000;
+    opacity:0.35;
+    mix-blend-mode:multiply;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.05  0 0 0 0 0.17  0 0 0 0 0.24  0 0 0 0.18 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+  }
+
+  /* faint vignette warmth */
+  body::after{
+    content:"";
+    position:fixed; inset:0;
+    pointer-events:none;
+    z-index:999;
+    background:
+      radial-gradient(ellipse 120% 80% at 50% -20%, rgba(232,181,69,0.22), transparent 60%),
+      radial-gradient(ellipse 100% 60% at 100% 100%, rgba(217,84,61,0.10), transparent 70%);
+  }
+
+  /* TYPE -------------------------------------------------------- */
+  .display{
+    font-family:'Instrument Serif', 'Times New Roman', serif;
+    font-weight:400;
+    line-height:0.92;
+    letter-spacing:-0.02em;
+  }
+  .display em, em.italic{
+    font-style:italic;
+    color:var(--coral);
+  }
+  .mono{
+    font-family:'JetBrains Mono', ui-monospace, monospace;
+    font-size:11px;
+    letter-spacing:0.16em;
+    text-transform:uppercase;
+    font-weight:500;
+  }
+  .eyebrow{
+    display:inline-flex; align-items:center; gap:10px;
+    font-family:'JetBrains Mono', ui-monospace, monospace;
+    font-size:11px; letter-spacing:0.18em; text-transform:uppercase;
+    color:var(--ink-mute);
+  }
+  .eyebrow .dot{ width:6px; height:6px; border-radius:50%; background:var(--coral); }
+  .eyebrow.sea .dot{ background:var(--sea); }
+  .eyebrow.sun .dot{ background:var(--sun); }
+
+  a{ color:inherit; text-decoration:none; }
+
+  /* LAYOUT ------------------------------------------------------ */
+  .wrap{
+    max-width:1320px;
+    margin:0 auto;
+    padding:0 36px;
+    position:relative;
+  }
+  @media (max-width: 720px){ .wrap{ padding:0 22px; } }
+
+  section{ position:relative; z-index:2; }
+
+  hr.rule{
+    border:0;
+    height:1px;
+    background:var(--line);
+    margin:0;
+  }
+
+  /* NAV --------------------------------------------------------- */
+  .nav{
+    position:sticky; top:0; z-index:50;
+    background:rgba(244,233,210,0.85);
+    backdrop-filter:blur(10px);
+    -webkit-backdrop-filter:blur(10px);
+    border-bottom:1px solid var(--line-soft);
+  }
+  .nav .inner{
+    display:flex; align-items:center; justify-content:space-between;
+    height:64px;
+  }
+  .brand{
+    display:flex; align-items:baseline; gap:8px;
+    font-family:'Instrument Serif', serif;
+    font-size:26px;
+    letter-spacing:-0.01em;
+  }
+  .brand .dot{
+    display:inline-block;
+    width:9px; height:9px; border-radius:50%;
+    background:var(--coral);
+    transform:translateY(-1px);
+    margin-right:2px;
+  }
+  .brand em{ font-style:italic; color:var(--coral); }
+  .nav-links{ display:flex; gap:28px; align-items:center; }
+  .nav-links a{
+    font-size:14px; color:var(--ink-soft);
+    transition:color .2s;
+  }
+  .nav-links a:hover{ color:var(--coral); }
+  .nav-cta{
+    background:var(--ink);
+    color:var(--paper);
+    padding:9px 16px;
+    border-radius:999px;
+    font-size:13px;
+    font-weight:500;
+    letter-spacing:0.01em;
+    transition:background .2s, transform .2s;
+  }
+  .nav-cta:hover{ background:var(--coral); transform:translateY(-1px); }
+  @media (max-width:720px){
+    .nav-links a:not(.nav-cta){ display:none; }
+  }
+
+  /* BUTTONS ----------------------------------------------------- */
+  .btn{
+    display:inline-flex; align-items:center; gap:10px;
+    font-family:'Hanken Grotesk', sans-serif;
+    font-size:15px; font-weight:500;
+    padding:14px 22px;
+    border-radius:999px;
+    transition:all .25s ease;
+    cursor:pointer;
+    border:none;
+    line-height:1;
+  }
+  .btn-primary{
+    background:var(--coral);
+    color:#fff8ec;
+    box-shadow:0 1px 0 var(--coral-deep), 0 6px 20px rgba(217,84,61,0.25);
+  }
+  .btn-primary:hover{ background:var(--coral-deep); transform:translateY(-2px); box-shadow:0 1px 0 var(--coral-deep), 0 10px 24px rgba(217,84,61,0.35); }
+  .btn-ghost{
+    background:transparent;
+    color:var(--ink);
+    border:1px solid var(--ink);
+  }
+  .btn-ghost:hover{ background:var(--ink); color:var(--paper); }
+  .btn .arrow{
+    display:inline-block;
+    transition:transform .25s ease;
+  }
+  .btn:hover .arrow{ transform:translateX(4px); }
+
+  /* HERO -------------------------------------------------------- */
+  .hero{
+    padding:74px 0 110px;
+    position:relative;
+  }
+  .hero-meta{
+    display:flex; justify-content:space-between; align-items:flex-end;
+    margin-bottom:46px;
+    gap:24px; flex-wrap:wrap;
+  }
+  .hero-meta .meta-left{ display:flex; flex-direction:column; gap:8px; }
+  .hero-meta .issue{
+    font-family:'Instrument Serif', serif;
+    font-style:italic;
+    font-size:18px;
+    color:var(--ink-mute);
+  }
+
+  .hero-title{
+    font-size: clamp(56px, 11.5vw, 178px);
+    margin-bottom: 38px;
+  }
+  .hero-title .line{ display:block; overflow:hidden; }
+  .hero-title .line span{ display:inline-block; will-change:transform; }
+  .hero-title .indent{ padding-left: 12vw; }
+  .hero-title .indent2{ padding-left: 26vw; }
+  @media (max-width:720px){
+    .hero-title .indent, .hero-title .indent2{ padding-left:0; }
+  }
+
+  .hero-row{
+    display:grid;
+    grid-template-columns: 1.3fr 1fr;
+    gap:64px;
+    align-items:start;
+    margin-top:60px;
+  }
+  @media (max-width: 900px){
+    .hero-row{ grid-template-columns:1fr; gap:46px; }
+  }
+
+  .hero-sub{
+    font-size:21px;
+    line-height:1.4;
+    max-width:520px;
+    color:var(--ink-soft);
+  }
+  .hero-sub strong{ color:var(--ink); font-weight:600; }
+
+  .cta-row{
+    display:flex; gap:14px; align-items:center;
+    margin-top:28px; flex-wrap:wrap;
+  }
+
+  .live-line{
+    margin-top:34px;
+    display:flex; align-items:center; gap:12px;
+    font-size:14px; color:var(--ink-mute);
+  }
+  .live-pulse{
+    position:relative;
+    width:8px; height:8px; border-radius:50%;
+    background:var(--sea);
+  }
+  .live-pulse::after{
+    content:""; position:absolute; inset:-6px; border-radius:50%;
+    border:2px solid var(--sea);
+    opacity:0.4;
+    animation:pulse 2s ease-out infinite;
+  }
+  @keyframes pulse{
+    0%{ transform:scale(0.7); opacity:0.6;}
+    100%{ transform:scale(1.6); opacity:0;}
+  }
+
+  /* CAYE PORTRAIT CARD ------------------------------------------ */
+  .caye-card{
+    background:var(--paper-soft);
+    border:1px solid var(--line);
+    border-radius:18px;
+    padding:26px;
+    position:relative;
+    box-shadow:
+      0 1px 0 rgba(255,255,255,0.5) inset,
+      0 24px 60px -20px rgba(13,43,62,0.18),
+      0 4px 12px rgba(13,43,62,0.05);
+    transform:rotate(1.4deg);
+    transition:transform .4s ease;
+  }
+  .caye-card:hover{ transform:rotate(0deg) translateY(-4px); }
+  .caye-card .corner{
+    position:absolute; top:-1px; right:-1px;
+    width:42px; height:42px;
+    background:var(--coral);
+    border-radius:0 18px 0 18px;
+  }
+  .caye-card .corner::after{
+    content:"·";
+    position:absolute;
+    color:#fff8ec;
+    font-size:32px;
+    top:-12px; right:14px;
+  }
+  .caye-portrait{
+    aspect-ratio:1.05/1;
+    background:
+      radial-gradient(circle at 30% 30%, rgba(232,181,69,0.55), transparent 55%),
+      linear-gradient(155deg, var(--sea) 0%, #4f7d6a 100%);
+    border-radius:12px;
+    position:relative;
+    overflow:hidden;
+    display:flex; align-items:flex-end; justify-content:flex-start;
+    padding:18px;
+    margin-bottom:18px;
+  }
+  .caye-portrait::before{
+    /* sun */
+    content:"";
+    position:absolute;
+    top:14%; right:14%;
+    width:78px; height:78px;
+    border-radius:50%;
+    background:radial-gradient(circle, #f5cf6b 0%, #e8b545 60%, transparent 75%);
+    filter:blur(0.5px);
+  }
+  .caye-portrait::after{
+    /* sandbar / caye silhouette */
+    content:"";
+    position:absolute;
+    bottom:0; left:0; right:0;
+    height:38%;
+    background:
+      radial-gradient(ellipse 60% 100% at 30% 100%, #e8c071 0%, #d9aa56 60%, transparent 95%),
+      radial-gradient(ellipse 50% 80% at 75% 100%, #e8c071 0%, transparent 70%);
+  }
+  .caye-portrait .name-tag{
+    position:relative;
+    z-index:2;
+    font-family:'Instrument Serif', serif;
+    font-style:italic;
+    font-size:54px;
+    color:#fff8ec;
+    line-height:0.9;
+    text-shadow:0 2px 0 rgba(0,0,0,0.08);
+  }
+  .caye-card .meta{
+    display:flex; justify-content:space-between; align-items:baseline;
+    border-top:1px dashed var(--line);
+    padding-top:14px;
+    font-family:'JetBrains Mono', monospace;
+    font-size:10px;
+    letter-spacing:0.14em;
+    text-transform:uppercase;
+    color:var(--ink-mute);
+  }
+  .caye-card .meta strong{ color:var(--ink); font-weight:600; }
+  .caye-stamp{
+    position:absolute;
+    bottom:-22px; left:-18px;
+    background:var(--ink);
+    color:var(--paper);
+    font-family:'JetBrains Mono', monospace;
+    font-size:10px;
+    letter-spacing:0.18em;
+    text-transform:uppercase;
+    padding:8px 14px;
+    border-radius:999px;
+    transform:rotate(-4deg);
+  }
+
+  /* MARQUEE ----------------------------------------------------- */
+  .marquee{
+    overflow:hidden;
+    border-top:1px solid var(--line);
+    border-bottom:1px solid var(--line);
+    background:var(--ink);
+    color:var(--paper);
+    padding:18px 0;
+  }
+  .marquee .track{
+    display:flex;
+    gap:48px;
+    white-space:nowrap;
+    will-change:transform;
+    font-family:'Instrument Serif', serif;
+    font-size:38px;
+    letter-spacing:-0.01em;
+    font-style:italic;
+  }
+  .marquee .track span{
+    display:inline-flex; align-items:center; gap:48px;
+    color:var(--paper);
+  }
+  .marquee .star{
+    color:var(--coral);
+    font-size:28px;
+    font-style:normal;
+    transform:translateY(-4px);
+  }
+
+  /* PROBLEM SECTION --------------------------------------------- */
+  .problem{
+    padding:120px 0 100px;
+  }
+  .section-head{
+    display:grid;
+    grid-template-columns: 200px 1fr;
+    gap:32px;
+    margin-bottom:64px;
+    align-items:start;
+  }
+  @media (max-width:720px){
+    .section-head{ grid-template-columns:1fr; gap:14px; }
+  }
+  .section-head .label{
+    padding-top:10px;
+  }
+  .section-head .title{
+    font-size:clamp(38px, 6vw, 72px);
+    line-height:1;
+    letter-spacing:-0.02em;
+    max-width:14ch;
+  }
+
+  .problem-grid{
+    display:grid;
+    grid-template-columns: 1fr 1fr 1fr 1fr;
+    gap:0;
+    border-top:1px solid var(--line);
+  }
+  @media (max-width:900px){
+    .problem-grid{ grid-template-columns:1fr 1fr; }
+  }
+  @media (max-width:520px){
+    .problem-grid{ grid-template-columns:1fr; }
+  }
+  .channel{
+    border-right:1px solid var(--line);
+    border-bottom:1px solid var(--line);
+    padding:34px 26px;
+    position:relative;
+    overflow:hidden;
+  }
+  .channel:last-child{ border-right:none; }
+  .channel .channel-name{
+    font-family:'Instrument Serif', serif;
+    font-style:italic;
+    font-size:30px;
+    margin-bottom:6px;
+  }
+  .channel .count{
+    font-family:'JetBrains Mono', monospace;
+    font-size:12px;
+    color:var(--ink-mute);
+    letter-spacing:0.12em;
+    margin-bottom:24px;
+  }
+  .channel .crack{
+    color:var(--coral);
+    font-weight:500;
+  }
+  .ghost-msg{
+    background:var(--paper-soft);
+    border:1px solid var(--line-soft);
+    border-radius:10px;
+    padding:10px 12px;
+    margin-bottom:8px;
+    font-size:13px;
+    color:var(--ink-mute);
+    position:relative;
+  }
+  .ghost-msg.missed{
+    color:var(--coral);
+    border-color:rgba(217,84,61,0.3);
+    background:rgba(217,84,61,0.06);
+    text-decoration:line-through;
+    text-decoration-color:rgba(217,84,61,0.5);
+  }
+  .ghost-msg .tiny{
+    display:block;
+    font-family:'JetBrains Mono', monospace;
+    font-size:9px;
+    letter-spacing:0.12em;
+    color:var(--ink-mute);
+    text-transform:uppercase;
+    margin-bottom:3px;
+    text-decoration:none;
+  }
+
+  .problem-quote{
+    margin-top:60px;
+    font-family:'Instrument Serif', serif;
+    font-size:clamp(28px, 4vw, 44px);
+    line-height:1.15;
+    letter-spacing:-0.01em;
+    max-width:22ch;
+  }
+  .problem-quote em{ color:var(--coral); font-style:italic; }
+
+  /* HOW SECTION ------------------------------------------------- */
+  .how{
+    background:var(--ink);
+    color:var(--paper);
+    padding:130px 0 130px;
+    position:relative;
+    overflow:hidden;
+  }
+  .how::before{
+    content:"";
+    position:absolute; inset:0;
+    background:
+      radial-gradient(circle 600px at 85% 20%, rgba(232,181,69,0.18), transparent 60%),
+      radial-gradient(circle 700px at 10% 90%, rgba(107,155,134,0.18), transparent 60%);
+    pointer-events:none;
+  }
+  .how .section-head .label{ color:rgba(244,233,210,0.7); }
+  .how .section-head .label .dot{ background:var(--sun); }
+  .how .section-head .title{ color:var(--paper); }
+  .how .section-head .title em{ color:var(--sun); font-style:italic; }
+
+  .steps{
+    display:grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap:28px;
+    margin-top:10px;
+    position:relative;
+  }
+  @media (max-width:900px){ .steps{ grid-template-columns:1fr; gap:36px; } }
+
+  .step{
+    position:relative;
+    padding:30px 26px 32px;
+    border:1px solid rgba(244,233,210,0.12);
+    border-radius:16px;
+    background:rgba(244,233,210,0.03);
+  }
+  .step .num{
+    font-family:'Instrument Serif', serif;
+    font-style:italic;
+    font-size:88px;
+    line-height:0.9;
+    color:var(--coral);
+    margin-bottom:14px;
+  }
+  .step h3{
+    font-family:'Instrument Serif', serif;
+    font-size:30px;
+    line-height:1.05;
+    margin-bottom:10px;
+    color:var(--paper);
+  }
+  .step p{
+    color:rgba(244,233,210,0.78);
+    font-size:15.5px;
+    line-height:1.55;
+  }
+
+  /* mini chat under steps */
+  .step .chip{
+    margin-top:18px;
+    display:inline-block;
+    background:rgba(244,233,210,0.07);
+    border:1px dashed rgba(244,233,210,0.18);
+    padding:8px 12px;
+    border-radius:999px;
+    font-family:'JetBrains Mono', monospace;
+    font-size:11px;
+    letter-spacing:0.1em;
+    text-transform:uppercase;
+    color:rgba(244,233,210,0.7);
+  }
+
+  /* CHAT DEMO --------------------------------------------------- */
+  .chatscene{
+    margin-top:90px;
+    display:grid;
+    grid-template-columns: 1fr 1fr;
+    gap:48px;
+    align-items:center;
+  }
+  @media (max-width:900px){ .chatscene{ grid-template-columns:1fr; gap:32px; } }
+
+  .chatscene .lead{
+    font-family:'Instrument Serif', serif;
+    font-size:clamp(28px, 3.5vw, 44px);
+    line-height:1.1;
+    color:var(--paper);
+  }
+  .chatscene .lead em{ color:var(--sun); font-style:italic; }
+  .chatscene .lead small{
+    display:block;
+    font-family:'Hanken Grotesk', sans-serif;
+    font-size:15px;
+    color:rgba(244,233,210,0.7);
+    margin-top:18px;
+    max-width:42ch;
+    line-height:1.55;
+  }
+
+  .chat{
+    background:var(--paper-soft);
+    border-radius:22px;
+    padding:18px;
+    color:var(--ink);
+    box-shadow:0 30px 70px -20px rgba(0,0,0,0.45), 0 8px 20px rgba(0,0,0,0.2);
+    max-width:460px;
+    margin-left:auto;
+    width:100%;
+  }
+  .chat .chat-head{
+    display:flex; align-items:center; gap:10px;
+    padding:8px 10px 14px;
+    border-bottom:1px solid var(--line-soft);
+    margin-bottom:14px;
+  }
+  .chat .avatar{
+    width:36px; height:36px; border-radius:50%;
+    background:linear-gradient(150deg, var(--sea), #4f7d6a);
+    display:flex; align-items:center; justify-content:center;
+    color:#fff8ec;
+    font-family:'Instrument Serif', serif;
+    font-style:italic;
+    font-size:20px;
+  }
+  .chat .who{ flex:1; }
+  .chat .who .name{ font-weight:600; font-size:14px; }
+  .chat .who .role{ font-size:12px; color:var(--ink-mute); font-family:'JetBrains Mono',monospace; letter-spacing:0.1em; text-transform:uppercase; }
+  .chat .badge{
+    background:var(--sea);
+    color:#fff8ec;
+    font-family:'JetBrains Mono', monospace;
+    font-size:10px;
+    letter-spacing:0.14em;
+    text-transform:uppercase;
+    padding:5px 9px;
+    border-radius:999px;
+  }
+  .bubble{
+    max-width:82%;
+    padding:11px 14px;
+    border-radius:16px;
+    margin-bottom:8px;
+    font-size:14.5px;
+    line-height:1.45;
+    opacity:0;
+    transform:translateY(8px);
+  }
+  .bubble.in{ background:#e6d8b8; border-bottom-left-radius:4px; }
+  .bubble.out{
+    background:var(--ink);
+    color:var(--paper);
+    margin-left:auto;
+    border-bottom-right-radius:4px;
+  }
+  .bubble .tag{
+    display:block;
+    font-family:'JetBrains Mono', monospace;
+    font-size:9px;
+    letter-spacing:0.14em;
+    text-transform:uppercase;
+    opacity:0.7;
+    margin-bottom:4px;
+  }
+  .bubble.system{
+    background:transparent;
+    color:var(--sea);
+    font-family:'JetBrains Mono', monospace;
+    font-size:11px;
+    letter-spacing:0.1em;
+    text-transform:uppercase;
+    border:1px dashed rgba(107,155,134,0.5);
+    border-radius:8px;
+    padding:8px 12px;
+    margin: 6px auto;
+    max-width:fit-content;
+  }
+  .typing{
+    display:inline-flex; gap:4px;
+    background:#e6d8b8;
+    padding:11px 14px;
+    border-radius:16px;
+    border-bottom-left-radius:4px;
+    opacity:0;
+  }
+  .typing span{
+    width:6px; height:6px; border-radius:50%;
+    background:var(--ink-mute);
+    animation:typebounce 1s infinite;
+  }
+  .typing span:nth-child(2){ animation-delay:0.15s; }
+  .typing span:nth-child(3){ animation-delay:0.3s; }
+  @keyframes typebounce{
+    0%,60%,100%{ transform:translateY(0); opacity:.4; }
+    30%{ transform:translateY(-4px); opacity:1; }
+  }
+
+  /* HANDLES ----------------------------------------------------- */
+  .handles{
+    padding:130px 0 110px;
+    position:relative;
+  }
+  .handles .section-head .title em{ color:var(--coral); font-style:italic; }
+  .handles-grid{
+    display:grid;
+    grid-template-columns: 1fr 1fr;
+    gap:0;
+    border-top:1px solid var(--ink);
+    border-left:1px solid var(--ink);
+  }
+  @media (max-width:720px){ .handles-grid{ grid-template-columns:1fr; } }
+
+  .handle{
+    border-right:1px solid var(--ink);
+    border-bottom:1px solid var(--ink);
+    padding:38px 32px 36px;
+    position:relative;
+    display:grid;
+    grid-template-columns: auto 1fr;
+    gap:22px;
+    background:var(--paper);
+    transition:background .25s ease;
+  }
+  .handle:hover{ background:var(--paper-soft); }
+  .handle .nbr{
+    font-family:'Instrument Serif', serif;
+    font-style:italic;
+    font-size:34px;
+    color:var(--coral);
+    line-height:1;
+    padding-top:4px;
+    min-width:56px;
+  }
+  .handle h4{
+    font-family:'Instrument Serif', serif;
+    font-size:30px;
+    line-height:1.05;
+    font-weight:400;
+    margin-bottom:10px;
+    letter-spacing:-0.01em;
+  }
+  .handle p{
+    color:var(--ink-soft);
+    font-size:15.5px;
+    line-height:1.55;
+    max-width:42ch;
+  }
+  .handle .kicker{
+    margin-top:14px;
+    display:inline-block;
+    font-family:'JetBrains Mono', monospace;
+    font-size:10px;
+    letter-spacing:0.16em;
+    text-transform:uppercase;
+    color:var(--sea);
+  }
+
+  /* PRICING ----------------------------------------------------- */
+  .pricing{
+    padding:120px 0 130px;
+    background:var(--paper-deep);
+    border-top:1px solid var(--line);
+    border-bottom:1px solid var(--line);
+  }
+  .pricing .section-head .title em{ color:var(--coral); }
+  .price-grid{
+    display:grid;
+    grid-template-columns: 1fr 1fr;
+    gap:28px;
+    margin-top:10px;
+  }
+  @media (max-width:820px){ .price-grid{ grid-template-columns:1fr; } }
+  .price-card{
+    background:var(--paper);
+    border:1px solid var(--ink);
+    border-radius:20px;
+    padding:36px 32px 34px;
+    position:relative;
+  }
+  .price-card.featured{
+    background:var(--ink);
+    color:var(--paper);
+    border-color:var(--ink);
+  }
+  .price-card .tag{
+    display:inline-block;
+    font-family:'JetBrains Mono', monospace;
+    font-size:11px;
+    letter-spacing:0.16em;
+    text-transform:uppercase;
+    color:var(--ink-mute);
+    margin-bottom:18px;
+  }
+  .price-card.featured .tag{ color:var(--sun); }
+  .price-card .num{
+    font-family:'Instrument Serif', serif;
+    font-size:96px;
+    line-height:0.95;
+    letter-spacing:-0.03em;
+    display:flex; align-items:flex-start; gap:6px;
+    margin-bottom:6px;
+  }
+  .price-card .num sup{
+    font-size:34px;
+    font-style:italic;
+    color:var(--coral);
+    margin-top:14px;
+  }
+  .price-card.featured .num sup{ color:var(--sun); }
+  .price-card .per{
+    font-family:'Instrument Serif', serif;
+    font-style:italic;
+    color:var(--ink-mute);
+    font-size:20px;
+    margin-bottom:22px;
+  }
+  .price-card.featured .per{ color:rgba(244,233,210,0.7); }
+  .price-card .title{
+    font-family:'Instrument Serif', serif;
+    font-size:30px;
+    line-height:1.1;
+    margin-bottom:18px;
+  }
+  .price-card ul{
+    list-style:none;
+    border-top:1px solid var(--line);
+    padding-top:18px;
+    margin-bottom:26px;
+  }
+  .price-card.featured ul{ border-top-color:rgba(244,233,210,0.2); }
+  .price-card li{
+    display:flex; gap:12px; align-items:flex-start;
+    padding:8px 0;
+    font-size:15px;
+  }
+  .price-card li::before{
+    content:"";
+    width:14px; height:14px;
+    border-radius:50%;
+    background:var(--sea);
+    flex-shrink:0;
+    margin-top:5px;
+  }
+  .price-card.featured li::before{ background:var(--sun); }
+  .price-card .btn{ width:100%; justify-content:center; }
+  .price-card.featured .btn-primary{ background:var(--coral); }
+  .pilot-note{
+    margin-top:32px;
+    background:var(--paper-soft);
+    border:1px dashed var(--ink);
+    border-radius:14px;
+    padding:20px 24px;
+    display:flex; gap:18px; align-items:center;
+    flex-wrap:wrap;
+  }
+  .pilot-note .em{
+    font-family:'Instrument Serif', serif;
+    font-style:italic;
+    font-size:22px;
+  }
+  .pilot-note .em strong{ color:var(--coral); font-weight:400; }
+
+  /* TESTIMONIAL ------------------------------------------------- */
+  .testimonial{
+    padding:130px 0 130px;
+  }
+  .testimonial-inner{
+    display:grid;
+    grid-template-columns: 1fr 1.4fr;
+    gap:56px;
+    align-items:center;
+  }
+  @media (max-width:900px){ .testimonial-inner{ grid-template-columns:1fr; } }
+  .testimonial .quote{
+    font-family:'Instrument Serif', serif;
+    font-size:clamp(28px, 3.6vw, 44px);
+    line-height:1.18;
+    letter-spacing:-0.01em;
+  }
+  .testimonial .quote em{ color:var(--coral); font-style:italic; }
+  .testimonial .quote .open{
+    font-size:1.4em;
+    color:var(--coral);
+    line-height:0;
+    margin-right:4px;
+    vertical-align:-0.15em;
+  }
+  .testimonial .attribution{
+    margin-top:30px;
+    display:flex; align-items:center; gap:14px;
+  }
+  .testimonial .avatar{
+    width:52px; height:52px; border-radius:50%;
+    background:linear-gradient(150deg, var(--coral), #b8412d);
+    color:#fff8ec;
+    display:flex; align-items:center; justify-content:center;
+    font-family:'Instrument Serif', serif;
+    font-style:italic;
+    font-size:24px;
+  }
+  .testimonial .who{ font-size:15px; }
+  .testimonial .who .name{ font-weight:600; }
+  .testimonial .who .role{ color:var(--ink-mute); }
+
+  .friday-card{
+    position:relative;
+    background:var(--paper-soft);
+    border:1px solid var(--line);
+    border-radius:18px;
+    padding:30px 30px 28px;
+    box-shadow:0 30px 60px -30px rgba(13,43,62,0.25);
+  }
+  .friday-card .stamp{
+    position:absolute;
+    top:-18px; right:-12px;
+    font-family:'Instrument Serif', serif;
+    font-style:italic;
+    font-size:18px;
+    background:var(--coral);
+    color:#fff8ec;
+    padding:8px 16px;
+    border-radius:999px;
+    transform:rotate(4deg);
+    box-shadow:0 6px 18px rgba(217,84,61,0.3);
+  }
+  .friday-card h5{
+    font-family:'JetBrains Mono', monospace;
+    font-size:11px;
+    letter-spacing:0.16em;
+    text-transform:uppercase;
+    color:var(--ink-mute);
+    margin-bottom:18px;
+  }
+  .calendar{
+    display:grid;
+    grid-template-columns:repeat(7, 1fr);
+    gap:6px;
+    margin-bottom:14px;
+  }
+  .calendar .day{
+    aspect-ratio:1;
+    border-radius:8px;
+    background:var(--paper);
+    border:1px solid var(--line-soft);
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    font-family:'JetBrains Mono', monospace;
+    font-size:11px;
+    color:var(--ink-mute);
+    position:relative;
+  }
+  .calendar .day .num{ font-weight:500; color:var(--ink); font-size:14px; font-family:'Instrument Serif', serif; font-style:italic;}
+  .calendar .day .label{ font-size:8px; letter-spacing:0.1em; text-transform:uppercase; margin-top:1px; }
+  .calendar .day.friday{
+    background:var(--ink);
+    color:var(--paper);
+    border-color:var(--ink);
+  }
+  .calendar .day.friday .num{ color:var(--sun); }
+  .calendar .day.friday .label{ color:rgba(244,233,210,0.7); }
+  .calendar .day.friday::after{
+    content:"caye";
+    position:absolute;
+    bottom:4px;
+    font-family:'Instrument Serif', serif;
+    font-style:italic;
+    font-size:10px;
+    color:var(--sun);
+  }
+  .calendar .day.friday .label{ display:none; }
+  .friday-card .note{
+    border-top:1px dashed var(--line);
+    padding-top:14px;
+    font-size:13.5px;
+    color:var(--ink-soft);
+    line-height:1.5;
+  }
+  .friday-card .note strong{ color:var(--coral); }
+
+  /* FINAL CTA --------------------------------------------------- */
+  .final{
+    background:var(--coral);
+    color:#fff8ec;
+    padding:130px 0 130px;
+    position:relative;
+    overflow:hidden;
+  }
+  .final::before{
+    content:"";
+    position:absolute;
+    width:600px; height:600px;
+    border-radius:50%;
+    background:radial-gradient(circle, var(--sun) 0%, transparent 65%);
+    right:-200px; top:-200px;
+    opacity:0.6;
+    pointer-events:none;
+  }
+  .final::after{
+    content:"";
+    position:absolute;
+    width:500px; height:500px;
+    border-radius:50%;
+    background:radial-gradient(circle, var(--sea) 0%, transparent 60%);
+    left:-180px; bottom:-200px;
+    opacity:0.5;
+    pointer-events:none;
+  }
+  .final-inner{ position:relative; z-index:2; text-align:left; }
+  .final h2{
+    font-family:'Instrument Serif', serif;
+    font-size:clamp(48px, 9vw, 140px);
+    line-height:0.92;
+    letter-spacing:-0.02em;
+    margin-bottom:36px;
+    max-width:14ch;
+  }
+  .final h2 em{ font-style:italic; color:var(--ink); }
+  .final .sub{
+    font-size:19px;
+    max-width:48ch;
+    color:rgba(255,248,236,0.92);
+    margin-bottom:34px;
+  }
+  .final .cta-row .btn-primary{
+    background:var(--ink);
+    color:var(--paper);
+    box-shadow:0 1px 0 #06192a, 0 8px 24px rgba(13,43,62,0.4);
+  }
+  .final .cta-row .btn-primary:hover{ background:#06192a; }
+  .final .cta-row .btn-ghost{
+    border-color:#fff8ec;
+    color:#fff8ec;
+  }
+  .final .cta-row .btn-ghost:hover{ background:#fff8ec; color:var(--coral); }
+
+  /* FOOTER ------------------------------------------------------ */
+  footer{
+    background:var(--ink);
+    color:var(--paper);
+    padding:60px 0 36px;
+  }
+  footer .row{
+    display:grid;
+    grid-template-columns: 1.4fr 1fr 1fr 1fr;
+    gap:36px;
+    padding-bottom:42px;
+    border-bottom:1px solid rgba(244,233,210,0.15);
+  }
+  @media (max-width:820px){ footer .row{ grid-template-columns:1fr 1fr; gap:32px;} }
+  footer .brand{
+    color:var(--paper);
+    font-size:32px;
+  }
+  footer .brand em{ color:var(--sun); }
+  footer .tag{
+    color:rgba(244,233,210,0.7);
+    font-size:14px;
+    margin-top:8px;
+    max-width:32ch;
+    line-height:1.5;
+  }
+  footer h6{
+    font-family:'JetBrains Mono', monospace;
+    font-size:11px;
+    letter-spacing:0.16em;
+    text-transform:uppercase;
+    color:rgba(244,233,210,0.55);
+    margin-bottom:14px;
+    font-weight:500;
+  }
+  footer ul{ list-style:none; display:flex; flex-direction:column; gap:8px; }
+  footer ul a{
+    color:var(--paper);
+    font-size:14.5px;
+    opacity:0.85;
+    transition:opacity .2s, color .2s;
+  }
+  footer ul a:hover{ color:var(--sun); opacity:1; }
+  footer .colophon{
+    padding-top:24px;
+    display:flex; justify-content:space-between; align-items:center;
+    font-family:'JetBrains Mono', monospace;
+    font-size:11px;
+    letter-spacing:0.12em;
+    text-transform:uppercase;
+    color:rgba(244,233,210,0.55);
+    flex-wrap:wrap; gap:12px;
+  }
+  footer .colophon a{ color:var(--sun); }
+
+  /* Selection */
+  ::selection{ background:var(--coral); color:#fff8ec; }
+</style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav class="nav">
+  <div class="wrap inner">
+    <a href="#top" class="brand"><span class="dot"></span>Tropi<em>Chat</em></a>
+    <div class="nav-links">
+      <a href="#caye">Meet Caye</a>
+      <a href="#how">How it works</a>
+      <a href="#handles">What she handles</a>
+      <a href="#pricing">Pricing</a>
+      <a href="#cta" class="nav-cta">Get Started →</a>
+    </div>
+  </div>
+</nav>
+
+<!-- HERO -->
+<section class="hero" id="top">
+  <div class="wrap">
+
+    <div class="hero-meta">
+      <div class="meta-left">
+        <span class="mono">— Vol. 01 / Issue 04</span>
+        <span class="issue">Nassau · Bahamas · est. on a boat</span>
+      </div>
+      <div class="mono" style="color:var(--ink-mute)">A Caribbean social sales hub</div>
+    </div>
+
+    <h1 class="hero-title display" id="hero-title">
+      <span class="line"><span>Meet <em>Caye.</em></span></span>
+      <span class="line indent"><span>She handles</span></span>
+      <span class="line indent2"><span>the messages.</span></span>
+    </h1>
+
+    <div class="hero-row">
+      <div>
+        <p class="hero-sub" id="hero-sub">
+          Caye is your AI receptionist — pronounced <em class="italic">key</em>, named for the sandbars off the islands. She reads your booking emails, checks your calendar, and writes back in your voice. <strong>You find out after.</strong>
+        </p>
+
+        <div class="cta-row" id="hero-cta">
+          <a class="btn btn-primary" href="#cta">Try Caye free <span class="arrow">→</span></a>
+          <a class="btn btn-ghost" href="#how">See how she works</a>
+        </div>
+
+        <div class="live-line" id="hero-live">
+          <span class="live-pulse"></span>
+          <span>Live with tour operators in the Bahamas — pilot Spring '26.</span>
+        </div>
+      </div>
+
+      <!-- Caye portrait card -->
+      <div id="caye" style="display:flex; justify-content:flex-end;">
+        <div class="caye-card" id="caye-card">
+          <div class="corner"></div>
+          <div class="caye-portrait">
+            <div class="name-tag">Caye.</div>
+          </div>
+          <div class="meta">
+            <span>Receptionist · <strong>Caribbean</strong></span>
+            <span>v1.0</span>
+          </div>
+          <div class="caye-stamp">always on · always warm</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- MARQUEE -->
+<div class="marquee" id="marquee">
+  <div class="track" id="track">
+    <span>WhatsApp <em class="star">✦</em> Instagram <em class="star">✦</em> Messenger <em class="star">✦</em> Email <em class="star">✦</em> WhatsApp <em class="star">✦</em> Instagram <em class="star">✦</em> Messenger <em class="star">✦</em> Email <em class="star">✦</em></span>
+    <span aria-hidden="true">WhatsApp <em class="star">✦</em> Instagram <em class="star">✦</em> Messenger <em class="star">✦</em> Email <em class="star">✦</em> WhatsApp <em class="star">✦</em> Instagram <em class="star">✦</em> Messenger <em class="star">✦</em> Email <em class="star">✦</em></span>
+  </div>
+</div>
+
+<!-- PROBLEM -->
+<section class="problem">
+  <div class="wrap">
+    <div class="section-head">
+      <div class="label"><span class="eyebrow"><span class="dot"></span>The problem · 01</span></div>
+      <h2 class="display title">Messages don't fall on one phone anymore.</h2>
+    </div>
+
+    <div class="problem-grid">
+      <div class="channel">
+        <div class="channel-name">WhatsApp</div>
+        <div class="count">3 unread · 2h ago</div>
+        <div class="ghost-msg"><span class="tiny">Anna · Cruise guest</span>"Hi! Is the snorkel tour available Sat?"</div>
+        <div class="ghost-msg missed"><span class="tiny">Marco · 8h ago</span>"Still need a tour for 4 people"</div>
+        <div class="ghost-msg"><span class="tiny">Sandra · 1d ago</span>"Confirming pickup time"</div>
+      </div>
+      <div class="channel">
+        <div class="channel-name">Instagram</div>
+        <div class="count">DMs · 5 unread</div>
+        <div class="ghost-msg"><span class="tiny">@thecruisemom</span>"Pricing for a group of 6?"</div>
+        <div class="ghost-msg missed"><span class="tiny">@jaybahamas · 2d ago</span>"Anyone home?"</div>
+        <div class="ghost-msg"><span class="tiny">@island.honeymoon</span>"Sunset cruise availability"</div>
+      </div>
+      <div class="channel">
+        <div class="channel-name">Messenger</div>
+        <div class="count">FB inbox · 2 unread</div>
+        <div class="ghost-msg"><span class="tiny">David L.</span>"How do I book?"</div>
+        <div class="ghost-msg missed"><span class="tiny">Tia P. · 3d ago</span>"Are you guys still doing tours?"</div>
+      </div>
+      <div class="channel">
+        <div class="channel-name">Email</div>
+        <div class="count">Inbox · 12 unread</div>
+        <div class="ghost-msg"><span class="tiny">booking@royalcaribbean</span>"Group inquiry — 14 pax"</div>
+        <div class="ghost-msg"><span class="tiny">karenda@gmail</span>"Re: Saturday tour 11am"</div>
+        <div class="ghost-msg missed"><span class="tiny">Mark Z · friday</span>"Need to confirm pickup..."</div>
+      </div>
+    </div>
+
+    <p class="problem-quote display" id="problem-quote">
+      So bookings <em>fall through the cracks</em> — and you find out two days later, when the cruise has already left port.
+    </p>
+  </div>
+</section>
+
+<!-- HOW IT WORKS -->
+<section class="how" id="how">
+  <div class="wrap">
+    <div class="section-head">
+      <div class="label"><span class="eyebrow sun"><span class="dot"></span>How Caye works · 02</span></div>
+      <h2 class="display title">No flowcharts. <em>No training.</em> She just handles it.</h2>
+    </div>
+
+    <div class="steps" id="steps">
+      <div class="step">
+        <div class="num">i.</div>
+        <h3>A guest reaches out.</h3>
+        <p>Could be a cruise mom on WhatsApp. Could be a honeymooner emailing about a sunset cruise. Caye sees it the second it lands.</p>
+        <div class="chip">↳ Reads the message</div>
+      </div>
+      <div class="step">
+        <div class="num">ii.</div>
+        <h3>She checks your calendar.</h3>
+        <p>Caye pulls availability the way you would — knows you don't run tours on Fridays, knows the boat needs an hour between trips.</p>
+        <div class="chip">↳ Checks the calendar</div>
+      </div>
+      <div class="step">
+        <div class="num">iii.</div>
+        <h3>She replies in your voice.</h3>
+        <p>Caye sends the confirmation, books the event, logs the customer. You read it the next morning over coffee, if at all.</p>
+        <div class="chip">↳ Sends, books, logs</div>
+      </div>
+    </div>
+
+    <div class="chatscene">
+      <div class="lead display">
+        It looks like a <em>regular email thread.</em>
+        <small>Because it is one — written by Caye, sent from your address, indistinguishable from the way you'd reply yourself. Cruise guests don't know they're talking to an AI. They know they got a fast, warm answer.</small>
+      </div>
+      <div class="chat" id="chat-card">
+        <div class="chat-head">
+          <div class="avatar">k</div>
+          <div class="who">
+            <div class="name">Karenda's Bahamas Tours</div>
+            <div class="role">Inbox · with Caye</div>
+          </div>
+          <div class="badge">Friday</div>
+        </div>
+
+        <div class="bubble in" data-step="1">
+          <span class="tag">From: cruise guest</span>
+          Hi there! Coming in on the Carnival Pride Saturday — are 4 of us able to do the snorkel + lunch tour at 11?
+        </div>
+
+        <div class="bubble system" data-step="2">caye · checking calendar…</div>
+
+        <div class="typing" id="typing" data-step="3"><span></span><span></span><span></span></div>
+
+        <div class="bubble out" data-step="4">
+          <span class="tag">From: karenda@bahamastours · sent by caye</span>
+          Hi Anna — yes, Saturday 11am works perfectly. Pickup at the cruise port pier, look for the blue boat. $89 pp, lunch included. I'll have the confirmation in your inbox in a sec. — Karenda
+        </div>
+
+        <div class="bubble system" data-step="5">caye · booking added to calendar · saturday 11:00</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- HANDLES -->
+<section class="handles" id="handles">
+  <div class="wrap">
+    <div class="section-head">
+      <div class="label"><span class="eyebrow"><span class="dot"></span>What Caye handles · 03</span></div>
+      <h2 class="display title">Everything you'd hire <em>a receptionist</em> to do.</h2>
+    </div>
+
+    <div class="handles-grid">
+      <div class="handle">
+        <div class="nbr">i.</div>
+        <div>
+          <h4>One inbox. Every channel.</h4>
+          <p>WhatsApp, Instagram DMs, Messenger and email — all in one view. No more swiping between four apps trying to remember which guest asked what, where.</p>
+          <div class="kicker">↳ Unified inbox</div>
+        </div>
+      </div>
+      <div class="handle">
+        <div class="nbr">ii.</div>
+        <div>
+          <h4>After-hours replies.</h4>
+          <p>Caye answers common inquiries automatically — pricing, hours, availability — the moment they come in. Including 2am. Including Sundays. Including Fridays.</p>
+          <div class="kicker">↳ AI Smart Replies</div>
+        </div>
+      </div>
+      <div class="handle">
+        <div class="nbr">iii.</div>
+        <div>
+          <h4>Bookings, captured.</h4>
+          <p>Whether the request lands in a DM or an email, Caye pulls it into a structured booking — name, date, party size, source — so nothing has to live in your head.</p>
+          <div class="kicker">↳ Booking management</div>
+        </div>
+      </div>
+      <div class="handle">
+        <div class="nbr">iv.</div>
+        <div>
+          <h4>Calendar, kept honest.</h4>
+          <p>Connect Google Calendar once. Caye reads availability before she promises anything, then drops the confirmed booking on the right day at the right time.</p>
+          <div class="kicker">↳ Calendar integration</div>
+        </div>
+      </div>
+      <div class="handle">
+        <div class="nbr">v.</div>
+        <div>
+          <h4>Follow-ups, on auto.</h4>
+          <p>Reminder the night before, thank-you the morning after, a nudge if a deposit is overdue. The little touches that make repeat customers — done without you remembering.</p>
+          <div class="kicker">↳ Automation flows</div>
+        </div>
+      </div>
+      <div class="handle">
+        <div class="nbr">vi.</div>
+        <div>
+          <h4>Customers, remembered.</h4>
+          <p>Every guest gets a profile. Last booking. What they ordered. Which kid was allergic to shellfish. So you sound like a friend, not a chain.</p>
+          <div class="kicker">↳ Customer profiles</div>
+        </div>
+      </div>
+      <div class="handle">
+        <div class="nbr">vii.</div>
+        <div>
+          <h4>The dollars, visible.</h4>
+          <p>Every lead, every booking, every dollar — in a single dashboard. So you can stop guessing how the season is going and just look.</p>
+          <div class="kicker">↳ Revenue analytics</div>
+        </div>
+      </div>
+      <div class="handle">
+        <div class="nbr">viii.</div>
+        <div>
+          <h4>In your voice. Always.</h4>
+          <p>Caye learns the way you write — the way Karenda signs off, the way Marco answers — so customers feel you, not a chatbot. She's the receptionist, not the brand.</p>
+          <div class="kicker">↳ Voice & tone</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- PRICING -->
+<section class="pricing" id="pricing">
+  <div class="wrap">
+    <div class="section-head">
+      <div class="label"><span class="eyebrow"><span class="dot"></span>Pricing · 04</span></div>
+      <h2 class="display title">One price. <em>No contracts.</em> Cancel any time.</h2>
+    </div>
+
+    <div class="price-grid">
+      <div class="price-card">
+        <div class="tag">— Caye Solo</div>
+        <div class="num"><sup>$</sup>79</div>
+        <div class="per">/month, flat</div>
+        <div class="title">Just Caye, handling the messages.</div>
+        <ul>
+          <li>Unified inbox · WhatsApp, IG, Messenger, Email</li>
+          <li>Caye AI receptionist with smart replies</li>
+          <li>Calendar integration & booking management</li>
+          <li>Customer profiles & revenue analytics</li>
+          <li>Onboarding call with our Bahamas team</li>
+        </ul>
+        <a class="btn btn-ghost" href="#cta">Start with Caye <span class="arrow">→</span></a>
+      </div>
+
+      <div class="price-card featured">
+        <div class="tag">— Caye + Website</div>
+        <div class="num"><sup>$</sup>129</div>
+        <div class="per">/month, bundled</div>
+        <div class="title">Caye, plus a TropiTech-built website.</div>
+        <ul>
+          <li>Everything in Caye Solo</li>
+          <li>Custom website built by TropiTech</li>
+          <li>Booking page wired straight to Caye</li>
+          <li>Domain, hosting, SSL — all handled</li>
+          <li>Priority Bahamas-based support</li>
+        </ul>
+        <a class="btn btn-primary" href="#cta">Get the bundle <span class="arrow">→</span></a>
+      </div>
+    </div>
+
+    <div class="pilot-note">
+      <div class="em"><strong>Pilot offer.</strong></div>
+      <div style="flex:1; min-width:200px;">First pilot customers get <strong>2 free months</strong> + <strong>$20/mo referral kickback</strong> for every active business they bring in. We're still small. We treat early operators like family.</div>
+    </div>
+  </div>
+</section>
+
+<!-- TESTIMONIAL -->
+<section class="testimonial">
+  <div class="wrap">
+    <div class="section-head">
+      <div class="label"><span class="eyebrow sea"><span class="dot"></span>From the field · 05</span></div>
+      <h2 class="display title">A Friday in Nassau, as told <em>by Karenda.</em></h2>
+    </div>
+
+    <div class="testimonial-inner">
+      <div>
+        <p class="quote display"><span class="open">“</span>I'm Seventh Day Adventist. I don't work Fridays — and I never have. But bookings still come in on Fridays, and for years I'd come back Saturday morning to <em>five missed inquiries</em> and three cruise guests who already booked someone else.</p>
+        <p class="quote display" style="margin-top:24px;">Now Caye just <em>handles it.</em> I check Saturday and the confirmations are sent, the calendar is full, the day is already paid for.<span style="color:var(--coral);">”</span></p>
+        <div class="attribution">
+          <div class="avatar">K</div>
+          <div class="who">
+            <div class="name">Karenda · pilot customer</div>
+            <div class="role">Tour operator · Nassau, Bahamas</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="friday-card">
+        <div class="stamp">handled.</div>
+        <h5>— Karenda's week · April '26</h5>
+        <div class="calendar">
+          <div class="day"><span class="num">M</span><span class="label">Mon</span></div>
+          <div class="day"><span class="num">T</span><span class="label">Tue</span></div>
+          <div class="day"><span class="num">W</span><span class="label">Wed</span></div>
+          <div class="day"><span class="num">Th</span><span class="label">Thu</span></div>
+          <div class="day friday"><span class="num">Fr</span><span class="label">Fri</span></div>
+          <div class="day"><span class="num">S</span><span class="label">Sat</span></div>
+          <div class="day"><span class="num">S</span><span class="label">Sun</span></div>
+        </div>
+        <div class="note">Friday — <strong>6 inquiries, 4 confirmed bookings, $0 of Karenda's time.</strong> Caye replied, checked the calendar, and got the deposit emails out by 2pm island time.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FINAL CTA -->
+<section class="final" id="cta">
+  <div class="wrap final-inner">
+    <h2 class="display">Let <em>Caye</em> handle it.</h2>
+    <p class="sub">Try TropiChat free for two months. We'll get you set up over a call, connect your WhatsApp and email, and have Caye answering for you by the end of the week.</p>
+    <div class="cta-row">
+      <a class="btn btn-primary" href="mailto:lamar@tropitech.org?subject=TropiChat%20Pilot">Start the pilot <span class="arrow">→</span></a>
+      <a class="btn btn-ghost" href="#how">See how she works</a>
+    </div>
+    <div style="margin-top:30px; font-family:'JetBrains Mono', monospace; font-size:11px; letter-spacing:0.16em; text-transform:uppercase; color:rgba(255,248,236,0.85);">
+      <span class="live-pulse" style="display:inline-block; vertical-align:middle; margin-right:10px;"></span>
+      Live · pilots open · Bahamas first, Caribbean next
+    </div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <div class="wrap">
+    <div class="row">
+      <div>
+        <div class="brand" style="font-family:'Instrument Serif',serif;"><span class="dot" style="background:var(--coral);"></span>Tropi<em>Chat</em></div>
+        <p class="tag">A Caribbean social sales hub. Built in Nassau by <a href="https://tropitech.org" style="color:var(--sun); text-decoration:underline;">TropiTech</a>.</p>
+      </div>
+      <div>
+        <h6>Product</h6>
+        <ul>
+          <li><a href="#caye">Meet Caye</a></li>
+          <li><a href="#how">How it works</a></li>
+          <li><a href="#handles">What she handles</a></li>
+          <li><a href="#pricing">Pricing</a></li>
+        </ul>
+      </div>
+      <div>
+        <h6>Company</h6>
+        <ul>
+          <li><a href="https://tropitech.org">TropiTech</a></li>
+          <li><a href="mailto:lamar@tropitech.org">Contact</a></li>
+          <li><a href="#cta">Start a pilot</a></li>
+          <li><a href="#">Referral program</a></li>
+        </ul>
+      </div>
+      <div>
+        <h6>Reach Lamar</h6>
+        <ul>
+          <li><a href="mailto:lamar@tropitech.org">lamar@tropitech.org</a></li>
+          <li><a href="https://tropichat.chat">tropichat.chat</a></li>
+          <li><a href="https://tropitech.org">tropitech.org</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="colophon">
+      <span>© 2026 TropiChat · Made on island time, on purpose.</span>
+      <span>Nassau · Bahamas · Caribbean-wide soon</span>
+    </div>
+  </div>
+</footer>
+
+<script>
+/* ============================================================
+   GSAP + ScrollTrigger orchestration
+   ============================================================ */
+gsap.registerPlugin(ScrollTrigger);
+
+/* Hero entrance ------------------------------------------------ */
+window.addEventListener('load', () => {
+  const tl = gsap.timeline({ defaults:{ ease:"power3.out" } });
+
+  // pre-set
+  gsap.set('#hero-title .line span', { yPercent:110 });
+  gsap.set('#hero-sub, #hero-cta, #hero-live', { opacity:0, y:18 });
+  gsap.set('#caye-card', { opacity:0, y:30, rotate:8 });
+  gsap.set('.hero-meta > *', { opacity:0, y:-10 });
+
+  tl.to('.hero-meta > *', { opacity:1, y:0, duration:0.6, stagger:0.1 })
+    .to('#hero-title .line span', { yPercent:0, duration:1.1, stagger:0.12 }, 0.1)
+    .to('#caye-card', { opacity:1, y:0, rotate:1.4, duration:1.1 }, 0.4)
+    .to('#hero-sub', { opacity:1, y:0, duration:0.7 }, 0.9)
+    .to('#hero-cta', { opacity:1, y:0, duration:0.6 }, 1.05)
+    .to('#hero-live', { opacity:1, y:0, duration:0.6 }, 1.15);
+});
+
+/* Marquee ----------------------------------------------------- */
+gsap.to('#track', {
+  xPercent:-50,
+  duration:30,
+  ease:'none',
+  repeat:-1
+});
+
+/* Caye card subtle float on scroll --------------------------- */
+gsap.to('#caye-card', {
+  y:-30,
+  scrollTrigger:{
+    trigger:'.hero',
+    start:'top top',
+    end:'bottom top',
+    scrub:1
+  }
+});
+
+/* Problem section: stagger channels + reveal quote ---------- */
+gsap.utils.toArray('.channel').forEach((el, i) => {
+  gsap.from(el, {
+    opacity:0,
+    y:40,
+    duration:0.7,
+    ease:'power3.out',
+    scrollTrigger:{
+      trigger:el,
+      start:'top 85%'
+    }
+  });
+});
+
+gsap.utils.toArray('.ghost-msg.missed').forEach(el => {
+  gsap.from(el, {
+    backgroundColor:'rgba(217,84,61,0.0)',
+    duration:1.2,
+    delay:0.3,
+    scrollTrigger:{ trigger:el, start:'top 85%' }
+  });
+});
+
+gsap.from('#problem-quote', {
+  opacity:0,
+  y:30,
+  duration:1,
+  scrollTrigger:{
+    trigger:'#problem-quote',
+    start:'top 80%'
+  }
+});
+
+/* How section: steps reveal --------------------------------- */
+gsap.utils.toArray('.step').forEach((el, i) => {
+  gsap.from(el, {
+    opacity:0,
+    y:60,
+    duration:0.8,
+    delay: i * 0.1,
+    ease:'power3.out',
+    scrollTrigger:{ trigger:'#steps', start:'top 75%' }
+  });
+});
+
+/* Chat scene: bubble pop-in on enter ------------------------- */
+ScrollTrigger.create({
+  trigger:'#chat-card',
+  start:'top 70%',
+  once:true,
+  onEnter: () => {
+    const bubbles = document.querySelectorAll('#chat-card [data-step]');
+    bubbles.forEach((b, i) => {
+      if(b.classList.contains('typing')){
+        gsap.to(b, { opacity:1, duration:0.3, delay:i*0.7 + 0.2 });
+        gsap.to(b, { opacity:0, duration:0.2, delay:i*0.7 + 1.4 });
+      } else {
+        gsap.to(b, { opacity:1, y:0, duration:0.5, delay:i*0.7, ease:'back.out(1.4)' });
+      }
+    });
+  }
+});
+
+/* Handles: cascade in --------------------------------------- */
+gsap.utils.toArray('.handle').forEach((el, i) => {
+  gsap.from(el, {
+    opacity:0,
+    y:40,
+    duration:0.6,
+    ease:'power3.out',
+    scrollTrigger:{ trigger:el, start:'top 88%' }
+  });
+});
+
+/* Pricing cards ---------------------------------------------- */
+gsap.from('.price-card', {
+  opacity:0,
+  y:50,
+  duration:0.8,
+  stagger:0.15,
+  ease:'power3.out',
+  scrollTrigger:{ trigger:'.price-grid', start:'top 80%' }
+});
+
+gsap.from('.pilot-note', {
+  opacity:0, y:30, duration:0.7,
+  scrollTrigger:{ trigger:'.pilot-note', start:'top 90%' }
+});
+
+/* Testimonial ------------------------------------------------- */
+gsap.from('.testimonial .quote', {
+  opacity:0, y:30, duration:0.9, stagger:0.15,
+  scrollTrigger:{ trigger:'.testimonial', start:'top 70%' }
+});
+gsap.from('.friday-card', {
+  opacity:0, x:50, duration:1,
+  scrollTrigger:{ trigger:'.friday-card', start:'top 80%' }
+});
+gsap.from('.calendar .day', {
+  opacity:0, scale:0.6, duration:0.5, stagger:0.06, ease:'back.out(1.7)',
+  scrollTrigger:{ trigger:'.calendar', start:'top 85%' }
+});
+
+/* Section titles soft reveal --------------------------------- */
+gsap.utils.toArray('.section-head').forEach(el => {
+  gsap.from(el.querySelectorAll('.label, .title'), {
+    opacity:0, y:24, duration:0.8, stagger:0.1,
+    scrollTrigger:{ trigger:el, start:'top 85%' }
+  });
+});
+
+/* Final CTA ---------------------------------------------------- */
+gsap.from('.final h2', {
+  opacity:0, y:40, duration:1,
+  scrollTrigger:{ trigger:'.final', start:'top 70%' }
+});
+gsap.from('.final .sub, .final .cta-row', {
+  opacity:0, y:20, duration:0.7, stagger:0.1,
+  scrollTrigger:{ trigger:'.final', start:'top 65%' }
+});
+
+/* Parallax on the sun/sea blobs in final */
+gsap.to('.final::before', {});  // (no-op — pseudo not animatable directly)
+
+/* Section dividers parallax: subtle backdrop drift --------- */
+ScrollTrigger.refresh();
+</script>
+
+</body>
+</html>

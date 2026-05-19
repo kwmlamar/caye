@@ -1,0 +1,2176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>TropiChat — Meet Caye, your Caribbean AI receptionist</title>
+<meta name="description" content="A unified inbox and AI receptionist for Caribbean small businesses. Caye reads the booking emails, checks the calendar, and writes back in your voice — even on Fridays." />
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js"></script>
+
+<style>
+  :root{
+    /* Surfaces */
+    --bg:           #f5f3ee;    /* warm off-white */
+    --bg-soft:      #ffffff;    /* surface / cards */
+    --bg-deep:      #ebe7df;    /* subtle differentiation */
+    --bg-dark:      #0b1419;    /* deep ink for dark sections */
+
+    /* Ink */
+    --ink:          #0b1419;
+    --ink-soft:     #2d3a44;
+    --ink-mute:     #6b7681;
+    --ink-faint:    #9aa3ac;
+
+    /* Borders / lines */
+    --line:         rgba(11, 20, 25, 0.09);
+    --line-strong:  rgba(11, 20, 25, 0.16);
+    --line-dark:    rgba(245, 243, 238, 0.10);
+
+    /* Brand */
+    --coral:        #e85a3c;
+    --coral-deep:   #c94824;
+    --coral-soft:   #fce8e1;
+    --teal:         #1e6157;
+    --teal-soft:    #e0eeea;
+    --sun:          #f4b942;
+    --sun-soft:     #fbeccb;
+
+    /* Shadows */
+    --shadow-sm:    0 1px 2px rgba(11,20,25,0.04), 0 1px 1px rgba(11,20,25,0.03);
+    --shadow-md:    0 4px 10px rgba(11,20,25,0.05), 0 12px 28px -10px rgba(11,20,25,0.10);
+    --shadow-lg:    0 12px 24px rgba(11,20,25,0.06), 0 40px 80px -20px rgba(11,20,25,0.18);
+  }
+
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html,body{ background:var(--bg); color:var(--ink); -webkit-font-smoothing:antialiased; }
+  body{
+    font-family: 'Geist', ui-sans-serif, system-ui, -apple-system, sans-serif;
+    font-feature-settings: "ss01", "cv11";
+    font-weight:400;
+    font-size:16px;
+    line-height:1.55;
+    overflow-x:hidden;
+    position:relative;
+  }
+
+  /* Subtle ambient warmth (no paper grain) */
+  body::before{
+    content:"";
+    position:fixed; inset:0;
+    pointer-events:none;
+    z-index:0;
+    background:
+      radial-gradient(900px 600px at 90% -10%, rgba(244,185,66,0.07), transparent 60%),
+      radial-gradient(700px 500px at -10% 30%, rgba(232,90,60,0.05), transparent 60%);
+  }
+
+  /* TYPE -------------------------------------------------------- */
+  .display{
+    font-family: 'Geist', ui-sans-serif, system-ui, sans-serif;
+    font-weight:600;
+    letter-spacing:-0.035em;
+    line-height:1;
+  }
+  .display .accent{ color:var(--coral); }
+  .display .teal{ color:var(--teal); }
+
+  .mono{
+    font-family:'JetBrains Mono', ui-monospace, monospace;
+    font-size:11px;
+    letter-spacing:0.14em;
+    text-transform:uppercase;
+    font-weight:500;
+  }
+  .eyebrow{
+    display:inline-flex; align-items:center; gap:10px;
+    font-family:'JetBrains Mono', monospace;
+    font-size:11px; letter-spacing:0.16em; text-transform:uppercase;
+    color:var(--ink-mute);
+    font-weight:500;
+  }
+  .eyebrow .dot{
+    width:6px; height:6px; border-radius:50%; background:var(--coral);
+    box-shadow:0 0 0 4px rgba(232,90,60,0.12);
+  }
+  .eyebrow.teal .dot{ background:var(--teal); box-shadow:0 0 0 4px rgba(30,97,87,0.12); }
+  .eyebrow.sun .dot{ background:var(--sun); box-shadow:0 0 0 4px rgba(244,185,66,0.14); }
+
+  a{ color:inherit; text-decoration:none; }
+
+  /* LAYOUT ------------------------------------------------------ */
+  .wrap{
+    max-width:1320px;
+    margin:0 auto;
+    padding:0 36px;
+    position:relative;
+  }
+  @media (max-width: 720px){ .wrap{ padding:0 20px; } }
+  section{ position:relative; z-index:2; }
+
+  /* NAV --------------------------------------------------------- */
+  .nav{
+    position:sticky; top:0; z-index:50;
+    background:rgba(245,243,238,0.78);
+    backdrop-filter:blur(14px) saturate(160%);
+    -webkit-backdrop-filter:blur(14px) saturate(160%);
+    border-bottom:1px solid var(--line);
+  }
+  .nav .inner{
+    display:flex; align-items:center; justify-content:space-between;
+    height:64px;
+  }
+  .brand{
+    display:inline-flex; align-items:center; gap:10px;
+    font-family:'Geist', sans-serif;
+    font-weight:600;
+    font-size:18px;
+    letter-spacing:-0.02em;
+    color:var(--ink);
+  }
+  .brand .mark{
+    display:inline-flex; align-items:center; justify-content:center;
+    width:26px; height:26px;
+    border-radius:8px;
+    background:var(--ink);
+    color:var(--bg);
+    font-size:13px;
+    font-weight:600;
+    position:relative;
+  }
+  .brand .mark::after{
+    content:""; position:absolute;
+    bottom:-2px; right:-2px;
+    width:9px; height:9px; border-radius:50%;
+    background:var(--coral);
+    border:2px solid var(--bg);
+  }
+  .nav-links{ display:flex; gap:6px; align-items:center; }
+  .nav-links a{
+    font-size:14px; color:var(--ink-soft);
+    padding:8px 14px;
+    border-radius:8px;
+    transition:background .2s, color .2s;
+    font-weight:500;
+  }
+  .nav-links a:hover{ color:var(--ink); background:rgba(11,20,25,0.04); }
+  .nav-cta{
+    background:var(--ink) !important;
+    color:var(--bg) !important;
+    padding:9px 16px !important;
+    border-radius:8px;
+    font-size:13.5px !important;
+    font-weight:500 !important;
+    margin-left:8px;
+    transition:background .2s, transform .2s !important;
+  }
+  .nav-cta:hover{ background:var(--coral) !important; transform:translateY(-1px); }
+  @media (max-width:820px){
+    .nav-links a:not(.nav-cta){ display:none; }
+  }
+
+  /* BUTTONS ----------------------------------------------------- */
+  .btn{
+    display:inline-flex; align-items:center; gap:8px;
+    font-family:'Geist', sans-serif;
+    font-size:14.5px; font-weight:500;
+    padding:12px 20px;
+    border-radius:10px;
+    transition:all .2s ease;
+    cursor:pointer;
+    border:1px solid transparent;
+    line-height:1;
+    letter-spacing:-0.005em;
+  }
+  .btn-primary{
+    background:var(--ink);
+    color:var(--bg);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), var(--shadow-sm);
+  }
+  .btn-primary:hover{ background:#1a2730; transform:translateY(-1px); box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), var(--shadow-md); }
+  .btn-coral{
+    background:var(--coral);
+    color:#fff;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), 0 6px 14px -4px rgba(232,90,60,0.4);
+  }
+  .btn-coral:hover{ background:var(--coral-deep); transform:translateY(-1px); }
+  .btn-ghost{
+    background:transparent;
+    color:var(--ink);
+    border:1px solid var(--line-strong);
+  }
+  .btn-ghost:hover{ background:var(--ink); color:var(--bg); border-color:var(--ink); }
+  .btn .arrow{ display:inline-block; transition:transform .2s ease; }
+  .btn:hover .arrow{ transform:translateX(3px); }
+
+  /* SECTION HEADER ---------------------------------------------- */
+  .section-head{
+    display:grid;
+    grid-template-columns: 220px 1fr;
+    gap:32px;
+    margin-bottom:48px;
+    align-items:start;
+  }
+  @media (max-width:820px){
+    .section-head{ grid-template-columns:1fr; gap:14px; }
+  }
+  .section-head .label{ padding-top:6px; }
+  .section-head .title{
+    font-size:clamp(34px, 5vw, 56px);
+    line-height:1.02;
+    letter-spacing:-0.035em;
+    font-weight:600;
+    max-width:18ch;
+  }
+  .section-head .title .accent{ color:var(--coral); }
+
+  /* HERO -------------------------------------------------------- */
+  .hero{
+    padding: 56px 0 100px;
+  }
+  .hero-grid{
+    display:grid;
+    grid-template-columns: 1fr 1.1fr;
+    gap:64px;
+    align-items:center;
+  }
+  @media (max-width:1000px){ .hero-grid{ grid-template-columns:1fr; gap:48px; } }
+
+  .hero-pill{
+    display:inline-flex; align-items:center; gap:8px;
+    background:var(--bg-soft);
+    border:1px solid var(--line);
+    padding:6px 12px 6px 8px;
+    border-radius:999px;
+    font-size:12.5px;
+    color:var(--ink-soft);
+    box-shadow:var(--shadow-sm);
+    margin-bottom:28px;
+  }
+  .hero-pill .badge{
+    background:var(--coral-soft);
+    color:var(--coral-deep);
+    padding:3px 8px;
+    border-radius:999px;
+    font-family:'JetBrains Mono', monospace;
+    font-size:10px;
+    letter-spacing:0.12em;
+    text-transform:uppercase;
+    font-weight:600;
+  }
+
+  .hero-title{
+    font-size: clamp(48px, 7.5vw, 96px);
+    margin-bottom: 24px;
+    font-weight:600;
+    letter-spacing:-0.04em;
+    line-height:0.98;
+  }
+  .hero-title .line{ display:block; overflow:hidden; }
+  .hero-title .line span{ display:inline-block; will-change:transform; }
+
+  .hero-sub{
+    font-size:18.5px;
+    line-height:1.5;
+    max-width:520px;
+    color:var(--ink-soft);
+    margin-bottom:32px;
+  }
+  .hero-sub strong{ color:var(--ink); font-weight:600; }
+
+  .cta-row{
+    display:flex; gap:12px; align-items:center;
+    flex-wrap:wrap;
+  }
+
+  .live-line{
+    margin-top:28px;
+    display:flex; align-items:center; gap:12px;
+    font-size:13.5px; color:var(--ink-mute);
+  }
+  .live-pulse{
+    position:relative;
+    width:8px; height:8px; border-radius:50%;
+    background:var(--teal);
+  }
+  .live-pulse::after{
+    content:""; position:absolute; inset:-6px; border-radius:50%;
+    border:2px solid var(--teal);
+    opacity:0.4;
+    animation:pulse 2s ease-out infinite;
+  }
+  @keyframes pulse{
+    0%{ transform:scale(0.7); opacity:0.6;}
+    100%{ transform:scale(1.6); opacity:0;}
+  }
+
+  /* ------- HERO PRODUCT WINDOW -------- */
+  .product-window{
+    background:var(--bg-soft);
+    border:1px solid var(--line);
+    border-radius:18px;
+    box-shadow: var(--shadow-lg);
+    overflow:hidden;
+    position:relative;
+  }
+  .pw-chrome{
+    display:flex; align-items:center; gap:10px;
+    padding:12px 14px;
+    border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg, #fbfaf6 0%, var(--bg-soft) 100%);
+  }
+  .pw-dots{ display:flex; gap:6px; }
+  .pw-dots span{ width:10px; height:10px; border-radius:50%; background:#dcd8cf; }
+  .pw-dots span:nth-child(1){ background:#e89c7e; }
+  .pw-dots span:nth-child(2){ background:#f0c674; }
+  .pw-dots span:nth-child(3){ background:#a8c79c; }
+  .pw-title{
+    flex:1; text-align:center;
+    font-family:'JetBrains Mono', monospace;
+    font-size:11px; letter-spacing:0.12em; text-transform:uppercase;
+    color:var(--ink-mute);
+  }
+  .pw-title strong{ color:var(--ink); font-weight:600; }
+
+  .pw-body{
+    display:grid;
+    grid-template-columns: 180px 1fr;
+    min-height:520px;
+  }
+  @media (max-width:560px){
+    .pw-body{ grid-template-columns:1fr; }
+    .pw-rail{ display:none; }
+  }
+  .pw-rail{
+    border-right:1px solid var(--line);
+    background:#fbfaf6;
+    padding:14px 10px;
+    display:flex; flex-direction:column; gap:2px;
+  }
+  .pw-rail .rail-head{
+    font-family:'JetBrains Mono', monospace;
+    font-size:10px;
+    letter-spacing:0.14em;
+    text-transform:uppercase;
+    color:var(--ink-faint);
+    padding:6px 10px 8px;
+    font-weight:500;
+  }
+  .pw-rail .channel{
+    display:flex; align-items:center; gap:10px;
+    padding:8px 10px;
+    border-radius:8px;
+    font-size:13.5px;
+    color:var(--ink-soft);
+    cursor:default;
+    position:relative;
+  }
+  .pw-rail .channel.active{
+    background:var(--bg);
+    color:var(--ink);
+    font-weight:500;
+  }
+  .pw-rail .channel .ico{
+    width:18px; height:18px; border-radius:5px;
+    display:inline-flex; align-items:center; justify-content:center;
+    font-size:10px; font-weight:600; color:#fff;
+  }
+  .pw-rail .channel .ico.wa{ background:#22c55e; }
+  .pw-rail .channel .ico.ig{ background:linear-gradient(135deg, #f59e0b, #ec4899, #8b5cf6); }
+  .pw-rail .channel .ico.fb{ background:#3b82f6; }
+  .pw-rail .channel .ico.em{ background:var(--ink); }
+  .pw-rail .channel .count{
+    margin-left:auto;
+    font-size:11px;
+    background:var(--bg-deep);
+    color:var(--ink-mute);
+    padding:2px 7px;
+    border-radius:999px;
+    font-family:'JetBrains Mono', monospace;
+    font-weight:500;
+  }
+  .pw-rail .channel.active .count{ background:var(--coral); color:#fff; }
+
+  .pw-main{
+    padding:18px;
+    display:flex; flex-direction:column; gap:12px;
+    background:var(--bg-soft);
+  }
+  .pw-thread-head{
+    display:flex; align-items:center; gap:10px;
+    padding-bottom:14px;
+    border-bottom:1px solid var(--line);
+  }
+  .pw-avatar{
+    width:36px; height:36px;
+    border-radius:50%;
+    background:linear-gradient(140deg, #f59e0b, #ec4899);
+    color:#fff;
+    display:flex; align-items:center; justify-content:center;
+    font-weight:600; font-size:14px;
+  }
+  .pw-thread-head .who{ flex:1; }
+  .pw-thread-head .name{ font-size:13.5px; font-weight:600; color:var(--ink); }
+  .pw-thread-head .role{ font-size:11.5px; color:var(--ink-mute); font-family:'JetBrains Mono', monospace; letter-spacing:0.08em; text-transform:uppercase; }
+  .pw-thread-head .meta{
+    font-family:'JetBrains Mono', monospace;
+    font-size:10px;
+    color:var(--ink-mute);
+    letter-spacing:0.12em;
+    text-transform:uppercase;
+  }
+
+  .msg{
+    max-width:88%;
+    padding:11px 14px;
+    border-radius:14px;
+    font-size:14px;
+    line-height:1.45;
+    position:relative;
+  }
+  .msg.in{
+    background:var(--bg-deep);
+    color:var(--ink);
+    border-bottom-left-radius:4px;
+  }
+  .msg.out{
+    background:var(--ink);
+    color:var(--bg);
+    margin-left:auto;
+    border-bottom-right-radius:4px;
+  }
+  .msg .tag{
+    display:block;
+    font-family:'JetBrains Mono', monospace;
+    font-size:9.5px;
+    letter-spacing:0.14em;
+    text-transform:uppercase;
+    opacity:0.65;
+    margin-bottom:4px;
+    font-weight:500;
+  }
+
+  .caye-banner{
+    margin: 2px auto;
+    display:flex; align-items:center; gap:10px;
+    padding:9px 12px;
+    border:1px dashed rgba(30,97,87,0.4);
+    background:var(--teal-soft);
+    border-radius:10px;
+    font-family:'JetBrains Mono', monospace;
+    font-size:11px;
+    letter-spacing:0.1em;
+    text-transform:uppercase;
+    color:var(--teal);
+    font-weight:600;
+    width:fit-content;
+  }
+  .caye-banner .swirl{
+    width:14px; height:14px; border-radius:50%;
+    background: conic-gradient(from 0deg, var(--teal), var(--sun), var(--coral), var(--teal));
+    animation: spin 3s linear infinite;
+  }
+  @keyframes spin{ to { transform:rotate(360deg); } }
+
+  .pw-action{
+    margin-top:auto;
+    display:flex; gap:8px; align-items:center;
+    padding:10px 12px;
+    border:1px solid var(--line);
+    border-radius:12px;
+    background:#fbfaf6;
+  }
+  .pw-action .draft{
+    flex:1;
+    font-size:13.5px;
+    color:var(--ink-mute);
+  }
+  .pw-action .draft strong{
+    color:var(--ink);
+    font-weight:500;
+    display:block;
+    margin-bottom:2px;
+  }
+  .pw-action .btnlet{
+    background:var(--ink);
+    color:var(--bg);
+    font-size:12px; font-weight:500;
+    padding:7px 12px;
+    border-radius:7px;
+  }
+
+  /* Floating toasts on hero card */
+  .toast{
+    position:absolute;
+    background:var(--bg-soft);
+    border:1px solid var(--line);
+    border-radius:12px;
+    padding:11px 14px;
+    display:flex; align-items:center; gap:10px;
+    box-shadow:var(--shadow-md);
+    font-size:13px;
+    font-weight:500;
+    z-index:5;
+  }
+  .toast .ico{
+    width:24px; height:24px;
+    border-radius:7px;
+    display:flex; align-items:center; justify-content:center;
+    background:var(--teal);
+    color:#fff;
+    font-size:13px;
+    font-weight:700;
+  }
+  .toast.t1{ top:14%; left:-32px; }
+  .toast.t2{ bottom:18%; right:-28px; }
+  .toast.t2 .ico{ background:var(--coral); }
+  @media (max-width:1000px){
+    .toast.t1{ left:8px; top:-14px; }
+    .toast.t2{ right:8px; bottom:-14px; }
+  }
+  @media (max-width:520px){
+    .toast{ display:none; }
+  }
+
+  /* MARQUEE ----------------------------------------------------- */
+  .marquee{
+    overflow:hidden;
+    border-top:1px solid var(--line);
+    border-bottom:1px solid var(--line);
+    background:var(--bg-soft);
+    padding:18px 0;
+  }
+  .marquee .track{
+    display:flex;
+    gap:0;
+    white-space:nowrap;
+    will-change:transform;
+    align-items:center;
+  }
+  .marquee .track > span{
+    display:inline-flex; align-items:center; gap:36px;
+    padding-right:36px;
+  }
+  .marquee .item{
+    display:inline-flex; align-items:center; gap:10px;
+    font-size:15px; font-weight:500;
+    color:var(--ink-soft);
+  }
+  .marquee .item .ic{
+    width:22px; height:22px; border-radius:7px;
+    display:inline-flex; align-items:center; justify-content:center;
+    color:#fff; font-size:11px; font-weight:700;
+  }
+  .marquee .star{ color:var(--coral); font-weight:700; }
+  .ic.wa{ background:#22c55e; }
+  .ic.ig{ background:linear-gradient(135deg, #f59e0b, #ec4899, #8b5cf6); }
+  .ic.fb{ background:#3b82f6; }
+  .ic.em{ background:var(--ink); }
+
+  /* PROBLEM ----------------------------------------------------- */
+  .problem{ padding:110px 0 100px; }
+  .problem-grid{
+    display:grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap:16px;
+  }
+  @media (max-width:900px){ .problem-grid{ grid-template-columns:1fr 1fr; } }
+  @media (max-width:540px){ .problem-grid{ grid-template-columns:1fr; } }
+
+  .channel-card{
+    background:var(--bg-soft);
+    border:1px solid var(--line);
+    border-radius:14px;
+    padding:18px;
+    box-shadow:var(--shadow-sm);
+    transition:transform .25s ease, box-shadow .25s ease;
+  }
+  .channel-card:hover{ transform:translateY(-2px); box-shadow:var(--shadow-md); }
+  .channel-card .head{
+    display:flex; align-items:center; gap:10px;
+    margin-bottom:4px;
+  }
+  .channel-card .head .ic{
+    width:24px; height:24px; border-radius:7px;
+    display:flex; align-items:center; justify-content:center;
+    color:#fff; font-size:11px; font-weight:700;
+  }
+  .channel-card .head .name{ font-weight:600; font-size:14.5px; }
+  .channel-card .head .count{
+    margin-left:auto;
+    font-family:'JetBrains Mono', monospace;
+    font-size:10px;
+    background:var(--coral-soft);
+    color:var(--coral-deep);
+    padding:2px 7px;
+    border-radius:999px;
+    font-weight:600;
+    letter-spacing:0.08em;
+    text-transform:uppercase;
+  }
+  .channel-card .when{
+    font-family:'JetBrains Mono', monospace;
+    font-size:10.5px;
+    color:var(--ink-faint);
+    letter-spacing:0.1em;
+    text-transform:uppercase;
+    margin-bottom:14px;
+  }
+  .ghost-msg{
+    background:var(--bg);
+    border:1px solid var(--line);
+    border-radius:10px;
+    padding:9px 11px;
+    margin-bottom:7px;
+    font-size:12.5px;
+    line-height:1.4;
+    color:var(--ink-soft);
+    position:relative;
+  }
+  .ghost-msg.missed{
+    color:var(--coral-deep);
+    border-color:rgba(232,90,60,0.28);
+    background:rgba(232,90,60,0.06);
+  }
+  .ghost-msg.missed::after{
+    content:"missed";
+    position:absolute;
+    top:-7px; right:8px;
+    background:var(--coral);
+    color:#fff;
+    font-family:'JetBrains Mono', monospace;
+    font-size:8.5px;
+    letter-spacing:0.12em;
+    padding:2px 6px;
+    border-radius:999px;
+    font-weight:600;
+    text-transform:uppercase;
+  }
+  .ghost-msg .tiny{
+    display:block;
+    font-family:'JetBrains Mono', monospace;
+    font-size:9px;
+    letter-spacing:0.1em;
+    color:var(--ink-mute);
+    text-transform:uppercase;
+    margin-bottom:3px;
+    font-weight:500;
+  }
+
+  .problem-quote{
+    margin-top:48px;
+    font-size:clamp(26px, 3.6vw, 40px);
+    line-height:1.15;
+    letter-spacing:-0.025em;
+    font-weight:600;
+    max-width:24ch;
+  }
+  .problem-quote .accent{ color:var(--coral); }
+
+  /* HOW SECTION ------------------------------------------------- */
+  .how{
+    background:var(--bg-dark);
+    color:var(--bg);
+    padding:110px 0;
+    position:relative;
+    overflow:hidden;
+  }
+  .how::before{
+    content:""; position:absolute; inset:0;
+    background:
+      radial-gradient(700px 400px at 90% 0%, rgba(244,185,66,0.12), transparent 60%),
+      radial-gradient(700px 500px at 0% 100%, rgba(30,97,87,0.18), transparent 60%);
+    pointer-events:none;
+  }
+  .how .section-head .label{ color:rgba(245,243,238,0.6); }
+  .how .section-head .label .dot{ background:var(--sun); box-shadow:0 0 0 4px rgba(244,185,66,0.14); }
+  .how .section-head .title{ color:var(--bg); }
+  .how .section-head .title .accent{ color:var(--sun); }
+
+  .steps{
+    display:grid;
+    grid-template-columns:1fr 1fr 1fr;
+    gap:16px;
+    margin-bottom:80px;
+  }
+  @media (max-width:900px){ .steps{ grid-template-columns:1fr; } }
+
+  .step{
+    background:rgba(245,243,238,0.04);
+    border:1px solid var(--line-dark);
+    border-radius:16px;
+    padding:24px;
+  }
+  .step .num{
+    font-family:'JetBrains Mono', monospace;
+    font-size:11px;
+    letter-spacing:0.18em;
+    color:var(--sun);
+    font-weight:600;
+    margin-bottom:14px;
+    display:inline-flex; align-items:center; gap:8px;
+  }
+  .step .num::before{
+    content:""; width:18px; height:1px; background:var(--sun);
+  }
+  .step h3{
+    font-size:22px;
+    font-weight:600;
+    letter-spacing:-0.02em;
+    line-height:1.15;
+    margin-bottom:8px;
+    color:var(--bg);
+  }
+  .step p{
+    color:rgba(245,243,238,0.7);
+    font-size:14.5px;
+    line-height:1.55;
+  }
+  .step .ui{
+    margin-top:18px;
+    background:rgba(245,243,238,0.04);
+    border:1px solid var(--line-dark);
+    border-radius:10px;
+    padding:10px 12px;
+    font-size:12.5px;
+    color:rgba(245,243,238,0.85);
+    display:flex; align-items:center; gap:10px;
+  }
+  .step .ui .pip{
+    width:8px; height:8px; border-radius:50%;
+    background:var(--teal);
+    flex-shrink:0;
+  }
+  .step .ui .ui-ic{
+    width:18px; height:18px; border-radius:5px;
+    display:inline-flex; align-items:center; justify-content:center;
+    font-size:10px; font-weight:700; color:#fff;
+  }
+
+  /* Chat product window inside the how section */
+  .chat-window{
+    background:var(--bg-soft);
+    color:var(--ink);
+    border-radius:18px;
+    overflow:hidden;
+    box-shadow: 0 40px 80px -20px rgba(0,0,0,0.4), 0 12px 24px rgba(0,0,0,0.15);
+    max-width:520px;
+    margin:0 auto;
+    width:100%;
+  }
+  .chatscene{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:48px;
+    align-items:center;
+  }
+  @media (max-width:900px){ .chatscene{ grid-template-columns:1fr; gap:32px; } }
+
+  .chatscene .lead{
+    font-size:clamp(28px, 3.6vw, 42px);
+    line-height:1.1;
+    color:var(--bg);
+    font-weight:600;
+    letter-spacing:-0.03em;
+  }
+  .chatscene .lead .accent{ color:var(--sun); }
+  .chatscene .lead small{
+    display:block;
+    font-size:15px;
+    color:rgba(245,243,238,0.7);
+    margin-top:18px;
+    max-width:46ch;
+    line-height:1.55;
+    font-weight:400;
+    letter-spacing:0;
+  }
+
+  .chat-window .pw-thread-head{ padding:14px 16px; border-bottom:1px solid var(--line); }
+  .chat-window .pw-thread-head .pw-avatar{
+    background:linear-gradient(140deg, var(--coral), var(--coral-deep));
+  }
+  .chat-window .body{ padding:16px; display:flex; flex-direction:column; gap:8px; }
+  .chat-window .msg{ opacity:0; transform:translateY(8px); }
+  .chat-window .caye-banner{ opacity:0; }
+  .typing{
+    display:inline-flex; gap:4px;
+    background:var(--bg-deep);
+    padding:11px 14px;
+    border-radius:14px;
+    border-bottom-left-radius:4px;
+    opacity:0;
+    width:fit-content;
+  }
+  .typing span{
+    width:6px; height:6px; border-radius:50%;
+    background:var(--ink-mute);
+    animation:typebounce 1s infinite;
+  }
+  .typing span:nth-child(2){ animation-delay:0.15s; }
+  .typing span:nth-child(3){ animation-delay:0.3s; }
+  @keyframes typebounce{
+    0%,60%,100%{ transform:translateY(0); opacity:.4; }
+    30%{ transform:translateY(-4px); opacity:1; }
+  }
+
+  /* HANDLES (feature grid) -------------------------------------- */
+  .handles{ padding:110px 0 100px; }
+  .handles .section-head .title .accent{ color:var(--coral); }
+
+  .handles-grid{
+    display:grid;
+    grid-template-columns:repeat(4, 1fr);
+    gap:16px;
+  }
+  @media (max-width:1000px){ .handles-grid{ grid-template-columns:1fr 1fr; } }
+  @media (max-width:560px){ .handles-grid{ grid-template-columns:1fr; } }
+
+  .feature{
+    background:var(--bg-soft);
+    border:1px solid var(--line);
+    border-radius:14px;
+    padding:20px;
+    position:relative;
+    display:flex; flex-direction:column;
+    transition: transform .25s ease, box-shadow .25s ease;
+  }
+  .feature:hover{ transform:translateY(-3px); box-shadow:var(--shadow-md); }
+  .feature .ftag{
+    font-family:'JetBrains Mono', monospace;
+    font-size:10px;
+    letter-spacing:0.14em;
+    text-transform:uppercase;
+    color:var(--coral);
+    font-weight:600;
+    margin-bottom:14px;
+  }
+  .feature h4{
+    font-size:19px;
+    font-weight:600;
+    letter-spacing:-0.02em;
+    line-height:1.2;
+    margin-bottom:8px;
+  }
+  .feature p{
+    font-size:14px;
+    color:var(--ink-mute);
+    line-height:1.5;
+    margin-bottom:16px;
+    flex:1;
+  }
+  .feature .viz{
+    background:var(--bg);
+    border:1px solid var(--line);
+    border-radius:10px;
+    padding:12px;
+    min-height:88px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    overflow:hidden;
+    position:relative;
+  }
+  /* Feature vignette variants */
+  .viz-channels{ gap:6px; justify-content:flex-start !important; flex-wrap:wrap; }
+  .viz-channels .ic{
+    width:28px; height:28px; border-radius:8px;
+    display:flex; align-items:center; justify-content:center;
+    color:#fff; font-size:11px; font-weight:700;
+  }
+  .viz-channels .arrow{ flex:1; height:1px; background:var(--line); position:relative; margin:0 6px; }
+  .viz-channels .arrow::after{
+    content:""; position:absolute; right:-1px; top:-3px;
+    border-left:6px solid var(--ink-mute);
+    border-top:3px solid transparent;
+    border-bottom:3px solid transparent;
+  }
+  .viz-channels .inbox{
+    background:var(--ink); color:var(--bg);
+    border-radius:8px; padding:6px 10px;
+    font-family:'JetBrains Mono', monospace;
+    font-size:10px; letter-spacing:0.1em; text-transform:uppercase;
+    font-weight:600;
+  }
+
+  .viz-bubble{
+    flex-direction:column; align-items:stretch !important; gap:6px;
+  }
+  .viz-bubble .m{
+    background:var(--bg-deep);
+    border-radius:8px;
+    padding:6px 8px;
+    font-size:11px;
+    color:var(--ink-soft);
+  }
+  .viz-bubble .m.out{
+    background:var(--ink);
+    color:var(--bg);
+    margin-left:24px;
+  }
+  .viz-bubble .stamp{
+    font-family:'JetBrains Mono', monospace;
+    font-size:9px;
+    letter-spacing:0.1em;
+    text-transform:uppercase;
+    color:var(--teal);
+    font-weight:600;
+  }
+
+  .viz-booking{ flex-direction:column; align-items:flex-start !important; gap:4px; }
+  .viz-booking .row{
+    display:flex; justify-content:space-between; align-items:center;
+    width:100%;
+    font-size:11.5px;
+    padding:3px 0;
+  }
+  .viz-booking .row .k{ font-family:'JetBrains Mono', monospace; font-size:9.5px; letter-spacing:0.1em; text-transform:uppercase; color:var(--ink-mute); font-weight:500; }
+  .viz-booking .row .v{ color:var(--ink); font-weight:500; }
+  .viz-booking .ok{
+    background:var(--teal-soft);
+    color:var(--teal);
+    padding:2px 8px;
+    border-radius:999px;
+    font-size:10px;
+    font-weight:600;
+    font-family:'JetBrains Mono', monospace;
+    letter-spacing:0.1em;
+    text-transform:uppercase;
+  }
+
+  .viz-cal{ display:grid !important; grid-template-columns:repeat(7,1fr); gap:3px; width:100%; }
+  .viz-cal .d{
+    aspect-ratio:1;
+    background:var(--bg-soft);
+    border:1px solid var(--line);
+    border-radius:5px;
+    display:flex; align-items:center; justify-content:center;
+    font-size:10px;
+    color:var(--ink-mute);
+    font-family:'JetBrains Mono', monospace;
+    font-weight:500;
+  }
+  .viz-cal .d.has{ background:var(--coral); color:#fff; border-color:var(--coral); }
+  .viz-cal .d.now{ background:var(--ink); color:var(--bg); border-color:var(--ink); }
+
+  .viz-flow{ flex-direction:column; align-items:stretch !important; gap:6px; }
+  .viz-flow .step-row{
+    display:flex; align-items:center; gap:8px;
+    font-size:11px;
+    color:var(--ink-soft);
+  }
+  .viz-flow .step-row .pip{
+    width:14px; height:14px; border-radius:50%;
+    background:var(--teal-soft); color:var(--teal);
+    display:flex; align-items:center; justify-content:center;
+    font-size:9px; font-weight:700;
+    flex-shrink:0;
+  }
+  .viz-flow .step-row.done .pip{ background:var(--teal); color:#fff; }
+
+  .viz-profile{ flex-direction:column; align-items:stretch !important; gap:6px; padding:10px; }
+  .viz-profile .top{ display:flex; align-items:center; gap:8px; }
+  .viz-profile .av{
+    width:24px; height:24px; border-radius:50%;
+    background:linear-gradient(135deg, var(--coral), var(--sun));
+    color:#fff; font-size:11px; font-weight:600;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .viz-profile .nm{ font-size:11.5px; font-weight:600; color:var(--ink); }
+  .viz-profile .sub{ font-size:10px; color:var(--ink-mute); font-family:'JetBrains Mono', monospace; letter-spacing:0.06em; text-transform:uppercase; }
+  .viz-profile .meta{
+    display:flex; gap:6px; flex-wrap:wrap;
+  }
+  .viz-profile .meta span{
+    background:var(--bg);
+    border:1px solid var(--line);
+    border-radius:999px;
+    padding:2px 7px;
+    font-size:10px;
+    font-family:'JetBrains Mono', monospace;
+    color:var(--ink-soft);
+  }
+
+  .viz-chart{ flex-direction:column; align-items:stretch !important; gap:6px; }
+  .viz-chart .top-row{
+    display:flex; justify-content:space-between; align-items:baseline;
+  }
+  .viz-chart .amt{ font-size:18px; font-weight:600; letter-spacing:-0.02em; }
+  .viz-chart .delta{
+    font-family:'JetBrains Mono', monospace;
+    font-size:10px;
+    color:var(--teal);
+    font-weight:600;
+    background:var(--teal-soft);
+    padding:2px 6px;
+    border-radius:6px;
+  }
+  .viz-chart .bars{
+    display:flex; align-items:flex-end; gap:4px;
+    height:30px;
+  }
+  .viz-chart .bars div{
+    flex:1;
+    background:var(--ink);
+    border-radius:2px 2px 0 0;
+    opacity:0.85;
+  }
+  .viz-chart .bars div:last-child{ background:var(--coral); opacity:1; }
+
+  .viz-voice{ flex-direction:column; align-items:stretch !important; gap:6px; }
+  .viz-voice .line{
+    height:5px; border-radius:3px; background:var(--bg-deep);
+    position:relative; overflow:hidden;
+  }
+  .viz-voice .line::after{
+    content:""; position:absolute; left:0; top:0; height:100%; background:var(--ink);
+  }
+  .viz-voice .line:nth-child(1)::after{ width:84%; }
+  .viz-voice .line:nth-child(2)::after{ width:64%; }
+  .viz-voice .line:nth-child(3)::after{ width:90%; background:var(--coral); }
+  .viz-voice .tag{
+    font-family:'JetBrains Mono', monospace;
+    font-size:9.5px;
+    color:var(--ink-mute);
+    letter-spacing:0.1em;
+    text-transform:uppercase;
+    margin-top:4px;
+  }
+
+  /* PRICING ----------------------------------------------------- */
+  .pricing{ padding:110px 0 110px; background:var(--bg-deep); border-top:1px solid var(--line); border-bottom:1px solid var(--line); }
+  .pricing .section-head .title .accent{ color:var(--coral); }
+  .price-grid{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:20px;
+  }
+  @media (max-width:820px){ .price-grid{ grid-template-columns:1fr; } }
+  .price-card{
+    background:var(--bg-soft);
+    border:1px solid var(--line);
+    border-radius:18px;
+    padding:32px;
+    display:flex; flex-direction:column;
+    box-shadow:var(--shadow-sm);
+  }
+  .price-card.featured{
+    background:var(--ink);
+    color:var(--bg);
+    border-color:var(--ink);
+    position:relative;
+    overflow:hidden;
+  }
+  .price-card.featured::before{
+    content:"";
+    position:absolute;
+    inset:0;
+    background:radial-gradient(500px 300px at 100% 0%, rgba(244,185,66,0.12), transparent 60%),
+               radial-gradient(400px 300px at 0% 100%, rgba(232,90,60,0.12), transparent 60%);
+    pointer-events:none;
+  }
+  .price-card .ftag{
+    font-family:'JetBrains Mono', monospace;
+    font-size:11px;
+    letter-spacing:0.16em;
+    text-transform:uppercase;
+    color:var(--ink-mute);
+    margin-bottom:18px;
+    font-weight:600;
+  }
+  .price-card.featured .ftag{ color:var(--sun); }
+  .price-card .num{
+    font-size:64px;
+    line-height:1;
+    letter-spacing:-0.04em;
+    font-weight:600;
+    display:flex; align-items:flex-start; gap:4px;
+    margin-bottom:6px;
+  }
+  .price-card .num sup{
+    font-size:24px;
+    margin-top:8px;
+    color:var(--ink-mute);
+    font-weight:500;
+  }
+  .price-card.featured .num sup{ color:rgba(245,243,238,0.6); }
+  .price-card .per{
+    font-size:14px;
+    color:var(--ink-mute);
+    margin-bottom:18px;
+  }
+  .price-card.featured .per{ color:rgba(245,243,238,0.7); }
+  .price-card .title{
+    font-size:20px;
+    font-weight:600;
+    letter-spacing:-0.02em;
+    margin-bottom:18px;
+    line-height:1.25;
+  }
+  .price-card ul{
+    list-style:none;
+    border-top:1px solid var(--line);
+    padding-top:16px;
+    margin-bottom:22px;
+    flex:1;
+  }
+  .price-card.featured ul{ border-top-color:rgba(245,243,238,0.16); }
+  .price-card li{
+    display:flex; gap:10px; align-items:flex-start;
+    padding:7px 0;
+    font-size:14px;
+    line-height:1.5;
+  }
+  .price-card li::before{
+    content:"✓";
+    width:18px; height:18px;
+    border-radius:6px;
+    background:var(--teal-soft);
+    color:var(--teal);
+    flex-shrink:0;
+    display:inline-flex; align-items:center; justify-content:center;
+    font-size:11px; font-weight:700;
+    margin-top:1px;
+  }
+  .price-card.featured li::before{
+    background:rgba(244,185,66,0.18);
+    color:var(--sun);
+  }
+  .price-card .btn{ width:100%; justify-content:center; position:relative; z-index:2; }
+
+  .pilot-note{
+    margin-top:24px;
+    background:var(--bg-soft);
+    border:1px solid var(--line);
+    border-radius:14px;
+    padding:18px 22px;
+    display:flex; gap:18px; align-items:center;
+    flex-wrap:wrap;
+  }
+  .pilot-note .badge{
+    background:var(--coral);
+    color:#fff;
+    font-family:'JetBrains Mono', monospace;
+    font-size:10px;
+    letter-spacing:0.16em;
+    text-transform:uppercase;
+    font-weight:600;
+    padding:5px 10px;
+    border-radius:6px;
+  }
+  .pilot-note p{ flex:1; min-width:240px; font-size:14px; color:var(--ink-soft); line-height:1.5; }
+  .pilot-note p strong{ color:var(--ink); font-weight:600; }
+
+  /* TESTIMONIAL ------------------------------------------------- */
+  .testimonial{ padding:110px 0 110px; }
+  .testimonial-inner{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:48px;
+    align-items:center;
+  }
+  @media (max-width:900px){ .testimonial-inner{ grid-template-columns:1fr; } }
+
+  .testimonial .quote{
+    font-size:clamp(22px, 2.6vw, 30px);
+    line-height:1.35;
+    letter-spacing:-0.02em;
+    font-weight:500;
+    color:var(--ink);
+  }
+  .testimonial .quote .accent{ color:var(--coral); font-weight:600; }
+  .testimonial .open{
+    display:inline-block;
+    color:var(--coral);
+    font-size:1.3em;
+    line-height:0;
+    vertical-align:-0.18em;
+    margin-right:4px;
+    font-weight:700;
+  }
+  .testimonial .attribution{
+    margin-top:28px;
+    display:flex; align-items:center; gap:14px;
+    padding-top:24px;
+    border-top:1px solid var(--line);
+  }
+  .testimonial .avatar{
+    width:48px; height:48px; border-radius:50%;
+    background:linear-gradient(140deg, var(--coral), var(--coral-deep));
+    color:#fff;
+    display:flex; align-items:center; justify-content:center;
+    font-weight:600; font-size:18px;
+  }
+  .testimonial .who{ font-size:14px; }
+  .testimonial .who .name{ font-weight:600; }
+  .testimonial .who .role{ color:var(--ink-mute); font-family:'JetBrains Mono', monospace; font-size:11px; letter-spacing:0.08em; text-transform:uppercase; margin-top:2px; }
+
+  .friday-card{
+    background:var(--bg-soft);
+    border:1px solid var(--line);
+    border-radius:18px;
+    padding:24px;
+    box-shadow:var(--shadow-md);
+    position:relative;
+  }
+  .friday-card .stamp{
+    position:absolute;
+    top:-12px; right:18px;
+    background:var(--coral);
+    color:#fff;
+    padding:6px 12px;
+    border-radius:8px;
+    font-family:'JetBrains Mono', monospace;
+    font-size:11px;
+    letter-spacing:0.14em;
+    text-transform:uppercase;
+    font-weight:600;
+    box-shadow:0 6px 16px -4px rgba(232,90,60,0.35);
+  }
+  .friday-card .fhead{
+    display:flex; justify-content:space-between; align-items:baseline;
+    margin-bottom:16px;
+  }
+  .friday-card h5{
+    font-family:'JetBrains Mono', monospace;
+    font-size:11px;
+    letter-spacing:0.14em;
+    text-transform:uppercase;
+    color:var(--ink-mute);
+    font-weight:600;
+  }
+  .friday-card .week{
+    font-family:'JetBrains Mono', monospace;
+    font-size:10px;
+    color:var(--ink-faint);
+    letter-spacing:0.1em;
+    text-transform:uppercase;
+  }
+  .calendar{
+    display:grid;
+    grid-template-columns:repeat(7,1fr);
+    gap:6px;
+    margin-bottom:18px;
+  }
+  .calendar .day{
+    aspect-ratio:1/1.1;
+    border-radius:8px;
+    background:var(--bg);
+    border:1px solid var(--line);
+    display:flex; flex-direction:column; align-items:flex-start; justify-content:flex-start;
+    padding:8px;
+    position:relative;
+  }
+  .calendar .day .lbl{
+    font-family:'JetBrains Mono', monospace;
+    font-size:9px;
+    letter-spacing:0.12em;
+    text-transform:uppercase;
+    color:var(--ink-faint);
+    font-weight:600;
+    margin-bottom:auto;
+  }
+  .calendar .day .nm{
+    font-size:18px;
+    font-weight:600;
+    letter-spacing:-0.02em;
+    color:var(--ink);
+  }
+  .calendar .day.friday{
+    background:var(--ink);
+    border-color:var(--ink);
+  }
+  .calendar .day.friday .lbl{ color:rgba(245,243,238,0.6); }
+  .calendar .day.friday .nm{ color:var(--bg); }
+  .calendar .day.friday::after{
+    content:"caye";
+    position:absolute;
+    bottom:6px; right:8px;
+    font-family:'JetBrains Mono', monospace;
+    font-size:9px;
+    letter-spacing:0.1em;
+    text-transform:uppercase;
+    color:var(--sun);
+    font-weight:600;
+  }
+  .friday-stats{
+    display:grid;
+    grid-template-columns:repeat(3, 1fr);
+    gap:10px;
+    margin-top:14px;
+    padding-top:16px;
+    border-top:1px solid var(--line);
+  }
+  .friday-stats .st{
+    display:flex; flex-direction:column; gap:2px;
+  }
+  .friday-stats .st .num{
+    font-size:22px;
+    font-weight:600;
+    letter-spacing:-0.02em;
+    color:var(--coral);
+  }
+  .friday-stats .st .k{
+    font-family:'JetBrains Mono', monospace;
+    font-size:9.5px;
+    letter-spacing:0.1em;
+    text-transform:uppercase;
+    color:var(--ink-mute);
+    font-weight:500;
+  }
+  .friday-note{
+    margin-top:14px;
+    font-size:13px;
+    color:var(--ink-soft);
+    line-height:1.5;
+  }
+  .friday-note strong{ color:var(--coral); font-weight:600; }
+
+  /* FINAL CTA --------------------------------------------------- */
+  .final{
+    background:var(--coral);
+    color:#fff;
+    padding:120px 0;
+    position:relative;
+    overflow:hidden;
+  }
+  .final::before{
+    content:""; position:absolute;
+    width:700px; height:700px; border-radius:50%;
+    background:radial-gradient(circle, var(--sun) 0%, transparent 65%);
+    right:-260px; top:-260px;
+    opacity:0.45;
+    pointer-events:none;
+  }
+  .final::after{
+    content:""; position:absolute;
+    width:500px; height:500px; border-radius:50%;
+    background:radial-gradient(circle, var(--ink) 0%, transparent 60%);
+    left:-200px; bottom:-220px;
+    opacity:0.4;
+    pointer-events:none;
+  }
+  .final-inner{ position:relative; z-index:2; }
+  .final h2{
+    font-size:clamp(46px, 8vw, 110px);
+    line-height:0.98;
+    letter-spacing:-0.04em;
+    font-weight:600;
+    margin-bottom:28px;
+    max-width:14ch;
+    color:#fff;
+  }
+  .final h2 .accent{ color:var(--ink); }
+  .final .sub{
+    font-size:18px;
+    max-width:50ch;
+    color:rgba(255,255,255,0.92);
+    margin-bottom:32px;
+  }
+  .final .cta-row .btn-primary{
+    background:var(--ink);
+    color:var(--bg);
+  }
+  .final .cta-row .btn-primary:hover{ background:#06101a; }
+  .final .cta-row .btn-ghost{ border-color:rgba(255,255,255,0.6); color:#fff; }
+  .final .cta-row .btn-ghost:hover{ background:#fff; color:var(--coral); border-color:#fff; }
+  .final .lives{
+    margin-top:28px;
+    display:inline-flex; align-items:center; gap:10px;
+    font-family:'JetBrains Mono', monospace;
+    font-size:11px; letter-spacing:0.14em; text-transform:uppercase;
+    font-weight:600;
+    color:rgba(255,255,255,0.95);
+  }
+  .final .lives .live-pulse{ background:var(--ink); }
+  .final .lives .live-pulse::after{ border-color:var(--ink); }
+
+  /* FOOTER ------------------------------------------------------ */
+  footer{
+    background:var(--bg-dark);
+    color:var(--bg);
+    padding:64px 0 32px;
+  }
+  footer .row{
+    display:grid;
+    grid-template-columns:1.4fr 1fr 1fr 1fr;
+    gap:36px;
+    padding-bottom:42px;
+    border-bottom:1px solid var(--line-dark);
+  }
+  @media (max-width:820px){ footer .row{ grid-template-columns:1fr 1fr; gap:32px;} }
+  footer .brand{ color:var(--bg); font-size:20px; }
+  footer .brand .mark{ background:var(--coral); color:#fff; }
+  footer .brand .mark::after{ background:var(--sun); border-color:var(--bg-dark); }
+  footer .tag{
+    color:rgba(245,243,238,0.6);
+    font-size:13.5px;
+    margin-top:12px;
+    max-width:34ch;
+    line-height:1.55;
+  }
+  footer .tag a{ color:var(--sun); text-decoration:underline; text-underline-offset:3px; }
+  footer h6{
+    font-family:'JetBrains Mono', monospace;
+    font-size:10.5px;
+    letter-spacing:0.16em;
+    text-transform:uppercase;
+    color:rgba(245,243,238,0.5);
+    margin-bottom:14px;
+    font-weight:600;
+  }
+  footer ul{ list-style:none; display:flex; flex-direction:column; gap:7px; }
+  footer ul a{
+    color:var(--bg);
+    font-size:14px;
+    opacity:0.85;
+    transition:color .2s, opacity .2s;
+  }
+  footer ul a:hover{ color:var(--sun); opacity:1; }
+  footer .colophon{
+    padding-top:24px;
+    display:flex; justify-content:space-between; align-items:center;
+    font-family:'JetBrains Mono', monospace;
+    font-size:11px;
+    letter-spacing:0.12em;
+    text-transform:uppercase;
+    color:rgba(245,243,238,0.5);
+    flex-wrap:wrap; gap:12px;
+    font-weight:500;
+  }
+
+  /* Selection */
+  ::selection{ background:var(--coral); color:#fff; }
+
+  /* GSAP hook reset (so reveals start hidden) */
+  .r-up{ opacity:0; transform:translateY(20px); }
+</style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav class="nav">
+  <div class="wrap inner">
+    <a href="#top" class="brand"><span class="mark">T</span>TropiChat</a>
+    <div class="nav-links">
+      <a href="#caye">Meet Caye</a>
+      <a href="#how">How it works</a>
+      <a href="#handles">Features</a>
+      <a href="#pricing">Pricing</a>
+      <a href="#cta" class="nav-cta">Get Started →</a>
+    </div>
+  </div>
+</nav>
+
+<!-- HERO -->
+<section class="hero" id="top">
+  <div class="wrap">
+    <div class="hero-grid">
+
+      <div>
+        <div class="hero-pill" id="hero-pill">
+          <span class="badge">New</span>
+          <span>Live with pilot operators in the Bahamas</span>
+        </div>
+
+        <h1 class="hero-title display" id="hero-title">
+          <span class="line"><span>Meet <span class="accent">Caye.</span></span></span>
+          <span class="line"><span>She handles the</span></span>
+          <span class="line"><span>messages.</span></span>
+        </h1>
+
+        <p class="hero-sub" id="hero-sub">
+          Caye is your AI receptionist — pronounced <strong>key</strong>, named for the sandbars off the islands. She reads your booking emails, checks your calendar, and writes back in your voice. <strong>You find out after.</strong>
+        </p>
+
+        <div class="cta-row" id="hero-cta">
+          <a class="btn btn-coral" href="#cta">Try Caye free <span class="arrow">→</span></a>
+          <a class="btn btn-ghost" href="#how">See how she works</a>
+        </div>
+
+        <div class="live-line" id="hero-live">
+          <span class="live-pulse"></span>
+          <span>Pilot live · 14 active operators · Spring '26</span>
+        </div>
+      </div>
+
+      <!-- Hero product window -->
+      <div id="caye" style="position:relative;">
+        <div class="toast t1" id="toast1">
+          <span class="ico">↓</span>
+          <div>
+            <div style="font-size:12px; color:var(--ink-mute); font-family:'JetBrains Mono',monospace; letter-spacing:0.1em; text-transform:uppercase;">New inquiry</div>
+            <div>Cruise guest · WhatsApp</div>
+          </div>
+        </div>
+        <div class="toast t2" id="toast2">
+          <span class="ico">✓</span>
+          <div>
+            <div style="font-size:12px; color:var(--ink-mute); font-family:'JetBrains Mono',monospace; letter-spacing:0.1em; text-transform:uppercase;">Booking confirmed</div>
+            <div>Sat 11:00 · added to calendar</div>
+          </div>
+        </div>
+
+        <div class="product-window" id="product-window">
+          <div class="pw-chrome">
+            <div class="pw-dots"><span></span><span></span><span></span></div>
+            <div class="pw-title">tropichat · <strong>karenda's bahamas tours</strong></div>
+            <div style="width:42px;"></div>
+          </div>
+          <div class="pw-body">
+            <div class="pw-rail">
+              <div class="rail-head">Inbox</div>
+              <div class="channel active">
+                <span class="ico wa">W</span>
+                <span>WhatsApp</span>
+                <span class="count">3</span>
+              </div>
+              <div class="channel">
+                <span class="ico ig">IG</span>
+                <span>Instagram</span>
+                <span class="count">5</span>
+              </div>
+              <div class="channel">
+                <span class="ico fb">M</span>
+                <span>Messenger</span>
+                <span class="count">2</span>
+              </div>
+              <div class="channel">
+                <span class="ico em">@</span>
+                <span>Email</span>
+                <span class="count">12</span>
+              </div>
+              <div class="rail-head" style="margin-top:14px;">Caye</div>
+              <div class="channel">
+                <span class="ico" style="background:var(--teal);">C</span>
+                <span>Drafts</span>
+                <span class="count" style="background:var(--teal-soft); color:var(--teal);">4</span>
+              </div>
+            </div>
+
+            <div class="pw-main">
+              <div class="pw-thread-head">
+                <div class="pw-avatar">A</div>
+                <div class="who">
+                  <div class="name">Anna · Carnival Pride</div>
+                  <div class="role">WhatsApp · Cruise guest</div>
+                </div>
+                <div class="meta">2:14 PM</div>
+              </div>
+
+              <div class="msg in">
+                Hi! Coming in on Carnival Pride Saturday — are 4 of us able to do the snorkel + lunch tour at 11?
+              </div>
+
+              <div class="caye-banner">
+                <span class="swirl"></span>
+                <span>caye · checking calendar…</span>
+              </div>
+
+              <div class="msg out">
+                <span class="tag">Drafted by caye · sent as karenda</span>
+                Hi Anna — yes, Saturday 11am works perfectly. Pickup at the cruise port pier, look for the blue boat. $89 pp, lunch included. I'll have the confirmation in your inbox in a sec. — Karenda
+              </div>
+
+              <div class="pw-action">
+                <div class="draft">
+                  <strong>Caye is on. Replying for you.</strong>
+                  Reviews auto-send after 30s · you can edit any time
+                </div>
+                <span class="btnlet">Review</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- MARQUEE -->
+<div class="marquee" id="marquee">
+  <div class="track" id="track">
+    <span>
+      <span class="item"><span class="ic wa">W</span>WhatsApp</span>
+      <span class="star">✦</span>
+      <span class="item"><span class="ic ig">IG</span>Instagram</span>
+      <span class="star">✦</span>
+      <span class="item"><span class="ic fb">M</span>Messenger</span>
+      <span class="star">✦</span>
+      <span class="item"><span class="ic em">@</span>Email</span>
+      <span class="star">✦</span>
+      <span class="item" style="color:var(--coral); font-weight:600;">→ One inbox.</span>
+      <span class="star">✦</span>
+    </span>
+    <span aria-hidden="true">
+      <span class="item"><span class="ic wa">W</span>WhatsApp</span>
+      <span class="star">✦</span>
+      <span class="item"><span class="ic ig">IG</span>Instagram</span>
+      <span class="star">✦</span>
+      <span class="item"><span class="ic fb">M</span>Messenger</span>
+      <span class="star">✦</span>
+      <span class="item"><span class="ic em">@</span>Email</span>
+      <span class="star">✦</span>
+      <span class="item" style="color:var(--coral); font-weight:600;">→ One inbox.</span>
+      <span class="star">✦</span>
+    </span>
+  </div>
+</div>
+
+<!-- PROBLEM -->
+<section class="problem">
+  <div class="wrap">
+    <div class="section-head">
+      <div class="label"><span class="eyebrow"><span class="dot"></span>The problem · 01</span></div>
+      <h2 class="display title">Messages don't fall <span class="accent">on one phone</span> anymore.</h2>
+    </div>
+
+    <div class="problem-grid">
+      <div class="channel-card r-up">
+        <div class="head">
+          <span class="ic wa">W</span>
+          <span class="name">WhatsApp</span>
+          <span class="count">3 unread</span>
+        </div>
+        <div class="when">2h ago</div>
+        <div class="ghost-msg"><span class="tiny">Anna · Cruise guest</span>"Hi! Is the snorkel tour available Sat?"</div>
+        <div class="ghost-msg missed"><span class="tiny">Marco · 8h ago</span>"Still need a tour for 4 people"</div>
+        <div class="ghost-msg"><span class="tiny">Sandra · 1d ago</span>"Confirming pickup time"</div>
+      </div>
+      <div class="channel-card r-up">
+        <div class="head">
+          <span class="ic ig">IG</span>
+          <span class="name">Instagram</span>
+          <span class="count">5 unread</span>
+        </div>
+        <div class="when">DMs</div>
+        <div class="ghost-msg"><span class="tiny">@thecruisemom</span>"Pricing for a group of 6?"</div>
+        <div class="ghost-msg missed"><span class="tiny">@jaybahamas · 2d ago</span>"Anyone home?"</div>
+        <div class="ghost-msg"><span class="tiny">@island.honeymoon</span>"Sunset cruise availability"</div>
+      </div>
+      <div class="channel-card r-up">
+        <div class="head">
+          <span class="ic fb">M</span>
+          <span class="name">Messenger</span>
+          <span class="count">2 unread</span>
+        </div>
+        <div class="when">FB inbox</div>
+        <div class="ghost-msg"><span class="tiny">David L.</span>"How do I book?"</div>
+        <div class="ghost-msg missed"><span class="tiny">Tia P. · 3d ago</span>"Are you guys still doing tours?"</div>
+      </div>
+      <div class="channel-card r-up">
+        <div class="head">
+          <span class="ic em">@</span>
+          <span class="name">Email</span>
+          <span class="count">12 unread</span>
+        </div>
+        <div class="when">Inbox</div>
+        <div class="ghost-msg"><span class="tiny">booking@royalcaribbean</span>"Group inquiry — 14 pax"</div>
+        <div class="ghost-msg"><span class="tiny">karenda@gmail</span>"Re: Saturday tour 11am"</div>
+        <div class="ghost-msg missed"><span class="tiny">Mark Z · friday</span>"Need to confirm pickup..."</div>
+      </div>
+    </div>
+
+    <p class="problem-quote display r-up" id="problem-quote">
+      So bookings <span class="accent">fall through the cracks</span> — and you find out two days later, when the cruise has already left port.
+    </p>
+  </div>
+</section>
+
+<!-- HOW IT WORKS -->
+<section class="how" id="how">
+  <div class="wrap">
+    <div class="section-head">
+      <div class="label"><span class="eyebrow sun"><span class="dot"></span>How Caye works · 02</span></div>
+      <h2 class="display title">No flowcharts. <span class="accent">No training.</span> She just handles it.</h2>
+    </div>
+
+    <div class="steps" id="steps">
+      <div class="step r-up">
+        <div class="num">Step 01 · Sees the message</div>
+        <h3>A guest reaches out.</h3>
+        <p>Could be a cruise mom on WhatsApp. Could be a honeymooner emailing about a sunset cruise. Caye sees it the second it lands.</p>
+        <div class="ui"><span class="ui-ic wa" style="background:#22c55e;">W</span><span>New thread from <strong style="color:#fff;">+1 305 ···</strong></span></div>
+      </div>
+      <div class="step r-up">
+        <div class="num">Step 02 · Checks availability</div>
+        <h3>She checks your calendar.</h3>
+        <p>Caye pulls availability the way you would — knows you don't run tours on Fridays, knows the boat needs an hour between trips.</p>
+        <div class="ui"><span class="pip"></span><span>Sat 11:00 — <strong style="color:#fff;">open</strong> · 2hr slot available</span></div>
+      </div>
+      <div class="step r-up">
+        <div class="num">Step 03 · Replies + books</div>
+        <h3>She replies in your voice.</h3>
+        <p>Caye sends the confirmation, books the event, logs the customer. You read it the next morning over coffee, if at all.</p>
+        <div class="ui"><span class="ui-ic" style="background:var(--coral);">✓</span><span>Confirmation sent · event added</span></div>
+      </div>
+    </div>
+
+    <div class="chatscene">
+      <div class="lead display r-up">
+        It looks like a <span class="accent">regular email thread.</span>
+        <small>Because it is one — written by Caye, sent from your address, indistinguishable from the way you'd reply yourself. Cruise guests don't know they're talking to an AI. They know they got a fast, warm answer.</small>
+      </div>
+
+      <div class="chat-window" id="chat-card">
+        <div class="pw-thread-head">
+          <div class="pw-avatar">K</div>
+          <div class="who">
+            <div class="name">Karenda's Bahamas Tours</div>
+            <div class="role">Email · with Caye</div>
+          </div>
+          <div class="meta" style="background:var(--coral); color:#fff; padding:4px 8px; border-radius:6px;">FRIDAY</div>
+        </div>
+        <div class="body">
+          <div class="msg in" data-step="1">
+            <span class="tag">From: cruise guest</span>
+            Hi there! Coming in on the Carnival Pride Saturday — are 4 of us able to do the snorkel + lunch tour at 11?
+          </div>
+
+          <div class="caye-banner" data-step="2">
+            <span class="swirl"></span>
+            <span>caye · checking calendar…</span>
+          </div>
+
+          <div class="typing" id="typing" data-step="3"><span></span><span></span><span></span></div>
+
+          <div class="msg out" data-step="4">
+            <span class="tag">From: karenda@bahamastours · sent by caye</span>
+            Hi Anna — yes, Saturday 11am works perfectly. Pickup at the cruise port pier, look for the blue boat. $89 pp, lunch included. I'll have the confirmation in your inbox in a sec. — Karenda
+          </div>
+
+          <div class="caye-banner" data-step="5" style="background:var(--coral-soft); border-color:rgba(232,90,60,0.4); color:var(--coral-deep);">
+            <span class="swirl"></span>
+            <span>caye · booking added · saturday 11:00</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- HANDLES (features) -->
+<section class="handles" id="handles">
+  <div class="wrap">
+    <div class="section-head">
+      <div class="label"><span class="eyebrow"><span class="dot"></span>What Caye handles · 03</span></div>
+      <h2 class="display title">Everything you'd hire <span class="accent">a receptionist</span> to do.</h2>
+    </div>
+
+    <div class="handles-grid">
+      <div class="feature r-up">
+        <div class="ftag">— 01 · Unified inbox</div>
+        <h4>One inbox. Every channel.</h4>
+        <p>WhatsApp, Instagram DMs, Messenger and email — all in one view. No more swiping between four apps trying to remember which guest asked what, where.</p>
+        <div class="viz viz-channels">
+          <span class="ic wa">W</span><span class="ic ig">IG</span><span class="ic fb">M</span><span class="ic em">@</span>
+          <span class="arrow"></span>
+          <span class="inbox">Inbox</span>
+        </div>
+      </div>
+
+      <div class="feature r-up">
+        <div class="ftag">— 02 · AI Smart Replies</div>
+        <h4>After-hours replies.</h4>
+        <p>Caye answers common inquiries automatically — pricing, hours, availability — the moment they come in. Including 2am. Including Sundays. Including Fridays.</p>
+        <div class="viz viz-bubble">
+          <div class="m">"What time does the snorkel tour start?"</div>
+          <div class="m out">"11am sharp — pier 4. See you Saturday!"</div>
+          <span class="stamp">↳ sent · 2:14am island time</span>
+        </div>
+      </div>
+
+      <div class="feature r-up">
+        <div class="ftag">— 03 · Booking management</div>
+        <h4>Bookings, captured.</h4>
+        <p>Whether the request lands in a DM or an email, Caye pulls it into a structured booking — name, date, party size, source — so nothing has to live in your head.</p>
+        <div class="viz viz-booking">
+          <div class="row"><span class="k">Guest</span><span class="v">Anna · 4 pax</span></div>
+          <div class="row"><span class="k">When</span><span class="v">Sat · 11:00</span></div>
+          <div class="row"><span class="k">Status</span><span class="ok">Confirmed</span></div>
+        </div>
+      </div>
+
+      <div class="feature r-up">
+        <div class="ftag">— 04 · Calendar integration</div>
+        <h4>Calendar, kept honest.</h4>
+        <p>Connect Google Calendar once. Caye reads availability before she promises anything, then drops the confirmed booking on the right day at the right time.</p>
+        <div class="viz viz-cal">
+          <div class="d">M</div><div class="d">T</div><div class="d has">W</div><div class="d">T</div><div class="d">F</div><div class="d now">S</div><div class="d has">S</div>
+        </div>
+      </div>
+
+      <div class="feature r-up">
+        <div class="ftag">— 05 · Automation flows</div>
+        <h4>Follow-ups, on auto.</h4>
+        <p>Reminder the night before, thank-you the morning after, a nudge if a deposit is overdue. The little touches that make repeat customers — done without you remembering.</p>
+        <div class="viz viz-flow">
+          <div class="step-row done"><span class="pip">✓</span><span>Booking confirmed</span></div>
+          <div class="step-row done"><span class="pip">✓</span><span>Reminder sent · night before</span></div>
+          <div class="step-row"><span class="pip">3</span><span>Thank-you · morning after</span></div>
+        </div>
+      </div>
+
+      <div class="feature r-up">
+        <div class="ftag">— 06 · Customer profiles</div>
+        <h4>Customers, remembered.</h4>
+        <p>Every guest gets a profile. Last booking. What they ordered. Which kid was allergic to shellfish. So you sound like a friend, not a chain.</p>
+        <div class="viz viz-profile">
+          <div class="top">
+            <div class="av">A</div>
+            <div>
+              <div class="nm">Anna M.</div>
+              <div class="sub">Carnival Pride · 4th visit</div>
+            </div>
+          </div>
+          <div class="meta">
+            <span>No shellfish</span>
+            <span>$1,240 LTV</span>
+            <span>Repeat</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="feature r-up">
+        <div class="ftag">— 07 · Revenue analytics</div>
+        <h4>The dollars, visible.</h4>
+        <p>Every lead, every booking, every dollar — in a single dashboard. So you can stop guessing how the season is going and just look.</p>
+        <div class="viz viz-chart">
+          <div class="top-row"><span class="amt">$12,480</span><span class="delta">+38%</span></div>
+          <div class="bars"><div style="height:40%"></div><div style="height:55%"></div><div style="height:48%"></div><div style="height:70%"></div><div style="height:62%"></div><div style="height:85%"></div><div style="height:100%"></div></div>
+        </div>
+      </div>
+
+      <div class="feature r-up">
+        <div class="ftag">— 08 · Voice & tone</div>
+        <h4>In your voice. Always.</h4>
+        <p>Caye learns the way you write — the way Karenda signs off, the way Marco answers — so customers feel you, not a chatbot. She's the receptionist, not the brand.</p>
+        <div class="viz viz-voice">
+          <div class="line"></div>
+          <div class="line"></div>
+          <div class="line"></div>
+          <span class="tag">trained on · 312 of karenda's replies</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- PRICING -->
+<section class="pricing" id="pricing">
+  <div class="wrap">
+    <div class="section-head">
+      <div class="label"><span class="eyebrow"><span class="dot"></span>Pricing · 04</span></div>
+      <h2 class="display title">One price. <span class="accent">No contracts.</span> Cancel any time.</h2>
+    </div>
+
+    <div class="price-grid">
+      <div class="price-card r-up">
+        <div class="ftag">— Caye Solo</div>
+        <div class="num"><sup>$</sup>79</div>
+        <div class="per">/ month · flat</div>
+        <div class="title">Just Caye, handling the messages.</div>
+        <ul>
+          <li>Unified inbox · WhatsApp, IG, Messenger, Email</li>
+          <li>Caye AI receptionist with smart replies</li>
+          <li>Calendar integration & booking management</li>
+          <li>Customer profiles & revenue analytics</li>
+          <li>Onboarding call with our Bahamas team</li>
+        </ul>
+        <a class="btn btn-ghost" href="#cta">Start with Caye <span class="arrow">→</span></a>
+      </div>
+
+      <div class="price-card featured r-up">
+        <div class="ftag">— Caye + Website</div>
+        <div class="num"><sup>$</sup>129</div>
+        <div class="per">/ month · bundled</div>
+        <div class="title">Caye, plus a TropiTech-built website.</div>
+        <ul>
+          <li>Everything in Caye Solo</li>
+          <li>Custom website built by TropiTech</li>
+          <li>Booking page wired straight to Caye</li>
+          <li>Domain, hosting, SSL — all handled</li>
+          <li>Priority Bahamas-based support</li>
+        </ul>
+        <a class="btn btn-coral" href="#cta">Get the bundle <span class="arrow">→</span></a>
+      </div>
+    </div>
+
+    <div class="pilot-note">
+      <span class="badge">Pilot offer</span>
+      <p>First pilot customers get <strong>2 free months</strong> + <strong>$20/mo referral kickback</strong> for every active business they bring in. We're still small. We treat early operators like family.</p>
+    </div>
+  </div>
+</section>
+
+<!-- TESTIMONIAL -->
+<section class="testimonial">
+  <div class="wrap">
+    <div class="section-head">
+      <div class="label"><span class="eyebrow teal"><span class="dot"></span>From the field · 05</span></div>
+      <h2 class="display title">A Friday in Nassau, as told <span class="accent">by Karenda.</span></h2>
+    </div>
+
+    <div class="testimonial-inner">
+      <div>
+        <p class="quote r-up"><span class="open">“</span>I'm Seventh Day Adventist. I don't work Fridays — and I never have. But bookings still come in on Fridays, and for years I'd come back Saturday morning to <span class="accent">five missed inquiries</span> and three cruise guests who already booked someone else.</p>
+        <p class="quote r-up" style="margin-top:18px;">Now Caye just <span class="accent">handles it.</span> I check Saturday and the confirmations are sent, the calendar is full, the day is already paid for.<span style="color:var(--coral);">”</span></p>
+        <div class="attribution">
+          <div class="avatar">K</div>
+          <div class="who">
+            <div class="name">Karenda · pilot customer</div>
+            <div class="role">Tour operator · Nassau, Bahamas</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="friday-card r-up">
+        <span class="stamp">Handled.</span>
+        <div class="fhead">
+          <h5>Karenda's week</h5>
+          <span class="week">April '26 · wk 14</span>
+        </div>
+        <div class="calendar">
+          <div class="day"><span class="lbl">Mon</span><span class="nm">06</span></div>
+          <div class="day"><span class="lbl">Tue</span><span class="nm">07</span></div>
+          <div class="day"><span class="lbl">Wed</span><span class="nm">08</span></div>
+          <div class="day"><span class="lbl">Thu</span><span class="nm">09</span></div>
+          <div class="day friday"><span class="lbl">Fri</span><span class="nm">10</span></div>
+          <div class="day"><span class="lbl">Sat</span><span class="nm">11</span></div>
+          <div class="day"><span class="lbl">Sun</span><span class="nm">12</span></div>
+        </div>
+        <div class="friday-stats">
+          <div class="st"><span class="num">6</span><span class="k">Inquiries</span></div>
+          <div class="st"><span class="num">4</span><span class="k">Booked</span></div>
+          <div class="st"><span class="num">$0</span><span class="k">Karenda's time</span></div>
+        </div>
+        <div class="friday-note">Friday — <strong>6 inquiries, 4 confirmed bookings, $0 of Karenda's time.</strong> Caye replied, checked the calendar, and got the deposit emails out by 2pm island time.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FINAL CTA -->
+<section class="final" id="cta">
+  <div class="wrap final-inner">
+    <h2 class="display">Let <span class="accent">Caye</span> handle it.</h2>
+    <p class="sub">Try TropiChat free for two months. We'll get you set up over a call, connect your WhatsApp and email, and have Caye answering for you by the end of the week.</p>
+    <div class="cta-row">
+      <a class="btn btn-primary" href="mailto:lamar@tropitech.org?subject=TropiChat%20Pilot">Start the pilot <span class="arrow">→</span></a>
+      <a class="btn btn-ghost" href="#how">See how she works</a>
+    </div>
+    <div class="lives">
+      <span class="live-pulse"></span>
+      <span>Live · pilots open · Bahamas first, Caribbean next</span>
+    </div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <div class="wrap">
+    <div class="row">
+      <div>
+        <div class="brand"><span class="mark">T</span>TropiChat</div>
+        <p class="tag">A Caribbean social sales hub. Built in Nassau by <a href="https://tropitech.org">TropiTech</a>.</p>
+      </div>
+      <div>
+        <h6>Product</h6>
+        <ul>
+          <li><a href="#caye">Meet Caye</a></li>
+          <li><a href="#how">How it works</a></li>
+          <li><a href="#handles">Features</a></li>
+          <li><a href="#pricing">Pricing</a></li>
+        </ul>
+      </div>
+      <div>
+        <h6>Company</h6>
+        <ul>
+          <li><a href="https://tropitech.org">TropiTech</a></li>
+          <li><a href="mailto:lamar@tropitech.org">Contact</a></li>
+          <li><a href="#cta">Start a pilot</a></li>
+          <li><a href="#">Referral program</a></li>
+        </ul>
+      </div>
+      <div>
+        <h6>Reach Lamar</h6>
+        <ul>
+          <li><a href="mailto:lamar@tropitech.org">lamar@tropitech.org</a></li>
+          <li><a href="https://tropichat.chat">tropichat.chat</a></li>
+          <li><a href="https://tropitech.org">tropitech.org</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="colophon">
+      <span>© 2026 TropiChat · Made on island time, on purpose.</span>
+      <span>Nassau · Bahamas · Caribbean-wide soon</span>
+    </div>
+  </div>
+</footer>
+
+<script>
+/* ============================================================
+   GSAP + ScrollTrigger orchestration
+   ============================================================ */
+gsap.registerPlugin(ScrollTrigger);
+
+/* Hero entrance ------------------------------------------------ */
+window.addEventListener('load', () => {
+  const tl = gsap.timeline({ defaults:{ ease:"power3.out" } });
+
+  gsap.set('#hero-title .line span', { yPercent:110 });
+  gsap.set('#hero-pill, #hero-sub, #hero-cta, #hero-live', { opacity:0, y:18 });
+  gsap.set('#product-window', { opacity:0, y:30, scale:0.97 });
+  gsap.set('#toast1, #toast2', { opacity:0, y:10, scale:0.9 });
+
+  tl.to('#hero-pill', { opacity:1, y:0, duration:0.5 })
+    .to('#hero-title .line span', { yPercent:0, duration:1, stagger:0.1 }, 0.1)
+    .to('#product-window', { opacity:1, y:0, scale:1, duration:1 }, 0.3)
+    .to('#hero-sub', { opacity:1, y:0, duration:0.6 }, 0.9)
+    .to('#hero-cta', { opacity:1, y:0, duration:0.5 }, 1.0)
+    .to('#hero-live', { opacity:1, y:0, duration:0.5 }, 1.1)
+    .to('#toast1', { opacity:1, y:0, scale:1, duration:0.5, ease:'back.out(1.6)' }, 1.2)
+    .to('#toast2', { opacity:1, y:0, scale:1, duration:0.5, ease:'back.out(1.6)' }, 1.4);
+});
+
+/* Marquee ----------------------------------------------------- */
+gsap.to('#track', {
+  xPercent:-50,
+  duration:32,
+  ease:'none',
+  repeat:-1
+});
+
+/* Subtle parallax on hero product window --------------------- */
+gsap.to('#product-window', {
+  y:-30,
+  scrollTrigger:{
+    trigger:'.hero',
+    start:'top top',
+    end:'bottom top',
+    scrub:1
+  }
+});
+
+/* Generic r-up reveals --------------------------------------- */
+gsap.utils.toArray('.r-up').forEach(el => {
+  gsap.to(el, {
+    opacity:1,
+    y:0,
+    duration:0.7,
+    ease:'power3.out',
+    scrollTrigger:{ trigger:el, start:'top 88%' }
+  });
+});
+
+/* Channel cards stagger -------------------------------------- */
+gsap.utils.toArray('.channel-card').forEach((el, i) => {
+  gsap.fromTo(el,
+    { opacity:0, y:30 },
+    {
+      opacity:1, y:0, duration:0.6, delay:i*0.08, ease:'power3.out',
+      scrollTrigger:{ trigger:'.problem-grid', start:'top 80%' }
+    }
+  );
+});
+
+/* Steps stagger ---------------------------------------------- */
+gsap.utils.toArray('.step').forEach((el, i) => {
+  gsap.fromTo(el,
+    { opacity:0, y:40 },
+    {
+      opacity:1, y:0, duration:0.7, delay:i*0.1, ease:'power3.out',
+      scrollTrigger:{ trigger:'#steps', start:'top 80%' }
+    }
+  );
+});
+
+/* Feature cards cascade -------------------------------------- */
+gsap.utils.toArray('.feature').forEach((el, i) => {
+  gsap.fromTo(el,
+    { opacity:0, y:30 },
+    {
+      opacity:1, y:0, duration:0.6, delay:(i%4)*0.07, ease:'power3.out',
+      scrollTrigger:{ trigger:el, start:'top 88%' }
+    }
+  );
+});
+
+/* Chat scene: bubble sequence -------------------------------- */
+ScrollTrigger.create({
+  trigger:'#chat-card',
+  start:'top 70%',
+  once:true,
+  onEnter: () => {
+    const items = document.querySelectorAll('#chat-card [data-step]');
+    items.forEach((b, i) => {
+      if(b.classList.contains('typing')){
+        gsap.to(b, { opacity:1, duration:0.3, delay:i*0.7 + 0.2 });
+        gsap.to(b, { opacity:0, duration:0.2, delay:i*0.7 + 1.4 });
+      } else {
+        gsap.to(b, { opacity:1, y:0, duration:0.5, delay:i*0.7, ease:'back.out(1.4)' });
+      }
+    });
+  }
+});
+
+/* Pricing cards ---------------------------------------------- */
+gsap.fromTo('.price-card',
+  { opacity:0, y:40 },
+  {
+    opacity:1, y:0, duration:0.8, stagger:0.12, ease:'power3.out',
+    scrollTrigger:{ trigger:'.price-grid', start:'top 80%' }
+  }
+);
+gsap.fromTo('.pilot-note',
+  { opacity:0, y:20 },
+  {
+    opacity:1, y:0, duration:0.6,
+    scrollTrigger:{ trigger:'.pilot-note', start:'top 90%' }
+  }
+);
+
+/* Testimonial calendar ---------------------------------------- */
+gsap.from('.calendar .day', {
+  opacity:0, scale:0.6, duration:0.5, stagger:0.06, ease:'back.out(1.7)',
+  scrollTrigger:{ trigger:'.calendar', start:'top 85%' }
+});
+gsap.from('.friday-stats .st', {
+  opacity:0, y:14, duration:0.5, stagger:0.1,
+  scrollTrigger:{ trigger:'.friday-stats', start:'top 90%' }
+});
+
+/* Section heads reveal --------------------------------------- */
+gsap.utils.toArray('.section-head').forEach(el => {
+  gsap.fromTo(el.querySelectorAll('.label, .title'),
+    { opacity:0, y:18 },
+    {
+      opacity:1, y:0, duration:0.7, stagger:0.1,
+      scrollTrigger:{ trigger:el, start:'top 88%' }
+    }
+  );
+});
+
+/* Final CTA --------------------------------------------------- */
+gsap.fromTo('.final h2',
+  { opacity:0, y:30 },
+  { opacity:1, y:0, duration:0.9, scrollTrigger:{ trigger:'.final', start:'top 70%' } }
+);
+gsap.fromTo('.final .sub, .final .cta-row, .final .lives',
+  { opacity:0, y:16 },
+  {
+    opacity:1, y:0, duration:0.6, stagger:0.1,
+    scrollTrigger:{ trigger:'.final', start:'top 65%' }
+  }
+);
+
+ScrollTrigger.refresh();
+</script>
+
+</body>
+</html>
