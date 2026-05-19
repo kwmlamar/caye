@@ -67,6 +67,26 @@ export async function GET(req: NextRequest) {
   const primaryEmail = emailList.find(e => e.isPrimary)
   const zohoEmail: string = primaryEmail?.mailId || emailList[0]?.mailId || zohoAccount.incomingUserName || ''
 
+  // Cache the inbox folderId so polling never needs the ZohoMail.folders.READ scope
+  let inboxFolderId: string | null = null
+  try {
+    const foldersRes = await fetch(`${base}/api/accounts/${zohoAccountId}/folders`, {
+      headers: { Authorization: `Zoho-oauthtoken ${access_token}` },
+    })
+    const foldersData = await foldersRes.json()
+    const folders: Array<{ folderId?: string; id?: string; folderType?: string; folderName?: string; name?: string }> =
+      Array.isArray(foldersData?.data) ? foldersData.data : []
+    const inboxFolder = folders.find((f) => {
+      const type = String(f.folderType || '').toLowerCase()
+      const name = String(f.folderName || f.name || '').toLowerCase()
+      return type === 'inbox' || name === 'inbox'
+    })
+    if (inboxFolder) inboxFolderId = String(inboxFolder.folderId || inboxFolder.id || '')
+    console.log(`[zoho/callback] inbox folderId resolved: ${inboxFolderId ?? 'not found'} (${folders.length} folders)`)
+  } catch (err) {
+    console.warn('[zoho/callback] Could not fetch inbox folder ID:', err)
+  }
+
   const supabase = createServiceClient()
 
   // Deactivate any existing email accounts for this workspace that are a different account
@@ -96,6 +116,7 @@ export async function GET(req: NextRequest) {
         metadata: {
           zoho_api_domain: api_domain || 'https://www.zohoapis.com',
           zoho_account_id: zohoAccountId,
+          inbox_folder_id: inboxFolderId,
         },
         updated_at: new Date().toISOString(),
       },

@@ -251,22 +251,11 @@ export async function GET(req: NextRequest) {
           .eq('id', account.id)
       }
 
-      // Resolve numeric inbox folder ID
-      let inboxFolderId: string | null = null
-      const foldersRes = await fetch(`${base}/api/accounts/${accountId}/folders`, {
-        headers: { Authorization: `Zoho-oauthtoken ${accessToken}` },
-      })
-      const foldersData = await foldersRes.json()
-      console.log(`[email/poll] folders raw: status=${foldersRes.status} body=${JSON.stringify(foldersData).slice(0, 400)}`)
-      const folders: Record<string, unknown>[] = Array.isArray(foldersData?.data)
-        ? foldersData.data
-        : []
-      const inboxFolder = folders.find((f) => {
-        const type = String(f.folderType || '').toLowerCase()
-        const name = String(f.folderName || f.name || f.path || '').toLowerCase()
-        return type === 'inbox' || name === 'inbox'
-      })
-      if (inboxFolder) inboxFolderId = String(inboxFolder.folderId || inboxFolder.id || '')
+      // Use cached inbox folderId stored at connect time (avoids needing folders scope on every poll)
+      const inboxFolderId: string | null = meta.inbox_folder_id || null
+      if (!inboxFolderId) {
+        console.warn(`[email/poll] No cached inbox_folder_id for account ${accountId} — reconnect Zoho to resolve`)
+      }
 
       // Fetch latest messages — folderId if resolved, else all recent
       // No status=unread filter: Zoho doesn't reliably support it; dedup handles re-processing
