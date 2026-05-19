@@ -257,11 +257,9 @@ export async function GET(req: NextRequest) {
         console.warn(`[email/poll] No cached inbox_folder_id for account ${accountId} — reconnect Zoho to resolve`)
       }
 
-      // Fetch latest messages — folderId if resolved, else all recent
-      // No status=unread filter: Zoho doesn't reliably support it; dedup handles re-processing
-      const listUrl = inboxFolderId
-        ? `${base}/api/accounts/${accountId}/messages/view?limit=25&sortby=date&sortorder=desc&folderId=${inboxFolderId}`
-        : `${base}/api/accounts/${accountId}/messages/view?limit=25&sortby=date&sortorder=desc`
+      // Zoho Mail messages/view only accepts: limit, start, folderId (no sort params)
+      if (!inboxFolderId) { summary.errors++; continue }
+      const listUrl = `${base}/api/accounts/${accountId}/messages/view?limit=25&folderId=${inboxFolderId}`
 
       const listRes = await fetch(listUrl, {
         headers: { Authorization: `Zoho-oauthtoken ${accessToken}` },
@@ -271,8 +269,12 @@ export async function GET(req: NextRequest) {
         ? listData.data
         : []
 
-      const detail = `account=${accountId} folderId=${inboxFolderId ?? 'none'} messages=${messages.length} zohoStatus=${listData?.status?.code ?? listData?.status}`
+      const zohoStatus = listData?.status?.code ?? listData?.status
+      const detail = `account=${accountId} folderId=${inboxFolderId} messages=${messages.length} zohoStatus=${zohoStatus}`
       console.log(`[email/poll] ${detail}`)
+      if (!listRes.ok) {
+        console.error(`[email/poll] Messages list failed: HTTP ${listRes.status}`, JSON.stringify(listData).slice(0, 400))
+      }
       ;(summary.detail as string[]).push(detail)
 
       for (const msg of messages) {
