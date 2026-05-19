@@ -251,11 +251,28 @@ export async function GET(req: NextRequest) {
           .eq('id', account.id)
       }
 
-      // Fetch latest unread messages from inbox
-      const listRes = await fetch(
-        `${base}/api/accounts/${accountId}/messages/view?limit=25&sortby=date&sortorder=desc&folder=inbox&status=unread`,
-        { headers: { Authorization: `Zoho-oauthtoken ${accessToken}` } }
+      // Resolve numeric inbox folder ID
+      let inboxFolderId: string | null = null
+      const foldersRes = await fetch(`${base}/api/accounts/${accountId}/folders`, {
+        headers: { Authorization: `Zoho-oauthtoken ${accessToken}` },
+      })
+      const foldersData = await foldersRes.json()
+      const folders: Record<string, unknown>[] = Array.isArray(foldersData?.data)
+        ? foldersData.data
+        : []
+      const inboxFolder = folders.find(
+        (f) => String(f.folderName || f.name || '').toLowerCase() === 'inbox'
       )
+      if (inboxFolder) inboxFolderId = String(inboxFolder.folderId || inboxFolder.id || '')
+
+      // Fetch latest unread messages — use folderId if resolved, otherwise fetch all unread
+      const listUrl = inboxFolderId
+        ? `${base}/api/accounts/${accountId}/messages/view?limit=25&sortby=date&sortorder=desc&folderId=${inboxFolderId}&status=unread`
+        : `${base}/api/accounts/${accountId}/messages/view?limit=25&sortby=date&sortorder=desc&status=unread`
+
+      const listRes = await fetch(listUrl, {
+        headers: { Authorization: `Zoho-oauthtoken ${accessToken}` },
+      })
       const listData = await listRes.json()
       const messages: Record<string, unknown>[] = Array.isArray(listData?.data)
         ? listData.data
