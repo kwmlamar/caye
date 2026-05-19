@@ -100,6 +100,13 @@ async function processMessage(
   // Self-loop guard
   if (!fromEmail || fromEmail === ownEmail) return 'skipped'
 
+  // Only auto-reply to emails that arrived after the account was connected.
+  // Historical emails are imported into the chat but never replied to.
+  const accountConnectedAt = String(account.updated_at || account.created_at || '')
+  const isHistorical = accountConnectedAt
+    ? new Date(receivedTime).getTime() < new Date(accountConnectedAt).getTime()
+    : false
+
   // Fetch full message body
   const contentRes = await fetch(
     `${base}/api/accounts/${accountId}/messages/${messageId}/content`,
@@ -159,6 +166,12 @@ async function processMessage(
     status: 'delivered',
     metadata: { subject, from: fromRaw, zoho_message_id: messageId, zoho_thread_id: threadId },
   })
+
+  // Don't auto-reply to emails that existed before the account was connected
+  if (isHistorical) {
+    console.log(`[email/poll] Historical email skipped (no auto-reply): ${messageId}`)
+    return 'skipped'
+  }
 
   // Generate AI reply
   let reply: string
