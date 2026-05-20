@@ -18,6 +18,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createHmac } from 'crypto'
 import { createServiceClient } from '@/lib/supabase-server'
 import { generateEmailReply, sendZohoReply } from '@/lib/email-ai'
+import type { VoiceProfile } from '@/lib/voice-profile'
 
 function htmlToPlainText(html: string): string {
   return html
@@ -138,19 +139,28 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
     return
   }
 
-  // Fetch workspace AI system prompt from workspace_ai_config
+  // Fetch workspace AI system prompt and voice profile in parallel
   let systemPrompt =
-    'You are a helpful assistant for a Caribbean tour business. Reply to customer emails warmly and professionally.'
+    'You are a helpful assistant. Reply to customer emails warmly and professionally.'
 
-  const { data: aiConfig } = await supabase
-    .from('workspace_ai_config')
-    .select('system_prompt')
-    .eq('workspace_id', workspaceId)
-    .maybeSingle()
+  const [{ data: aiConfig }, { data: customer }] = await Promise.all([
+    supabase
+      .from('workspace_ai_config')
+      .select('system_prompt')
+      .eq('workspace_id', workspaceId)
+      .maybeSingle(),
+    supabase
+      .from('customers')
+      .select('ai_voice_profile')
+      .eq('id', workspaceId)
+      .maybeSingle(),
+  ])
 
   if (aiConfig?.system_prompt) {
     systemPrompt = aiConfig.system_prompt
   }
+
+  const voiceProfile = (customer?.ai_voice_profile ?? undefined) as VoiceProfile | undefined
 
   // Upsert conversation keyed on threadId
   const { data: conversation, error: convErr } = await supabase
@@ -206,11 +216,11 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
   // Generate AI reply
   let reply: string
   try {
-    reply = await generateEmailReply(systemPrompt, {
-      senderName: fromName || fromEmail,
-      subject,
-      body: body || subject,
-    })
+    reply = await generateEmailReply(
+      systemPrompt,
+      { senderName: fromName || fromEmail, subject, body: body || subject },
+      voiceProfile
+    )
   } catch (err) {
     console.error('[zoho-email webhook] AI reply generation failed:', err)
     return

@@ -8,6 +8,7 @@
 
 import Anthropic from '@anthropic-ai/sdk'
 import { createServiceClient } from './supabase-server'
+import type { VoiceProfile } from './voice-profile'
 
 const ZOHO_TOKEN_URL = 'https://accounts.zoho.com/oauth/v2/token'
 
@@ -50,11 +51,25 @@ async function refreshZohoToken(
  */
 export async function generateEmailReply(
   systemPrompt: string,
-  inbound: { senderName: string; subject: string; body: string }
+  inbound: { senderName: string; subject: string; body: string },
+  voiceProfile?: VoiceProfile
 ): Promise<string> {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
-  const fullSystem = systemPrompt +
+  let fullSystem = systemPrompt
+
+  if (voiceProfile) {
+    fullSystem +=
+      '\n\nVOICE PROFILE — write in this person\'s actual style:\n' +
+      `- Formality: ${voiceProfile.formality_level}\n` +
+      `- Style: ${voiceProfile.writing_style}\n` +
+      `- Common phrases to use naturally: ${voiceProfile.common_phrases.join(', ')}\n` +
+      `- Typical greeting: ${voiceProfile.greeting_style}\n` +
+      `- Typical sign-off: ${voiceProfile.signoff_style}\n` +
+      `- Tone notes: ${voiceProfile.tone_notes}`
+  }
+
+  fullSystem +=
     '\n\nWrite only the reply body — no "To:", "Subject:", or any header lines. ' +
     'Do not use markdown formatting (no **bold**, no bullet hyphens, no headers). ' +
     'Plain prose only. Sign off naturally without wrapping your name in asterisks.'

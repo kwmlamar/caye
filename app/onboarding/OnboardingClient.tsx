@@ -23,6 +23,15 @@ interface BusinessProfile {
   never_say: string
 }
 
+interface VoiceProfile {
+  writing_style: string
+  common_phrases: string[]
+  greeting_style: string
+  signoff_style: string
+  formality_level: 'casual' | 'warm-professional' | 'formal'
+  tone_notes: string
+}
+
 interface Message {
   id: string
   role: 'caye' | 'user'
@@ -30,6 +39,7 @@ interface Message {
 }
 
 type Phase = 'loading' | 'chatting' | 'synthesizing' | 'summary' | 'error'
+type VoiceSamplePhase = 'idle' | 'showing' | 'submitting' | 'confirmed'
 
 interface Props {
   questions: Question[]
@@ -247,6 +257,95 @@ function ProfileSummary({ profile, onConfirm }: { profile: BusinessProfile; onCo
   )
 }
 
+function VoiceSamplePanel({
+  value,
+  onChange,
+  onSubmit,
+  onSkip,
+  isSubmitting,
+}: {
+  value: string
+  onChange: (v: string) => void
+  onSubmit: () => void
+  onSkip: () => void
+  isSubmitting: boolean
+}) {
+  const canSubmit = value.trim().length > 0 && !isSubmitting
+  return (
+    <div className="ob-message" style={{ paddingLeft: 38 }}>
+      <div style={{
+        background: '#1c2830',
+        border: '1px solid rgba(255,255,255,0.09)',
+        borderRadius: 14,
+        padding: '14px 16px',
+      }}>
+        <p style={{
+          fontSize: 12, color: 'rgba(255,255,255,0.5)',
+          marginBottom: 10, lineHeight: 1.55,
+        }}>
+          Paste 3–5 messages or emails you&apos;ve sent to clients. Separate each with <code style={{ background: 'rgba(255,255,255,0.08)', borderRadius: 3, padding: '1px 4px', fontSize: 11 }}>---</code>. The more real examples, the better Caye will sound like you.
+        </p>
+        <textarea
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          disabled={isSubmitting}
+          placeholder={"Hey Sarah, just confirming your appointment Thursday at 2pm...\n---\nHi! Thanks for reaching out. Here's what we can do for you..."}
+          style={{
+            width: '100%',
+            minHeight: 160,
+            background: 'rgba(255,255,255,0.04)',
+            border: '1px solid rgba(255,255,255,0.09)',
+            borderRadius: 8,
+            color: '#fff',
+            fontSize: 13,
+            lineHeight: 1.55,
+            padding: '10px 12px',
+            resize: 'vertical',
+            fontFamily: 'inherit',
+            boxSizing: 'border-box',
+            outline: 'none',
+          }}
+        />
+        <div style={{
+          display: 'flex', gap: 8, marginTop: 10, justifyContent: 'flex-end',
+        }}>
+          <button
+            onClick={onSkip}
+            disabled={isSubmitting}
+            style={{
+              background: 'transparent',
+              border: '1px solid rgba(255,255,255,0.15)',
+              color: 'rgba(255,255,255,0.5)',
+              borderRadius: 8, padding: '8px 14px',
+              fontSize: 13, cursor: isSubmitting ? 'default' : 'pointer',
+              fontFamily: 'inherit',
+              transition: 'color 0.15s ease, border-color 0.15s ease',
+            }}
+          >
+            Skip for now
+          </button>
+          <button
+            onClick={onSubmit}
+            disabled={!canSubmit}
+            style={{
+              background: canSubmit ? '#1e6157' : 'rgba(255,255,255,0.08)',
+              border: 'none',
+              color: '#fff',
+              borderRadius: 8, padding: '8px 16px',
+              fontSize: 13, fontWeight: 600,
+              cursor: canSubmit ? 'pointer' : 'default',
+              fontFamily: 'inherit',
+              transition: 'background 0.15s ease',
+            }}
+          >
+            {isSubmitting ? 'Analyzing…' : 'Teach Caye your voice'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function OnboardingClient({ questions, workspaceIdHint }: Props) {
@@ -262,9 +361,13 @@ export default function OnboardingClient({ questions, workspaceIdHint }: Props) 
   const [profile, setProfile] = useState<BusinessProfile | null>(null)
   const [errorMsg, setErrorMsg] = useState('')
   const [answeredCount, setAnsweredCount] = useState(0)
+  const [voiceSamplePhase, setVoiceSamplePhase] = useState<VoiceSamplePhase>('idle')
+  const [voiceSamples, setVoiceSamples] = useState('')
+  const [voiceProfile, setVoiceProfile] = useState<VoiceProfile | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const chatStartedRef = useRef(false)
+  const voiceNextQRef = useRef<number>(5)
 
   // ── Auth init ─────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -289,14 +392,14 @@ export default function OnboardingClient({ questions, workspaceIdHint }: Props) 
   // ── Auto-scroll ───────────────────────────────────────────────────────────
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, showTyping])
+  }, [messages, showTyping, voiceSamplePhase])
 
   // ── Focus input ───────────────────────────────────────────────────────────
   useEffect(() => {
-    if (phase === 'chatting' && !showTyping) {
+    if (phase === 'chatting' && !showTyping && voiceSamplePhase === 'idle') {
       setTimeout(() => inputRef.current?.focus(), 50)
     }
-  }, [showTyping, phase])
+  }, [showTyping, phase, voiceSamplePhase])
 
   // ── Start conversation ────────────────────────────────────────────────────
   useEffect(() => {
@@ -338,6 +441,18 @@ export default function OnboardingClient({ questions, workspaceIdHint }: Props) 
     setAnsweredCount(prev => prev + 1)
 
     const next = currentQ + 1
+
+    // After the tone question, show the voice sample step before continuing
+    if (q.id === 'tone') {
+      voiceNextQRef.current = next
+      await sleep(300)
+      await addCayeMessage(
+        "Before we move on — paste a few messages you've sent to clients and I'll learn your writing style. The more real examples you share, the more I'll actually sound like you."
+      )
+      setVoiceSamplePhase('showing')
+      return
+    }
+
     if (next < questions.length) {
       await sleep(300)
       await askQuestion(next)
@@ -350,12 +465,54 @@ export default function OnboardingClient({ questions, workspaceIdHint }: Props) 
     }
   }
 
+  async function handleVoiceSampleSubmit() {
+    if (!voiceSamples.trim()) return
+    setVoiceSamplePhase('submitting')
+
+    let extractedProfile: VoiceProfile | null = null
+    try {
+      const res = await fetch('/api/onboarding/voice-sample', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ samples: [voiceSamples], workspaceId }),
+      })
+      const data = await res.json() as { voiceProfile?: VoiceProfile; error?: string }
+      if (res.ok && data.voiceProfile) {
+        extractedProfile = data.voiceProfile
+        setVoiceProfile(data.voiceProfile)
+      }
+    } catch {
+      // Non-fatal — continue without voice profile
+    }
+
+    setVoiceSamplePhase('confirmed')
+    await sleep(300)
+    if (extractedProfile) {
+      await addCayeMessage(
+        `Got it. Here's what I learned about your voice: ${extractedProfile.formality_level}, ${extractedProfile.tone_notes}`
+      )
+      await sleep(400)
+    }
+    await askQuestion(voiceNextQRef.current)
+  }
+
+  async function handleVoiceSampleSkip() {
+    setVoiceSamplePhase('confirmed')
+    await sleep(200)
+    await askQuestion(voiceNextQRef.current)
+  }
+
   async function synthesize(finalAnswers: Record<string, string>) {
     try {
       const res = await fetch('/api/onboarding/complete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ workspaceId, answers: finalAnswers, businessName }),
+        body: JSON.stringify({
+          workspaceId,
+          answers: finalAnswers,
+          businessName,
+          ...(voiceProfile ? { voiceProfile } : {}),
+        }),
       })
       const data = await res.json() as { profile?: BusinessProfile; error?: string }
       if (!res.ok || data.error) {
@@ -388,6 +545,7 @@ export default function OnboardingClient({ questions, workspaceIdHint }: Props) 
   const currentQuestion = questions[currentQ]
   const isWaitingForAnswer = phase === 'chatting' && !showTyping && messages.length > 0
   const lastMessageIsCaye = messages[messages.length - 1]?.role === 'caye'
+  const showVoicePanel = voiceSamplePhase === 'showing' || voiceSamplePhase === 'submitting'
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
@@ -587,8 +745,19 @@ export default function OnboardingClient({ questions, workspaceIdHint }: Props) 
                 </div>
               )}
 
+              {/* Voice sample panel — shown after tone question */}
+              {showVoicePanel && (
+                <VoiceSamplePanel
+                  value={voiceSamples}
+                  onChange={setVoiceSamples}
+                  onSubmit={handleVoiceSampleSubmit}
+                  onSkip={handleVoiceSampleSkip}
+                  isSubmitting={voiceSamplePhase === 'submitting'}
+                />
+              )}
+
               {/* Suggestion chip — shown below the current Caye question */}
-              {isWaitingForAnswer && lastMessageIsCaye && currentQuestion && (
+              {isWaitingForAnswer && lastMessageIsCaye && currentQuestion && voiceSamplePhase === 'idle' && (
                 <div
                   className="ob-message"
                   style={{
@@ -648,8 +817,8 @@ export default function OnboardingClient({ questions, workspaceIdHint }: Props) 
           )}
         </main>
 
-        {/* ── Input bar ── */}
-        {phase === 'chatting' && (
+        {/* ── Input bar — hidden during voice sample step ── */}
+        {phase === 'chatting' && !showVoicePanel && (
           <div style={{
             flexShrink: 0,
             padding: '12px 16px env(safe-area-inset-bottom, 12px)',

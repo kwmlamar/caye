@@ -73,8 +73,7 @@ export interface CayeMessage {
   text: string
   bullets?: CayeBullet[]
   footer?: string
-  configUpdated?: boolean
-  fieldChanged?: string
+  configUpdates?: { field: string; summary: string }[]
 }
 
 export interface CayeHeldItem {

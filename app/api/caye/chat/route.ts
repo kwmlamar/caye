@@ -7,8 +7,6 @@ interface HistoryMessage {
   text: string
 }
 
-const CONFIG_BLOCK_RE = /```config\s*\n([\s\S]*?)\n```/
-
 const KNOWN_FIELDS = new Set([
   'system_prompt',
   'tone',
@@ -17,6 +15,7 @@ const KNOWN_FIELDS = new Set([
   'pricing_info',
   'common_questions',
   'cancellation_policy',
+  'voice_profile',
 ])
 
 const TOOLS: Anthropic.Tool[] = [
@@ -80,6 +79,35 @@ const TOOLS: Anthropic.Tool[] = [
       required: ['conversation_id'],
     },
   },
+  {
+    name: 'update_config',
+    description:
+      'Update Caye\'s behavior or business configuration when the owner gives an instruction to change how Caye responds. Use this any time the owner says "don\'t say X", "always mention Y", "change your tone to Z", "add this to your FAQ", etc.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        field: {
+          type: 'string',
+          enum: ['system_prompt', 'tone', 'never_say', 'escalation_rules', 'pricing_info', 'common_questions', 'cancellation_policy', 'voice_profile'],
+          description: 'Which config field to update.',
+        },
+        action: {
+          type: 'string',
+          enum: ['replace', 'append'],
+          description: 'Replace overwrites the field. Append adds to it.',
+        },
+        value: {
+          type: 'string',
+          description: 'The new value or addition.',
+        },
+        summary: {
+          type: 'string',
+          description: 'One short sentence describing what changed, in plain language for the owner. e.g. "I\'ll stop mentioning deposit amounts over WhatsApp."',
+        },
+      },
+      required: ['field', 'action', 'value', 'summary'],
+    },
+  },
 ]
 
 type SearchInput = {
@@ -96,6 +124,17 @@ type GetMessagesInput = {
   conversation_id: string
   limit?: number
 }
+
+type UpdateConfigInput = {
+  field: string
+  action: 'replace' | 'append'
+  value: string
+  summary: string
+}
+
+type UpdateConfigResult =
+  | { success: true; field: string; summary: string }
+  | { error: string }
 
 async function runSearchConversations(
   supabase: ReturnType<typeof createServiceClient>,
@@ -158,6 +197,70 @@ async function runGetConversationMessages(
   return { messages: ((data || []).reverse()) }
 }
 
+async function runUpdateConfig(
+  supabase: ReturnType<typeof createServiceClient>,
+  workspaceId: string,
+  aiConfig: Record<string, unknown> | null,
+  input: UpdateConfigInput
+): Promise<UpdateConfigResult> {
+  const { field, action, value, summary } = input
+
+  if (!KNOWN_FIELDS.has(field)) {
+    return { error: `Unknown field: ${field}` }
+  }
+
+  if (field === 'voice_profile') {
+    let newValue: unknown = value
+    if (action === 'append') {
+      const existing = aiConfig?.['voice_profile'] as Record<string, unknown> | string | null | undefined
+      if (existing && typeof existing === 'object') {
+        try {
+          const incoming = JSON.parse(value) as Record<string, unknown>
+          newValue = { ...existing, ...incoming }
+        } catch {
+          newValue = value
+        }
+      } else if (typeof existing === 'string' && existing) {
+        newValue = `${existing}\n${value}`
+      }
+    }
+
+    const { error } = await supabase
+      .from('customers')
+      .update({ ai_voice_profile: newValue })
+      .eq('id', workspaceId)
+
+    if (error) {
+      console.error('[caye/chat] voice_profile update failed:', error)
+      return { error: error.message }
+    }
+    return { success: true, field, summary }
+  }
+
+  let newValue = String(value)
+  if (action === 'append') {
+    const existing = aiConfig?.[field] as string | null | undefined
+    if (existing) newValue = `${existing}\n${newValue}`
+  }
+
+  const { error } = await supabase
+    .from('workspace_ai_config')
+    .upsert(
+      {
+        workspace_id: workspaceId,
+        [field]: newValue,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'workspace_id' }
+    )
+
+  if (error) {
+    console.error('[caye/chat] Config update failed:', error)
+    return { error: error.message }
+  }
+  return { success: true, field, summary }
+}
+
 function buildSystemPrompt(businessName: string, existingPrompt?: string | null): string {
   const today = new Date().toISOString().split('T')[0]
   return `You are Caye, the AI receptionist for ${businessName}. The person talking to you is the business owner. Today's date is ${today}.
@@ -165,12 +268,7 @@ function buildSystemPrompt(businessName: string, existingPrompt?: string | null)
 You have three jobs:
 1. Answer questions about the inbox — use your tools to look up real conversations, messages, and customer activity before answering. Never say you don't have access to the inbox.
 2. Answer questions about the business, customers, or how you handle things.
-3. When the owner gives feedback or asks you to change how you respond — understand what they want, update your behavior going forward, and confirm casually.
-
-When updating behavior, append this at the end of your response:
-\`\`\`config
-{ "field": "tone|never_say|pricing_info|common_questions|escalation_rules|cancellation_policy|system_prompt", "action": "append|replace", "value": "..." }
-\`\`\`
+3. When the owner tells you to change your behavior, use the update_config tool immediately. Confirm casually what you changed in plain language.
 
 Keep responses short and conversational. You are texting with your boss, not writing essays.${existingPrompt ? `\n\nContext about the business:\n${existingPrompt}` : ''}`
 }
@@ -233,7 +331,8 @@ export async function POST(req: NextRequest) {
 
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
-  let rawReply = ''
+  let reply = ''
+  const configUpdates: { field: string; summary: string }[] = []
 
   try {
     for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
@@ -247,7 +346,7 @@ export async function POST(req: NextRequest) {
 
       if (response.stop_reason === 'end_turn') {
         const textBlock = response.content.find((b) => b.type === 'text')
-        if (textBlock && textBlock.type === 'text') rawReply = textBlock.text
+        if (textBlock && textBlock.type === 'text') reply = textBlock.text
         break
       }
 
@@ -265,6 +364,17 @@ export async function POST(req: NextRequest) {
               result = await runSearchConversations(supabase, workspaceId, block.input as SearchInput)
             } else if (block.name === 'get_conversation_messages') {
               result = await runGetConversationMessages(supabase, block.input as GetMessagesInput)
+            } else if (block.name === 'update_config') {
+              const updateResult = await runUpdateConfig(
+                supabase,
+                workspaceId,
+                aiConfig as Record<string, unknown> | null,
+                block.input as UpdateConfigInput
+              )
+              if ('success' in updateResult && updateResult.success) {
+                configUpdates.push({ field: updateResult.field, summary: updateResult.summary })
+              }
+              result = updateResult
             } else {
               result = { error: `Unknown tool: ${block.name}` }
             }
@@ -285,7 +395,7 @@ export async function POST(req: NextRequest) {
 
       // Unexpected stop reason — take whatever text we have
       const textBlock = response.content.find((b) => b.type === 'text')
-      if (textBlock && textBlock.type === 'text') rawReply = textBlock.text
+      if (textBlock && textBlock.type === 'text') reply = textBlock.text
       break
     }
   } catch (err) {
@@ -293,46 +403,5 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'AI service error' }, { status: 500 })
   }
 
-  const configMatch = rawReply.match(CONFIG_BLOCK_RE)
-  const reply = rawReply.replace(CONFIG_BLOCK_RE, '').trim()
-  let configUpdated = false
-  let fieldChanged: string | undefined
-
-  if (configMatch) {
-    try {
-      const parsed = JSON.parse(configMatch[1].trim())
-      const { field, action, value } = parsed
-
-      if (field && KNOWN_FIELDS.has(field) && value !== undefined) {
-        let newValue = String(value)
-
-        if (action === 'append') {
-          const existing = aiConfig?.[field as keyof typeof aiConfig] as string | null | undefined
-          if (existing) newValue = `${existing}\n${newValue}`
-        }
-
-        const { error: updateErr } = await supabase
-          .from('workspace_ai_config')
-          .upsert(
-            {
-              workspace_id: workspaceId,
-              [field]: newValue,
-              updated_at: new Date().toISOString(),
-            },
-            { onConflict: 'workspace_id' }
-          )
-
-        if (!updateErr) {
-          configUpdated = true
-          fieldChanged = field
-        } else {
-          console.error('[caye/chat] Config update failed:', updateErr)
-        }
-      }
-    } catch (err) {
-      console.error('[caye/chat] Config block parse error:', err)
-    }
-  }
-
-  return NextResponse.json({ reply, configUpdated, fieldChanged })
+  return NextResponse.json({ reply, configUpdates })
 }

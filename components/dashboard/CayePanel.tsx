@@ -126,8 +126,7 @@ export default function CayePanel({ open, onClose }: { open: boolean; onClose: (
       const cayeMsg: CayeMessage = {
         from: 'caye',
         text: reply,
-        configUpdated: data.configUpdated,
-        fieldChanged: data.fieldChanged,
+        configUpdates: Array.isArray(data.configUpdates) ? data.configUpdates : undefined,
       }
       setMessages((m) => [...m, cayeMsg])
       setHistory((h) => [...h, { from: 'user', text }, { from: 'caye', text: reply }])
@@ -186,9 +185,22 @@ export default function CayePanel({ open, onClose }: { open: boolean; onClose: (
                 )}
                 {m.footer && <div className="cp-msg-footer">{m.footer}</div>}
               </div>
-              {m.configUpdated && (
-                <div style={{ fontSize: 11, color: 'var(--tc-ink-mute)', marginTop: 4 }}>
-                  settings updated · {m.fieldChanged}
+              {m.configUpdates && m.configUpdates.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 4 }}>
+                  {m.configUpdates.map((u, k) => (
+                    <span key={k} style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 4,
+                      fontSize: 12,
+                      color: '#16a34a',
+                      background: '#f0fdf4',
+                      borderRadius: 999,
+                      padding: '2px 8px',
+                    }}>
+                      ✓ {u.summary}
+                    </span>
+                  ))}
                 </div>
               )}
             </div>
@@ -216,7 +228,7 @@ export default function CayePanel({ open, onClose }: { open: boolean; onClose: (
           <button onClick={onSend} className="cp-send">↵</button>
         </div>
         <div className="cp-foot-meta">
-          <span>configure tone in Settings</span>
+          <span>just tell me to change anything</span>
         </div>
       </footer>
     </aside>
