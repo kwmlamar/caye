@@ -63,6 +63,73 @@ function extractEmail(raw: string): string {
   )
 }
 
+// ── Web3Forms helpers ───────────────────────────────────────────────────────
+
+interface Web3FormsFields {
+  customerName: string
+  customerEmail: string
+  phone: string | null
+  tour: string | null
+  date: string | null
+  guests: string | null
+  notes: string | null
+}
+
+/**
+ * Returns true if this email is a Web3Forms submission notification
+ * rather than a direct email from a customer.
+ */
+function isWeb3FormsNotification(fromEmail: string, subject: string): boolean {
+  const domain = fromEmail.split('@')[1]?.toLowerCase() || ''
+  return (
+    domain === 'web3forms.com' ||
+    domain === 'web3forms.co' ||
+    /^tour booking:/i.test(subject.trim())
+  )
+}
+
+/**
+ * Parses the structured "Field: Value" body that Web3Forms sends.
+ * Returns null if the required customer email is missing.
+ */
+function parseWeb3FormsFields(body: string): Web3FormsFields | null {
+  const get = (field: string): string | null => {
+    const m = body.match(new RegExp(`^${field}:\\s*(.+)$`, 'im'))
+    const val = m?.[1]?.trim()
+    return val && val.toLowerCase() !== 'none' ? val : null
+  }
+
+  const customerEmail = get('Email')
+  const customerName = get('Name')
+  if (!customerEmail || !customerName) return null
+
+  return {
+    customerName,
+    customerEmail: customerEmail.toLowerCase(),
+    phone: get('Phone'),
+    tour: get('Tour'),
+    date: get('Date'),
+    guests: get('Guests'),
+    notes: get('Notes'),
+  }
+}
+
+/**
+ * Builds a structured body to pass to Caye so it has full context
+ * about the booking request — tour type, date, group size, etc.
+ */
+function buildWeb3FormsContext(fields: Web3FormsFields): string {
+  const lines = [
+    `Customer name: ${fields.customerName}`,
+    fields.tour    ? `Tour requested: ${fields.tour}`      : null,
+    fields.date    ? `Requested date: ${fields.date}`      : null,
+    fields.guests  ? `Number of guests: ${fields.guests}`  : null,
+    fields.notes   ? `Customer notes: ${fields.notes}`     : null,
+    fields.phone   ? `Phone: ${fields.phone}`              : null,
+  ].filter(Boolean)
+  return lines.join('\n')
+}
+
 type Supabase = ReturnType<typeof createServiceClient>
 type Account = Record<string, unknown>
 
@@ -100,6 +167,40 @@ async function processMessage(
   // Self-loop guard
   if (!fromEmail || fromEmail === ownEmail) return 'skipped'
 
+  // ── Web3Forms interception ────────────────────────────────────────────────
+  // Web3Forms sends a notification to the business inbox — the From: address
+  // is noreply@web3forms.com, not the customer. We need to extract the real
+  // customer contact from the email body and redirect accordingly.
+  let web3FormsFields: Web3FormsFields | null = null
+  if (isWeb3FormsNotification(fromEmail, subject)) {
+    // Fetch body early so we can parse the fields
+    const w3ContentRes = await fetch(
+      `${base}/api/accounts/${accountId}/messages/${messageId}/content`,
+      { headers: { Authorization: `Zoho-oauthtoken ${accessToken}` } }
+    )
+    const w3ContentData = await w3ContentRes.json()
+    const w3Raw = String(
+      w3ContentData?.data?.content ||
+      w3ContentData?.data?.htmlContent ||
+      w3ContentData?.data?.textContent ||
+      w3ContentData?.data?.summary || ''
+    )
+    const w3Body = w3Raw.includes('<') ? htmlToPlainText(w3Raw) : w3Raw.trim()
+
+    web3FormsFields = parseWeb3FormsFields(w3Body)
+
+    if (!web3FormsFields) {
+      // Can't extract customer — store raw notification but don't auto-reply
+      console.warn(`[email/poll] Web3Forms notification missing customer fields: ${messageId}`)
+      return 'skipped'
+    }
+
+  }
+
+  // Resolve the effective contact for this message
+  const effectiveEmail = web3FormsFields?.customerEmail ?? fromEmail
+  const effectiveName  = web3FormsFields?.customerName  ?? fromName
+
   // Only auto-reply to emails that arrived after the account was connected.
   // Historical emails are imported into the chat but never replied to.
   const accountConnectedAt = String(account.updated_at || account.created_at || '')
@@ -107,20 +208,26 @@ async function processMessage(
     ? new Date(receivedTime).getTime() < new Date(accountConnectedAt).getTime()
     : false
 
-  // Fetch full message body
-  const contentRes = await fetch(
-    `${base}/api/accounts/${accountId}/messages/${messageId}/content`,
-    { headers: { Authorization: `Zoho-oauthtoken ${accessToken}` } }
-  )
-  const contentData = await contentRes.json()
-  const rawContent = String(
-    contentData?.data?.content ||
-    contentData?.data?.htmlContent ||
-    contentData?.data?.textContent ||
-    contentData?.data?.summary ||
-    ''
-  )
-  const body = rawContent.includes('<') ? htmlToPlainText(rawContent) : rawContent.trim()
+  // Fetch full message body (skip if already fetched during Web3Forms parsing)
+  let body: string
+  if (web3FormsFields) {
+    // Body was already fetched above; rebuild context from structured fields
+    body = buildWeb3FormsContext(web3FormsFields)
+  } else {
+    const contentRes = await fetch(
+      `${base}/api/accounts/${accountId}/messages/${messageId}/content`,
+      { headers: { Authorization: `Zoho-oauthtoken ${accessToken}` } }
+    )
+    const contentData = await contentRes.json()
+    const rawContent = String(
+      contentData?.data?.content ||
+      contentData?.data?.htmlContent ||
+      contentData?.data?.textContent ||
+      contentData?.data?.summary ||
+      ''
+    )
+    body = rawContent.includes('<') ? htmlToPlainText(rawContent) : rawContent.trim()
+  }
 
   // Fetch workspace AI prompt
   let systemPrompt =
@@ -132,18 +239,28 @@ async function processMessage(
     .maybeSingle()
   if (aiConfig?.system_prompt) systemPrompt = aiConfig.system_prompt
 
-  // Upsert conversation
+  // Upsert conversation — for Web3Forms submissions use the customer's email
+  // as the channel_conversation_id so follow-up direct emails thread correctly
+  const convChannelId = web3FormsFields
+    ? `w3f_${web3FormsFields.customerEmail}_${threadId}`
+    : threadId
+
   const { data: conversation, error: convErr } = await supabase
     .from('unified_conversations')
     .upsert(
       {
         connected_account_id: String(account.id),
         channel_type: 'email',
-        channel_conversation_id: threadId,
-        customer_name: fromName || fromEmail,
-        customer_id: fromEmail,
+        channel_conversation_id: convChannelId,
+        customer_name: effectiveName,
+        customer_id: effectiveEmail,
         status: 'open',
-        metadata: { subject, from: fromRaw, thread_id: threadId },
+        metadata: {
+          subject,
+          from: web3FormsFields ? effectiveEmail : fromRaw,
+          thread_id: threadId,
+          ...(web3FormsFields ? { source: 'web3forms', form_fields: web3FormsFields } : {}),
+        },
       },
       { onConflict: 'connected_account_id,channel_conversation_id' }
     )
@@ -183,7 +300,7 @@ async function processMessage(
   try {
     decision = await generateCayeAutoReply(
       systemPrompt,
-      { senderName: fromName || fromEmail, body: body || subject, channel: 'email', subject }
+      { senderName: effectiveName || effectiveEmail, body: body || subject, channel: 'email', subject }
     )
   } catch (err) {
     console.error('[email/poll] AI reply generation failed:', err)
@@ -206,7 +323,7 @@ async function processMessage(
       is_internal: true,
       metadata: { generated_by: 'caye', hold_reason: decision.reason },
     })
-    console.log(`[email/poll] Held for human: ${fromEmail} — ${decision.reason}`)
+    console.log(`[email/poll] Held for human: ${effectiveEmail} — ${decision.reason}`)
     return 'held'
   }
 
@@ -220,7 +337,7 @@ async function processMessage(
     },
     body: JSON.stringify({
       fromAddress: ownEmail,
-      toAddress: fromEmail,
+      toAddress: effectiveEmail,
       subject: replySubject,
       content: decision.content,
       mailFormat: 'plaintext',
@@ -253,7 +370,7 @@ async function processMessage(
       .eq('id', conversation.id)
   }
 
-  console.log(`[email/poll] Auto-replied to ${fromEmail} for workspace ${workspaceId}`)
+  console.log(`[email/poll] Auto-replied to ${effectiveEmail} for workspace ${workspaceId}`)
   return 'processed'
 }
 
