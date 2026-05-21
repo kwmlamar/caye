@@ -68,6 +68,7 @@ export default function ChannelsPanel() {
   const workspaceId = urlWorkspaceId || ctxWorkspaceId
   const [byType, setByType] = useState<Record<string, ConnectedAccount>>({})
   const [loading, setLoading] = useState(true)
+  const [showWhatsAppModal, setShowWhatsAppModal] = useState(false)
   const searchParams = useSearchParams()
   const router = useRouter()
 
@@ -202,10 +203,12 @@ export default function ChannelsPanel() {
                     onClick={() => {
                       if (type === 'email') {
                         window.location.href = `/api/auth/zoho?workspaceId=${workspaceId}`
+                      } else if (type === 'whatsapp') {
+                        setShowWhatsAppModal(true)
                       }
                     }}
-                    disabled={type !== 'email'}
-                    title={type !== 'email' ? 'Coming soon' : undefined}
+                    disabled={type !== 'email' && type !== 'whatsapp'}
+                    title={type !== 'email' && type !== 'whatsapp' ? 'Coming soon' : undefined}
                   >
                     <SIcon name="plus" size={12} />
                     {needsReauth ? 'Reconnect' : 'Connect'}
@@ -215,6 +218,140 @@ export default function ChannelsPanel() {
             </div>
           )
         })}
+      </div>
+
+      {showWhatsAppModal && workspaceId && (
+        <WhatsAppModal
+          workspaceId={workspaceId}
+          onSuccess={fetchAccounts}
+          onClose={() => setShowWhatsAppModal(false)}
+        />
+      )}
+    </div>
+  )
+}
+
+function WhatsAppModal({ workspaceId, onSuccess, onClose }: {
+  workspaceId: string
+  onSuccess: () => void
+  onClose: () => void
+}) {
+  const [phoneNumberId, setPhoneNumberId] = useState('')
+  const [accessToken, setAccessToken] = useState('')
+  const [displayName, setDisplayName] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+
+  const handleSubmit = async () => {
+    setSubmitting(true)
+    try {
+      const res = await fetch('/api/channels/whatsapp/connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspaceId, phoneNumberId, accessToken, displayName: displayName || undefined }),
+      })
+      const data = await res.json() as { success?: boolean; error?: string }
+      if (!res.ok || !data.success) {
+        toast.error(data.error ?? 'Connection failed')
+        return
+      }
+      toast.success('WhatsApp connected')
+      onSuccess()
+      onClose()
+    } catch {
+      toast.error('Connection failed')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const inputStyle: React.CSSProperties = {
+    width: '100%',
+    padding: '8px 10px',
+    border: '1px solid #e2e8f0',
+    borderRadius: 8,
+    fontSize: 13,
+    outline: 'none',
+    boxSizing: 'border-box',
+  }
+  const hintStyle: React.CSSProperties = {
+    fontSize: 11,
+    color: 'var(--tc-ink-faint)',
+    marginTop: 4,
+  }
+  const labelStyle: React.CSSProperties = {
+    display: 'block',
+    fontSize: 12.5,
+    fontWeight: 500,
+    color: 'var(--tc-ink)',
+    marginBottom: 5,
+  }
+  const fieldStyle: React.CSSProperties = { marginBottom: 16 }
+
+  return (
+    <div
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)',
+        zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}
+      onClick={onClose}
+    >
+      <div
+        style={{
+          background: '#fff', borderRadius: 12, padding: 24,
+          width: '100%', maxWidth: 420, boxShadow: '0 8px 32px rgba(0,0,0,0.14)',
+        }}
+        onClick={e => e.stopPropagation()}
+      >
+        <h2 style={{ margin: '0 0 20px', fontSize: 16, fontWeight: 600, color: 'var(--tc-ink)' }}>
+          Connect WhatsApp Business
+        </h2>
+
+        <div style={fieldStyle}>
+          <label style={labelStyle}>Phone Number ID</label>
+          <input
+            style={inputStyle}
+            value={phoneNumberId}
+            onChange={e => setPhoneNumberId(e.target.value)}
+            placeholder="123456789012345"
+          />
+          <p style={hintStyle}>Meta Business Suite → WhatsApp → API Setup</p>
+        </div>
+
+        <div style={fieldStyle}>
+          <label style={labelStyle}>Permanent Access Token</label>
+          <input
+            style={inputStyle}
+            type="password"
+            value={accessToken}
+            onChange={e => setAccessToken(e.target.value)}
+            placeholder="EAAxxxxx..."
+          />
+          <p style={hintStyle}>Meta App Dashboard → Access Tokens</p>
+        </div>
+
+        <div style={fieldStyle}>
+          <label style={labelStyle}>Display name (optional)</label>
+          <input
+            style={inputStyle}
+            value={displayName}
+            onChange={e => setDisplayName(e.target.value)}
+            placeholder="e.g. ODS Construction"
+          />
+          <p style={hintStyle}>Shown in your inbox — leave blank to use the verified name from Meta</p>
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
+          <button className="btn-ghost sm" onClick={onClose} disabled={submitting}>
+            Cancel
+          </button>
+          <button
+            className="btn-solid sm"
+            onClick={handleSubmit}
+            disabled={submitting || !phoneNumberId || !accessToken}
+          >
+            {submitting ? 'Connecting…' : 'Connect'}
+          </button>
+        </div>
       </div>
     </div>
   )

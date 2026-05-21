@@ -1,11 +1,15 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import CayeMark from '@/components/ui/CayeMark'
 import ChannelIcon from '@/components/ui/ChannelIcon'
 import type { CayeMessage, CayeBullet, ChannelType } from '@/lib/types'
 import { useWorkspace } from '@/lib/workspace-context'
 import { getSupabase } from '@/lib/supabase'
+
+const MIN_WIDTH = 300
+const MAX_WIDTH = 620
+const DEFAULT_WIDTH = 340
 
 function toUiChannel(ch: string): ChannelType {
   if (ch === 'whatsapp') return 'wa'
@@ -32,7 +36,35 @@ export default function CayePanel({ open, onClose }: { open: boolean; onClose: (
   const [history, setHistory] = useState<{ from: 'user' | 'caye'; text: string }[]>([])
   const [typing, setTyping] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [panelWidth, setPanelWidth] = useState(DEFAULT_WIDTH)
   const initialized = useRef(false)
+  const isDragging = useRef(false)
+  const dragStartX = useRef(0)
+  const dragStartWidth = useRef(DEFAULT_WIDTH)
+
+  const onDragStart = useCallback((e: React.MouseEvent) => {
+    isDragging.current = true
+    dragStartX.current = e.clientX
+    dragStartWidth.current = panelWidth
+    document.body.style.cursor = 'ew-resize'
+    document.body.style.userSelect = 'none'
+
+    const onMove = (ev: MouseEvent) => {
+      if (!isDragging.current) return
+      const delta = dragStartX.current - ev.clientX
+      const next = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, dragStartWidth.current + delta))
+      setPanelWidth(next)
+    }
+    const onUp = () => {
+      isDragging.current = false
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }, [panelWidth])
 
   useEffect(() => {
     if (!open || initialized.current) return
@@ -138,10 +170,14 @@ export default function CayePanel({ open, onClose }: { open: boolean; onClose: (
   }
 
   return (
-    <aside className={'caye-panel' + (open ? ' open' : '')}>
+    <aside className={'caye-panel' + (open ? ' open' : '')} style={{ width: panelWidth }}>
+      <div className="cp-resize-handle" onMouseDown={onDragStart} title="Drag to resize" />
       <header className="cp-head">
+        <div className="cp-head-bg" />
         <div className="cp-title">
-          <CayeMark size={28} />
+          <div className="cp-mark-wrap">
+            <CayeMark size={28} />
+          </div>
           <div>
             <div className="cp-name">Caye</div>
             <div className="cp-status">
@@ -152,12 +188,16 @@ export default function CayePanel({ open, onClose }: { open: boolean; onClose: (
         <button className="cp-close" onClick={onClose}>×</button>
       </header>
 
-<div className="cp-body">
+      <div className="cp-body">
         {loading && (
           <div className="cp-msg caye">
             <CayeMark size={20} />
             <div className="cp-msg-body">
-              <div className="cp-msg-bubble" style={{ opacity: 0.6 }}>…</div>
+              <div className="cp-msg-bubble cp-thinking">
+                <span className="cp-dot" />
+                <span className="cp-dot" />
+                <span className="cp-dot" />
+              </div>
             </div>
           </div>
         )}
@@ -186,19 +226,11 @@ export default function CayePanel({ open, onClose }: { open: boolean; onClose: (
                 {m.footer && <div className="cp-msg-footer">{m.footer}</div>}
               </div>
               {m.configUpdates && m.configUpdates.length > 0 && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 4 }}>
+                <div className="cp-config-updates">
                   {m.configUpdates.map((u, k) => (
-                    <span key={k} style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 4,
-                      fontSize: 12,
-                      color: '#16a34a',
-                      background: '#f0fdf4',
-                      borderRadius: 999,
-                      padding: '2px 8px',
-                    }}>
-                      ✓ {u.summary}
+                    <span key={k} className="cp-config-chip">
+                      <span className="cp-config-check">✓</span>
+                      {u.summary}
                     </span>
                   ))}
                 </div>
@@ -210,7 +242,11 @@ export default function CayePanel({ open, onClose }: { open: boolean; onClose: (
           <div className="cp-msg caye">
             <CayeMark size={20} />
             <div className="cp-msg-body">
-              <div className="cp-msg-bubble" style={{ opacity: 0.6 }}>…</div>
+              <div className="cp-msg-bubble cp-thinking">
+                <span className="cp-dot" />
+                <span className="cp-dot" />
+                <span className="cp-dot" />
+              </div>
             </div>
           </div>
         )}
