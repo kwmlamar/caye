@@ -210,6 +210,11 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
     })
     if (inboundErr) {
       console.error('[zoho-email webhook] Inbound message insert failed:', inboundErr)
+    } else {
+      await supabase
+        .from('unified_conversations')
+        .update({ last_sender_type: 'customer', last_message_at: sentAt, last_message_preview: (body || subject).slice(0, 100) })
+        .eq('id', conversation.id)
     }
   }
 
@@ -236,13 +241,14 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
   }
 
   // Store outbound message
-  await supabase.from('unified_messages').insert({
+  const replySentAt = new Date().toISOString()
+  const { error: outboundErr } = await supabase.from('unified_messages').insert({
     conversation_id: conversation.id,
     channel_message_id: `caye_auto_${Date.now()}`,
     sender_type: 'business',
     content: reply,
     message_type: 'text',
-    sent_at: new Date().toISOString(),
+    sent_at: replySentAt,
     status: 'sent',
     metadata: {
       subject: replySubject,
@@ -250,6 +256,13 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
       generated_by: 'caye',
     },
   })
+
+  if (!outboundErr) {
+    await supabase
+      .from('unified_conversations')
+      .update({ last_sender_type: 'business', last_message_at: replySentAt, last_message_preview: reply.slice(0, 100) })
+      .eq('id', conversation.id)
+  }
 
   console.log(`[zoho-email webhook] Auto-reply sent to ${fromEmail} for workspace ${workspaceId}`)
 }

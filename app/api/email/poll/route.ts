@@ -167,6 +167,11 @@ async function processMessage(
     metadata: { subject, from: fromRaw, zoho_message_id: messageId, zoho_thread_id: threadId },
   })
 
+  await supabase
+    .from('unified_conversations')
+    .update({ last_sender_type: 'customer', last_message_at: receivedTime, last_message_preview: (body || subject).slice(0, 100) })
+    .eq('id', conversation.id)
+
   // Don't auto-reply to emails that existed before the account was connected
   if (isHistorical) {
     console.log(`[email/poll] Historical email skipped (no auto-reply): ${messageId}`)
@@ -210,16 +215,24 @@ async function processMessage(
   }
 
   // Store outbound message
-  await supabase.from('unified_messages').insert({
+  const replySentAt = new Date().toISOString()
+  const { error: outboundErr } = await supabase.from('unified_messages').insert({
     conversation_id: conversation.id,
     channel_message_id: `caye_auto_${Date.now()}`,
     sender_type: 'business',
     content: reply,
     message_type: 'text',
-    sent_at: new Date().toISOString(),
+    sent_at: replySentAt,
     status: 'sent',
     metadata: { subject: replySubject, is_automated: true, generated_by: 'caye' },
   })
+
+  if (!outboundErr) {
+    await supabase
+      .from('unified_conversations')
+      .update({ last_sender_type: 'business', last_message_at: replySentAt, last_message_preview: reply.slice(0, 100) })
+      .eq('id', conversation.id)
+  }
 
   console.log(`[email/poll] Auto-replied to ${fromEmail} for workspace ${workspaceId}`)
   return 'processed'

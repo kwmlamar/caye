@@ -377,10 +377,14 @@
   color: var(--tc-ink-mute);
   width: fit-content;
 }
+.conv-caye.held  { color: var(--tc-coral); }
+.conv-caye.replied { color: var(--tc-teal); }
 .caye-pip {
   width: 5px; height: 5px; border-radius: 50%;
   background: conic-gradient(from 0deg, var(--tc-teal), var(--tc-sun), var(--tc-coral), var(--tc-teal));
 }
+.conv-caye.held  .caye-pip { background: var(--tc-coral); }
+.conv-caye.replied .caye-pip { background: var(--tc-teal); }
 
 /* ---------- THREAD ---------- */
 .thread-col {
@@ -551,7 +555,13 @@
   display: inline-flex; align-items: center; gap: 7px;
   font-size: 12px; color: var(--tc-ink-soft); font-weight: 500;
 }
-.ai-toggle.header { font-size: 11.5px; color: var(--tc-ink-mute); padding-right: 4px; }
+.ai-toggle.header {
+  font-size: 11.5px; color: var(--tc-ink-mute); padding-right: 4px;
+  background: none; border: none; cursor: pointer;
+  transition: opacity .15s;
+}
+.ai-toggle.header:hover { opacity: 0.75; }
+.ai-toggle.header.toggling { opacity: 0.45; cursor: default; }
 .ai-toggle-track {
   width: 24px; height: 14px;
   background: var(--tc-bg-deeper);

@@ -85,12 +85,17 @@ function ConversationRow({
             <span className="conv-unread">{conv.unread_count}</span>
           )}
         </div>
-        {conv.human_agent_enabled && (
+        {conv.human_agent_enabled ? (
           <div className="conv-caye held">
             <span className="caye-pip" />
             <span>Caye held</span>
           </div>
-        )}
+        ) : conv.last_sender_type === 'business' ? (
+          <div className="conv-caye replied">
+            <span className="caye-pip" />
+            <span>Caye replied</span>
+          </div>
+        ) : null}
       </div>
     </button>
   )
@@ -107,6 +112,7 @@ export default function ChatsScreen({ openCaye }: { openCaye: () => void }) {
   const [searchQuery, setSearchQuery] = useState('')
   const [replyText, setReplyText] = useState('')
   const [sending, setSending] = useState(false)
+  const [togglingAutoReply, setTogglingAutoReply] = useState(false)
   const [accountIds, setAccountIds] = useState<string[]>([])
 
   const mountedRef = useRef(true)
@@ -320,13 +326,18 @@ export default function ChatsScreen({ openCaye }: { openCaye: () => void }) {
     setConversations((prev) =>
       prev.map((c) =>
         c.id === selectedConv.id
-          ? { ...c, last_message_at: tempMsg.sent_at, last_message_preview: text.slice(0, 100) }
+          ? { ...c, last_message_at: tempMsg.sent_at, last_message_preview: text.slice(0, 100), last_sender_type: 'business' as const }
           : c
       )
     )
+    setSelectedConv((prev) => prev ? { ...prev, last_sender_type: 'business' as const } : prev)
 
     const { data, error } = await sendUnifiedMessage(selectedConv.id, text)
     setSending(false)
+
+    if (!error) {
+      updateUnifiedConversation(selectedConv.id, { last_sender_type: 'business' })
+    }
 
     if (error) {
       setMessages((prev) =>
@@ -337,6 +348,33 @@ export default function ChatsScreen({ openCaye }: { openCaye: () => void }) {
         if (prev.some((m) => m.id === data.id)) return prev
         return prev.map((m) => (m.id === tempMsg.id ? data : m))
       })
+    }
+  }
+
+  // Toggle Caye auto-reply (inverts human_agent_enabled)
+  async function handleToggleAutoReply() {
+    if (!selectedConv || togglingAutoReply) return
+    const nextEnabled = !selectedConv.human_agent_enabled
+    // human_agent_enabled=true means Caye is HELD (auto-reply OFF)
+    // human_agent_enabled=false means Caye is active (auto-reply ON)
+    const updates = nextEnabled
+      ? { human_agent_enabled: true }
+      : { human_agent_enabled: false, human_agent_reason: null as unknown as string, human_agent_marked_at: null as unknown as string }
+
+    // Optimistic update
+    const patch = { human_agent_enabled: nextEnabled, human_agent_reason: nextEnabled ? selectedConv.human_agent_reason : null }
+    setSelectedConv((prev) => prev ? { ...prev, ...patch } : prev)
+    setConversations((prev) => prev.map((c) => c.id === selectedConv.id ? { ...c, ...patch } : c))
+
+    setTogglingAutoReply(true)
+    const { error } = await updateUnifiedConversation(selectedConv.id, updates)
+    setTogglingAutoReply(false)
+
+    if (error) {
+      // Revert on failure
+      const revert = { human_agent_enabled: selectedConv.human_agent_enabled, human_agent_reason: selectedConv.human_agent_reason }
+      setSelectedConv((prev) => prev ? { ...prev, ...revert } : prev)
+      setConversations((prev) => prev.map((c) => c.id === selectedConv.id ? { ...c, ...revert } : c))
     }
   }
 
@@ -446,12 +484,17 @@ export default function ChatsScreen({ openCaye }: { openCaye: () => void }) {
                 </div>
               </div>
               <div className="thread-actions">
-                <span className="ai-toggle header">
-                  <span className="ai-toggle-track on">
+                <button
+                  className={'ai-toggle header' + (togglingAutoReply ? ' toggling' : '')}
+                  onClick={handleToggleAutoReply}
+                  disabled={togglingAutoReply}
+                  title={selectedConv.human_agent_enabled ? 'Caye is paused — click to resume auto-reply' : 'Caye is replying — click to pause'}
+                >
+                  <span className={'ai-toggle-track' + (!selectedConv.human_agent_enabled ? ' on' : '')}>
                     <span className="ai-toggle-thumb" />
                   </span>
                   Caye auto-reply
-                </span>
+                </button>
                 <button className="ghost-btn" title="Open contact">View contact</button>
                 <button className="ghost-btn" title="Book this guest">+ Booking</button>
                 <button className="ghost-btn icon-only" title="More">⋯</button>

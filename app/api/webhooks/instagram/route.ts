@@ -166,6 +166,7 @@ async function processInboundInstagram(payload: Record<string, unknown>): Promis
             status: 'open',
             last_message_at: sentAt,
             last_message_preview: body.slice(0, 100),
+            last_sender_type: 'customer',
             metadata: { instagram_recipient_id: recipientId },
           },
           { onConflict: 'connected_account_id,channel_conversation_id' }
@@ -237,6 +238,11 @@ async function processInboundInstagram(payload: Record<string, unknown>): Promis
 
       if (outboundErr) {
         console.error('[instagram webhook] Outbound message insert failed:', outboundErr)
+      } else {
+        await supabase
+          .from('unified_conversations')
+          .update({ last_sender_type: 'business' })
+          .eq('id', conversation.id)
       }
 
       console.log(

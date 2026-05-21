@@ -200,6 +200,7 @@ async function processInboundWhatsApp(payload: Record<string, unknown>): Promise
           status: 'open',
           last_message_at: sentAt,
           last_message_preview: isTextMessage ? body.slice(0, 100) : `[${message.type}]`,
+          last_sender_type: 'customer',
           metadata: { wa_id: from, phone_number_id },
           ...(isTextMessage
             ? {}
@@ -276,6 +277,11 @@ async function processInboundWhatsApp(payload: Record<string, unknown>): Promise
 
     if (outboundErr) {
       console.error('[whatsapp webhook] Outbound message insert failed:', outboundErr)
+    } else {
+      await supabase
+        .from('unified_conversations')
+        .update({ last_sender_type: 'business' })
+        .eq('id', conversation.id)
     }
 
     console.log(`[whatsapp webhook] Auto-reply sent to ${from} for workspace ${workspaceId}`)

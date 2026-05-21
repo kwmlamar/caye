@@ -82,7 +82,8 @@ export async function updateUnifiedConversation(
   id: string,
   updates: Partial<Pick<UnifiedConversation,
     'is_archived' | 'unread_count' | 'status' |
-    'human_agent_enabled' | 'human_agent_reason' | 'human_agent_marked_at'
+    'human_agent_enabled' | 'human_agent_reason' | 'human_agent_marked_at' |
+    'last_sender_type'
   >>
 ) {
   const client = getSupabase()

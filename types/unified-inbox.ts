@@ -40,6 +40,7 @@ export interface UnifiedConversation {
   human_agent_enabled: boolean
   human_agent_reason: string | null
   human_agent_marked_at: string | null
+  last_sender_type: 'customer' | 'business' | null
   created_at: string
   updated_at: string
   connected_account?: ConnectedAccount
