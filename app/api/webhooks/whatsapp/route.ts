@@ -19,7 +19,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createHmac } from 'crypto'
 import { createServiceClient } from '@/lib/supabase-server'
-import { generateWhatsAppReply, sendWhatsAppMessage } from '@/lib/whatsapp'
+import { sendWhatsAppMessage } from '@/lib/whatsapp'
+import { generateCayeAutoReply } from '@/lib/caye-reply'
 import type { VoiceProfile } from '@/lib/voice-profile'
 
 // ─── GET — webhook verification ──────────────────────────────────────────────
@@ -242,12 +243,12 @@ async function processInboundWhatsApp(payload: Record<string, unknown>): Promise
     // Non-text messages get no AI reply — human agent flag already set above
     if (!isTextMessage || !body) continue
 
-    // Generate AI reply
-    let reply: string
+    // Generate Caye response (reply or hold decision)
+    let decision: Awaited<ReturnType<typeof generateCayeAutoReply>>
     try {
-      reply = await generateWhatsAppReply(
+      decision = await generateCayeAutoReply(
         systemPrompt,
-        { senderName: customerName, body },
+        { senderName: customerName, body, channel: 'whatsapp' },
         voiceProfile
       )
     } catch (err) {
@@ -255,9 +256,30 @@ async function processInboundWhatsApp(payload: Record<string, unknown>): Promise
       continue
     }
 
+    if (decision.action === 'hold') {
+      // Hold the conversation and leave an internal note for the owner
+      await supabase
+        .from('unified_conversations')
+        .update({ human_agent_enabled: true, human_agent_reason: decision.reason })
+        .eq('id', conversation.id)
+      await supabase.from('unified_messages').insert({
+        conversation_id: conversation.id,
+        channel_message_id: null,
+        sender_type: 'business',
+        content: decision.note,
+        message_type: 'text',
+        sent_at: new Date().toISOString(),
+        status: 'sent',
+        is_internal: true,
+        metadata: { generated_by: 'caye', hold_reason: decision.reason },
+      })
+      console.log(`[whatsapp webhook] Held for human: ${from} — ${decision.reason}`)
+      continue
+    }
+
     // Send reply via Meta Cloud API
     try {
-      await sendWhatsAppMessage(from, reply, phone_number_id, account.access_token)
+      await sendWhatsAppMessage(from, decision.content, phone_number_id, account.access_token)
     } catch (err) {
       console.error('[whatsapp webhook] WhatsApp send failed:', err)
       continue
@@ -268,7 +290,7 @@ async function processInboundWhatsApp(payload: Record<string, unknown>): Promise
       conversation_id: conversation.id,
       channel_message_id: `caye_wa_${Date.now()}`,
       sender_type: 'business',
-      content: reply,
+      content: decision.content,
       message_type: 'text',
       sent_at: new Date().toISOString(),
       status: 'sent',

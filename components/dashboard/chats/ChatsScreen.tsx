@@ -542,12 +542,13 @@ export default function ChatsScreen({ openCaye }: { openCaye: () => void }) {
               ) : (
                 messages.map((msg) => {
                   if (msg.is_internal) {
+                    const byCaye = (msg.metadata as Record<string, unknown>)?.generated_by === 'caye'
                     return (
-                      <div key={msg.id} className="msg-row internal">
-                        <div className="note-bubble">
+                      <div key={msg.id} className={'msg-row internal' + (byCaye ? ' caye-note' : '')}>
+                        <div className={'note-bubble' + (byCaye ? ' caye' : '')}>
                           <div className="note-header">
-                            <span className="note-icon">🔒</span>
-                            <span className="note-label">Internal note</span>
+                            {byCaye ? <CayeMark size={13} /> : <span className="note-icon">🔒</span>}
+                            <span className="note-label">{byCaye ? 'Caye note' : 'Internal note'}</span>
                             <span className="note-time">{formatTime(msg.sent_at)}</span>
                           </div>
                           <div className="note-body" style={{ whiteSpace: 'pre-wrap' }}>{msg.content || ''}</div>

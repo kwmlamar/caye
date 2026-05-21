@@ -597,7 +597,7 @@
 .btn-send.note { background: var(--tc-sun-deep); color: #fff; }
 .btn-send.note:hover { background: #b8860b; }
 
-/* Internal note bubble */
+/* Internal note bubble — human */
 .msg-row.internal { justify-content: center; }
 .note-bubble {
   width: 100%;
@@ -607,6 +607,12 @@
   padding: 10px 13px;
   font-size: 13px; line-height: 1.5;
 }
+/* Caye-authored note variant */
+.note-bubble.caye {
+  background: rgba(224,238,234,0.55);
+  border-color: rgba(30,97,87,0.2);
+}
+.note-bubble.caye .note-label { color: var(--tc-teal); }
 .note-header {
   display: flex; align-items: center; gap: 6px;
   margin-bottom: 6px;

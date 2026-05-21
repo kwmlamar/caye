@@ -19,7 +19,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createHmac } from 'crypto'
 import { createServiceClient } from '@/lib/supabase-server'
-import { generateMetaReply, sendMetaMessage, fetchMetaSenderName } from '@/lib/meta-reply'
+import { sendMetaMessage, fetchMetaSenderName } from '@/lib/meta-reply'
+import { generateCayeAutoReply } from '@/lib/caye-reply'
 import type { VoiceProfile } from '@/lib/voice-profile'
 
 // ─── GET — webhook verification ──────────────────────────────────────────────
@@ -201,11 +202,35 @@ async function processInboundInstagram(payload: Record<string, unknown>): Promis
         }
       }
 
-      let reply: string
+      let decision: Awaited<ReturnType<typeof generateCayeAutoReply>>
       try {
-        reply = await generateMetaReply(systemPrompt, { senderName: customerName, body }, voiceProfile)
+        decision = await generateCayeAutoReply(
+          systemPrompt,
+          { senderName: customerName, body, channel: 'instagram' },
+          voiceProfile
+        )
       } catch (err) {
         console.error('[instagram webhook] AI reply generation failed:', err)
+        continue
+      }
+
+      if (decision.action === 'hold') {
+        await supabase
+          .from('unified_conversations')
+          .update({ human_agent_enabled: true, human_agent_reason: decision.reason })
+          .eq('id', conversation.id)
+        await supabase.from('unified_messages').insert({
+          conversation_id: conversation.id,
+          channel_message_id: null,
+          sender_type: 'business',
+          content: decision.note,
+          message_type: 'text',
+          sent_at: new Date().toISOString(),
+          status: 'sent',
+          is_internal: true,
+          metadata: { generated_by: 'caye', hold_reason: decision.reason },
+        })
+        console.log(`[instagram webhook] Held for human: ${senderId} — ${decision.reason}`)
         continue
       }
 
@@ -213,7 +238,7 @@ async function processInboundInstagram(payload: Record<string, unknown>): Promis
 
       if (!demoMode) {
         try {
-          await sendMetaMessage(senderId, reply, account.access_token)
+          await sendMetaMessage(senderId, decision.content, account.access_token)
         } catch (err) {
           console.error('[instagram webhook] Send failed:', err)
           continue
@@ -224,7 +249,7 @@ async function processInboundInstagram(payload: Record<string, unknown>): Promis
         conversation_id: conversation.id,
         channel_message_id: `caye_ig_${Date.now()}`,
         sender_type: 'business',
-        content: reply,
+        content: decision.content,
         message_type: 'text',
         sent_at: new Date().toISOString(),
         status: demoMode ? 'pending' : 'sent',

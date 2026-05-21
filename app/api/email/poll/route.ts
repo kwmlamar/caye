@@ -11,7 +11,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase-server'
-import { generateEmailReply } from '@/lib/email-ai'
+import { generateCayeAutoReply } from '@/lib/caye-reply'
 
 const ZOHO_TOKEN_URL = 'https://accounts.zoho.com/oauth/v2/token'
 
@@ -72,7 +72,7 @@ async function processMessage(
   msg: Record<string, unknown>,
   accessToken: string,
   base: string
-): Promise<'processed' | 'skipped' | 'error'> {
+): Promise<'processed' | 'skipped' | 'error' | 'held'> {
   const messageId = String(msg.messageId || msg.message_id || '')
   if (!messageId) return 'skipped'
 
@@ -178,17 +178,36 @@ async function processMessage(
     return 'skipped'
   }
 
-  // Generate AI reply
-  let reply: string
+  // Generate Caye response
+  let decision: Awaited<ReturnType<typeof generateCayeAutoReply>>
   try {
-    reply = await generateEmailReply(systemPrompt, {
-      senderName: fromName || fromEmail,
-      subject,
-      body: body || subject,
-    })
+    decision = await generateCayeAutoReply(
+      systemPrompt,
+      { senderName: fromName || fromEmail, body: body || subject, channel: 'email', subject }
+    )
   } catch (err) {
     console.error('[email/poll] AI reply generation failed:', err)
     return 'error'
+  }
+
+  if (decision.action === 'hold') {
+    await supabase
+      .from('unified_conversations')
+      .update({ human_agent_enabled: true, human_agent_reason: decision.reason })
+      .eq('id', conversation.id)
+    await supabase.from('unified_messages').insert({
+      conversation_id: conversation.id,
+      channel_message_id: null,
+      sender_type: 'business',
+      content: decision.note,
+      message_type: 'text',
+      sent_at: new Date().toISOString(),
+      status: 'sent',
+      is_internal: true,
+      metadata: { generated_by: 'caye', hold_reason: decision.reason },
+    })
+    console.log(`[email/poll] Held for human: ${fromEmail} — ${decision.reason}`)
+    return 'held'
   }
 
   // Send reply via Zoho Mail API
@@ -203,7 +222,7 @@ async function processMessage(
       fromAddress: ownEmail,
       toAddress: fromEmail,
       subject: replySubject,
-      content: reply,
+      content: decision.content,
       mailFormat: 'plaintext',
     }),
   })
@@ -220,7 +239,7 @@ async function processMessage(
     conversation_id: conversation.id,
     channel_message_id: `caye_auto_${Date.now()}`,
     sender_type: 'business',
-    content: reply,
+    content: decision.content,
     message_type: 'text',
     sent_at: replySentAt,
     status: 'sent',
@@ -230,7 +249,7 @@ async function processMessage(
   if (!outboundErr) {
     await supabase
       .from('unified_conversations')
-      .update({ last_sender_type: 'business', last_message_at: replySentAt, last_message_preview: reply.slice(0, 100) })
+      .update({ last_sender_type: 'business', last_message_at: replySentAt, last_message_preview: decision.content.slice(0, 100) })
       .eq('id', conversation.id)
   }
 

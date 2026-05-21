@@ -17,7 +17,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createHmac } from 'crypto'
 import { createServiceClient } from '@/lib/supabase-server'
-import { generateEmailReply, sendZohoReply } from '@/lib/email-ai'
+import { sendZohoReply } from '@/lib/email-ai'
+import { generateCayeAutoReply } from '@/lib/caye-reply'
 import type { VoiceProfile } from '@/lib/voice-profile'
 
 function htmlToPlainText(html: string): string {
@@ -218,12 +219,12 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
     }
   }
 
-  // Generate AI reply
-  let reply: string
+  // Generate Caye response
+  let decision: Awaited<ReturnType<typeof generateCayeAutoReply>>
   try {
-    reply = await generateEmailReply(
+    decision = await generateCayeAutoReply(
       systemPrompt,
-      { senderName: fromName || fromEmail, subject, body: body || subject },
+      { senderName: fromName || fromEmail, body: body || subject, channel: 'email', subject },
       voiceProfile
     )
   } catch (err) {
@@ -231,10 +232,30 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
     return
   }
 
+  if (decision.action === 'hold') {
+    await supabase
+      .from('unified_conversations')
+      .update({ human_agent_enabled: true, human_agent_reason: decision.reason })
+      .eq('id', conversation.id)
+    await supabase.from('unified_messages').insert({
+      conversation_id: conversation.id,
+      channel_message_id: null,
+      sender_type: 'business',
+      content: decision.note,
+      message_type: 'text',
+      sent_at: new Date().toISOString(),
+      status: 'sent',
+      is_internal: true,
+      metadata: { generated_by: 'caye', hold_reason: decision.reason },
+    })
+    console.log(`[zoho-email webhook] Held for human: ${fromEmail} — ${decision.reason}`)
+    return
+  }
+
   // Send via Zoho
   const replySubject = subject.startsWith('Re:') ? subject : `Re: ${subject}`
   try {
-    await sendZohoReply(fromEmail, replySubject, reply, threadId, workspaceId)
+    await sendZohoReply(fromEmail, replySubject, decision.content, threadId, workspaceId)
   } catch (err) {
     console.error('[zoho-email webhook] Zoho send failed:', err)
     return
@@ -246,7 +267,7 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
     conversation_id: conversation.id,
     channel_message_id: `caye_auto_${Date.now()}`,
     sender_type: 'business',
-    content: reply,
+    content: decision.content,
     message_type: 'text',
     sent_at: replySentAt,
     status: 'sent',
@@ -260,7 +281,7 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
   if (!outboundErr) {
     await supabase
       .from('unified_conversations')
-      .update({ last_sender_type: 'business', last_message_at: replySentAt, last_message_preview: reply.slice(0, 100) })
+      .update({ last_sender_type: 'business', last_message_at: replySentAt, last_message_preview: decision.content.slice(0, 100) })
       .eq('id', conversation.id)
   }
 
