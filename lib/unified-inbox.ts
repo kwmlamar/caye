@@ -157,6 +157,30 @@ export async function sendUnifiedMessage(
   }
 }
 
+export async function saveInternalNote(
+  conversationId: string,
+  content: string
+): Promise<{ data: UnifiedMessage | null; error: string | null }> {
+  const client = getSupabase()
+  const { data, error } = await client
+    .from('unified_messages')
+    .insert({
+      conversation_id: conversationId,
+      channel_message_id: null,
+      sender_type: 'business',
+      content,
+      message_type: 'text',
+      sent_at: new Date().toISOString(),
+      status: 'sent',
+      is_internal: true,
+      metadata: {},
+    })
+    .select()
+    .single()
+
+  return { data: data as UnifiedMessage | null, error: error?.message || null }
+}
+
 // ==================== REAL-TIME ====================
 
 export function subscribeToUnifiedMessages(

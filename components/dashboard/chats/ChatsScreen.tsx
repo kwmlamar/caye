@@ -9,6 +9,7 @@ import {
   getUnifiedConversations,
   getUnifiedMessages,
   sendUnifiedMessage,
+  saveInternalNote,
   updateUnifiedConversation,
   subscribeToUnifiedMessages,
   subscribeToUnifiedConversations,
@@ -111,6 +112,7 @@ export default function ChatsScreen({ openCaye }: { openCaye: () => void }) {
   const [filter, setFilter] = useState<Filter>('all')
   const [searchQuery, setSearchQuery] = useState('')
   const [replyText, setReplyText] = useState('')
+  const [replyMode, setReplyMode] = useState<'reply' | 'note'>('reply')
   const [sending, setSending] = useState(false)
   const [togglingAutoReply, setTogglingAutoReply] = useState(false)
   const [accountIds, setAccountIds] = useState<string[]>([])
@@ -298,12 +300,14 @@ export default function ChatsScreen({ openCaye }: { openCaye: () => void }) {
     return unsubscribe
   }, [accountIds])
 
-  // Send message handler
+  // Send message or save internal note
   async function handleSend() {
     if (!selectedConv || !replyText.trim() || sending) return
     const text = replyText.trim()
     setReplyText('')
     setSending(true)
+
+    const isNote = replyMode === 'note'
 
     const tempMsg: UnifiedMessage = {
       id: generateId(),
@@ -318,36 +322,52 @@ export default function ChatsScreen({ openCaye }: { openCaye: () => void }) {
       failed_at: null,
       status: 'sending',
       error_message: null,
+      is_internal: isNote,
       metadata: {},
       created_at: new Date().toISOString(),
     }
 
     setMessages((prev) => [...prev, tempMsg])
-    setConversations((prev) =>
-      prev.map((c) =>
-        c.id === selectedConv.id
-          ? { ...c, last_message_at: tempMsg.sent_at, last_message_preview: text.slice(0, 100), last_sender_type: 'business' as const }
-          : c
+
+    if (!isNote) {
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === selectedConv.id
+            ? { ...c, last_message_at: tempMsg.sent_at, last_message_preview: text.slice(0, 100), last_sender_type: 'business' as const }
+            : c
+        )
       )
-    )
-    setSelectedConv((prev) => prev ? { ...prev, last_sender_type: 'business' as const } : prev)
-
-    const { data, error } = await sendUnifiedMessage(selectedConv.id, text)
-    setSending(false)
-
-    if (!error) {
-      updateUnifiedConversation(selectedConv.id, { last_sender_type: 'business' })
+      setSelectedConv((prev) => prev ? { ...prev, last_sender_type: 'business' as const } : prev)
     }
 
-    if (error) {
-      setMessages((prev) =>
-        prev.map((m) => (m.id === tempMsg.id ? { ...m, status: 'failed' as const } : m))
-      )
-    } else if (data) {
-      setMessages((prev) => {
-        if (prev.some((m) => m.id === data.id)) return prev
-        return prev.map((m) => (m.id === tempMsg.id ? data : m))
-      })
+    if (isNote) {
+      const { data, error } = await saveInternalNote(selectedConv.id, text)
+      setSending(false)
+      if (error || !data) {
+        setMessages((prev) =>
+          prev.map((m) => (m.id === tempMsg.id ? { ...m, status: 'failed' as const } : m))
+        )
+      } else {
+        setMessages((prev) => prev.map((m) => (m.id === tempMsg.id ? data : m)))
+      }
+    } else {
+      const { data, error } = await sendUnifiedMessage(selectedConv.id, text)
+      setSending(false)
+
+      if (!error) {
+        updateUnifiedConversation(selectedConv.id, { last_sender_type: 'business' })
+      }
+
+      if (error) {
+        setMessages((prev) =>
+          prev.map((m) => (m.id === tempMsg.id ? { ...m, status: 'failed' as const } : m))
+        )
+      } else if (data) {
+        setMessages((prev) => {
+          if (prev.some((m) => m.id === data.id)) return prev
+          return prev.map((m) => (m.id === tempMsg.id ? data : m))
+        })
+      }
     }
   }
 
@@ -521,6 +541,24 @@ export default function ChatsScreen({ openCaye }: { openCaye: () => void }) {
                 </div>
               ) : (
                 messages.map((msg) => {
+                  if (msg.is_internal) {
+                    return (
+                      <div key={msg.id} className="msg-row internal">
+                        <div className="note-bubble">
+                          <div className="note-header">
+                            <span className="note-icon">🔒</span>
+                            <span className="note-label">Internal note</span>
+                            <span className="note-time">{formatTime(msg.sent_at)}</span>
+                          </div>
+                          <div className="note-body" style={{ whiteSpace: 'pre-wrap' }}>{msg.content || ''}</div>
+                          {msg.status === 'failed' && (
+                            <div className="note-error">Failed to save</div>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  }
+
                   const side = msg.sender_type === 'customer' ? 'in' : 'out'
                   const isEmail = selectedConv?.channel_type === 'email'
                   const meta = (msg.metadata || {}) as Record<string, string>
@@ -559,13 +597,23 @@ export default function ChatsScreen({ openCaye }: { openCaye: () => void }) {
               <div ref={messagesEndRef} />
             </div>
 
-            <footer className="reply-box">
+            <footer className={'reply-box' + (replyMode === 'note' ? ' note-mode' : '')}>
               <div className="reply-tabs">
-                <button className="rt on">Reply</button>
-                <button className="rt">Internal note</button>
+                <button
+                  className={'rt' + (replyMode === 'reply' ? ' on' : '')}
+                  onClick={() => setReplyMode('reply')}
+                >
+                  Reply
+                </button>
+                <button
+                  className={'rt' + (replyMode === 'note' ? ' on note' : '')}
+                  onClick={() => setReplyMode('note')}
+                >
+                  Internal note
+                </button>
               </div>
               <textarea
-                placeholder={`Write back to ${selName.split(' ')[0]}…`}
+                placeholder={replyMode === 'note' ? 'Leave a note (only visible to you)…' : `Write back to ${selName.split(' ')[0]}…`}
                 value={replyText}
                 onChange={(e) => setReplyText(e.target.value)}
                 onKeyDown={(e) => {
@@ -595,11 +643,11 @@ export default function ChatsScreen({ openCaye }: { openCaye: () => void }) {
                   </button>
                 </div>
                 <button
-                  className="btn-send"
+                  className={'btn-send' + (replyMode === 'note' ? ' note' : '')}
                   onClick={handleSend}
                   disabled={!replyText.trim() || sending}
                 >
-                  {sending ? 'Sending…' : 'Send'}
+                  {sending ? (replyMode === 'note' ? 'Saving…' : 'Sending…') : (replyMode === 'note' ? 'Save note' : 'Send')}
                 </button>
               </div>
             </footer>

@@ -529,12 +529,16 @@
   font-weight: 500;
 }
 .rt.on { color: var(--tc-ink); border-bottom: 2px solid var(--tc-coral); }
+.rt.on.note { border-bottom-color: var(--tc-sun); color: var(--tc-sun-deep); }
 .reply-box textarea {
   width: 100%; padding: 10px 14px;
   font-size: 13.5px; line-height: 1.5;
   min-height: 60px;
+  transition: background .2s;
 }
 .reply-box textarea::placeholder { color: var(--tc-ink-faint); }
+.reply-box.note-mode { border-color: rgba(244,185,66,0.35); background: rgba(254,252,232,0.6); }
+.reply-box.note-mode textarea { background: transparent; }
 .reply-footer {
   display: flex; align-items: center; justify-content: space-between;
   padding: 8px 12px;
@@ -590,6 +594,35 @@
   transition: background .15s;
 }
 .btn-send:hover { background: #1a2730; }
+.btn-send.note { background: var(--tc-sun-deep); color: #fff; }
+.btn-send.note:hover { background: #b8860b; }
+
+/* Internal note bubble */
+.msg-row.internal { justify-content: center; }
+.note-bubble {
+  width: 100%;
+  background: rgba(254,243,199,0.7);
+  border: 1px solid rgba(244,185,66,0.4);
+  border-radius: 10px;
+  padding: 10px 13px;
+  font-size: 13px; line-height: 1.5;
+}
+.note-header {
+  display: flex; align-items: center; gap: 6px;
+  margin-bottom: 6px;
+}
+.note-icon { font-size: 11px; }
+.note-label {
+  font-size: 10.5px; font-weight: 700; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--tc-sun-deep);
+  flex: 1;
+}
+.note-time {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 10px; color: var(--tc-ink-faint); letter-spacing: .04em;
+}
+.note-body { color: var(--tc-ink-soft); }
+.note-error { font-size: 11px; color: var(--tc-coral); margin-top: 4px; }
 
 /* ====================================================== CONTACTS */
 .contacts-screen {

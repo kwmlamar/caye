@@ -60,6 +60,7 @@ export interface UnifiedMessage {
   failed_at: string | null
   status: MessageDeliveryStatus
   error_message: string | null
+  is_internal: boolean
   metadata: Record<string, unknown>
   created_at: string
 }
