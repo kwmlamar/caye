@@ -69,24 +69,38 @@ export default function ChannelsPanel() {
   const [byType, setByType] = useState<Record<string, ConnectedAccount>>({})
   const [loading, setLoading] = useState(true)
   const [showWhatsAppModal, setShowWhatsAppModal] = useState(false)
-  const [showMessengerModal, setShowMessengerModal] = useState(false)
+  const [messengerPages, setMessengerPages] = useState<{ id: string; name: string; token: string }[] | null>(null)
   const searchParams = useSearchParams()
   const router = useRouter()
 
   useEffect(() => {
-    const connected = searchParams.get('zoho_connected')
-    const error = searchParams.get('zoho_error')
-    if (!connected && !error) return
+    const zohoConnected = searchParams.get('zoho_connected')
+    const zohoError = searchParams.get('zoho_error')
+    const msgrConnected = searchParams.get('messenger_connected')
+    const msgrError = searchParams.get('messenger_error')
+    const msgrPages = searchParams.get('messenger_pages')
 
-    if (connected === '1') toast.success('Zoho Mail connected')
-    else if (error === 'access_denied') toast.error('Zoho authorization was denied')
-    else if (error) toast.error(`Zoho connection failed (${error})`)
+    if (zohoConnected === '1') toast.success('Zoho Mail connected')
+    else if (zohoError === 'access_denied') toast.error('Zoho authorization was denied')
+    else if (zohoError) toast.error(`Zoho connection failed (${zohoError})`)
+
+    if (msgrConnected === '1') { toast.success('Messenger connected'); fetchAccounts() }
+    else if (msgrError === 'access_denied') toast.error('Facebook authorization was denied')
+    else if (msgrError === 'no_pages') toast.error('No Facebook Pages found — make sure you manage at least one Page')
+    else if (msgrError) toast.error(`Messenger connection failed (${msgrError})`)
+
+    if (msgrPages) {
+      try {
+        const decoded = JSON.parse(Buffer.from(msgrPages, 'base64url').toString())
+        setMessengerPages(decoded)
+      } catch { /* ignore */ }
+    }
 
     // Strip the one-time params so they don't re-fire on refresh
-    const params = new URLSearchParams(searchParams.toString())
-    params.delete('zoho_connected')
-    params.delete('zoho_error')
-    router.replace(`?${params.toString()}`)
+    const clean = new URLSearchParams(searchParams.toString())
+    clean.delete('zoho_connected'); clean.delete('zoho_error')
+    clean.delete('messenger_connected'); clean.delete('messenger_error'); clean.delete('messenger_pages')
+    router.replace(`?${clean.toString()}`)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -207,7 +221,7 @@ export default function ChannelsPanel() {
                       } else if (type === 'whatsapp') {
                         setShowWhatsAppModal(true)
                       } else if (type === 'messenger') {
-                        setShowMessengerModal(true)
+                        window.location.href = `/api/auth/meta?workspaceId=${workspaceId}`
                       }
                     }}
                     disabled={type !== 'email' && type !== 'whatsapp' && type !== 'messenger'}
@@ -231,11 +245,12 @@ export default function ChannelsPanel() {
         />
       )}
 
-      {showMessengerModal && workspaceId && (
-        <MessengerModal
+      {messengerPages && workspaceId && (
+        <MessengerPagePicker
+          pages={messengerPages}
           workspaceId={workspaceId}
-          onSuccess={fetchAccounts}
-          onClose={() => setShowMessengerModal(false)}
+          onSuccess={() => { setMessengerPages(null); fetchAccounts() }}
+          onClose={() => setMessengerPages(null)}
         />
       )}
     </div>
@@ -368,50 +383,34 @@ function WhatsAppModal({ workspaceId, onSuccess, onClose }: {
   )
 }
 
-function MessengerModal({ workspaceId, onSuccess, onClose }: {
+// Shown only when the user manages multiple Facebook Pages after OAuth.
+// They pick which one to connect to this workspace.
+function MessengerPagePicker({ pages, workspaceId, onSuccess, onClose }: {
+  pages: { id: string; name: string; token: string }[]
   workspaceId: string
   onSuccess: () => void
   onClose: () => void
 }) {
-  const [pageId, setPageId] = useState('')
-  const [accessToken, setAccessToken] = useState('')
-  const [pageName, setPageName] = useState('')
-  const [submitting, setSubmitting] = useState(false)
+  const [saving, setSaving] = useState<string | null>(null)
 
-  const handleSubmit = async () => {
-    setSubmitting(true)
+  const handlePick = async (page: { id: string; name: string; token: string }) => {
+    setSaving(page.id)
     try {
       const res = await fetch('/api/channels/messenger/connect', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ workspaceId, pageId, accessToken, pageName: pageName || undefined }),
+        body: JSON.stringify({ workspaceId, pageId: page.id, accessToken: page.token, pageName: page.name }),
       })
-      const data = await res.json() as { success?: boolean; error?: string; pageName?: string }
-      if (!res.ok || !data.success) {
-        toast.error(data.error ?? 'Connection failed')
-        return
-      }
-      toast.success(`Messenger connected — ${data.pageName ?? 'Page'}`)
+      const data = await res.json() as { success?: boolean; error?: string }
+      if (!res.ok || !data.success) { toast.error(data.error ?? 'Connection failed'); return }
+      toast.success(`Messenger connected — ${page.name}`)
       onSuccess()
-      onClose()
     } catch {
       toast.error('Connection failed')
     } finally {
-      setSubmitting(false)
+      setSaving(null)
     }
   }
-
-  const inputStyle: React.CSSProperties = {
-    width: '100%', padding: '8px 10px',
-    border: '1px solid #e2e8f0', borderRadius: 8,
-    fontSize: 13, outline: 'none', boxSizing: 'border-box',
-  }
-  const hintStyle: React.CSSProperties = { fontSize: 11, color: 'var(--tc-ink-faint)', marginTop: 4 }
-  const labelStyle: React.CSSProperties = {
-    display: 'block', fontSize: 12.5, fontWeight: 500,
-    color: 'var(--tc-ink)', marginBottom: 5,
-  }
-  const fieldStyle: React.CSSProperties = { marginBottom: 16 }
 
   return (
     <div
@@ -424,63 +423,31 @@ function MessengerModal({ workspaceId, onSuccess, onClose }: {
       <div
         style={{
           background: '#fff', borderRadius: 12, padding: 24,
-          width: '100%', maxWidth: 420, boxShadow: '0 8px 32px rgba(0,0,0,0.14)',
+          width: '100%', maxWidth: 400, boxShadow: '0 8px 32px rgba(0,0,0,0.14)',
         }}
         onClick={e => e.stopPropagation()}
       >
         <h2 style={{ margin: '0 0 6px', fontSize: 16, fontWeight: 600, color: 'var(--tc-ink)' }}>
-          Connect Facebook Messenger
+          Choose a Facebook Page
         </h2>
-        <p style={{ margin: '0 0 20px', fontSize: 12.5, color: 'var(--tc-ink-faint)', lineHeight: 1.5 }}>
-          You need a Facebook Page access token with <code>pages_messaging</code> permission.
-          Generate one in Meta for Developers → your App → Access Tokens.
+        <p style={{ margin: '0 0 16px', fontSize: 12.5, color: 'var(--tc-ink-faint)' }}>
+          You manage multiple Pages — pick which one to connect to this workspace.
         </p>
-
-        <div style={fieldStyle}>
-          <label style={labelStyle}>Facebook Page ID</label>
-          <input
-            style={inputStyle}
-            value={pageId}
-            onChange={e => setPageId(e.target.value)}
-            placeholder="123456789012345"
-          />
-          <p style={hintStyle}>Meta Business Suite → Settings → Page ID</p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {pages.map(page => (
+            <button
+              key={page.id}
+              className="btn-ghost sm"
+              style={{ justifyContent: 'flex-start', textAlign: 'left', padding: '10px 14px' }}
+              disabled={saving !== null}
+              onClick={() => handlePick(page)}
+            >
+              {saving === page.id ? 'Connecting…' : page.name}
+            </button>
+          ))}
         </div>
-
-        <div style={fieldStyle}>
-          <label style={labelStyle}>Page Access Token</label>
-          <input
-            style={inputStyle}
-            type="password"
-            value={accessToken}
-            onChange={e => setAccessToken(e.target.value)}
-            placeholder="EAAxxxxx..."
-          />
-          <p style={hintStyle}>Must have pages_messaging permission</p>
-        </div>
-
-        <div style={fieldStyle}>
-          <label style={labelStyle}>Display name (optional)</label>
-          <input
-            style={inputStyle}
-            value={pageName}
-            onChange={e => setPageName(e.target.value)}
-            placeholder="e.g. Bimini Island Tours"
-          />
-          <p style={hintStyle}>Shown in your inbox — leave blank to use your Page name from Meta</p>
-        </div>
-
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
-          <button className="btn-ghost sm" onClick={onClose} disabled={submitting}>
-            Cancel
-          </button>
-          <button
-            className="btn-solid sm"
-            onClick={handleSubmit}
-            disabled={submitting || !pageId || !accessToken}
-          >
-            {submitting ? 'Connecting…' : 'Connect'}
-          </button>
+        <div style={{ marginTop: 16, textAlign: 'right' }}>
+          <button className="btn-ghost sm" onClick={onClose} disabled={saving !== null}>Cancel</button>
         </div>
       </div>
     </div>
