@@ -20,7 +20,7 @@
  *   Subscribe to: messages
  */
 
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, after } from 'next/server'
 import { createHmac } from 'crypto'
 import { createServiceClient } from '@/lib/supabase-server'
 import { sendMetaMessage, fetchMetaSenderName } from '@/lib/meta-reply'
@@ -78,9 +78,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ status: 'ok' }, { status: 200 })
   }
 
-  // Return 200 immediately; process in background
-  processInboundMessenger(payload).catch(err =>
-    console.error('[messenger webhook] Processing error:', err)
+  // Return 200 immediately; after() keeps the function alive until processing finishes
+  after(
+    processInboundMessenger(payload).catch(err =>
+      console.error('[messenger webhook] Processing error:', err)
+    )
   )
 
   return NextResponse.json({ status: 'ok' }, { status: 200 })

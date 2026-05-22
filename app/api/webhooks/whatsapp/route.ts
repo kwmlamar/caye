@@ -16,7 +16,7 @@
  *   Subscribe to: messages
  */
 
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, after } from 'next/server'
 import { createHmac } from 'crypto'
 import { createServiceClient } from '@/lib/supabase-server'
 import { sendWhatsAppMessage } from '@/lib/whatsapp'
@@ -70,9 +70,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
   }
 
-  // Return 200 immediately; process in background
-  processInboundWhatsApp(payload).catch(err =>
-    console.error('[whatsapp webhook] Processing error:', err)
+  // Return 200 immediately; after() keeps the function alive until processing finishes
+  after(
+    processInboundWhatsApp(payload).catch(err =>
+      console.error('[whatsapp webhook] Processing error:', err)
+    )
   )
 
   return NextResponse.json({ status: 'ok' }, { status: 200 })
