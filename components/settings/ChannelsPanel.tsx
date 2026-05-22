@@ -70,6 +70,7 @@ export default function ChannelsPanel() {
   const [loading, setLoading] = useState(true)
   const [showWhatsAppModal, setShowWhatsAppModal] = useState(false)
   const [messengerPages, setMessengerPages] = useState<{ id: string; name: string; token: string }[] | null>(null)
+  const [instagramPages, setInstagramPages] = useState<{ id: string; name: string; token: string }[] | null>(null)
   const searchParams = useSearchParams()
   const router = useRouter()
 
@@ -79,6 +80,9 @@ export default function ChannelsPanel() {
     const msgrConnected = searchParams.get('messenger_connected')
     const msgrError = searchParams.get('messenger_error')
     const msgrPages = searchParams.get('messenger_pages')
+    const instagramConnected = searchParams.get('instagram_connected')
+    const instagramError = searchParams.get('instagram_error')
+    const instagramPagesParam = searchParams.get('instagram_pages')
 
     if (zohoConnected === '1') toast.success('Zoho Mail connected')
     else if (zohoError === 'access_denied') toast.error('Zoho authorization was denied')
@@ -89,6 +93,11 @@ export default function ChannelsPanel() {
     else if (msgrError === 'no_pages') toast.error('No Facebook Pages found — make sure you manage at least one Page')
     else if (msgrError) toast.error(`Messenger connection failed (${msgrError})`)
 
+    if (instagramConnected === '1') { toast.success('Instagram DMs connected'); fetchAccounts() }
+    else if (instagramError === 'access_denied') toast.error('Facebook authorization was denied')
+    else if (instagramError === 'no_instagram_accounts') toast.error('No linked Instagram Business Accounts found — make sure your Instagram account is linked to your Facebook Page')
+    else if (instagramError) toast.error(`Instagram connection failed (${instagramError})`)
+
     if (msgrPages) {
       try {
         // Use atob (Web API) instead of Buffer (Node.js) for client-side decoding
@@ -98,10 +107,19 @@ export default function ChannelsPanel() {
       } catch (e) { console.error('[ChannelsPanel] Failed to decode messenger_pages:', e) }
     }
 
+    if (instagramPagesParam) {
+      try {
+        const base64 = instagramPagesParam.replace(/-/g, '+').replace(/_/g, '/')
+        const decoded = JSON.parse(atob(base64))
+        setInstagramPages(decoded)
+      } catch (e) { console.error('[ChannelsPanel] Failed to decode instagram_pages:', e) }
+    }
+
     // Strip the one-time params so they don't re-fire on refresh
     const clean = new URLSearchParams(searchParams.toString())
     clean.delete('zoho_connected'); clean.delete('zoho_error')
     clean.delete('messenger_connected'); clean.delete('messenger_error'); clean.delete('messenger_pages')
+    clean.delete('instagram_connected'); clean.delete('instagram_error'); clean.delete('instagram_pages')
     router.replace(`?${clean.toString()}`)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -223,11 +241,13 @@ export default function ChannelsPanel() {
                       } else if (type === 'whatsapp') {
                         setShowWhatsAppModal(true)
                       } else if (type === 'messenger') {
-                        window.location.href = `/api/auth/meta?workspaceId=${workspaceId}`
+                        window.location.href = `/api/auth/meta?workspaceId=${workspaceId}&channel=messenger`
+                      } else if (type === 'instagram') {
+                        window.location.href = `/api/auth/meta?workspaceId=${workspaceId}&channel=instagram`
                       }
                     }}
-                    disabled={type !== 'email' && type !== 'whatsapp' && type !== 'messenger'}
-                    title={type !== 'email' && type !== 'whatsapp' && type !== 'messenger' ? 'Coming soon' : undefined}
+                    disabled={type !== 'email' && type !== 'whatsapp' && type !== 'messenger' && type !== 'instagram'}
+                    title={type !== 'email' && type !== 'whatsapp' && type !== 'messenger' && type !== 'instagram' ? 'Coming soon' : undefined}
                   >
                     <SIcon name="plus" size={12} />
                     {needsReauth ? 'Reconnect' : 'Connect'}
@@ -253,6 +273,15 @@ export default function ChannelsPanel() {
           workspaceId={workspaceId}
           onSuccess={() => { setMessengerPages(null); fetchAccounts() }}
           onClose={() => setMessengerPages(null)}
+        />
+      )}
+
+      {instagramPages && workspaceId && (
+        <InstagramPagePicker
+          pages={instagramPages}
+          workspaceId={workspaceId}
+          onSuccess={() => { setInstagramPages(null); fetchAccounts() }}
+          onClose={() => setInstagramPages(null)}
         />
       )}
     </div>
@@ -434,6 +463,75 @@ function MessengerPagePicker({ pages, workspaceId, onSuccess, onClose }: {
         </h2>
         <p style={{ margin: '0 0 16px', fontSize: 12.5, color: 'var(--tc-ink-faint)' }}>
           You manage multiple Pages — pick which one to connect to this workspace.
+        </p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {pages.map(page => (
+            <button
+              key={page.id}
+              className="btn-ghost sm"
+              style={{ justifyContent: 'flex-start', textAlign: 'left', padding: '10px 14px' }}
+              disabled={saving !== null}
+              onClick={() => handlePick(page)}
+            >
+              {saving === page.id ? 'Connecting…' : page.name}
+            </button>
+          ))}
+        </div>
+        <div style={{ marginTop: 16, textAlign: 'right' }}>
+          <button className="btn-ghost sm" onClick={onClose} disabled={saving !== null}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function InstagramPagePicker({ pages, workspaceId, onSuccess, onClose }: {
+  pages: { id: string; name: string; token: string }[]
+  workspaceId: string
+  onSuccess: () => void
+  onClose: () => void
+}) {
+  const [saving, setSaving] = useState<string | null>(null)
+
+  const handlePick = async (page: { id: string; name: string; token: string }) => {
+    setSaving(page.id)
+    try {
+      const res = await fetch('/api/channels/instagram/connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspaceId, instagramBusinessId: page.id, accessToken: page.token, instagramName: page.name }),
+      })
+      const data = await res.json() as { success?: boolean; error?: string }
+      if (!res.ok || !data.success) { toast.error(data.error ?? 'Connection failed'); return }
+      toast.success(`Instagram DMs connected — ${page.name}`)
+      onSuccess()
+    } catch {
+      toast.error('Connection failed')
+    } finally {
+      setSaving(null)
+    }
+  }
+
+  return (
+    <div
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)',
+        zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}
+      onClick={onClose}
+    >
+      <div
+        style={{
+          background: '#fff', borderRadius: 12, padding: 24,
+          width: '100%', maxWidth: 400, boxShadow: '0 8px 32px rgba(0,0,0,0.14)',
+        }}
+        onClick={e => e.stopPropagation()}
+      >
+        <h2 style={{ margin: '0 0 6px', fontSize: 16, fontWeight: 600, color: 'var(--tc-ink)' }}>
+          Choose an Instagram Account
+        </h2>
+        <p style={{ margin: '0 0 16px', fontSize: 12.5, color: 'var(--tc-ink-faint)' }}>
+          Multiple Instagram Business Accounts found — pick which one to connect to this workspace.
         </p>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {pages.map(page => (

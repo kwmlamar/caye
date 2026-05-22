@@ -5,6 +5,11 @@ interface MetaPage {
   id: string
   name: string
   access_token: string
+  instagram_business_account?: {
+    id: string
+    username: string
+    name?: string
+  }
 }
 
 async function savePageAccount(
@@ -46,18 +51,59 @@ async function savePageAccount(
   return error?.message ?? null
 }
 
+async function saveInstagramAccount(
+  workspaceId: string,
+  account: { id: string; name: string; token: string }
+): Promise<string | null> {
+  const supabase = createServiceClient()
+
+  // Deactivate any existing instagram connections for this workspace
+  await supabase
+    .from('connected_accounts')
+    .update({ is_active: false, needs_reauth: false })
+    .eq('user_id', workspaceId)
+    .eq('channel_type', 'instagram')
+    .neq('channel_account_id', account.id)
+
+  const { error } = await supabase
+    .from('connected_accounts')
+    .upsert(
+      {
+        user_id: workspaceId,
+        channel_type: 'instagram',
+        channel_account_id: account.id,
+        channel_account_name: account.name,
+        channel_username: account.name,
+        access_token: account.token,
+        is_active: true,
+        needs_reauth: false,
+        metadata: { instagram_business_id: account.id, instagram_username: account.name },
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'channel_type,channel_account_id' }
+    )
+  if (error) {
+    console.error('[meta/callback] saveInstagramAccount upsert error:', error)
+  }
+  return error?.message ?? null
+}
+
 export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl
   const code = searchParams.get('code')
-  const workspaceId = searchParams.get('state')
+  const state = searchParams.get('state') || ''
   const metaError = searchParams.get('error')
+
+  // Parse state (format: workspaceId:channel)
+  const [workspaceId, channelVal] = state.split(':')
+  const channel = channelVal || 'messenger'
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL!
   const settingsUrl = `${appUrl}/dashboard/${workspaceId}/settings?tab=channels`
 
   if (metaError || !code || !workspaceId) {
     console.error('[meta/callback] Denied or missing params:', { metaError, hasCode: !!code, workspaceId })
-    return NextResponse.redirect(`${settingsUrl}&messenger_error=access_denied`)
+    return NextResponse.redirect(`${settingsUrl}&${channel}_error=access_denied`)
   }
 
   const redirectUri = `${appUrl}/api/auth/meta/callback`
@@ -75,7 +121,7 @@ export async function GET(req: NextRequest) {
   const tokenData = (await tokenRes.json()) as Record<string, unknown>
   if (!tokenData.access_token) {
     console.error('[meta/callback] Token exchange failed:', tokenData)
-    return NextResponse.redirect(`${settingsUrl}&messenger_error=token_exchange`)
+    return NextResponse.redirect(`${settingsUrl}&${channel}_error=token_exchange`)
   }
 
   // 2. Exchange for long-lived user token (60 days)
@@ -91,18 +137,53 @@ export async function GET(req: NextRequest) {
   const llData = (await llRes.json()) as Record<string, unknown>
   const userToken = String(llData.access_token || tokenData.access_token)
 
-  // 3. Fetch the pages this user manages (each has its own never-expiring page token)
+  // 3. Fetch pages (optionally including instagram_business_account if connecting Instagram)
+  const fields = channel === 'instagram'
+    ? 'id,name,access_token,instagram_business_account{id,username,name}'
+    : 'id,name,access_token'
+
   const pagesRes = await fetch(
-    `https://graph.facebook.com/v19.0/me/accounts?fields=id,name,access_token&access_token=${encodeURIComponent(userToken)}`
+    `https://graph.facebook.com/v19.0/me/accounts?fields=${encodeURIComponent(fields)}&access_token=${encodeURIComponent(userToken)}`
   )
   const pagesData = (await pagesRes.json()) as { data?: MetaPage[] }
   const pages = pagesData.data ?? []
 
   if (!pages.length) {
     console.warn('[meta/callback] No Facebook Pages found for this user')
-    return NextResponse.redirect(`${settingsUrl}&messenger_error=no_pages`)
+    return NextResponse.redirect(`${settingsUrl}&${channel}_error=no_pages`)
   }
 
+  if (channel === 'instagram') {
+    // Filter and map only pages that have a linked Instagram Business Account
+    const instagramAccounts = pages
+      .filter(p => p.instagram_business_account)
+      .map(p => ({
+        id: p.instagram_business_account!.id,
+        name: p.instagram_business_account!.name || p.instagram_business_account!.username,
+        token: p.access_token,
+      }))
+
+    if (!instagramAccounts.length) {
+      console.warn('[meta/callback] No linked Instagram accounts found')
+      return NextResponse.redirect(`${settingsUrl}&instagram_error=no_instagram_accounts`)
+    }
+
+    // Single Instagram account — connect immediately
+    if (instagramAccounts.length === 1) {
+      const dbErr = await saveInstagramAccount(workspaceId, instagramAccounts[0])
+      if (dbErr) {
+        console.error('[meta/callback] DB upsert failed:', dbErr)
+        return NextResponse.redirect(`${settingsUrl}&instagram_error=db_save`)
+      }
+      return NextResponse.redirect(`${settingsUrl}&instagram_connected=1`)
+    }
+
+    // Multiple Instagram accounts — show picker
+    const encoded = Buffer.from(JSON.stringify(instagramAccounts)).toString('base64url')
+    return NextResponse.redirect(`${settingsUrl}&instagram_pages=${encoded}`)
+  }
+
+  // Default flow: Messenger (Facebook Page connection)
   // 4a. Single page — connect immediately
   if (pages.length === 1) {
     const dbErr = await savePageAccount(workspaceId, pages[0])

@@ -36,6 +36,15 @@ export async function POST(req: NextRequest) {
   const { display_phone_number, verified_name } = metaData
   const supabase = createServiceClient()
 
+  // Deactivate any existing whatsapp connections for this workspace
+  // that point to a different phone number
+  await supabase
+    .from('connected_accounts')
+    .update({ is_active: false, needs_reauth: false })
+    .eq('user_id', workspaceId)
+    .eq('channel_type', 'whatsapp')
+    .neq('channel_account_id', phoneNumberId)
+
   const { error: upsertError } = await supabase
     .from('connected_accounts')
     .upsert(
