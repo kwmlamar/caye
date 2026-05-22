@@ -5,7 +5,7 @@ export default function manifest(): MetadataRoute.Manifest {
     name: 'Caye — AI Receptionist',
     short_name: 'Caye',
     description: 'Your Caribbean AI receptionist. See what Caye handled, review what she held.',
-    start_url: '/',
+    start_url: '/login',
     display: 'standalone',
     orientation: 'portrait',
     background_color: '#f5f1e8',

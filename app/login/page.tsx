@@ -1,16 +1,35 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
-import { signIn, signInWithOAuth } from "@/lib/supabase"
+import { signIn, signInWithOAuth, getSession } from "@/lib/supabase"
+
+function isMobileViewport() {
+  return typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches
+}
+
+function appRoute(userId: string) {
+  return isMobileViewport() ? `/m/${userId}` : `/dashboard/${userId}`
+}
 
 export default function LoginPage() {
   const router = useRouter()
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)   // true while checking existing session
   const [error, setError] = useState<string | null>(null)
+
+  // Auto sign-in: if a session already exists, skip the form
+  useEffect(() => {
+    getSession().then(({ session }) => {
+      if (session?.user) {
+        router.replace(appRoute(session.user.id))
+      } else {
+        setLoading(false)
+      }
+    })
+  }, [router])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -19,13 +38,24 @@ export default function LoginPage() {
     const { data, error } = await signIn(email, password)
     setLoading(false)
     if (error) { setError(error); return }
-    if (data?.user) router.push(`/dashboard/${data.user.id}`)
+    if (data?.user) router.push(appRoute(data.user.id))
   }
 
   const handleOAuth = () => {
     signInWithOAuth('google', {
       redirectTo: `${window.location.origin}/auth/callback`
     })
+  }
+
+  // Don't flash the login form while checking an existing session
+  if (loading && !error && !email) {
+    return (
+      <div className="login-root">
+        <div className="login-card" style={{ alignItems: 'center', justifyContent: 'center', minHeight: 220 }}>
+          <span className="sb-mark" style={{ width: 36, height: 36, fontSize: 17, opacity: 0.6 }}>C</span>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -65,7 +95,7 @@ export default function LoginPage() {
             />
           </div>
           <button type="submit" className="btn-primary" disabled={loading} style={{ width: '100%', justifyContent: 'center' }}>
-            {loading ? 'Signing in…' : 'Sign in'}
+            {loading ? 'Signing in…' : 'Sign in →'}
           </button>
         </form>
 
