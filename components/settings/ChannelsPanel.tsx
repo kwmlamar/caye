@@ -69,6 +69,7 @@ export default function ChannelsPanel() {
   const [byType, setByType] = useState<Record<string, ConnectedAccount>>({})
   const [loading, setLoading] = useState(true)
   const [showWhatsAppModal, setShowWhatsAppModal] = useState(false)
+  const [showMessengerModal, setShowMessengerModal] = useState(false)
   const searchParams = useSearchParams()
   const router = useRouter()
 
@@ -205,10 +206,12 @@ export default function ChannelsPanel() {
                         window.location.href = `/api/auth/zoho?workspaceId=${workspaceId}`
                       } else if (type === 'whatsapp') {
                         setShowWhatsAppModal(true)
+                      } else if (type === 'messenger') {
+                        setShowMessengerModal(true)
                       }
                     }}
-                    disabled={type !== 'email' && type !== 'whatsapp'}
-                    title={type !== 'email' && type !== 'whatsapp' ? 'Coming soon' : undefined}
+                    disabled={type !== 'email' && type !== 'whatsapp' && type !== 'messenger'}
+                    title={type !== 'email' && type !== 'whatsapp' && type !== 'messenger' ? 'Coming soon' : undefined}
                   >
                     <SIcon name="plus" size={12} />
                     {needsReauth ? 'Reconnect' : 'Connect'}
@@ -225,6 +228,14 @@ export default function ChannelsPanel() {
           workspaceId={workspaceId}
           onSuccess={fetchAccounts}
           onClose={() => setShowWhatsAppModal(false)}
+        />
+      )}
+
+      {showMessengerModal && workspaceId && (
+        <MessengerModal
+          workspaceId={workspaceId}
+          onSuccess={fetchAccounts}
+          onClose={() => setShowMessengerModal(false)}
         />
       )}
     </div>
@@ -348,6 +359,125 @@ function WhatsAppModal({ workspaceId, onSuccess, onClose }: {
             className="btn-solid sm"
             onClick={handleSubmit}
             disabled={submitting || !phoneNumberId || !accessToken}
+          >
+            {submitting ? 'Connecting…' : 'Connect'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function MessengerModal({ workspaceId, onSuccess, onClose }: {
+  workspaceId: string
+  onSuccess: () => void
+  onClose: () => void
+}) {
+  const [pageId, setPageId] = useState('')
+  const [accessToken, setAccessToken] = useState('')
+  const [pageName, setPageName] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+
+  const handleSubmit = async () => {
+    setSubmitting(true)
+    try {
+      const res = await fetch('/api/channels/messenger/connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspaceId, pageId, accessToken, pageName: pageName || undefined }),
+      })
+      const data = await res.json() as { success?: boolean; error?: string; pageName?: string }
+      if (!res.ok || !data.success) {
+        toast.error(data.error ?? 'Connection failed')
+        return
+      }
+      toast.success(`Messenger connected — ${data.pageName ?? 'Page'}`)
+      onSuccess()
+      onClose()
+    } catch {
+      toast.error('Connection failed')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const inputStyle: React.CSSProperties = {
+    width: '100%', padding: '8px 10px',
+    border: '1px solid #e2e8f0', borderRadius: 8,
+    fontSize: 13, outline: 'none', boxSizing: 'border-box',
+  }
+  const hintStyle: React.CSSProperties = { fontSize: 11, color: 'var(--tc-ink-faint)', marginTop: 4 }
+  const labelStyle: React.CSSProperties = {
+    display: 'block', fontSize: 12.5, fontWeight: 500,
+    color: 'var(--tc-ink)', marginBottom: 5,
+  }
+  const fieldStyle: React.CSSProperties = { marginBottom: 16 }
+
+  return (
+    <div
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)',
+        zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}
+      onClick={onClose}
+    >
+      <div
+        style={{
+          background: '#fff', borderRadius: 12, padding: 24,
+          width: '100%', maxWidth: 420, boxShadow: '0 8px 32px rgba(0,0,0,0.14)',
+        }}
+        onClick={e => e.stopPropagation()}
+      >
+        <h2 style={{ margin: '0 0 6px', fontSize: 16, fontWeight: 600, color: 'var(--tc-ink)' }}>
+          Connect Facebook Messenger
+        </h2>
+        <p style={{ margin: '0 0 20px', fontSize: 12.5, color: 'var(--tc-ink-faint)', lineHeight: 1.5 }}>
+          You need a Facebook Page access token with <code>pages_messaging</code> permission.
+          Generate one in Meta for Developers → your App → Access Tokens.
+        </p>
+
+        <div style={fieldStyle}>
+          <label style={labelStyle}>Facebook Page ID</label>
+          <input
+            style={inputStyle}
+            value={pageId}
+            onChange={e => setPageId(e.target.value)}
+            placeholder="123456789012345"
+          />
+          <p style={hintStyle}>Meta Business Suite → Settings → Page ID</p>
+        </div>
+
+        <div style={fieldStyle}>
+          <label style={labelStyle}>Page Access Token</label>
+          <input
+            style={inputStyle}
+            type="password"
+            value={accessToken}
+            onChange={e => setAccessToken(e.target.value)}
+            placeholder="EAAxxxxx..."
+          />
+          <p style={hintStyle}>Must have pages_messaging permission</p>
+        </div>
+
+        <div style={fieldStyle}>
+          <label style={labelStyle}>Display name (optional)</label>
+          <input
+            style={inputStyle}
+            value={pageName}
+            onChange={e => setPageName(e.target.value)}
+            placeholder="e.g. Bimini Island Tours"
+          />
+          <p style={hintStyle}>Shown in your inbox — leave blank to use your Page name from Meta</p>
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
+          <button className="btn-ghost sm" onClick={onClose} disabled={submitting}>
+            Cancel
+          </button>
+          <button
+            className="btn-solid sm"
+            onClick={handleSubmit}
+            disabled={submitting || !pageId || !accessToken}
           >
             {submitting ? 'Connecting…' : 'Connect'}
           </button>
