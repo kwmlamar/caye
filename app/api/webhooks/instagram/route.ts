@@ -154,7 +154,8 @@ async function processInboundInstagram(payload: Record<string, unknown>): Promis
 
       const voiceProfile = (customer?.ai_voice_profile ?? undefined) as VoiceProfile | undefined
 
-      const sentAt = new Date(timestamp * 1000).toISOString()
+      // Meta delivers Instagram event timestamps in milliseconds
+      const sentAt = new Date(timestamp).toISOString()
       const customerName = senderName ?? senderId
 
       const { data: conversation, error: convErr } = await supabase
