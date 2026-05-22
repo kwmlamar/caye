@@ -78,12 +78,12 @@
 
 .m-screen {
   flex: 1;
-  display: flex;
-  flex-direction: column;
+  display: block;
   min-height: 0;
   padding-top: 50px;        /* below status bar */
   padding-bottom: 110px;    /* above tab nav + home indicator */
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   position: relative;
 }
 .m-screen::-webkit-scrollbar { display: none; }
