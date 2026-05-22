@@ -68,7 +68,7 @@ export default function ChannelsPanel() {
   const workspaceId = urlWorkspaceId || ctxWorkspaceId
   const [byType, setByType] = useState<Record<string, ConnectedAccount>>({})
   const [loading, setLoading] = useState(true)
-  const [showWhatsAppModal, setShowWhatsAppModal] = useState(false)
+  const [whatsappPages, setWhatsappPages] = useState<{ id: string; name: string; token: string; display_phone_number: string }[] | null>(null)
   const [messengerPages, setMessengerPages] = useState<{ id: string; name: string; token: string }[] | null>(null)
   const [instagramPages, setInstagramPages] = useState<{ id: string; name: string; token: string }[] | null>(null)
   const searchParams = useSearchParams()
@@ -83,6 +83,9 @@ export default function ChannelsPanel() {
     const instagramConnected = searchParams.get('instagram_connected')
     const instagramError = searchParams.get('instagram_error')
     const instagramPagesParam = searchParams.get('instagram_pages')
+    const whatsappConnected = searchParams.get('whatsapp_connected')
+    const whatsappError = searchParams.get('whatsapp_error')
+    const whatsappPagesParam = searchParams.get('whatsapp_pages')
 
     if (zohoConnected === '1') toast.success('Zoho Mail connected')
     else if (zohoError === 'access_denied') toast.error('Zoho authorization was denied')
@@ -97,6 +100,11 @@ export default function ChannelsPanel() {
     else if (instagramError === 'access_denied') toast.error('Facebook authorization was denied')
     else if (instagramError === 'no_instagram_accounts') toast.error('No linked Instagram Business Accounts found — make sure your Instagram account is linked to your Facebook Page')
     else if (instagramError) toast.error(`Instagram connection failed (${instagramError})`)
+
+    if (whatsappConnected === '1') { toast.success('WhatsApp connected'); fetchAccounts() }
+    else if (whatsappError === 'access_denied') toast.error('Facebook authorization was denied')
+    else if (whatsappError === 'no_whatsapp_accounts') toast.error('No WhatsApp phone numbers found in your Meta Business account')
+    else if (whatsappError) toast.error(`WhatsApp connection failed (${whatsappError})`)
 
     if (msgrPages) {
       try {
@@ -115,11 +123,20 @@ export default function ChannelsPanel() {
       } catch (e) { console.error('[ChannelsPanel] Failed to decode instagram_pages:', e) }
     }
 
+    if (whatsappPagesParam) {
+      try {
+        const base64 = whatsappPagesParam.replace(/-/g, '+').replace(/_/g, '/')
+        const decoded = JSON.parse(atob(base64))
+        setWhatsappPages(decoded)
+      } catch (e) { console.error('[ChannelsPanel] Failed to decode whatsapp_pages:', e) }
+    }
+
     // Strip the one-time params so they don't re-fire on refresh
     const clean = new URLSearchParams(searchParams.toString())
     clean.delete('zoho_connected'); clean.delete('zoho_error')
     clean.delete('messenger_connected'); clean.delete('messenger_error'); clean.delete('messenger_pages')
     clean.delete('instagram_connected'); clean.delete('instagram_error'); clean.delete('instagram_pages')
+    clean.delete('whatsapp_connected'); clean.delete('whatsapp_error'); clean.delete('whatsapp_pages')
     router.replace(`?${clean.toString()}`)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -239,7 +256,7 @@ export default function ChannelsPanel() {
                       if (type === 'email') {
                         window.location.href = `/api/auth/zoho?workspaceId=${workspaceId}`
                       } else if (type === 'whatsapp') {
-                        setShowWhatsAppModal(true)
+                        window.location.href = `/api/auth/meta?workspaceId=${workspaceId}&channel=whatsapp`
                       } else if (type === 'messenger') {
                         window.location.href = `/api/auth/meta?workspaceId=${workspaceId}&channel=messenger`
                       } else if (type === 'instagram') {
@@ -259,11 +276,12 @@ export default function ChannelsPanel() {
         })}
       </div>
 
-      {showWhatsAppModal && workspaceId && (
-        <WhatsAppModal
+      {whatsappPages && workspaceId && (
+        <WhatsAppPagePicker
+          pages={whatsappPages}
           workspaceId={workspaceId}
-          onSuccess={fetchAccounts}
-          onClose={() => setShowWhatsAppModal(false)}
+          onSuccess={() => { setWhatsappPages(null); fetchAccounts() }}
+          onClose={() => setWhatsappPages(null)}
         />
       )}
 
@@ -288,61 +306,32 @@ export default function ChannelsPanel() {
   )
 }
 
-function WhatsAppModal({ workspaceId, onSuccess, onClose }: {
+function WhatsAppPagePicker({ pages, workspaceId, onSuccess, onClose }: {
+  pages: { id: string; name: string; token: string; display_phone_number: string }[]
   workspaceId: string
   onSuccess: () => void
   onClose: () => void
 }) {
-  const [phoneNumberId, setPhoneNumberId] = useState('')
-  const [accessToken, setAccessToken] = useState('')
-  const [displayName, setDisplayName] = useState('')
-  const [submitting, setSubmitting] = useState(false)
+  const [saving, setSaving] = useState<string | null>(null)
 
-  const handleSubmit = async () => {
-    setSubmitting(true)
+  const handlePick = async (page: { id: string; name: string; token: string; display_phone_number: string }) => {
+    setSaving(page.id)
     try {
       const res = await fetch('/api/channels/whatsapp/connect', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ workspaceId, phoneNumberId, accessToken, displayName: displayName || undefined }),
+        body: JSON.stringify({ workspaceId, phoneNumberId: page.id, accessToken: page.token, displayName: page.name }),
       })
       const data = await res.json() as { success?: boolean; error?: string }
-      if (!res.ok || !data.success) {
-        toast.error(data.error ?? 'Connection failed')
-        return
-      }
-      toast.success('WhatsApp connected')
+      if (!res.ok || !data.success) { toast.error(data.error ?? 'Connection failed'); return }
+      toast.success(`WhatsApp connected — ${page.display_phone_number}`)
       onSuccess()
-      onClose()
     } catch {
       toast.error('Connection failed')
     } finally {
-      setSubmitting(false)
+      setSaving(null)
     }
   }
-
-  const inputStyle: React.CSSProperties = {
-    width: '100%',
-    padding: '8px 10px',
-    border: '1px solid #e2e8f0',
-    borderRadius: 8,
-    fontSize: 13,
-    outline: 'none',
-    boxSizing: 'border-box',
-  }
-  const hintStyle: React.CSSProperties = {
-    fontSize: 11,
-    color: 'var(--tc-ink-faint)',
-    marginTop: 4,
-  }
-  const labelStyle: React.CSSProperties = {
-    display: 'block',
-    fontSize: 12.5,
-    fontWeight: 500,
-    color: 'var(--tc-ink)',
-    marginBottom: 5,
-  }
-  const fieldStyle: React.CSSProperties = { marginBottom: 16 }
 
   return (
     <div
@@ -355,59 +344,31 @@ function WhatsAppModal({ workspaceId, onSuccess, onClose }: {
       <div
         style={{
           background: '#fff', borderRadius: 12, padding: 24,
-          width: '100%', maxWidth: 420, boxShadow: '0 8px 32px rgba(0,0,0,0.14)',
+          width: '100%', maxWidth: 400, boxShadow: '0 8px 32px rgba(0,0,0,0.14)',
         }}
         onClick={e => e.stopPropagation()}
       >
-        <h2 style={{ margin: '0 0 20px', fontSize: 16, fontWeight: 600, color: 'var(--tc-ink)' }}>
-          Connect WhatsApp Business
+        <h2 style={{ margin: '0 0 6px', fontSize: 16, fontWeight: 600, color: 'var(--tc-ink)' }}>
+          Choose a WhatsApp Account
         </h2>
-
-        <div style={fieldStyle}>
-          <label style={labelStyle}>Phone Number ID</label>
-          <input
-            style={inputStyle}
-            value={phoneNumberId}
-            onChange={e => setPhoneNumberId(e.target.value)}
-            placeholder="123456789012345"
-          />
-          <p style={hintStyle}>Meta Business Suite → WhatsApp → API Setup</p>
+        <p style={{ margin: '0 0 16px', fontSize: 12.5, color: 'var(--tc-ink-faint)' }}>
+          Multiple WhatsApp phone numbers found — pick which one to connect to this workspace.
+        </p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {pages.map(page => (
+            <button
+              key={page.id}
+              className="btn-ghost sm"
+              style={{ justifyContent: 'flex-start', textAlign: 'left', padding: '10px 14px' }}
+              disabled={saving !== null}
+              onClick={() => handlePick(page)}
+            >
+              {saving === page.id ? 'Connecting…' : `${page.name} (${page.display_phone_number})`}
+            </button>
+          ))}
         </div>
-
-        <div style={fieldStyle}>
-          <label style={labelStyle}>Permanent Access Token</label>
-          <input
-            style={inputStyle}
-            type="password"
-            value={accessToken}
-            onChange={e => setAccessToken(e.target.value)}
-            placeholder="EAAxxxxx..."
-          />
-          <p style={hintStyle}>Meta App Dashboard → Access Tokens</p>
-        </div>
-
-        <div style={fieldStyle}>
-          <label style={labelStyle}>Display name (optional)</label>
-          <input
-            style={inputStyle}
-            value={displayName}
-            onChange={e => setDisplayName(e.target.value)}
-            placeholder="e.g. ODS Construction"
-          />
-          <p style={hintStyle}>Shown in your inbox — leave blank to use the verified name from Meta</p>
-        </div>
-
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
-          <button className="btn-ghost sm" onClick={onClose} disabled={submitting}>
-            Cancel
-          </button>
-          <button
-            className="btn-solid sm"
-            onClick={handleSubmit}
-            disabled={submitting || !phoneNumberId || !accessToken}
-          >
-            {submitting ? 'Connecting…' : 'Connect'}
-          </button>
+        <div style={{ marginTop: 16, textAlign: 'right' }}>
+          <button className="btn-ghost sm" onClick={onClose} disabled={saving !== null}>Cancel</button>
         </div>
       </div>
     </div>

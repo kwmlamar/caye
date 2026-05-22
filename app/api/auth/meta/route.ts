@@ -18,6 +18,8 @@ export async function GET(req: NextRequest) {
   // Request appropriate scopes depending on the channel being connected
   const scopes = channel === 'instagram'
     ? 'instagram_basic,instagram_manage_messages,pages_read_engagement,pages_show_list'
+    : channel === 'whatsapp'
+    ? 'whatsapp_business_management,whatsapp_business_messaging,pages_read_engagement,pages_show_list'
     : 'pages_messaging,pages_read_engagement,pages_manage_metadata'
 
   const source = req.nextUrl.searchParams.get('source') || 'desktop'

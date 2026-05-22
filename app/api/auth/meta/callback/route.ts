@@ -88,6 +88,43 @@ async function saveInstagramAccount(
   return error?.message ?? null
 }
 
+async function saveWhatsAppAccount(
+  workspaceId: string,
+  account: { id: string; name: string; token: string; display_phone_number: string }
+): Promise<string | null> {
+  const supabase = createServiceClient()
+
+  // Deactivate any existing whatsapp connections for this workspace
+  await supabase
+    .from('connected_accounts')
+    .update({ is_active: false, needs_reauth: false })
+    .eq('user_id', workspaceId)
+    .eq('channel_type', 'whatsapp')
+    .neq('channel_account_id', account.id)
+
+  const { error } = await supabase
+    .from('connected_accounts')
+    .upsert(
+      {
+        user_id: workspaceId,
+        channel_type: 'whatsapp',
+        channel_account_id: account.id,
+        channel_account_name: account.name,
+        channel_username: account.display_phone_number,
+        access_token: account.token,
+        is_active: true,
+        needs_reauth: false,
+        metadata: { phone_number_id: account.id, verified_name: account.name, display_phone_number: account.display_phone_number },
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'channel_type,channel_account_id' }
+    )
+  if (error) {
+    console.error('[meta/callback] saveWhatsAppAccount upsert error:', error)
+  }
+  return error?.message ?? null
+}
+
 export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl
   const code = searchParams.get('code')
@@ -142,6 +179,64 @@ export async function GET(req: NextRequest) {
   )
   const llData = (await llRes.json()) as Record<string, unknown>
   const userToken = String(llData.access_token || tokenData.access_token)
+
+  if (channel === 'whatsapp') {
+    // 1. Fetch WABAs managed by this user/business
+    const wabaRes = await fetch(
+      `https://graph.facebook.com/v19.0/me/whatsapp_business_accounts?access_token=${encodeURIComponent(userToken)}`
+    )
+    const wabaData = (await wabaRes.json()) as { data?: { id: string; name: string }[] }
+    const wabas = wabaData.data ?? []
+
+    const whatsappNumbers: { id: string; name: string; token: string; display_phone_number: string }[] = []
+    
+    // 2. Fetch phone numbers for each WABA
+    for (const waba of wabas) {
+      try {
+        const numRes = await fetch(
+          `https://graph.facebook.com/v19.0/${waba.id}/phone_numbers?access_token=${encodeURIComponent(userToken)}`
+        )
+        const numData = (await numRes.json()) as {
+          data?: { id: string; display_phone_number: string; verified_name?: string }[]
+        }
+        const nums = numData.data ?? []
+        for (const num of nums) {
+          whatsappNumbers.push({
+            id: num.id,
+            name: num.verified_name || num.display_phone_number || waba.name,
+            token: userToken,
+            display_phone_number: num.display_phone_number,
+          })
+        }
+      } catch (err) {
+        console.error(`[meta/callback] Failed to fetch numbers for WABA ${waba.id}:`, err)
+      }
+    }
+
+    if (!whatsappNumbers.length) {
+      console.warn('[meta/callback] No WhatsApp accounts/phone numbers found')
+      return NextResponse.redirect(fail('whatsapp_error=no_whatsapp_accounts'))
+    }
+
+    // Single WhatsApp number — connect immediately
+    if (whatsappNumbers.length === 1) {
+      const dbErr = await saveWhatsAppAccount(workspaceId, whatsappNumbers[0])
+      if (dbErr) {
+        console.error('[meta/callback] DB upsert failed:', dbErr)
+        return NextResponse.redirect(fail('whatsapp_error=db_save'))
+      }
+      return NextResponse.redirect(ok('whatsapp_connected=1'))
+    }
+
+    // Multiple WhatsApp numbers — show picker (desktop only; mobile just connects first)
+    if (isMobile) {
+      const dbErr = await saveWhatsAppAccount(workspaceId, whatsappNumbers[0])
+      if (dbErr) return NextResponse.redirect(mobileUrl)
+      return NextResponse.redirect(mobileUrl)
+    }
+    const encoded = Buffer.from(JSON.stringify(whatsappNumbers)).toString('base64url')
+    return NextResponse.redirect(`${desktopUrl}&whatsapp_pages=${encoded}`)
+  }
 
   // 3. Fetch pages (optionally including instagram_business_account if connecting Instagram)
   const fields = channel === 'instagram'
