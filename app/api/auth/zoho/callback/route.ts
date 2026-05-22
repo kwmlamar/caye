@@ -10,15 +10,24 @@ function mailBase(apiDomain: string): string {
 export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl
   const code = searchParams.get('code')
-  const workspaceId = searchParams.get('state')
+  const rawState = searchParams.get('state') || ''
   const zohoError = searchParams.get('error')
 
+  // Parse state (format: workspaceId:source)
+  const [workspaceId, sourceVal] = rawState.split(':')
+  const isMobile = sourceVal === 'mobile'
+
   const appUrl = process.env.NEXT_PUBLIC_APP_URL!
-  const settingsUrl = `${appUrl}/dashboard/${workspaceId}/settings?tab=channels`
+  const mobileUrl = `${appUrl}/m/${workspaceId}`
+  const desktopUrl = `${appUrl}/dashboard/${workspaceId}/settings?tab=channels`
+
+  // Mobile gets a clean redirect — the mobile app reads state from Supabase, not query params
+  const ok = (param: string) => isMobile ? mobileUrl : `${desktopUrl}&${param}`
+  const fail = (param: string) => isMobile ? mobileUrl : `${desktopUrl}&${param}`
 
   if (zohoError || !code || !workspaceId) {
     console.error('[zoho/callback] Access denied or missing params:', { zohoError, code: !!code, workspaceId })
-    return NextResponse.redirect(`${settingsUrl}&zoho_error=access_denied`)
+    return NextResponse.redirect(fail('zoho_error=access_denied'))
   }
 
   const redirectUri = `${appUrl}/api/auth/zoho/callback`
@@ -39,7 +48,7 @@ export async function GET(req: NextRequest) {
   const tokenData = await tokenRes.json()
   if (!tokenData.access_token) {
     console.error('[zoho/callback] Token exchange failed:', tokenData)
-    return NextResponse.redirect(`${settingsUrl}&zoho_error=token_exchange`)
+    return NextResponse.redirect(fail('zoho_error=token_exchange'))
   }
 
   const { access_token, refresh_token, expires_in, api_domain } = tokenData
@@ -55,7 +64,7 @@ export async function GET(req: NextRequest) {
 
   if (!zohoAccount) {
     console.error('[zoho/callback] Failed to fetch Zoho account info:', accountsData)
-    return NextResponse.redirect(`${settingsUrl}&zoho_error=account_fetch`)
+    return NextResponse.redirect(fail('zoho_error=account_fetch'))
   }
 
   const zohoAccountId = String(zohoAccount.accountId)
@@ -125,8 +134,8 @@ export async function GET(req: NextRequest) {
 
   if (upsertError) {
     console.error('[zoho/callback] DB upsert error:', upsertError)
-    return NextResponse.redirect(`${settingsUrl}&zoho_error=db_save`)
+    return NextResponse.redirect(fail('zoho_error=db_save'))
   }
 
-  return NextResponse.redirect(`${settingsUrl}&zoho_connected=1`)
+  return NextResponse.redirect(ok('zoho_connected=1'))
 }

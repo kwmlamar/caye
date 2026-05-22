@@ -49,10 +49,10 @@ export default function MobileChannelsSheet({
   }, [workspaceId])
 
   const connectEmail = () => {
-    window.location.href = `/api/auth/zoho?workspaceId=${workspaceId}`
+    window.location.href = `/api/auth/zoho?workspaceId=${workspaceId}&source=mobile`
   }
   const connectMessenger = () => {
-    window.location.href = `/api/auth/meta?workspaceId=${workspaceId}`
+    window.location.href = `/api/auth/meta?workspaceId=${workspaceId}&source=mobile`
   }
 
   const connectWhatsApp = async () => {

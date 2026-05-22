@@ -20,12 +20,14 @@ export async function GET(req: NextRequest) {
     ? 'instagram_basic,instagram_manage_messages,pages_read_engagement,pages_show_list'
     : 'pages_messaging,pages_read_engagement,pages_manage_metadata'
 
+  const source = req.nextUrl.searchParams.get('source') || 'desktop'
+
   const params = new URLSearchParams({
     client_id: process.env.META_APP_ID!,
     redirect_uri: redirectUri,
     scope: scopes,
     response_type: 'code',
-    state: `${workspaceId}:${channel}`,
+    state: `${workspaceId}:${channel}:${source}`,
   })
 
   return NextResponse.redirect(`${META_AUTH_URL}?${params.toString()}`)

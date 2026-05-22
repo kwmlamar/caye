@@ -11,13 +11,15 @@ export async function GET(req: NextRequest) {
 
   const redirectUri = `${process.env.NEXT_PUBLIC_APP_URL}/api/auth/zoho/callback`
 
+  const source = req.nextUrl.searchParams.get('source') || 'desktop'
+
   const params = new URLSearchParams({
     response_type: 'code',
     client_id: process.env.ZOHO_CLIENT_ID!,
     scope: SCOPES,
     redirect_uri: redirectUri,
     access_type: 'offline',
-    state: workspaceId,
+    state: `${workspaceId}:${source}`,
   })
 
   return NextResponse.redirect(`${ZOHO_AUTH_URL}?${params.toString()}`)

@@ -94,16 +94,22 @@ export async function GET(req: NextRequest) {
   const state = searchParams.get('state') || ''
   const metaError = searchParams.get('error')
 
-  // Parse state (format: workspaceId:channel)
-  const [workspaceId, channelVal] = state.split(':')
+  // Parse state (format: workspaceId:channel:source)
+  const [workspaceId, channelVal, sourceVal] = state.split(':')
   const channel = channelVal || 'messenger'
+  const isMobile = sourceVal === 'mobile'
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL!
-  const settingsUrl = `${appUrl}/dashboard/${workspaceId}/settings?tab=channels`
+  const mobileUrl = `${appUrl}/m/${workspaceId}`
+  const desktopUrl = `${appUrl}/dashboard/${workspaceId}/settings?tab=channels`
+
+  // Mobile gets a clean redirect — mobile app reads state from Supabase, not query params
+  const ok = (param: string) => isMobile ? mobileUrl : `${desktopUrl}&${param}`
+  const fail = (param: string) => isMobile ? mobileUrl : `${desktopUrl}&${param}`
 
   if (metaError || !code || !workspaceId) {
     console.error('[meta/callback] Denied or missing params:', { metaError, hasCode: !!code, workspaceId })
-    return NextResponse.redirect(`${settingsUrl}&${channel}_error=access_denied`)
+    return NextResponse.redirect(fail(`${channel}_error=access_denied`))
   }
 
   const redirectUri = `${appUrl}/api/auth/meta/callback`
@@ -121,7 +127,7 @@ export async function GET(req: NextRequest) {
   const tokenData = (await tokenRes.json()) as Record<string, unknown>
   if (!tokenData.access_token) {
     console.error('[meta/callback] Token exchange failed:', tokenData)
-    return NextResponse.redirect(`${settingsUrl}&${channel}_error=token_exchange`)
+    return NextResponse.redirect(fail(`${channel}_error=token_exchange`))
   }
 
   // 2. Exchange for long-lived user token (60 days)
@@ -150,7 +156,7 @@ export async function GET(req: NextRequest) {
 
   if (!pages.length) {
     console.warn('[meta/callback] No Facebook Pages found for this user')
-    return NextResponse.redirect(`${settingsUrl}&${channel}_error=no_pages`)
+    return NextResponse.redirect(fail(`${channel}_error=no_pages`))
   }
 
   if (channel === 'instagram') {
@@ -165,7 +171,7 @@ export async function GET(req: NextRequest) {
 
     if (!instagramAccounts.length) {
       console.warn('[meta/callback] No linked Instagram accounts found')
-      return NextResponse.redirect(`${settingsUrl}&instagram_error=no_instagram_accounts`)
+      return NextResponse.redirect(fail('instagram_error=no_instagram_accounts'))
     }
 
     // Single Instagram account — connect immediately
@@ -173,14 +179,19 @@ export async function GET(req: NextRequest) {
       const dbErr = await saveInstagramAccount(workspaceId, instagramAccounts[0])
       if (dbErr) {
         console.error('[meta/callback] DB upsert failed:', dbErr)
-        return NextResponse.redirect(`${settingsUrl}&instagram_error=db_save`)
+        return NextResponse.redirect(fail('instagram_error=db_save'))
       }
-      return NextResponse.redirect(`${settingsUrl}&instagram_connected=1`)
+      return NextResponse.redirect(ok('instagram_connected=1'))
     }
 
-    // Multiple Instagram accounts — show picker
+    // Multiple Instagram accounts — show picker (desktop only; mobile just connects first)
+    if (isMobile) {
+      const dbErr = await saveInstagramAccount(workspaceId, instagramAccounts[0])
+      if (dbErr) return NextResponse.redirect(mobileUrl)
+      return NextResponse.redirect(mobileUrl)
+    }
     const encoded = Buffer.from(JSON.stringify(instagramAccounts)).toString('base64url')
-    return NextResponse.redirect(`${settingsUrl}&instagram_pages=${encoded}`)
+    return NextResponse.redirect(`${desktopUrl}&instagram_pages=${encoded}`)
   }
 
   // Default flow: Messenger (Facebook Page connection)
@@ -189,14 +200,19 @@ export async function GET(req: NextRequest) {
     const dbErr = await savePageAccount(workspaceId, pages[0])
     if (dbErr) {
       console.error('[meta/callback] DB upsert failed:', dbErr)
-      return NextResponse.redirect(`${settingsUrl}&messenger_error=db_save`)
+      return NextResponse.redirect(fail('messenger_error=db_save'))
     }
-    return NextResponse.redirect(`${settingsUrl}&messenger_connected=1`)
+    return NextResponse.redirect(ok('messenger_connected=1'))
   }
 
-  // 4b. Multiple pages — pass list to settings so user can pick one
+  // 4b. Multiple pages — mobile auto-picks the first; desktop shows a picker
+  if (isMobile) {
+    const dbErr = await savePageAccount(workspaceId, pages[0])
+    if (dbErr) console.error('[meta/callback] DB upsert failed (mobile auto-pick):', dbErr)
+    return NextResponse.redirect(mobileUrl)
+  }
   const encoded = Buffer.from(
     JSON.stringify(pages.map(p => ({ id: p.id, name: p.name, token: p.access_token })))
   ).toString('base64url')
-  return NextResponse.redirect(`${settingsUrl}&messenger_pages=${encoded}`)
+  return NextResponse.redirect(`${desktopUrl}&messenger_pages=${encoded}`)
 }
