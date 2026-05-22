@@ -12,6 +12,7 @@ import {
   type StandingRule,
 } from '@/lib/data/mobile'
 import MIcon from '../MIcon'
+import MobileChannelsSheet from '../MobileChannelsSheet'
 
 const EXAMPLES = [
   "Don't accept bookings less than 2 hours before tour start time.",
@@ -24,13 +25,13 @@ export default function RulesScreen() {
   const [draft, setDraft] = useState('')
   const [saving, setSaving] = useState(false)
   const [channels, setChannels] = useState<string[]>([])
+  const [showChannels, setShowChannels] = useState(false)
 
   const loadRules = useCallback(() => {
     getStandingRules(workspace.id).then(setRules)
   }, [workspace.id])
 
-  useEffect(() => {
-    loadRules()
+  const loadChannels = useCallback(() => {
     const supabase = getSupabase()
     supabase
       .from('connected_accounts')
@@ -41,7 +42,12 @@ export default function RulesScreen() {
         const types = [...new Set((data ?? []).map((a: { channel_type: string }) => a.channel_type))]
         setChannels(types)
       })
-  }, [workspace.id, loadRules])
+  }, [workspace.id])
+
+  useEffect(() => {
+    loadRules()
+    loadChannels()
+  }, [loadRules, loadChannels])
 
   const save = async () => {
     if (!draft.trim()) return
@@ -66,6 +72,7 @@ export default function RulesScreen() {
       : 'No channels connected yet'
 
   return (
+    <>
     <div className="m-screen" data-screen-label="Standing rules">
       <div className="m-screen-head">
         <div className="eyebrow">
@@ -106,23 +113,13 @@ export default function RulesScreen() {
         {rules && rules.length > 0 && <span className="right">Tap trash to remove</span>}
       </div>
 
-      <div className="rules-list">
-        {rules === null ? (
-          <div className="rule-row">
-            <div className="rule-body">
-              <div className="rule-text">Loading…</div>
-            </div>
-          </div>
-        ) : rules.length === 0 ? (
-          <div className="rule-row">
-            <div className="rule-body">
-              <div className="rule-text" style={{ color: 'var(--m-ink-mute)' }}>
-                No rules yet — add your first one below.
-              </div>
-            </div>
-          </div>
-        ) : (
-          rules.map((r, i) => (
+      {rules === null ? (
+        <div className="rules-empty">Loading…</div>
+      ) : rules.length === 0 ? (
+        <div className="rules-empty">No rules yet — add your first one below.</div>
+      ) : (
+        <div className="rules-list">
+          {rules.map((r, i) => (
             <div className="rule-row" key={r.id}>
               <span className="rule-num">{String(i + 1).padStart(2, '0')}</span>
               <div className="rule-body">
@@ -145,9 +142,9 @@ export default function RulesScreen() {
                 <MIcon name="trash" size={16} />
               </button>
             </div>
-          ))
-        )}
-      </div>
+          ))}
+        </div>
+      )}
 
       <div className="m-section-label" style={{ marginTop: 22 }}>
         <span>Teach Caye a new rule</span>
@@ -192,7 +189,11 @@ export default function RulesScreen() {
             <div className="sub">{workspace.business_name || 'Your business'}</div>
           </div>
         </div>
-        <div className="settings-row">
+        <div
+          className="settings-row"
+          onClick={() => setShowChannels(true)}
+          style={{ cursor: 'pointer' }}
+        >
           <div className="ic">
             <MIcon name="msg" size={16} />
           </div>
@@ -200,6 +201,9 @@ export default function RulesScreen() {
             <div className="ttl">Connected channels</div>
             <div className="sub">{channelLabel}</div>
           </div>
+          <span className="chev">
+            <MIcon name="chev" size={16} />
+          </span>
         </div>
         <div className="settings-row">
           <div className="ic">
@@ -212,5 +216,16 @@ export default function RulesScreen() {
         </div>
       </div>
     </div>
+
+    {showChannels && (
+      <MobileChannelsSheet
+        workspaceId={workspace.id}
+        onClose={() => {
+          setShowChannels(false)
+          loadChannels()
+        }}
+      />
+    )}
+    </>
   )
 }
