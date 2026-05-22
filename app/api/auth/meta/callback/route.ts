@@ -27,7 +27,7 @@ async function savePageAccount(
         metadata: { page_id: page.id, page_name: page.name },
         updated_at: new Date().toISOString(),
       },
-      { onConflict: 'user_id,channel_type' }
+      { onConflict: 'channel_type,channel_account_id' }
     )
   return error?.message ?? null
 }

@@ -50,7 +50,7 @@ export async function POST(req: NextRequest) {
         needs_reauth: false,
         metadata: { phone_number_id: phoneNumberId, verified_name, display_phone_number },
       },
-      { onConflict: 'user_id,channel_type' }
+      { onConflict: 'channel_type,channel_account_id' }
     )
 
   if (upsertError) {

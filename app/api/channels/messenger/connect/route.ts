@@ -50,7 +50,7 @@ export async function POST(req: NextRequest) {
         needs_reauth: false,
         metadata: { page_id: pageId, page_name: resolvedName },
       },
-      { onConflict: 'user_id,channel_type' }
+      { onConflict: 'channel_type,channel_account_id' }
     )
 
   if (upsertError) {
