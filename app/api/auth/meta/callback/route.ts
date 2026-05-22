@@ -53,11 +53,11 @@ export async function GET(req: NextRequest) {
   const metaError = searchParams.get('error')
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL!
-  const settingsUrl = `${appUrl}/dashboard/${workspaceId}/settings`
+  const settingsUrl = `${appUrl}/dashboard/${workspaceId}/settings?tab=channels`
 
   if (metaError || !code || !workspaceId) {
     console.error('[meta/callback] Denied or missing params:', { metaError, hasCode: !!code, workspaceId })
-    return NextResponse.redirect(`${settingsUrl}?messenger_error=access_denied`)
+    return NextResponse.redirect(`${settingsUrl}&messenger_error=access_denied`)
   }
 
   const redirectUri = `${appUrl}/api/auth/meta/callback`
@@ -75,7 +75,7 @@ export async function GET(req: NextRequest) {
   const tokenData = (await tokenRes.json()) as Record<string, unknown>
   if (!tokenData.access_token) {
     console.error('[meta/callback] Token exchange failed:', tokenData)
-    return NextResponse.redirect(`${settingsUrl}?messenger_error=token_exchange`)
+    return NextResponse.redirect(`${settingsUrl}&messenger_error=token_exchange`)
   }
 
   // 2. Exchange for long-lived user token (60 days)
@@ -100,7 +100,7 @@ export async function GET(req: NextRequest) {
 
   if (!pages.length) {
     console.warn('[meta/callback] No Facebook Pages found for this user')
-    return NextResponse.redirect(`${settingsUrl}?messenger_error=no_pages`)
+    return NextResponse.redirect(`${settingsUrl}&messenger_error=no_pages`)
   }
 
   // 4a. Single page — connect immediately
@@ -108,14 +108,14 @@ export async function GET(req: NextRequest) {
     const dbErr = await savePageAccount(workspaceId, pages[0])
     if (dbErr) {
       console.error('[meta/callback] DB upsert failed:', dbErr)
-      return NextResponse.redirect(`${settingsUrl}?messenger_error=db_save`)
+      return NextResponse.redirect(`${settingsUrl}&messenger_error=db_save`)
     }
-    return NextResponse.redirect(`${settingsUrl}?messenger_connected=1`)
+    return NextResponse.redirect(`${settingsUrl}&messenger_connected=1`)
   }
 
   // 4b. Multiple pages — pass list to settings so user can pick one
   const encoded = Buffer.from(
     JSON.stringify(pages.map(p => ({ id: p.id, name: p.name, token: p.access_token })))
   ).toString('base64url')
-  return NextResponse.redirect(`${settingsUrl}?messenger_pages=${encoded}`)
+  return NextResponse.redirect(`${settingsUrl}&messenger_pages=${encoded}`)
 }
