@@ -63,7 +63,7 @@ function buildSystem(
       '\n\nVOICE PROFILE — write in this person\'s actual style:\n' +
       `- Formality: ${voiceProfile.formality_level}\n` +
       `- Style: ${voiceProfile.writing_style}\n` +
-      `- Common phrases to use naturally: ${voiceProfile.common_phrases.join(', ')}\n` +
+      `- Common phrases to use naturally: ${(voiceProfile.common_phrases ?? []).join(', ')}\n` +
       `- Typical greeting: ${voiceProfile.greeting_style}\n` +
       `- Typical sign-off: ${voiceProfile.signoff_style}\n` +
       `- Tone notes: ${voiceProfile.tone_notes}`
