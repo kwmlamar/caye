@@ -4,6 +4,7 @@ import { useEffect, useState, use } from "react"
 import { useRouter } from "next/navigation"
 import Sidebar from "@/components/dashboard/Sidebar"
 import CayePanel from "@/components/dashboard/CayePanel"
+import ViewportRedirect from "@/components/mobile/ViewportRedirect"
 import { getSession, getSupabase } from "@/lib/supabase"
 import { WorkspaceProvider, type WorkspaceMembership } from "@/lib/workspace-context"
 import { DashboardProvider, useDashboard } from "@/lib/dashboard-context"
@@ -34,6 +35,7 @@ function DashboardShell({ children, workspace, workspaceId, workspaces, isOwner 
 
   return (
     <WorkspaceProvider value={{ workspace, workspaceId, workspaces, isOwner }}>
+      <ViewportRedirect mode="toMobile" workspaceId={workspaceId} />
       <div className="tc-root">
         <div className="tc-frame">
           <Sidebar workspaceId={workspaceId} />
