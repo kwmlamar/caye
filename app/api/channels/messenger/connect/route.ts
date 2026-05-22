@@ -36,6 +36,15 @@ export async function POST(req: NextRequest) {
 
   const supabase = createServiceClient()
 
+  // Deactivate any existing messenger connections for this workspace
+  // that point to a different page (same pattern as Zoho callback)
+  await supabase
+    .from('connected_accounts')
+    .update({ is_active: false, needs_reauth: false })
+    .eq('user_id', workspaceId)
+    .eq('channel_type', 'messenger')
+    .neq('channel_account_id', pageId)
+
   const { error: upsertError } = await supabase
     .from('connected_accounts')
     .upsert(
@@ -54,6 +63,7 @@ export async function POST(req: NextRequest) {
     )
 
   if (upsertError) {
+    console.error('[messenger/connect] upsert error:', upsertError)
     return NextResponse.json({ error: upsertError.message }, { status: 500 })
   }
 

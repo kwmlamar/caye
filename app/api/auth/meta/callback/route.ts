@@ -12,6 +12,17 @@ async function savePageAccount(
   page: MetaPage
 ): Promise<string | null> {
   const supabase = createServiceClient()
+
+  // Deactivate any existing messenger connections for this workspace
+  // that point to a different page (same pattern as Zoho callback)
+  await supabase
+    .from('connected_accounts')
+    .update({ is_active: false, needs_reauth: false })
+    .eq('user_id', workspaceId)
+    .eq('channel_type', 'messenger')
+    .neq('channel_account_id', page.id)
+
+  // Upsert on the actual DB unique constraint (channel_type, channel_account_id)
   const { error } = await supabase
     .from('connected_accounts')
     .upsert(
@@ -29,6 +40,9 @@ async function savePageAccount(
       },
       { onConflict: 'channel_type,channel_account_id' }
     )
+  if (error) {
+    console.error('[meta/callback] savePageAccount upsert error:', error)
+  }
   return error?.message ?? null
 }
 

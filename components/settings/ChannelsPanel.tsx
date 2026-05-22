@@ -91,9 +91,11 @@ export default function ChannelsPanel() {
 
     if (msgrPages) {
       try {
-        const decoded = JSON.parse(Buffer.from(msgrPages, 'base64url').toString())
+        // Use atob (Web API) instead of Buffer (Node.js) for client-side decoding
+        const base64 = msgrPages.replace(/-/g, '+').replace(/_/g, '/')
+        const decoded = JSON.parse(atob(base64))
         setMessengerPages(decoded)
-      } catch { /* ignore */ }
+      } catch (e) { console.error('[ChannelsPanel] Failed to decode messenger_pages:', e) }
     }
 
     // Strip the one-time params so they don't re-fire on refresh
