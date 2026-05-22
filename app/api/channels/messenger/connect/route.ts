@@ -67,5 +67,22 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: upsertError.message }, { status: 500 })
   }
 
+  // Subscribe the page to the app's webhook so Meta delivers message events
+  try {
+    const subRes = await fetch(
+      `https://graph.facebook.com/v19.0/${encodeURIComponent(pageId)}/subscribed_apps` +
+        `?subscribed_fields=messages&access_token=${encodeURIComponent(accessToken)}`,
+      { method: 'POST' }
+    )
+    const subData = (await subRes.json()) as Record<string, unknown>
+    if (!subData.success) {
+      console.error('[messenger/connect] Page webhook subscription failed:', subData)
+    } else {
+      console.log(`[messenger/connect] Page ${pageId} subscribed to webhook`)
+    }
+  } catch (err) {
+    console.error('[messenger/connect] Page webhook subscription error:', err)
+  }
+
   return NextResponse.json({ success: true, pageName: resolvedName })
 }

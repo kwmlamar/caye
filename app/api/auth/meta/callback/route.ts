@@ -47,8 +47,27 @@ async function savePageAccount(
     )
   if (error) {
     console.error('[meta/callback] savePageAccount upsert error:', error)
+    return error.message
   }
-  return error?.message ?? null
+
+  // Subscribe the page to the app's webhook so Meta delivers messages events
+  try {
+    const subRes = await fetch(
+      `https://graph.facebook.com/v19.0/${encodeURIComponent(page.id)}/subscribed_apps` +
+        `?subscribed_fields=messages&access_token=${encodeURIComponent(page.access_token)}`,
+      { method: 'POST' }
+    )
+    const subData = (await subRes.json()) as Record<string, unknown>
+    if (!subData.success) {
+      console.error('[meta/callback] Page webhook subscription failed:', subData)
+    } else {
+      console.log(`[meta/callback] Page ${page.id} subscribed to webhook`)
+    }
+  } catch (err) {
+    console.error('[meta/callback] Page webhook subscription error:', err)
+  }
+
+  return null
 }
 
 async function saveInstagramAccount(
