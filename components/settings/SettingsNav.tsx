@@ -41,10 +41,12 @@ export default function SettingsNav({
   const [teamCount, setTeamCount] = useState<number | null>(null)
   const [channelCount, setChannelCount] = useState<number | null>(null)
 
+  const [serviceCount, setServiceCount] = useState<number | null>(null)
+
   useEffect(() => {
     async function loadCounts() {
       const supabase = getSupabase()
-      const [{ count: members }, { count: channels }] = await Promise.all([
+      const [{ count: members }, { count: channels }, { count: services }] = await Promise.all([
         // team_members has no RLS — readable by any authenticated user
         supabase
           .from('team_members')
@@ -56,9 +58,15 @@ export default function SettingsNav({
           .select('*', { count: 'exact', head: true })
           .eq('user_id', workspaceId)
           .eq('is_active', true),
+        supabase
+          .from('booking_services')
+          .select('*', { count: 'exact', head: true })
+          .eq('user_id', workspaceId)
+          .eq('is_active', true),
       ])
       setTeamCount(members ?? null)
       setChannelCount(channels ?? null)
+      setServiceCount(services ?? null)
     }
     loadCounts()
   }, [workspaceId])
@@ -82,6 +90,8 @@ export default function SettingsNav({
         return teamCount !== null ? `${teamCount} member${teamCount !== 1 ? 's' : ''}` : staticSub
       case 'channels':
         return channelCount !== null ? `${channelCount} connection${channelCount !== 1 ? 's' : ''}` : staticSub
+      case 'services':
+        return serviceCount !== null ? `${serviceCount} active` : staticSub
       default:
         return staticSub
     }
