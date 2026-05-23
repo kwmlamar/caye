@@ -206,15 +206,27 @@ export async function syncZohoEventsToBookings(workspaceId: string): Promise<Inb
     }
   }
 
-  // Reconcile deletes: any linked booking in window not seen in this fetch is gone
-  for (const [uid, booking] of localByZohoUid.entries()) {
-    if (zohoUidsSeen.has(uid)) continue
-    if (booking.status === 'cancelled') continue
-    await supabase
-      .from('bookings')
-      .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
-      .eq('id', booking.id)
-    stats.cancelled++
+  // Reconcile deletes — but ONLY if Zoho returned at least one event.
+  // An empty fetch could mean the API call worked against the wrong calendar,
+  // the range format silently returned nothing, or pagination cut off. In any
+  // of those cases mass-cancelling local bookings would be catastrophic — so
+  // we only treat absence as a delete signal when we have positive evidence
+  // the calendar actually has data.
+  if (events.length > 0) {
+    for (const [uid, booking] of localByZohoUid.entries()) {
+      if (zohoUidsSeen.has(uid)) continue
+      if (booking.status === 'cancelled') continue
+      await supabase
+        .from('bookings')
+        .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
+        .eq('id', booking.id)
+      stats.cancelled++
+    }
+  } else if (localByZohoUid.size > 0) {
+    console.warn(
+      `[zoho-inbound-sync] ${workspaceId}: Zoho returned 0 events but ${localByZohoUid.size} ` +
+        `local bookings have zoho_event_ids. Skipping reconcile to avoid mass-cancel.`
+    )
   }
 
   return stats

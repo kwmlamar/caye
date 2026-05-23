@@ -74,8 +74,13 @@ async function getOrFetchCalendarId(
     headers: { Authorization: `Zoho-oauthtoken ${accessToken}` },
   })
   const data = await res.json()
-  const calendars: Array<{ uid: string; isdefault?: string | boolean; default?: boolean }> =
+  const calendars: Array<{ uid: string; isdefault?: string | boolean; default?: boolean; name?: string }> =
     Array.isArray(data?.calendars) ? data.calendars : []
+
+  console.log(
+    `[zoho-calendar] getOrFetchCalendarId workspace=${workspaceId} found ${calendars.length} calendars: ` +
+      calendars.map(c => `${c.name ?? '?'}[${c.uid}${c.isdefault ? ' default' : ''}]`).join(', ')
+  )
 
   // Find the default calendar (Zoho uses "isdefault" as string 'true' OR boolean)
   const def = calendars.find(c => c.isdefault === true || c.isdefault === 'true' || c.default === true)
@@ -239,7 +244,13 @@ async function fetchEventsChunk(
   }
 
   const data = await res.json()
-  return Array.isArray(data?.events) ? data.events : []
+  const events: ZohoRawEvent[] = Array.isArray(data?.events) ? data.events : []
+  console.log(
+    `[zoho-calendar] list ${fromDateISO}..${toDateISO} cal=${calId} → ${events.length} events. ` +
+      `Sample keys: ${Object.keys(data || {}).join(',')}. ` +
+      `First event: ${events[0] ? JSON.stringify(events[0]).slice(0, 300) : '(none)'}`
+  )
+  return events
 }
 
 /**
