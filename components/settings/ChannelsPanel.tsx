@@ -146,7 +146,7 @@ export default function ChannelsPanel() {
     const supabase = getSupabase()
     const { data, error } = await supabase
       .from('connected_accounts')
-      .select('id, channel_type, channel_account_name, channel_username, channel_account_id, is_active, needs_reauth, created_at')
+      .select('id, channel_type, channel_account_name, channel_username, channel_account_id, is_active, needs_reauth, sync_calendar, created_at')
       .eq('user_id', workspaceId)
 
     if (error) { toast.error('Failed to load channels'); setLoading(false); return }
