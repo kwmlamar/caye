@@ -300,7 +300,15 @@ async function processMessage(
   try {
     decision = await generateCayeAutoReply(
       systemPrompt,
-      { senderName: effectiveName || effectiveEmail, body: body || subject, channel: 'email', subject }
+      {
+        senderName: effectiveName || effectiveEmail,
+        body: body || subject,
+        channel: 'email',
+        subject,
+        workspaceId,
+        conversationId: conversation.id,
+        senderEmail: effectiveEmail,
+      }
     )
   } catch (err) {
     console.error('[email/poll] AI reply generation failed:', err)

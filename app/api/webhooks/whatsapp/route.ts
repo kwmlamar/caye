@@ -21,6 +21,7 @@ import { createHmac } from 'crypto'
 import { createServiceClient } from '@/lib/supabase-server'
 import { sendWhatsAppMessage } from '@/lib/whatsapp'
 import { generateCayeAutoReply } from '@/lib/caye-reply'
+import { syncBookingToCalendar } from '@/lib/calendar-sync'
 import type { VoiceProfile } from '@/lib/voice-profile'
 
 // ─── GET — webhook verification ──────────────────────────────────────────────
@@ -258,7 +259,14 @@ async function processInboundWhatsApp(payload: Record<string, unknown>): Promise
     try {
       decision = await generateCayeAutoReply(
         systemPrompt,
-        { senderName: customerName, body, channel: 'whatsapp', isFirstMessage },
+        {
+          senderName: customerName,
+          body,
+          channel: 'whatsapp',
+          isFirstMessage,
+          workspaceId,
+          conversationId: conversation.id,
+        },
         voiceProfile
       )
     } catch (err) {
@@ -314,6 +322,15 @@ async function processInboundWhatsApp(payload: Record<string, unknown>): Promise
         .from('unified_conversations')
         .update({ last_sender_type: 'business', last_business_sender_kind: 'caye' })
         .eq('id', conversation.id)
+    }
+
+    if (decision.bookingId) {
+      syncBookingToCalendar(workspaceId, decision.bookingId, 'upsert').catch(err =>
+        console.error('[whatsapp webhook] Calendar sync failed:', err)
+      )
+      console.log(
+        `[whatsapp webhook] Caye created booking ${decision.bookingId} for workspace ${workspaceId}`
+      )
     }
 
     console.log(`[whatsapp webhook] Auto-reply sent to ${from} for workspace ${workspaceId}`)

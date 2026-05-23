@@ -20,6 +20,7 @@ import { createHmac } from 'crypto'
 import { createServiceClient } from '@/lib/supabase-server'
 import { sendZohoReply } from '@/lib/email-ai'
 import { generateCayeAutoReply } from '@/lib/caye-reply'
+import { syncBookingToCalendar } from '@/lib/calendar-sync'
 import type { VoiceProfile } from '@/lib/voice-profile'
 
 function htmlToPlainText(html: string): string {
@@ -230,7 +231,15 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
   try {
     decision = await generateCayeAutoReply(
       systemPrompt,
-      { senderName: fromName || fromEmail, body: body || subject, channel: 'email', subject },
+      {
+        senderName: fromName || fromEmail,
+        body: body || subject,
+        channel: 'email',
+        subject,
+        workspaceId,
+        conversationId: conversation.id,
+        senderEmail: fromEmail,
+      },
       voiceProfile
     )
   } catch (err) {
@@ -289,6 +298,15 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
       .from('unified_conversations')
       .update({ last_sender_type: 'business', last_business_sender_kind: 'caye', last_message_at: replySentAt, last_message_preview: decision.content.slice(0, 100) })
       .eq('id', conversation.id)
+  }
+
+  if (decision.bookingId) {
+    syncBookingToCalendar(workspaceId, decision.bookingId, 'upsert').catch(err =>
+      console.error('[zoho-email webhook] Calendar sync failed:', err)
+    )
+    console.log(
+      `[zoho-email webhook] Caye created booking ${decision.bookingId} for workspace ${workspaceId}`
+    )
   }
 
   console.log(`[zoho-email webhook] Auto-reply sent to ${fromEmail} for workspace ${workspaceId}`)

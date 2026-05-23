@@ -2101,3 +2101,100 @@
 }
 .ghost-btn.danger { color: var(--tc-coral, #e2725b); }
 .ghost-btn.danger:hover { background: rgba(226, 114, 91, 0.08); }
+
+/* ── Ask Caye side panel (calendar) ─────────────────────────────────── */
+.ask-caye-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 380px;
+  max-width: 92vw;
+  background: var(--surface, #fff);
+  border-left: 1px solid var(--border, rgba(0, 0, 0, 0.08));
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.06);
+  display: flex;
+  flex-direction: column;
+  z-index: 60;
+}
+.ask-caye-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border, rgba(0, 0, 0, 0.08));
+}
+.ask-caye-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 14px;
+}
+.ask-caye-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ask-caye-msg {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+.ask-caye-msg.user {
+  justify-content: flex-end;
+}
+.ask-caye-msg-avatar {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--tc-teal-soft, rgba(45, 165, 165, 0.12));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.ask-caye-msg-bubble {
+  padding: 8px 12px;
+  border-radius: 12px;
+  font-size: 13px;
+  line-height: 1.4;
+  max-width: 280px;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+.ask-caye-msg.assistant .ask-caye-msg-bubble {
+  background: var(--bg-soft, #f4f4f4);
+  color: var(--text, #111);
+}
+.ask-caye-msg.user .ask-caye-msg-bubble {
+  background: var(--tc-teal, #2da5a5);
+  color: #fff;
+}
+.ask-caye-msg-bubble.typing {
+  opacity: 0.6;
+  font-style: italic;
+}
+.ask-caye-error {
+  margin: 0 14px 8px;
+  color: var(--tc-coral, #e2725b);
+  font-size: 12px;
+  padding: 6px 10px;
+  background: rgba(226, 114, 91, 0.08);
+  border-radius: 6px;
+}
+.ask-caye-foot {
+  display: flex;
+  gap: 8px;
+  padding: 12px 14px;
+  border-top: 1px solid var(--border, rgba(0, 0, 0, 0.08));
+  align-items: flex-end;
+}
+.ask-caye-input {
+  flex: 1;
+  resize: none;
+  font-size: 13px;
+}
