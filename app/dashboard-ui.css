@@ -2055,3 +2055,49 @@
   .s-row { grid-template-columns: 1fr; gap: 8px; }
   .s-row .s-label { padding-top: 0; }
 }
+
+/* ── Booking modal ─────────────────────────────────────────────────────────── */
+.bk-modal-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(15, 23, 30, 0.45);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 100;
+  padding: 20px;
+}
+.bk-modal {
+  background: var(--tc-bg-app);
+  border: 1px solid var(--tc-line);
+  border-radius: 14px;
+  width: 100%; max-width: 560px;
+  max-height: 90vh;
+  display: flex; flex-direction: column;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
+}
+.bk-modal-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--tc-line);
+}
+.bk-modal-head h3 { margin: 0; font-size: 16px; font-weight: 600; }
+.bk-modal-body {
+  padding: 16px 20px;
+  display: flex; flex-direction: column; gap: 14px;
+  overflow-y: auto;
+}
+.bk-modal-foot {
+  padding: 12px 20px;
+  border-top: 1px solid var(--tc-line);
+  display: flex; align-items: center; gap: 8px;
+}
+.bk-field { display: flex; flex-direction: column; gap: 6px; flex: 1; }
+.bk-field label { font-size: 12px; color: var(--tc-ink-faint); font-weight: 500; }
+.bk-field-row { display: flex; gap: 10px; }
+.bk-modal-error {
+  color: var(--tc-coral, #e2725b);
+  font-size: 13px;
+  padding: 8px 10px;
+  background: rgba(226, 114, 91, 0.08);
+  border-radius: 6px;
+}
+.ghost-btn.danger { color: var(--tc-coral, #e2725b); }
+.ghost-btn.danger:hover { background: rgba(226, 114, 91, 0.08); }

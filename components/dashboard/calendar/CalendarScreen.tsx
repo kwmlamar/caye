@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import CayeMark from '@/components/ui/CayeMark'
 import { getSupabase } from '@/lib/supabase'
 import { useWorkspace } from '@/lib/workspace-context'
+import BookingModal, { type BookingModalData } from './BookingModal'
 
 const ROW_H = 56
 const START = 8
@@ -13,12 +14,45 @@ const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 interface SupaBooking {
   id: string
   customer_name: string
+  customer_phone: string | null
+  customer_email: string | null
+  service_id: string | null
   booking_date: string        // 'YYYY-MM-DD'
   booking_time: string        // 'HH:MM:SS'
   number_of_people: number
-  status: 'confirmed' | 'pending' | 'completed'
+  status: 'confirmed' | 'pending' | 'completed' | 'cancelled'
+  notes: string | null
   conversation_id: string | null
   service: { name: string; duration_minutes: number }[] | null
+}
+
+function emptyBookingForm(date?: string, time = '10:00'): BookingModalData {
+  return {
+    service_id: null,
+    customer_name: '',
+    customer_phone: '',
+    customer_email: '',
+    booking_date: date ?? new Date().toISOString().slice(0, 10),
+    booking_time: time,
+    number_of_people: 1,
+    status: 'confirmed',
+    notes: '',
+  }
+}
+
+function bookingToForm(b: SupaBooking): BookingModalData {
+  return {
+    id: b.id,
+    service_id: b.service_id,
+    customer_name: b.customer_name,
+    customer_phone: b.customer_phone ?? '',
+    customer_email: b.customer_email ?? '',
+    booking_date: b.booking_date,
+    booking_time: b.booking_time.slice(0, 5),
+    number_of_people: b.number_of_people,
+    status: b.status,
+    notes: b.notes ?? '',
+  }
 }
 
 function weekStart(date: Date): Date {
@@ -85,6 +119,7 @@ export default function CalendarScreen() {
   const [monthOf, setMonthOf] = useState<Date>(new Date(todayDate.getFullYear(), todayDate.getMonth(), 1))
   const [bookings, setBookings] = useState<SupaBooking[]>([])
   const [loading, setLoading] = useState(true)
+  const [modal, setModal] = useState<{ mode: 'new' | 'edit'; data: BookingModalData } | null>(null)
 
   const weekDays = Array.from({ length: 7 }, (_, i) => addDays(weekOf, i))
   const weekEnd = weekDays[6]
@@ -105,7 +140,7 @@ export default function CalendarScreen() {
 
     const { data, error } = await supabase
       .from('bookings')
-      .select('id, customer_name, booking_date, booking_time, number_of_people, status, conversation_id, service:booking_services(name, duration_minutes)')
+      .select('id, customer_name, customer_phone, customer_email, service_id, booking_date, booking_time, number_of_people, status, notes, conversation_id, service:booking_services(name, duration_minutes)')
       .eq('user_id', workspaceId)
       .gte('booking_date', start)
       .lte('booking_date', end)
@@ -167,7 +202,12 @@ export default function CalendarScreen() {
             <span className={view === 'DAY' ? 'on' : ''} onClick={() => setView('DAY')} style={{ cursor: 'pointer' }}>Day</span>
             <span className={view === 'MONTH' ? 'on' : ''} onClick={() => setView('MONTH')} style={{ cursor: 'pointer' }}>Month</span>
           </div>
-          <button className="btn-primary sm">+ New booking</button>
+          <button
+            className="btn-primary sm"
+            onClick={() => setModal({ mode: 'new', data: emptyBookingForm(toISO(todayDate)) })}
+          >
+            + New booking
+          </button>
         </div>
       </header>
 
@@ -187,7 +227,12 @@ export default function CalendarScreen() {
                   <span className="cal-month-dnum">{date.getDate()}</span>
                   <div className="cal-month-events">
                     {dayBks.slice(0, 3).map(b => (
-                      <div key={b.id} className={`cal-month-bk ${b.status}`}>
+                      <div
+                        key={b.id}
+                        className={`cal-month-bk ${b.status}`}
+                        style={{ cursor: 'pointer' }}
+                        onClick={() => setModal({ mode: 'edit', data: bookingToForm(b) })}
+                      >
                         <span className="cmb-time">{fmtTime(b.booking_time)}</span>
                         <span className="cmb-name">{b.customer_name}</span>
                         <span className="cmb-guests">{b.number_of_people}p</span>
@@ -245,7 +290,12 @@ export default function CalendarScreen() {
                     const isByCaye = !!b.conversation_id
                     const cls = `bk-card ${b.status}${isByCaye ? ' by-caye' : ''}`
                     return (
-                      <div key={b.id} className={cls} style={{ top, height }}>
+                      <div
+                        key={b.id}
+                        className={cls}
+                        style={{ top, height, cursor: 'pointer' }}
+                        onClick={() => setModal({ mode: 'edit', data: bookingToForm(b) })}
+                      >
                         <div className="bk-top">
                           <span className="bk-time">
                             {fmtTime(b.booking_time)}–{fmtEndTime(b.booking_time, durationMins)}
@@ -272,6 +322,16 @@ export default function CalendarScreen() {
             })}
           </div>
         </div>
+      )}
+
+      {modal && workspaceId && (
+        <BookingModal
+          workspaceId={workspaceId}
+          initial={modal.data}
+          mode={modal.mode}
+          onClose={() => setModal(null)}
+          onSaved={() => { setModal(null); fetchBookings() }}
+        />
       )}
     </div>
   )
