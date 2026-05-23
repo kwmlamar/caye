@@ -206,12 +206,10 @@ export async function syncZohoEventsToBookings(workspaceId: string): Promise<Inb
     }
   }
 
-  // Reconcile deletes are DISABLED until we've confirmed Zoho list is reliably
-  // returning the user's events. The previous behavior mass-cancelled local
-  // bookings whenever Zoho returned an empty (or wrong-calendar) response.
-  // Re-enable behind a flag once we verify the fetch is correct.
-  const RECONCILE_DELETES = false
-  if (RECONCILE_DELETES && events.length > 0) {
+  // Reconcile deletes: any linked booking in window not seen in this fetch is
+  // assumed deleted in Zoho. Guarded by `events.length > 0` so an empty fetch
+  // (wrong calendar, transient error returning [], etc.) can never mass-cancel.
+  if (events.length > 0) {
     for (const [uid, booking] of localByZohoUid.entries()) {
       if (zohoUidsSeen.has(uid)) continue
       if (booking.status === 'cancelled') continue

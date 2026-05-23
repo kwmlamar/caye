@@ -191,12 +191,24 @@ export interface ZohoEventSummary {
   durationMinutes: number
 }
 
+/**
+ * Zoho's list response uses 'YYYYMMDDTHHMMSS±HHMM' (with timezone offset)
+ * while the create/update payload uses 'YYYYMMDDTHHMMSSZ' (UTC). Both forms
+ * need to round-trip cleanly.
+ */
 function parseZohoDateTime(s: string): Date | null {
   if (!s) return null
-  const compact = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z?$/.exec(s)
-  if (compact) {
-    const [, y, mo, d, h, mi, se] = compact
-    return new Date(`${y}-${mo}-${d}T${h}:${mi}:${se}Z`)
+  // 20260524T090000-0500  or  20260524T090000Z  or  20260524T090000
+  const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})(Z|[+-]\d{2}:?\d{2})?$/.exec(s)
+  if (m) {
+    const [, y, mo, d, h, mi, se, tz] = m
+    let zone = 'Z'
+    if (tz && tz !== 'Z') {
+      // Normalize '-0500' → '-05:00' (Date constructor requires the colon)
+      zone = tz.length === 5 ? `${tz.slice(0, 3)}:${tz.slice(3)}` : tz
+    }
+    const d2 = new Date(`${y}-${mo}-${d}T${h}:${mi}:${se}${zone}`)
+    return Number.isFinite(d2.getTime()) ? d2 : null
   }
   const t = Date.parse(s)
   return Number.isFinite(t) ? new Date(t) : null
