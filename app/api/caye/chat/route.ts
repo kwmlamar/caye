@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { createServiceClient, createServerClient } from '@/lib/supabase-server'
+import { syncBookingToCalendar } from '@/lib/calendar-sync'
 
 interface HistoryMessage {
   from: 'user' | 'caye'
@@ -108,6 +109,61 @@ const TOOLS: Anthropic.Tool[] = [
       required: ['field', 'action', 'value', 'summary'],
     },
   },
+  {
+    name: 'list_bookings',
+    description:
+      'List existing bookings on a given date or date range. Use this whenever ' +
+      'the owner asks "what\'s on Friday?", "show me next week", or wants to check ' +
+      'the schedule before creating a booking.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        start_date: { type: 'string', description: 'YYYY-MM-DD.' },
+        end_date: {
+          type: 'string',
+          description: 'YYYY-MM-DD. Omit to query a single day.',
+        },
+      },
+      required: ['start_date'],
+    },
+  },
+  {
+    name: 'create_booking',
+    description:
+      'Create a booking when the owner asks you to. Trust the owner\'s input as ' +
+      'the source of truth — don\'t make up missing fields, ask in your reply if ' +
+      'something is missing. After it succeeds, confirm the details in plain text.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        customer_name: { type: 'string' },
+        customer_phone: { type: 'string' },
+        customer_email: { type: 'string' },
+        booking_date: { type: 'string', description: 'YYYY-MM-DD.' },
+        booking_time: { type: 'string', description: '24-hour HH:MM.' },
+        number_of_people: { type: 'number' },
+        service_id: {
+          type: 'string',
+          description: 'Service id from the SERVICES list in your system prompt. Omit if none fits.',
+        },
+        notes: { type: 'string' },
+        status: { type: 'string', enum: ['confirmed', 'pending'] },
+      },
+      required: ['customer_name', 'booking_date', 'booking_time'],
+    },
+  },
+  {
+    name: 'cancel_booking',
+    description: 'Cancel an existing booking by id. Use list_bookings first if you don\'t know the id.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        booking_id: { type: 'string', description: 'UUID of the booking to cancel.' },
+      },
+      required: ['booking_id'],
+    },
+    cache_control: { type: 'ephemeral' },
+  },
 ]
 
 type SearchInput = {
@@ -135,6 +191,114 @@ type UpdateConfigInput = {
 type UpdateConfigResult =
   | { success: true; field: string; summary: string }
   | { error: string }
+
+type ListBookingsInput = { start_date: string; end_date?: string }
+
+type CreateBookingInput = {
+  customer_name: string
+  customer_phone?: string
+  customer_email?: string
+  booking_date: string
+  booking_time: string
+  number_of_people?: number
+  service_id?: string
+  notes?: string
+  status?: 'confirmed' | 'pending'
+}
+
+type CancelBookingInput = { booking_id: string }
+
+interface ServiceRow {
+  id: string
+  name: string
+  duration_minutes: number
+  description?: string | null
+}
+
+async function runListBookings(
+  supabase: ReturnType<typeof createServiceClient>,
+  workspaceId: string,
+  input: ListBookingsInput
+) {
+  const end = input.end_date ?? input.start_date
+  const { data, error } = await supabase
+    .from('bookings')
+    .select(
+      'id, customer_name, booking_date, booking_time, number_of_people, status, service:booking_services(name)'
+    )
+    .eq('user_id', workspaceId)
+    .gte('booking_date', input.start_date)
+    .lte('booking_date', end)
+    .neq('status', 'cancelled')
+    .order('booking_date')
+    .order('booking_time')
+
+  if (error) return { error: error.message }
+  type Row = {
+    id: string
+    customer_name: string
+    booking_date: string
+    booking_time: string
+    number_of_people: number
+    status: string
+    service: { name: string }[] | null
+  }
+  const rows = (data ?? []) as unknown as Row[]
+  return {
+    bookings: rows.map(r => ({
+      id: r.id,
+      date: r.booking_date,
+      time: r.booking_time.slice(0, 5),
+      customer: r.customer_name,
+      party_size: r.number_of_people,
+      service: r.service?.[0]?.name ?? null,
+      status: r.status,
+    })),
+  }
+}
+
+async function runCreateBooking(
+  supabase: ReturnType<typeof createServiceClient>,
+  workspaceId: string,
+  input: CreateBookingInput
+) {
+  const time = input.booking_time.length === 5 ? `${input.booking_time}:00` : input.booking_time
+  const payload = {
+    user_id: workspaceId,
+    service_id: input.service_id || null,
+    customer_name: input.customer_name.trim(),
+    customer_phone: input.customer_phone?.trim() || null,
+    customer_email: input.customer_email?.trim() || null,
+    booking_date: input.booking_date,
+    booking_time: time,
+    number_of_people:
+      input.number_of_people && input.number_of_people > 0 ? input.number_of_people : 1,
+    status: input.status ?? 'confirmed',
+    notes: input.notes?.trim() || null,
+  }
+  const { data, error } = await supabase.from('bookings').insert(payload).select('id').single()
+  if (error || !data) return { success: false, error: error?.message ?? 'Insert failed' }
+  return { success: true, booking_id: data.id }
+}
+
+async function runCancelBooking(
+  supabase: ReturnType<typeof createServiceClient>,
+  workspaceId: string,
+  input: CancelBookingInput
+) {
+  const { data: bk } = await supabase
+    .from('bookings')
+    .select('id, user_id')
+    .eq('id', input.booking_id)
+    .maybeSingle()
+  if (!bk || bk.user_id !== workspaceId) return { success: false, error: 'Booking not found' }
+  const { error } = await supabase
+    .from('bookings')
+    .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
+    .eq('id', input.booking_id)
+  if (error) return { success: false, error: error.message }
+  return { success: true, booking_id: input.booking_id }
+}
 
 async function runSearchConversations(
   supabase: ReturnType<typeof createServiceClient>,
@@ -261,14 +425,29 @@ async function runUpdateConfig(
   return { success: true, field, summary }
 }
 
-function buildSystemPrompt(businessName: string, existingPrompt?: string | null): string {
+function formatServices(services: ServiceRow[]): string {
+  if (!services.length) return '(No services configured.)'
+  return services
+    .map(s => `- ${s.name} (${s.duration_minutes} min) [id: ${s.id}]`)
+    .join('\n')
+}
+
+function buildSystemPrompt(
+  businessName: string,
+  services: ServiceRow[],
+  existingPrompt?: string | null
+): string {
   const today = new Date().toISOString().split('T')[0]
   return `You are Caye, the AI receptionist for ${businessName}. The person talking to you is the business owner. Today's date is ${today}.
 
-You have three jobs:
-1. Answer questions about the inbox — use your tools to look up real conversations, messages, and customer activity before answering. Never say you don't have access to the inbox.
-2. Answer questions about the business, customers, or how you handle things.
-3. When the owner tells you to change your behavior, use the update_config tool immediately. Confirm casually what you changed in plain language.
+You have four jobs:
+1. Answer questions about the inbox — use search_conversations / get_conversation_messages to look up real activity. Never say you don't have access to the inbox.
+2. Manage the calendar — use list_bookings, create_booking, and cancel_booking. The owner is the source of truth, so trust their input. If something's missing (e.g. time), ask in your reply rather than guessing.
+3. Answer questions about the business, customers, or how you handle things.
+4. When the owner tells you to change your behavior, use update_config immediately. Confirm casually what you changed.
+
+SERVICES (use these ids when create_booking takes service_id; omit if none fits):
+${formatServices(services)}
 
 Keep responses short and conversational. You are texting with your boss, not writing essays.${existingPrompt ? `\n\nContext about the business:\n${existingPrompt}` : ''}`
 }
@@ -315,13 +494,20 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const [{ data: workspace }, { data: aiConfig }] = await Promise.all([
+  const [{ data: workspace }, { data: aiConfig }, { data: serviceRows }] = await Promise.all([
     supabase.from('customers').select('business_name').eq('id', workspaceId).maybeSingle(),
     supabase.from('workspace_ai_config').select('*').eq('workspace_id', workspaceId).maybeSingle(),
+    supabase
+      .from('booking_services')
+      .select('id, name, duration_minutes, description')
+      .eq('user_id', workspaceId)
+      .eq('active', true)
+      .order('name'),
   ])
 
   const businessName = workspace?.business_name || 'your business'
-  const systemPrompt = buildSystemPrompt(businessName, aiConfig?.system_prompt)
+  const services = (serviceRows ?? []) as ServiceRow[]
+  const systemPrompt = buildSystemPrompt(businessName, services, aiConfig?.system_prompt)
 
   const messages: Anthropic.MessageParam[] = history.map((m) => ({
     role: m.from === 'user' ? 'user' : 'assistant',
@@ -333,13 +519,21 @@ export async function POST(req: NextRequest) {
 
   let reply = ''
   const configUpdates: { field: string; summary: string }[] = []
+  let createdBookingId: string | undefined
+  let cancelledBookingId: string | undefined
 
   try {
     for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
       const response = await client.messages.create({
         model: 'claude-sonnet-4-6',
         max_tokens: 1024,
-        system: systemPrompt,
+        system: [
+          {
+            type: 'text',
+            text: systemPrompt,
+            cache_control: { type: 'ephemeral' },
+          },
+        ],
         tools: TOOLS,
         messages,
       })
@@ -375,6 +569,28 @@ export async function POST(req: NextRequest) {
                 configUpdates.push({ field: updateResult.field, summary: updateResult.summary })
               }
               result = updateResult
+            } else if (block.name === 'list_bookings') {
+              result = await runListBookings(supabase, workspaceId, block.input as ListBookingsInput)
+            } else if (block.name === 'create_booking') {
+              const bookingResult = await runCreateBooking(
+                supabase,
+                workspaceId,
+                block.input as CreateBookingInput
+              )
+              if (bookingResult.success && bookingResult.booking_id) {
+                createdBookingId = bookingResult.booking_id
+              }
+              result = bookingResult
+            } else if (block.name === 'cancel_booking') {
+              const cancelResult = await runCancelBooking(
+                supabase,
+                workspaceId,
+                block.input as CancelBookingInput
+              )
+              if (cancelResult.success && cancelResult.booking_id) {
+                cancelledBookingId = cancelResult.booking_id
+              }
+              result = cancelResult
             } else {
               result = { error: `Unknown tool: ${block.name}` }
             }
@@ -403,5 +619,22 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'AI service error' }, { status: 500 })
   }
 
-  return NextResponse.json({ reply, configUpdates })
+  // Fire-and-forget calendar sync for any bookings Caye created/cancelled this turn.
+  if (createdBookingId) {
+    syncBookingToCalendar(workspaceId, createdBookingId, 'upsert').catch(err =>
+      console.error('[caye/chat] Calendar sync (upsert) failed:', err)
+    )
+  }
+  if (cancelledBookingId) {
+    syncBookingToCalendar(workspaceId, cancelledBookingId, 'delete').catch(err =>
+      console.error('[caye/chat] Calendar sync (delete) failed:', err)
+    )
+  }
+
+  return NextResponse.json({
+    reply,
+    configUpdates,
+    bookingId: createdBookingId,
+    cancelledBookingId,
+  })
 }
