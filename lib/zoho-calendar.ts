@@ -205,23 +205,22 @@ interface ZohoRawEvent {
   dateandtime?: { start?: string; end?: string; timezone?: string }
 }
 
-/**
- * Lists events on the workspace's default Zoho calendar between the given
- * dates (inclusive). Returns normalized summaries — events without parseable
- * start/end are skipped.
- *
- * Zoho's list endpoint accepts `range={"start":"<compact>","end":"<compact>"}`
- * as a URL-encoded JSON string.
- */
-export async function listZohoCalendarEvents(
-  workspaceId: string,
+// Zoho caps a single events list request at 31 days. We chunk larger ranges.
+const ZOHO_MAX_RANGE_DAYS = 30
+
+function addDaysISO(iso: string, n: number): string {
+  const d = new Date(`${iso}T00:00:00Z`)
+  d.setUTCDate(d.getUTCDate() + n)
+  return d.toISOString().slice(0, 10)
+}
+
+async function fetchEventsChunk(
+  apiDomain: string,
+  calId: string,
+  accessToken: string,
   fromDateISO: string,
   toDateISO: string
-): Promise<ZohoEventSummary[]> {
-  const { accessToken, apiDomain, accountRow } = await getZohoContext(workspaceId)
-  const meta = (accountRow.metadata as Record<string, string>) || {}
-  const calId = await getOrFetchCalendarId(workspaceId, apiDomain, accessToken, meta.zoho_calendar_id)
-
+): Promise<ZohoRawEvent[]> {
   const startCompact = `${fromDateISO.replace(/-/g, '')}T000000Z`
   const endCompact = `${toDateISO.replace(/-/g, '')}T235959Z`
   const range = encodeURIComponent(JSON.stringify({ start: startCompact, end: endCompact }))
@@ -234,17 +233,52 @@ export async function listZohoCalendarEvents(
 
   if (!res.ok) {
     const text = await res.text()
-    throw new Error(`Zoho Calendar list failed (${res.status}): ${text.slice(0, 300)}`)
+    throw new Error(
+      `Zoho Calendar list failed (${res.status}) for ${fromDateISO}..${toDateISO}: ${text.slice(0, 300)}`
+    )
   }
 
   const data = await res.json()
-  const rawEvents: ZohoRawEvent[] = Array.isArray(data?.events) ? data.events : []
+  return Array.isArray(data?.events) ? data.events : []
+}
 
+/**
+ * Lists events on the workspace's default Zoho calendar between the given
+ * dates (inclusive). Returns normalized summaries — events without parseable
+ * start/end are skipped.
+ *
+ * Zoho's API caps a single list call at 31 days, so we chunk the window into
+ * 30-day slices and merge the results (deduped by uid in case of overlap).
+ */
+export async function listZohoCalendarEvents(
+  workspaceId: string,
+  fromDateISO: string,
+  toDateISO: string
+): Promise<ZohoEventSummary[]> {
+  const { accessToken, apiDomain, accountRow } = await getZohoContext(workspaceId)
+  const meta = (accountRow.metadata as Record<string, string>) || {}
+  const calId = await getOrFetchCalendarId(workspaceId, apiDomain, accessToken, meta.zoho_calendar_id)
+
+  // Build chunked ranges
+  const raw: ZohoRawEvent[] = []
+  let chunkStart = fromDateISO
+  while (chunkStart <= toDateISO) {
+    const tentativeEnd = addDaysISO(chunkStart, ZOHO_MAX_RANGE_DAYS - 1)
+    const chunkEnd = tentativeEnd > toDateISO ? toDateISO : tentativeEnd
+    const events = await fetchEventsChunk(apiDomain, calId, accessToken, chunkStart, chunkEnd)
+    raw.push(...events)
+    chunkStart = addDaysISO(chunkEnd, 1)
+  }
+
+  // Dedupe by uid and normalize
+  const seen = new Set<string>()
   const out: ZohoEventSummary[] = []
-  for (const ev of rawEvents) {
+  for (const ev of raw) {
     const uid = ev.uid
     const dt = ev.dateandtime
     if (!uid || !dt?.start || !dt?.end) continue
+    if (seen.has(uid)) continue
+    seen.add(uid)
 
     const start = parseZohoDateTime(dt.start)
     const end = parseZohoDateTime(dt.end)
