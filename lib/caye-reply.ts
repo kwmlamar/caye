@@ -12,6 +12,8 @@ interface ServiceRow {
   name: string
   duration_minutes: number
   description?: string | null
+  is_shared: boolean
+  max_capacity: number
 }
 
 const MAX_TOOL_ROUNDS = 6
@@ -127,7 +129,10 @@ function formatServicesList(services: ServiceRow[]): string {
   return services
     .map(s => {
       const desc = s.description ? ` — ${s.description}` : ''
-      return `- ${s.name} (${s.duration_minutes} min) [id: ${s.id}]${desc}`
+      const capacity = s.is_shared
+        ? `, SHARED group tour, capacity ${s.max_capacity} guests/slot`
+        : ', exclusive (one party per slot)'
+      return `- ${s.name} (${s.duration_minutes} min${capacity}) [id: ${s.id}]${desc}`
     })
     .join('\n')
 }
@@ -168,7 +173,12 @@ function buildSystem(
     '- If they\'re vague ("sometime next week"), reply asking for a specific day and time first.\n' +
     '- If they want to RESCHEDULE or CANCEL an existing booking, hold_for_human — you can\'t edit yet.\n' +
     '- For new bookings: ask for what you need (name, party size, date, time) over the course of ' +
-    'the conversation. Don\'t demand it all in one message.'
+    'the conversation. Don\'t demand it all in one message.\n' +
+    '- SHARED services (group tours): multiple parties can share a slot up to the service capacity. ' +
+    'check_availability returns total_guests + capacity_remaining per slot. If there\'s room, ' +
+    'create_booking with the same date/time as the existing slot — the new party joins the group. ' +
+    'If the slot is full, suggest the next time. Mention to the customer they\'ll be joining other guests.\n' +
+    '- EXCLUSIVE services: only one party per slot. If the slot has any booking, suggest another time.'
 
   s += isEmail
     ? '\n\nWrite only the reply body — no headers, no markdown. Plain prose, sign off naturally.'
@@ -182,40 +192,71 @@ function buildSystem(
 }
 
 interface AvailabilityRow {
+  service_id: string | null
   booking_time: string
   number_of_people: number
   status: string
-  service: { name: string; duration_minutes: number }[] | null
+  service: { name: string; duration_minutes: number; is_shared: boolean; max_capacity: number }[] | null
+}
+
+interface AvailabilitySlot {
+  time: string
+  service: string | null
+  service_id: string | null
+  duration_minutes: number
+  is_shared: boolean
+  max_capacity: number | null
+  total_guests: number
+  capacity_remaining: number | null
+  parties: Array<{ name?: string; guests: number }>
 }
 
 async function checkAvailability(
   workspaceId: string,
   date: string
-): Promise<{ date: string; bookings: Array<{ time: string; duration_minutes: number; party_size: number; service: string | null; status: string }> }> {
+): Promise<{ date: string; slots: AvailabilitySlot[] }> {
   const supabase = createServiceClient()
   const { data, error } = await supabase
     .from('bookings')
-    .select('booking_time, number_of_people, status, service:booking_services(name, duration_minutes)')
+    .select('service_id, customer_name, booking_time, number_of_people, status, service:booking_services(name, duration_minutes, is_shared, max_capacity)')
     .eq('user_id', workspaceId)
     .eq('booking_date', date)
     .neq('status', 'cancelled')
     .order('booking_time')
 
   if (error) {
-    return { date, bookings: [] }
+    return { date, slots: [] }
   }
 
-  const rows = (data ?? []) as unknown as AvailabilityRow[]
-  return {
-    date,
-    bookings: rows.map(r => ({
-      time: r.booking_time.slice(0, 5),
-      duration_minutes: r.service?.[0]?.duration_minutes ?? 120,
-      party_size: r.number_of_people,
-      service: r.service?.[0]?.name ?? null,
-      status: r.status,
-    })),
+  // Group rows by (service_id, time) so shared slots aggregate
+  type Key = string
+  const groups = new Map<Key, { rows: (AvailabilityRow & { customer_name?: string })[]; svc?: AvailabilityRow['service'] }>()
+  const rows = (data ?? []) as unknown as (AvailabilityRow & { customer_name?: string })[]
+  for (const r of rows) {
+    const k = `${r.service_id ?? 'none'}|${r.booking_time}`
+    if (!groups.has(k)) groups.set(k, { rows: [], svc: r.service })
+    groups.get(k)!.rows.push(r)
   }
+
+  const slots: AvailabilitySlot[] = []
+  for (const { rows, svc } of groups.values()) {
+    const total = rows.reduce((a, b) => a + b.number_of_people, 0)
+    const s = svc?.[0]
+    const isShared = s?.is_shared ?? false
+    const capacity = isShared ? s?.max_capacity ?? null : 1 // exclusive = 1 "slot"
+    slots.push({
+      time: rows[0].booking_time.slice(0, 5),
+      service: s?.name ?? null,
+      service_id: rows[0].service_id,
+      duration_minutes: s?.duration_minutes ?? 120,
+      is_shared: isShared,
+      max_capacity: capacity,
+      total_guests: total,
+      capacity_remaining: capacity != null ? Math.max(0, capacity - total) : null,
+      parties: rows.map(r => ({ name: r.customer_name, guests: r.number_of_people })),
+    })
+  }
+  return { date, slots }
 }
 
 interface CreateBookingInput {
@@ -292,7 +333,7 @@ export async function generateCayeAutoReply(
   const supabase = createServiceClient()
   const { data: serviceRows } = await supabase
     .from('booking_services')
-    .select('id, name, duration_minutes, description')
+    .select('id, name, duration_minutes, description, is_shared, max_capacity')
     .eq('user_id', inbound.workspaceId)
     .eq('active', true)
     .order('name')

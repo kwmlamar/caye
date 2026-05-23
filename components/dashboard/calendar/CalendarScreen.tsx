@@ -24,7 +24,65 @@ interface SupaBooking {
   status: 'confirmed' | 'pending' | 'completed' | 'cancelled'
   notes: string | null
   conversation_id: string | null
-  service: { name: string; duration_minutes: number }[] | null
+  service: { name: string; duration_minutes: number; is_shared: boolean; max_capacity: number }[] | null
+}
+
+/** A slot is either one booking or a merged group of parties sharing the same time. */
+type CalendarSlot =
+  | { kind: 'single'; booking: SupaBooking }
+  | {
+      kind: 'group'
+      serviceId: string
+      serviceName: string
+      time: string
+      durationMinutes: number
+      maxCapacity: number
+      totalGuests: number
+      bookings: SupaBooking[]
+    }
+
+function mergeSharedBookings(bks: SupaBooking[]): CalendarSlot[] {
+  // Group by (service_id, booking_time) when service.is_shared. Anything
+  // without a shared service stays as its own single slot.
+  type Key = string
+  const groupKey = (b: SupaBooking): Key | null => {
+    const svc = b.service?.[0]
+    if (!svc?.is_shared || !b.service_id) return null
+    return `${b.service_id}|${b.booking_time}`
+  }
+  const groups = new Map<Key, SupaBooking[]>()
+  const singles: SupaBooking[] = []
+  for (const b of bks) {
+    const k = groupKey(b)
+    if (!k) { singles.push(b); continue }
+    if (!groups.has(k)) groups.set(k, [])
+    groups.get(k)!.push(b)
+  }
+  const slots: CalendarSlot[] = singles.map(b => ({ kind: 'single', booking: b }))
+  for (const list of groups.values()) {
+    if (list.length === 1) {
+      slots.push({ kind: 'single', booking: list[0] })
+      continue
+    }
+    const first = list[0]
+    const svc = first.service![0]
+    slots.push({
+      kind: 'group',
+      serviceId: first.service_id!,
+      serviceName: svc.name,
+      time: first.booking_time,
+      durationMinutes: first.duration_minutes ?? svc.duration_minutes ?? 120,
+      maxCapacity: svc.max_capacity,
+      totalGuests: list.reduce((a, b) => a + b.number_of_people, 0),
+      bookings: list,
+    })
+  }
+  // Sort by time for stable rendering
+  return slots.sort((a, b) => {
+    const ta = a.kind === 'single' ? a.booking.booking_time : a.time
+    const tb = b.kind === 'single' ? b.booking.booking_time : b.time
+    return ta.localeCompare(tb)
+  })
 }
 
 function emptyBookingForm(date?: string, time = '10:00'): BookingModalData {
@@ -148,7 +206,7 @@ export default function CalendarScreen() {
 
     const { data, error } = await supabase
       .from('bookings')
-      .select('id, customer_name, customer_phone, customer_email, service_id, booking_date, booking_time, number_of_people, duration_minutes, status, notes, conversation_id, service:booking_services(name, duration_minutes)')
+      .select('id, customer_name, customer_phone, customer_email, service_id, booking_date, booking_time, number_of_people, duration_minutes, status, notes, conversation_id, service:booking_services(name, duration_minutes, is_shared, max_capacity)')
       .eq('user_id', workspaceId)
       .gte('booking_date', start)
       .lte('booking_date', end)
@@ -286,40 +344,95 @@ export default function CalendarScreen() {
 
             {weekDays.map(date => {
               const iso = toISO(date)
-              const dayBks = bookingsForDate(iso)
+              const slots = mergeSharedBookings(bookingsForDate(iso))
               return (
                 <div key={iso} className={`cal-col${isToday(date) ? ' today' : ''}`}>
                   {HOURS.map(h => <div key={h} className="cal-cell" />)}
-                  {dayBks.map(b => {
-                    const durationMins = effectiveDurationMinutes(b)
-                    const startH = t2h(b.booking_time)
+                  {slots.map(slot => {
+                    if (slot.kind === 'single') {
+                      const b = slot.booking
+                      const durationMins = effectiveDurationMinutes(b)
+                      const startH = t2h(b.booking_time)
+                      const top = (startH - START) * ROW_H
+                      const height = Math.max(38, (durationMins / 60) * ROW_H - 4)
+                      const isByCaye = !!b.conversation_id
+                      const cls = `bk-card ${b.status}${isByCaye ? ' by-caye' : ''}`
+                      return (
+                        <div
+                          key={b.id}
+                          className={cls}
+                          style={{ top, height, cursor: 'pointer' }}
+                          onClick={() => setModal({ mode: 'edit', data: bookingToForm(b) })}
+                        >
+                          <div className="bk-top">
+                            <span className="bk-time">
+                              {fmtTime(b.booking_time)}–{fmtEndTime(b.booking_time, durationMins)}
+                            </span>
+                            {isByCaye && (
+                              <span className="bk-caye-tag" title="Booked via Caye">
+                                <CayeMark size={12} />
+                              </span>
+                            )}
+                          </div>
+                          <div className="bk-tour">{b.service?.[0]?.name ?? 'Island Tour'}</div>
+                          <div className="bk-name">{b.customer_name}</div>
+                          <div className="bk-foot">
+                            <span className="bk-guests">{b.number_of_people} guests</span>
+                            <span className={`bk-status ${b.status}`}>
+                              {b.status === 'confirmed' ? 'Confirmed' : 'Pending'}
+                            </span>
+                          </div>
+                        </div>
+                      )
+                    }
+
+                    // Group slot — merged shared-service tour
+                    const startH = t2h(slot.time)
                     const top = (startH - START) * ROW_H
-                    const height = Math.max(38, (durationMins / 60) * ROW_H - 4)
-                    const isByCaye = !!b.conversation_id
-                    const cls = `bk-card ${b.status}${isByCaye ? ' by-caye' : ''}`
+                    const height = Math.max(38, (slot.durationMinutes / 60) * ROW_H - 4)
+                    const anyByCaye = slot.bookings.some(b => !!b.conversation_id)
+                    const cls = `bk-card confirmed group${anyByCaye ? ' by-caye' : ''}`
+                    const capacityLabel = `${slot.totalGuests}/${slot.maxCapacity}`
+                    const isFull = slot.totalGuests >= slot.maxCapacity
                     return (
                       <div
-                        key={b.id}
+                        key={`group-${slot.serviceId}-${slot.time}`}
                         className={cls}
-                        style={{ top, height, cursor: 'pointer' }}
-                        onClick={() => setModal({ mode: 'edit', data: bookingToForm(b) })}
+                        style={{ top, height }}
                       >
                         <div className="bk-top">
                           <span className="bk-time">
-                            {fmtTime(b.booking_time)}–{fmtEndTime(b.booking_time, durationMins)}
+                            {fmtTime(slot.time)}–{fmtEndTime(slot.time, slot.durationMinutes)}
                           </span>
-                          {isByCaye && (
-                            <span className="bk-caye-tag" title="Booked via Caye">
+                          {anyByCaye && (
+                            <span className="bk-caye-tag" title="Some parties booked via Caye">
                               <CayeMark size={12} />
                             </span>
                           )}
                         </div>
-                        <div className="bk-tour">{b.service?.[0]?.name ?? 'Island Tour'}</div>
-                        <div className="bk-name">{b.customer_name}</div>
+                        <div className="bk-tour">{slot.serviceName}</div>
+                        <ul className="bk-parties">
+                          {slot.bookings.map(b => (
+                            <li
+                              key={b.id}
+                              className="bk-party"
+                              onClick={() => setModal({ mode: 'edit', data: bookingToForm(b) })}
+                              style={{ cursor: 'pointer' }}
+                            >
+                              <span className="bk-party-name">
+                                {b.conversation_id && <CayeMark size={10} />}
+                                {b.customer_name}
+                              </span>
+                              <span className="bk-party-guests">{b.number_of_people}</span>
+                            </li>
+                          ))}
+                        </ul>
                         <div className="bk-foot">
-                          <span className="bk-guests">{b.number_of_people} guests</span>
-                          <span className={`bk-status ${b.status}`}>
-                            {b.status === 'confirmed' ? 'Confirmed' : 'Pending'}
+                          <span className="bk-guests">
+                            {slot.bookings.length} parties · {capacityLabel} guests
+                          </span>
+                          <span className={`bk-status ${isFull ? 'completed' : 'confirmed'}`}>
+                            {isFull ? 'Full' : 'Open'}
                           </span>
                         </div>
                       </div>

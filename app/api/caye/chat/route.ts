@@ -220,6 +220,8 @@ interface ServiceRow {
   name: string
   duration_minutes: number
   description?: string | null
+  is_shared: boolean
+  max_capacity: number
 }
 
 async function runListBookings(
@@ -437,7 +439,12 @@ async function runUpdateConfig(
 function formatServices(services: ServiceRow[]): string {
   if (!services.length) return '(No services configured.)'
   return services
-    .map(s => `- ${s.name} (${s.duration_minutes} min) [id: ${s.id}]`)
+    .map(s => {
+      const sharing = s.is_shared
+        ? `, shared group tour, capacity ${s.max_capacity}/slot`
+        : ', exclusive'
+      return `- ${s.name} (${s.duration_minutes} min${sharing}) [id: ${s.id}]`
+    })
     .join('\n')
 }
 
@@ -508,7 +515,7 @@ export async function POST(req: NextRequest) {
     supabase.from('workspace_ai_config').select('*').eq('workspace_id', workspaceId).maybeSingle(),
     supabase
       .from('booking_services')
-      .select('id, name, duration_minutes, description')
+      .select('id, name, duration_minutes, description, is_shared, max_capacity')
       .eq('user_id', workspaceId)
       .eq('active', true)
       .order('name'),
