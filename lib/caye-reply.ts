@@ -57,6 +57,12 @@ const TOOLS: Anthropic.Tool[] = [
           type: 'number',
           description: 'Number of guests. Default to 1 if not mentioned.',
         },
+        duration_minutes: {
+          type: 'number',
+          description:
+            'How long the booking lasts, in minutes. Omit when the customer didn\'t say — ' +
+            'the service\'s default duration (or 120 min) will be used.',
+        },
         service_id: {
           type: 'string',
           description: 'Service id from the AVAILABLE SERVICES list. Omit if none fits.',
@@ -219,6 +225,7 @@ interface CreateBookingInput {
   booking_date: string
   booking_time: string
   number_of_people?: number
+  duration_minutes?: number
   service_id?: string
   notes?: string
   status?: 'confirmed' | 'pending'
@@ -244,6 +251,8 @@ async function createBookingFromCaye(
     booking_date: input.booking_date,
     booking_time: timeWithSeconds,
     number_of_people: input.number_of_people && input.number_of_people > 0 ? input.number_of_people : 1,
+    duration_minutes:
+      input.duration_minutes && input.duration_minutes > 0 ? input.duration_minutes : null,
     status: input.status ?? 'confirmed',
     notes: input.notes?.trim() || null,
   }

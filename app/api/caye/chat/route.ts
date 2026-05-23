@@ -142,6 +142,12 @@ const TOOLS: Anthropic.Tool[] = [
         booking_date: { type: 'string', description: 'YYYY-MM-DD.' },
         booking_time: { type: 'string', description: '24-hour HH:MM.' },
         number_of_people: { type: 'number' },
+        duration_minutes: {
+          type: 'number',
+          description:
+            'Booking length in minutes. Omit when the owner didn\'t say — the service ' +
+            'default (or 120 min) will be used.',
+        },
         service_id: {
           type: 'string',
           description: 'Service id from the SERVICES list in your system prompt. Omit if none fits.',
@@ -201,6 +207,7 @@ type CreateBookingInput = {
   booking_date: string
   booking_time: string
   number_of_people?: number
+  duration_minutes?: number
   service_id?: string
   notes?: string
   status?: 'confirmed' | 'pending'
@@ -273,6 +280,8 @@ async function runCreateBooking(
     booking_time: time,
     number_of_people:
       input.number_of_people && input.number_of_people > 0 ? input.number_of_people : 1,
+    duration_minutes:
+      input.duration_minutes && input.duration_minutes > 0 ? input.duration_minutes : null,
     status: input.status ?? 'confirmed',
     notes: input.notes?.trim() || null,
   }

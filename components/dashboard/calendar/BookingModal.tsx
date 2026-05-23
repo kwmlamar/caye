@@ -12,6 +12,7 @@ export interface BookingModalData {
   booking_date: string  // 'YYYY-MM-DD'
   booking_time: string  // 'HH:MM'
   number_of_people: number
+  duration_minutes: number | null
   status: 'pending' | 'confirmed' | 'completed' | 'cancelled'
   notes: string
 }
@@ -97,6 +98,7 @@ export default function BookingModal({ workspaceId, initial, mode, onClose, onSa
       booking_date: form.booking_date,
       booking_time: form.booking_time.length === 5 ? `${form.booking_time}:00` : form.booking_time,
       number_of_people: form.number_of_people,
+      duration_minutes: form.duration_minutes,
       status: form.status,
       notes: form.notes.trim() || null,
     }
@@ -220,6 +222,23 @@ export default function BookingModal({ workspaceId, initial, mode, onClose, onSa
                 min={1}
                 value={form.number_of_people}
                 onChange={e => set('number_of_people', Math.max(1, Number(e.target.value) || 1))}
+              />
+            </div>
+            <div className="bk-field" style={{ maxWidth: 140 }}>
+              <label>Duration (min)</label>
+              <input
+                className="s-input"
+                type="number"
+                min={15}
+                step={15}
+                placeholder={
+                  services.find(s => s.id === form.service_id)?.duration_minutes?.toString() ?? '120'
+                }
+                value={form.duration_minutes ?? ''}
+                onChange={e => {
+                  const v = e.target.value
+                  set('duration_minutes', v === '' ? null : Math.max(15, Number(v) || 0))
+                }}
               />
             </div>
           </div>

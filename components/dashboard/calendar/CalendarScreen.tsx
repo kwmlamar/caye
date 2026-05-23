@@ -20,6 +20,7 @@ interface SupaBooking {
   booking_date: string        // 'YYYY-MM-DD'
   booking_time: string        // 'HH:MM:SS'
   number_of_people: number
+  duration_minutes: number | null
   status: 'confirmed' | 'pending' | 'completed' | 'cancelled'
   notes: string | null
   conversation_id: string | null
@@ -35,6 +36,7 @@ function emptyBookingForm(date?: string, time = '10:00'): BookingModalData {
     booking_date: date ?? new Date().toISOString().slice(0, 10),
     booking_time: time,
     number_of_people: 1,
+    duration_minutes: null,
     status: 'confirmed',
     notes: '',
   }
@@ -50,9 +52,15 @@ function bookingToForm(b: SupaBooking): BookingModalData {
     booking_date: b.booking_date,
     booking_time: b.booking_time.slice(0, 5),
     number_of_people: b.number_of_people,
+    duration_minutes: b.duration_minutes,
     status: b.status,
     notes: b.notes ?? '',
   }
+}
+
+/** Effective duration: per-booking override → service → 120 legacy default. */
+function effectiveDurationMinutes(b: SupaBooking): number {
+  return b.duration_minutes ?? b.service?.[0]?.duration_minutes ?? 120
 }
 
 function weekStart(date: Date): Date {
@@ -140,7 +148,7 @@ export default function CalendarScreen() {
 
     const { data, error } = await supabase
       .from('bookings')
-      .select('id, customer_name, customer_phone, customer_email, service_id, booking_date, booking_time, number_of_people, status, notes, conversation_id, service:booking_services(name, duration_minutes)')
+      .select('id, customer_name, customer_phone, customer_email, service_id, booking_date, booking_time, number_of_people, duration_minutes, status, notes, conversation_id, service:booking_services(name, duration_minutes)')
       .eq('user_id', workspaceId)
       .gte('booking_date', start)
       .lte('booking_date', end)
@@ -283,7 +291,7 @@ export default function CalendarScreen() {
                 <div key={iso} className={`cal-col${isToday(date) ? ' today' : ''}`}>
                   {HOURS.map(h => <div key={h} className="cal-cell" />)}
                   {dayBks.map(b => {
-                    const durationMins = b.service?.[0]?.duration_minutes ?? 120
+                    const durationMins = effectiveDurationMinutes(b)
                     const startH = t2h(b.booking_time)
                     const top = (startH - START) * ROW_H
                     const height = Math.max(38, (durationMins / 60) * ROW_H - 4)

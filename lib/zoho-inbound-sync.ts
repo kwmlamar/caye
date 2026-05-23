@@ -27,6 +27,7 @@ interface LocalBookingRow {
   booking_date: string
   booking_time: string
   number_of_people: number
+  duration_minutes: number | null
   notes: string | null
   status: string
   zoho_event_id: string | null
@@ -84,6 +85,7 @@ function bookingNeedsUpdate(b: LocalBookingRow, ev: ZohoEventSummary): boolean {
   if (b.booking_time !== ev.startTime) return true
   const evCustomer = parseCustomerFromTitle(ev.title)
   if (b.customer_name.trim() !== evCustomer.trim()) return true
+  if ((b.duration_minutes ?? -1) !== ev.durationMinutes) return true
   return false
 }
 
@@ -130,7 +132,7 @@ export async function syncZohoEventsToBookings(workspaceId: string): Promise<Inb
   // Local bookings in the same window
   const { data: localRows } = await supabase
     .from('bookings')
-    .select('id, customer_name, booking_date, booking_time, number_of_people, notes, status, zoho_event_id')
+    .select('id, customer_name, booking_date, booking_time, number_of_people, duration_minutes, notes, status, zoho_event_id')
     .eq('user_id', workspaceId)
     .gte('booking_date', fromDate)
     .lte('booking_date', toDate)
@@ -157,6 +159,7 @@ export async function syncZohoEventsToBookings(workspaceId: string): Promise<Inb
         payload.booking_date = ev.startDate
         payload.booking_time = ev.startTime
         payload.customer_name = parseCustomerFromTitle(ev.title)
+        payload.duration_minutes = ev.durationMinutes
       }
       if (existing.status === 'cancelled') {
         payload.status = 'confirmed'
@@ -198,6 +201,7 @@ export async function syncZohoEventsToBookings(workspaceId: string): Promise<Inb
       booking_date: ev.startDate,
       booking_time: ev.startTime,
       number_of_people: 1,
+      duration_minutes: ev.durationMinutes,
       status: 'confirmed',
       notes: ev.description?.slice(0, 500) || null,
       zoho_event_id: ev.uid,

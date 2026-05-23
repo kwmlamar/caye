@@ -34,7 +34,7 @@ export async function syncBookingToCalendar(
   const { data: booking, error: bkErr } = await supabase
     .from('bookings')
     .select(
-      'id, user_id, customer_name, booking_date, booking_time, number_of_people, notes, zoho_event_id, service:booking_services(name, duration_minutes)'
+      'id, user_id, customer_name, booking_date, booking_time, number_of_people, duration_minutes, notes, zoho_event_id, service:booking_services(name, duration_minutes)'
     )
     .eq('id', bookingId)
     .single()
@@ -58,12 +58,13 @@ export async function syncBookingToCalendar(
   if (!account.sync_calendar) return { synced: false, reason: 'Calendar sync disabled' }
 
   const serviceArr = booking.service as { name: string; duration_minutes: number }[] | null
+  const bk = booking as typeof booking & { duration_minutes: number | null }
   const eventInput: BookingEventInput = {
     customerName: booking.customer_name,
     serviceName: serviceArr?.[0]?.name ?? null,
     bookingDate: booking.booking_date,
     bookingTime: booking.booking_time,
-    durationMinutes: serviceArr?.[0]?.duration_minutes ?? 120,
+    durationMinutes: bk.duration_minutes ?? serviceArr?.[0]?.duration_minutes ?? 120,
     numberOfPeople: booking.number_of_people,
     notes: booking.notes,
   }
