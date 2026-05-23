@@ -172,6 +172,102 @@ export async function updateZohoCalendarEvent(
   }
 }
 
+/**
+ * Normalized event shape used by the inbound poller.
+ * Dates/times are returned in plain ISO so the caller can write straight to bookings.
+ */
+export interface ZohoEventSummary {
+  uid: string
+  title: string
+  description: string | null
+  isAllDay: boolean
+  startDate: string   // 'YYYY-MM-DD'
+  startTime: string   // 'HH:MM:SS' (UTC)
+  durationMinutes: number
+}
+
+function parseZohoDateTime(s: string): Date | null {
+  if (!s) return null
+  const compact = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z?$/.exec(s)
+  if (compact) {
+    const [, y, mo, d, h, mi, se] = compact
+    return new Date(`${y}-${mo}-${d}T${h}:${mi}:${se}Z`)
+  }
+  const t = Date.parse(s)
+  return Number.isFinite(t) ? new Date(t) : null
+}
+
+interface ZohoRawEvent {
+  uid?: string
+  title?: string
+  description?: string
+  isallday?: boolean | string
+  dateandtime?: { start?: string; end?: string; timezone?: string }
+}
+
+/**
+ * Lists events on the workspace's default Zoho calendar between the given
+ * dates (inclusive). Returns normalized summaries — events without parseable
+ * start/end are skipped.
+ *
+ * Zoho's list endpoint accepts `range={"start":"<compact>","end":"<compact>"}`
+ * as a URL-encoded JSON string.
+ */
+export async function listZohoCalendarEvents(
+  workspaceId: string,
+  fromDateISO: string,
+  toDateISO: string
+): Promise<ZohoEventSummary[]> {
+  const { accessToken, apiDomain, accountRow } = await getZohoContext(workspaceId)
+  const meta = (accountRow.metadata as Record<string, string>) || {}
+  const calId = await getOrFetchCalendarId(workspaceId, apiDomain, accessToken, meta.zoho_calendar_id)
+
+  const startCompact = `${fromDateISO.replace(/-/g, '')}T000000Z`
+  const endCompact = `${toDateISO.replace(/-/g, '')}T235959Z`
+  const range = encodeURIComponent(JSON.stringify({ start: startCompact, end: endCompact }))
+
+  const base = calendarBase(apiDomain)
+  const url = `${base}/api/v1/calendars/${calId}/events?range=${range}`
+  const res = await fetch(url, {
+    headers: { Authorization: `Zoho-oauthtoken ${accessToken}` },
+  })
+
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`Zoho Calendar list failed (${res.status}): ${text.slice(0, 300)}`)
+  }
+
+  const data = await res.json()
+  const rawEvents: ZohoRawEvent[] = Array.isArray(data?.events) ? data.events : []
+
+  const out: ZohoEventSummary[] = []
+  for (const ev of rawEvents) {
+    const uid = ev.uid
+    const dt = ev.dateandtime
+    if (!uid || !dt?.start || !dt?.end) continue
+
+    const start = parseZohoDateTime(dt.start)
+    const end = parseZohoDateTime(dt.end)
+    if (!start || !end) continue
+
+    const isAllDay = ev.isallday === true || ev.isallday === 'true'
+    const durationMinutes = Math.max(15, Math.round((end.getTime() - start.getTime()) / 60000))
+    const iso = start.toISOString()
+
+    out.push({
+      uid,
+      title: (ev.title ?? '').trim() || 'Untitled event',
+      description: ev.description ?? null,
+      isAllDay,
+      startDate: iso.slice(0, 10),
+      startTime: iso.slice(11, 19),
+      durationMinutes,
+    })
+  }
+
+  return out
+}
+
 export async function deleteZohoCalendarEvent(
   workspaceId: string,
   eventId: string
