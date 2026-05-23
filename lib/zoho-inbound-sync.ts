@@ -43,7 +43,11 @@ export interface InboundSyncStats {
   error?: string
 }
 
-const WINDOW_DAYS_BACK = 1
+// Window is intentionally a bit wide on the back side so events created in
+// the recent past (e.g. an owner backfilling yesterday's walk-in) still get
+// pulled. Reconcile-cancel only acts on bookings linked via zoho_event_id,
+// so the wider window isn't dangerous.
+const WINDOW_DAYS_BACK = 7
 const WINDOW_DAYS_FORWARD = 90
 
 function addDaysISO(iso: string, n: number): string {
