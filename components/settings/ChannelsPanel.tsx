@@ -29,7 +29,7 @@ const CHANNEL_META: Record<string, { name: string; label: string; bg: string; no
     name: 'Instagram DMs',
     label: 'IG',
     bg: 'linear-gradient(135deg,#f59e0b,#ec4899,#8b5cf6)',
-    note: 'Connect your Instagram account to route DMs into the TropiChat inbox.',
+    note: 'Connect your Instagram account to route DMs into the Caye inbox.',
   },
   messenger: {
     name: 'Messenger',
@@ -183,7 +183,7 @@ export default function ChannelsPanel() {
           <div className="set-page-eyebrow"><span className="dot"></span>Channels</div>
           <h1>Where guests reach you</h1>
           <p className="set-page-desc">
-            Every connected channel funnels into the same TropiChat inbox. Caye AI replies on all connected channels by default.
+            Every connected channel funnels into the same Caye inbox. Caye AI replies on all connected channels by default.
           </p>
         </div>
         <div className="ph-right">
@@ -227,6 +227,26 @@ export default function ChannelsPanel() {
                 {isConnected ? (
                   <div style={{ fontSize: 12.5, color: 'var(--tc-ink-mute)', lineHeight: 1.5 }}>
                     Active — Caye replies on this channel automatically.
+                    {type === 'email' && account && (
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={!!account.sync_calendar}
+                          onChange={async (e) => {
+                            const next = e.target.checked
+                            const supabase = getSupabase()
+                            const { error } = await supabase
+                              .from('connected_accounts')
+                              .update({ sync_calendar: next })
+                              .eq('id', account.id)
+                            if (error) { toast.error('Failed to update sync setting'); return }
+                            toast.success(next ? 'Calendar sync enabled' : 'Calendar sync disabled')
+                            fetchAccounts()
+                          }}
+                        />
+                        <span>Mirror Caye bookings to my Zoho Calendar</span>
+                      </label>
+                    )}
                   </div>
                 ) : (
                   <div style={{ fontSize: 12.5, color: 'var(--tc-ink-mute)', lineHeight: 1.5 }}>

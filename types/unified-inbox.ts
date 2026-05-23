@@ -17,6 +17,9 @@ export interface ConnectedAccount {
   channel_account_name: string | null
   metadata: Record<string, unknown>
   is_active: boolean
+  needs_reauth?: boolean
+  channel_username?: string | null
+  sync_calendar?: boolean
   created_at: string
   updated_at: string
 }

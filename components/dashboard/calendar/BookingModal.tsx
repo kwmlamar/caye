@@ -56,6 +56,25 @@ export default function BookingModal({ workspaceId, initial, mode, onClose, onSa
     setForm(prev => ({ ...prev, [key]: value }))
   }
 
+  async function syncToCalendar(bookingId: string, action: 'upsert' | 'delete') {
+    const supabase = getSupabase()
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session) return
+    try {
+      await fetch('/api/calendar/sync', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ booking_id: bookingId, action }),
+      })
+    } catch (err) {
+      // Don't block the UI — sync failures are logged server-side
+      console.warn('[BookingModal] calendar sync request failed', err)
+    }
+  }
+
   async function handleSave() {
     if (!form.customer_name.trim()) {
       setError('Customer name is required')
@@ -82,15 +101,23 @@ export default function BookingModal({ workspaceId, initial, mode, onClose, onSa
       notes: form.notes.trim() || null,
     }
 
-    const { error: dbErr } = mode === 'edit' && form.id
-      ? await supabase.from('bookings').update(payload).eq('id', form.id)
-      : await supabase.from('bookings').insert(payload)
+    let savedId: string | undefined = form.id
+    if (mode === 'edit' && form.id) {
+      const { error: dbErr } = await supabase.from('bookings').update(payload).eq('id', form.id)
+      if (dbErr) { setSaving(false); setError(dbErr.message); return }
+    } else {
+      const { data, error: dbErr } = await supabase.from('bookings').insert(payload).select('id').single()
+      if (dbErr) { setSaving(false); setError(dbErr.message); return }
+      savedId = data?.id
+    }
+
+    // Push to external calendar (no-op if user has no Zoho or sync is off)
+    if (savedId) {
+      const action = form.status === 'cancelled' ? 'delete' : 'upsert'
+      await syncToCalendar(savedId, action)
+    }
 
     setSaving(false)
-    if (dbErr) {
-      setError(dbErr.message)
-      return
-    }
     onSaved()
   }
 
@@ -103,11 +130,11 @@ export default function BookingModal({ workspaceId, initial, mode, onClose, onSa
       .from('bookings')
       .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
       .eq('id', form.id)
+    if (dbErr) { setSaving(false); setError(dbErr.message); return }
+
+    await syncToCalendar(form.id, 'delete')
+
     setSaving(false)
-    if (dbErr) {
-      setError(dbErr.message)
-      return
-    }
     onSaved()
   }
 
