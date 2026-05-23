@@ -4,8 +4,9 @@
  * Receives inbound email notifications from Zoho (via Zoho Flow or a direct webhook rule),
  * generates an AI reply using the workspace's system prompt, and sends it back via Zoho Mail.
  *
- * Returns 200 immediately after validating the payload. Processing runs in the background.
- * Note: on Vercel Edge/Serverless, background work may be cut off — add waitUntil() if deploying there.
+ * Returns 200 immediately after validating the payload. Processing runs after the
+ * response is sent, via Next.js `after()` — this keeps the function context alive on
+ * Vercel so the worker isn't killed before Caye finishes generating and sending the reply.
  *
  * Zoho webhook registration:
  *   URL: https://<your-domain>/api/webhooks/zoho-email
@@ -14,7 +15,7 @@
  *   Secret header: X-Zoho-Webhook-Token: <ZOHO_WEBHOOK_SECRET>
  */
 
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, after } from 'next/server'
 import { createHmac } from 'crypto'
 import { createServiceClient } from '@/lib/supabase-server'
 import { sendZohoReply } from '@/lib/email-ai'
@@ -71,10 +72,15 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
   }
 
-  // Return 200 immediately; process in background
-  processInboundEmail(payload).catch(err =>
-    console.error('[zoho-email webhook] Processing error:', err)
-  )
+  // Return 200 immediately; process after response is sent.
+  // `after()` keeps the Vercel function context alive so processing isn't cut off.
+  after(async () => {
+    try {
+      await processInboundEmail(payload)
+    } catch (err) {
+      console.error('[zoho-email webhook] Processing error:', err)
+    }
+  })
 
   return NextResponse.json({ status: 'ok' }, { status: 200 })
 }
@@ -281,7 +287,7 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
   if (!outboundErr) {
     await supabase
       .from('unified_conversations')
-      .update({ last_sender_type: 'business', last_message_at: replySentAt, last_message_preview: decision.content.slice(0, 100) })
+      .update({ last_sender_type: 'business', last_business_sender_kind: 'caye', last_message_at: replySentAt, last_message_preview: decision.content.slice(0, 100) })
       .eq('id', conversation.id)
   }
 

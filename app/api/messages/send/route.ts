@@ -151,6 +151,7 @@ export async function POST(request: NextRequest) {
       last_message_at: now,
       last_message_preview: text.slice(0, 100),
       last_sender_type: 'business',
+      last_business_sender_kind: 'human',
     })
     .eq('id', conversation_id)
 

@@ -366,7 +366,7 @@ async function processMessage(
   if (!outboundErr) {
     await supabase
       .from('unified_conversations')
-      .update({ last_sender_type: 'business', last_message_at: replySentAt, last_message_preview: decision.content.slice(0, 100) })
+      .update({ last_sender_type: 'business', last_business_sender_kind: 'caye', last_message_at: replySentAt, last_message_preview: decision.content.slice(0, 100) })
       .eq('id', conversation.id)
   }
 

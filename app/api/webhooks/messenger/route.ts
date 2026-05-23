@@ -275,7 +275,7 @@ async function processInboundMessenger(payload: Record<string, unknown>): Promis
       } else {
         await supabase
           .from('unified_conversations')
-          .update({ last_sender_type: 'business' })
+          .update({ last_sender_type: 'business', last_business_sender_kind: 'caye' })
           .eq('id', conversation.id)
       }
 

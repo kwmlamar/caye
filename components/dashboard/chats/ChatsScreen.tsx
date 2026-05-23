@@ -92,10 +92,17 @@ function ConversationRow({
             <span>Caye held</span>
           </div>
         ) : conv.last_sender_type === 'business' ? (
-          <div className="conv-caye replied">
-            <span className="caye-pip" />
-            <span>Caye replied</span>
-          </div>
+          conv.last_business_sender_kind === 'human' ? (
+            <div className="conv-caye replied">
+              <span className="caye-pip" />
+              <span>You replied</span>
+            </div>
+          ) : (
+            <div className="conv-caye replied">
+              <span className="caye-pip" />
+              <span>Caye replied</span>
+            </div>
+          )
         ) : null}
       </div>
     </button>
@@ -333,11 +340,21 @@ export default function ChatsScreen({ openCaye }: { openCaye: () => void }) {
       setConversations((prev) =>
         prev.map((c) =>
           c.id === selectedConv.id
-            ? { ...c, last_message_at: tempMsg.sent_at, last_message_preview: text.slice(0, 100), last_sender_type: 'business' as const }
+            ? {
+                ...c,
+                last_message_at: tempMsg.sent_at,
+                last_message_preview: text.slice(0, 100),
+                last_sender_type: 'business' as const,
+                last_business_sender_kind: 'human' as const,
+              }
             : c
         )
       )
-      setSelectedConv((prev) => prev ? { ...prev, last_sender_type: 'business' as const } : prev)
+      setSelectedConv((prev) =>
+        prev
+          ? { ...prev, last_sender_type: 'business' as const, last_business_sender_kind: 'human' as const }
+          : prev
+      )
     }
 
     if (isNote) {
@@ -355,7 +372,10 @@ export default function ChatsScreen({ openCaye }: { openCaye: () => void }) {
       setSending(false)
 
       if (!error) {
-        updateUnifiedConversation(selectedConv.id, { last_sender_type: 'business' })
+        updateUnifiedConversation(selectedConv.id, {
+          last_sender_type: 'business',
+          last_business_sender_kind: 'human',
+        })
       }
 
       if (error) {

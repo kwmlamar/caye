@@ -41,6 +41,7 @@ export interface UnifiedConversation {
   human_agent_reason: string | null
   human_agent_marked_at: string | null
   last_sender_type: 'customer' | 'business' | null
+  last_business_sender_kind: 'caye' | 'human' | null
   created_at: string
   updated_at: string
   connected_account?: ConnectedAccount

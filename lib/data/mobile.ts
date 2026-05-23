@@ -436,6 +436,7 @@ export async function resolveHeld(
       human_agent_reason: null,
       human_agent_marked_at: null,
       last_sender_type: replyText.trim() ? 'business' : undefined,
+      last_business_sender_kind: replyText.trim() ? 'human' : undefined,
       last_message_at: replyText.trim() ? now : undefined,
       last_message_preview: replyText.trim() ? replyText.trim().slice(0, 100) : undefined,
     })
