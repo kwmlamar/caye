@@ -28,20 +28,47 @@ export interface BookingEventInput {
 }
 
 /**
- * Zoho's dateandtime format is 'YYYYMMDDTHHMMSSZ' (UTC).
- * Booking date+time are stored without TZ; assume UTC for now.
+ * Convert a (date, time, IANA tz) tuple — interpreted as wall-clock time in
+ * that timezone — into the equivalent UTC Date. Uses Intl to read the offset
+ * for the specific date so DST is handled correctly.
  */
-function toZohoDateTime(dateISO: string, timeISO: string): string {
-  const d = dateISO.replace(/-/g, '')
-  const t = timeISO.slice(0, 8).replace(/:/g, '')
-  return `${d}T${t}Z`
+function localToUTC(dateISO: string, timeISO: string, tz: string): Date {
+  // Anchor: pretend the local time IS UTC. Its wall-clock in tz tells us
+  // the offset for that moment.
+  const anchor = new Date(`${dateISO}T${timeISO.slice(0, 8)}Z`)
+  if (!tz || tz === 'UTC') return anchor
+
+  const dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    hour12: false,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  })
+  const parts: Record<string, string> = {}
+  for (const p of dtf.formatToParts(anchor)) {
+    if (p.type !== 'literal') parts[p.type] = p.value
+  }
+  const wallAsUTC = Date.UTC(
+    Number(parts.year), Number(parts.month) - 1, Number(parts.day),
+    Number(parts.hour) === 24 ? 0 : Number(parts.hour),
+    Number(parts.minute), Number(parts.second)
+  )
+  const offsetMin = (wallAsUTC - anchor.getTime()) / 60000  // tz - UTC, e.g. -300 for CDT
+  return new Date(anchor.getTime() - offsetMin * 60000)
 }
 
-function buildEventData(b: BookingEventInput): Record<string, unknown> {
-  const startDt = new Date(`${b.bookingDate}T${b.bookingTime}Z`)
-  const endDt = new Date(startDt.getTime() + b.durationMinutes * 60 * 1000)
-  const endTimeISO = endDt.toISOString().slice(11, 19)
-  const endDateISO = endDt.toISOString().slice(0, 10)
+function toZohoUTCCompact(d: Date): string {
+  const iso = d.toISOString()  // 2026-05-24T19:00:00.000Z
+  return (
+    iso.slice(0, 4) + iso.slice(5, 7) + iso.slice(8, 10) +
+    'T' + iso.slice(11, 13) + iso.slice(14, 16) + iso.slice(17, 19) + 'Z'
+  )
+}
+
+function buildEventData(b: BookingEventInput, tz: string): Record<string, unknown> {
+  // booking_date/booking_time are local wall-clock in the workspace's tz.
+  const startUTC = localToUTC(b.bookingDate, b.bookingTime, tz)
+  const endUTC = new Date(startUTC.getTime() + b.durationMinutes * 60 * 1000)
 
   const title = b.serviceName
     ? `${b.serviceName} — ${b.customerName} (${b.numberOfPeople})`
@@ -54,9 +81,9 @@ function buildEventData(b: BookingEventInput): Record<string, unknown> {
     title,
     description: descParts.join('\n'),
     dateandtime: {
-      start: toZohoDateTime(b.bookingDate, b.bookingTime),
-      end: toZohoDateTime(endDateISO, endTimeISO),
-      timezone: 'UTC',
+      start: toZohoUTCCompact(startUTC),
+      end: toZohoUTCCompact(endUTC),
+      timezone: tz || 'UTC',
     },
   }
 }
@@ -126,8 +153,9 @@ export async function createZohoCalendarEvent(
   const { accessToken, apiDomain, accountRow } = await getZohoContext(workspaceId)
   const meta = (accountRow.metadata as Record<string, string>) || {}
   const calId = await getOrFetchCalendarId(workspaceId, apiDomain, accessToken, meta.zoho_calendar_id)
+  const tz = meta.zoho_user_timezone || 'UTC'
 
-  const eventdata = buildEventData(booking)
+  const eventdata = buildEventData(booking, tz)
   const base = calendarBase(apiDomain)
   const formBody = new URLSearchParams({ eventdata: JSON.stringify(eventdata) }).toString()
 
@@ -158,8 +186,9 @@ export async function updateZohoCalendarEvent(
   const { accessToken, apiDomain, accountRow } = await getZohoContext(workspaceId)
   const meta = (accountRow.metadata as Record<string, string>) || {}
   const calId = await getOrFetchCalendarId(workspaceId, apiDomain, accessToken, meta.zoho_calendar_id)
+  const tz = meta.zoho_user_timezone || 'UTC'
 
-  const eventdata = buildEventData(booking)
+  const eventdata = buildEventData(booking, tz)
   const base = calendarBase(apiDomain)
   const formBody = new URLSearchParams({ eventdata: JSON.stringify(eventdata) }).toString()
 
@@ -186,8 +215,8 @@ export interface ZohoEventSummary {
   title: string
   description: string | null
   isAllDay: boolean
-  startDate: string   // 'YYYY-MM-DD'
-  startTime: string   // 'HH:MM:SS' (UTC)
+  startDate: string   // 'YYYY-MM-DD' (local wall-clock in the workspace's tz)
+  startTime: string   // 'HH:MM:SS'  (local wall-clock in the workspace's tz)
   durationMinutes: number
 }
 
@@ -220,6 +249,22 @@ interface ZohoRawEvent {
   description?: string
   isallday?: boolean | string
   dateandtime?: { start?: string; end?: string; timezone?: string }
+  user_timezone?: string
+}
+
+/**
+ * Extracts the wall-clock date and time from a Zoho timestamp string,
+ * ignoring the timezone offset. This is what we store in bookings:
+ * '20260524T140000-0500' → { date: '2026-05-24', time: '14:00:00' }.
+ *
+ * The wall-clock IS the booking time the owner sees — when an event is
+ * "8am Chicago" the booking row should say 08:00:00, not the UTC equivalent.
+ */
+function extractLocalParts(s: string): { date: string; time: string } | null {
+  const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})/.exec(s)
+  if (!m) return null
+  const [, y, mo, d, h, mi, se] = m
+  return { date: `${y}-${mo}-${d}`, time: `${h}:${mi}:${se}` }
 }
 
 // Zoho caps a single events list request at 31 days. We chunk larger ranges.
@@ -297,7 +342,20 @@ export async function listZohoCalendarEvents(
     chunkStart = addDaysISO(chunkEnd, 1)
   }
 
-  // Dedupe by uid and normalize
+  // Discover and cache the workspace's timezone from the first real event.
+  // Zoho returns user_timezone on every event; we use it for outbound too.
+  const discoveredTz = raw.find(e => e.user_timezone)?.user_timezone
+  if (discoveredTz && discoveredTz !== meta.zoho_user_timezone) {
+    const supabase = createServiceClient()
+    await supabase
+      .from('connected_accounts')
+      .update({ metadata: { ...meta, zoho_user_timezone: discoveredTz } })
+      .eq('id', accountRow.id)
+    console.log(`[zoho-calendar] cached zoho_user_timezone=${discoveredTz} for workspace ${workspaceId}`)
+  }
+
+  // Dedupe by uid and normalize using LOCAL components (not UTC) so the
+  // wall-clock the owner sees in Zoho matches what we store in bookings.
   const seen = new Set<string>()
   const out: ZohoEventSummary[] = []
   for (const ev of raw) {
@@ -307,21 +365,26 @@ export async function listZohoCalendarEvents(
     if (seen.has(uid)) continue
     seen.add(uid)
 
-    const start = parseZohoDateTime(dt.start)
-    const end = parseZohoDateTime(dt.end)
-    if (!start || !end) continue
+    const localStart = extractLocalParts(dt.start)
+    if (!localStart) continue
+
+    // Duration is tz-invariant — compute from the parsed UTC moments.
+    const startUtc = parseZohoDateTime(dt.start)
+    const endUtc = parseZohoDateTime(dt.end)
+    const durationMinutes =
+      startUtc && endUtc
+        ? Math.max(15, Math.round((endUtc.getTime() - startUtc.getTime()) / 60000))
+        : 60
 
     const isAllDay = ev.isallday === true || ev.isallday === 'true'
-    const durationMinutes = Math.max(15, Math.round((end.getTime() - start.getTime()) / 60000))
-    const iso = start.toISOString()
 
     out.push({
       uid,
       title: (ev.title ?? '').trim() || 'Untitled event',
       description: ev.description ?? null,
       isAllDay,
-      startDate: iso.slice(0, 10),
-      startTime: iso.slice(11, 19),
+      startDate: localStart.date,
+      startTime: localStart.time,
       durationMinutes,
     })
   }
