@@ -1,5 +1,5 @@
 // =========================================================
-// TropiChat — Settings panels (Caye AI, Notifications, Team, Billing)
+// Caye — Settings panels (Caye AI, Notifications, Team, Billing)
 // =========================================================
 
 // ---------------- 3. CAYE AI ----------------
@@ -210,7 +210,7 @@ const NotificationsPanel = () => {
 
       <section className="s-card">
         <div className="s-card-head">
-          <div className="h"><h3>Alerts</h3><div className="desc">Push notifications go to the TropiChat mobile app on Karenda's phone.</div></div>
+          <div className="h"><h3>Alerts</h3><div className="desc">Push notifications go to the Caye mobile app on Karenda's phone.</div></div>
           <div style={{ display: "flex", gap: 24, paddingRight: 4 }}>
             <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, letterSpacing: ".14em", color: "var(--ink-faint)", fontWeight: 600, textTransform: "uppercase", width: 50, textAlign: "center" }}>Push</span>
             <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, letterSpacing: ".14em", color: "var(--ink-faint)", fontWeight: 600, textTransform: "uppercase", width: 50, textAlign: "center" }}>Email</span>

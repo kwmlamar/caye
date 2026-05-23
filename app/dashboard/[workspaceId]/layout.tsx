@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, use } from "react"
+import { useEffect, useState, use, Suspense } from "react"
 import { useRouter } from "next/navigation"
 import Sidebar from "@/components/dashboard/Sidebar"
 import CayePanel from "@/components/dashboard/CayePanel"
@@ -162,15 +162,17 @@ export default function WorkspaceLayout({
   if (!workspace) return null
 
   return (
-    <DashboardProvider>
-      <DashboardShell
-        workspace={workspace}
-        workspaceId={workspaceId}
-        workspaces={workspaces}
-        isOwner={isOwner}
-      >
-        {children}
-      </DashboardShell>
-    </DashboardProvider>
+    <Suspense fallback={null}>
+      <DashboardProvider>
+        <DashboardShell
+          workspace={workspace}
+          workspaceId={workspaceId}
+          workspaces={workspaces}
+          isOwner={isOwner}
+        >
+          {children}
+        </DashboardShell>
+      </DashboardProvider>
+    </Suspense>
   )
 }

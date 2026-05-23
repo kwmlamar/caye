@@ -1,12 +1,12 @@
 // =========================================================
-// TropiChat — Settings page root
+// Caye — Settings page root
 // =========================================================
 
 // Outer rail sidebar (mirrors dashboard) — Settings is the active item here
 const OUTER_RAIL = [
-  { id: "chats",    label: "Chats",    count: 4,    icon: "chat",     href: "TropiChat Dashboard.html" },
-  { id: "contacts", label: "Contacts", count: null, icon: "contacts", href: "TropiChat Dashboard.html" },
-  { id: "calendar", label: "Calendar", count: 14,   icon: "cal",      href: "TropiChat Dashboard.html" },
+  { id: "chats",    label: "Chats",    count: 4,    icon: "chat",     href: "Caye Dashboard.html" },
+  { id: "contacts", label: "Contacts", count: null, icon: "contacts", href: "Caye Dashboard.html" },
+  { id: "calendar", label: "Calendar", count: 14,   icon: "cal",      href: "Caye Dashboard.html" },
 ];
 
 const RailIcon = ({ name, size = 18 }) => {
@@ -30,9 +30,9 @@ const RailIcon = ({ name, size = 18 }) => {
 const OuterSidebar = ({ expanded, setExpanded }) => (
   <nav className={"sidebar" + (expanded ? " expanded" : "")} onMouseEnter={() => setExpanded(true)} onMouseLeave={() => setExpanded(false)}>
     <div className="sb-top">
-      <a href="TropiChat Dashboard.html" className="sb-brand">
+      <a href="Caye Dashboard.html" className="sb-brand">
         <span className="sb-mark">T</span>
-        <span className="sb-brand-name">TropiChat</span>
+        <span className="sb-brand-name">Caye</span>
       </a>
 
       <div className="sb-section">

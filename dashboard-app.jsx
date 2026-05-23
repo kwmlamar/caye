@@ -1,5 +1,5 @@
 // =========================================================
-// Main TropiChat dashboard app
+// Main Caye dashboard app
 // =========================================================
 
 const SCREENS = [
@@ -58,7 +58,7 @@ const Sidebar = ({ screen, setScreen, expanded, setExpanded }) => {
       <div className="sb-top">
         <a href="#" className="sb-brand">
           <span className="sb-mark">T</span>
-          <span className="sb-brand-name">TropiChat</span>
+          <span className="sb-brand-name">Caye</span>
         </a>
 
         <div className="sb-section">
@@ -150,7 +150,7 @@ const DemoStrip = ({ screen, setScreen }) => {
     <div className="demo-strip">
       <div className="demo-brand">
         <span className="dm-mark">T</span>
-        <span>TropiChat · Dashboard exploration</span>
+        <span>Caye · Dashboard exploration</span>
       </div>
       <div className="demo-tabs">
         {states.map((s) => (

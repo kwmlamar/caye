@@ -1,5 +1,5 @@
 // =========================================================
-// Mock data + reusable icons for the TropiChat dashboard
+// Mock data + reusable icons for the Caye dashboard
 // =========================================================
 
 // --- Channel mark (W / IG / M / @) ---

@@ -1,5 +1,5 @@
 // =========================================================
-// TropiChat — Settings panels (one per nav section)
+// Caye — Settings panels (one per nav section)
 // =========================================================
 
 // ---------------- 1. PROFILE ----------------
@@ -109,7 +109,7 @@ const ChannelsPanel = () => (
       <div className="ph-left">
         <div className="set-page-eyebrow"><span className="dot"></span>Channels</div>
         <h1>Where guests reach you</h1>
-        <p className="set-page-desc">Every connected channel funnels into the same TropiChat inbox. Caye AI replies on all connected channels by default.</p>
+        <p className="set-page-desc">Every connected channel funnels into the same Caye inbox. Caye AI replies on all connected channels by default.</p>
       </div>
       <div className="ph-right">
         <button className="btn-ghost">Test inbound message</button>

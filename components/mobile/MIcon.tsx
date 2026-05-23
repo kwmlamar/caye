@@ -1,6 +1,6 @@
 /**
  * Mobile icon set — stroke icons drawn with currentColor.
- * Converted from the TropiChat Mobile design (mobile-data.jsx).
+ * Converted from the Caye Mobile design (mobile-data.jsx).
  */
 
 export type MIconName =

@@ -40,7 +40,7 @@ export default function NotificationsPanel() {
         <div className="s-card-head">
           <div className="h">
             <h3>Alerts</h3>
-            <div className="desc">Push notifications go to the TropiChat mobile app on Karenda&apos;s phone.</div>
+            <div className="desc">Push notifications go to the Caye mobile app on Karenda&apos;s phone.</div>
           </div>
           <div style={{ display: 'flex', gap: 24, paddingRight: 4 }}>
             <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, letterSpacing: '.14em', color: 'var(--tc-ink-faint)', fontWeight: 600, textTransform: 'uppercase', width: 50, textAlign: 'center' }}>Push</span>

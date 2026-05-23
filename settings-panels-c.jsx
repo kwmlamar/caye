@@ -1,5 +1,5 @@
 // =========================================================
-// TropiChat — Settings panels (Team, Billing) + SaveBar
+// Caye — Settings panels (Team, Billing) + SaveBar
 // =========================================================
 
 // ---------------- SAVE BAR (shared) ----------------

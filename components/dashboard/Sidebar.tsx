@@ -189,9 +189,6 @@ export default function Sidebar({ workspaceId }: SidebarProps) {
 
   const handleScreenClick = (s: Screen) => {
     setScreen(s)
-    if (isSettings) {
-      router.push(`/dashboard/${workspaceId}`)
-    }
   }
 
   const handleSelectWorkspace = useCallback((id: string) => {
