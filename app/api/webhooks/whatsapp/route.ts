@@ -219,12 +219,20 @@ async function processInboundWhatsApp(payload: Record<string, unknown>): Promise
       continue
     }
 
-    // Dedup inbound message
-    const { data: existing } = await supabase
-      .from('unified_messages')
-      .select('id')
-      .eq('channel_message_id', messageId)
-      .maybeSingle()
+    // Dedup check + first-message detection (run in parallel)
+    const [{ data: existing }, { count: priorCount }] = await Promise.all([
+      supabase
+        .from('unified_messages')
+        .select('id')
+        .eq('channel_message_id', messageId)
+        .maybeSingle(),
+      supabase
+        .from('unified_messages')
+        .select('*', { count: 'exact', head: true })
+        .eq('conversation_id', conversation.id),
+    ])
+
+    const isFirstMessage = (priorCount ?? 0) === 0
 
     if (!existing) {
       const { error: inboundErr } = await supabase.from('unified_messages').insert({
@@ -250,7 +258,7 @@ async function processInboundWhatsApp(payload: Record<string, unknown>): Promise
     try {
       decision = await generateCayeAutoReply(
         systemPrompt,
-        { senderName: customerName, body, channel: 'whatsapp' },
+        { senderName: customerName, body, channel: 'whatsapp', isFirstMessage },
         voiceProfile
       )
     } catch (err) {

@@ -190,11 +190,19 @@ async function processInboundMessenger(payload: Record<string, unknown>): Promis
         continue
       }
 
-      const { data: existing } = await supabase
-        .from('unified_messages')
-        .select('id')
-        .eq('channel_message_id', messageId)
-        .maybeSingle()
+      const [{ data: existing }, { count: priorCount }] = await Promise.all([
+        supabase
+          .from('unified_messages')
+          .select('id')
+          .eq('channel_message_id', messageId)
+          .maybeSingle(),
+        supabase
+          .from('unified_messages')
+          .select('*', { count: 'exact', head: true })
+          .eq('conversation_id', conversation.id),
+      ])
+
+      const isFirstMessage = (priorCount ?? 0) === 0
 
       if (!existing) {
         const { error: inboundErr } = await supabase.from('unified_messages').insert({
@@ -216,7 +224,7 @@ async function processInboundMessenger(payload: Record<string, unknown>): Promis
       try {
         decision = await generateCayeAutoReply(
           systemPrompt,
-          { senderName: customerName, body, channel: 'messenger' },
+          { senderName: customerName, body, channel: 'messenger', isFirstMessage },
           voiceProfile
         )
       } catch (err) {

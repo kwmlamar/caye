@@ -55,7 +55,8 @@ function buildSystem(
   systemPrompt: string,
   voiceProfile: VoiceProfile | undefined,
   channel: string,
-  isEmail: boolean
+  isEmail: boolean,
+  isFirstMessage: boolean
 ): string {
   let s = systemPrompt
 
@@ -72,7 +73,9 @@ function buildSystem(
 
   s += isEmail
     ? '\n\nWrite only the reply body — no headers, no markdown. Plain prose, sign off naturally.'
-    : `\n\nWrite only the reply body. Plain conversational prose — no markdown. Keep it brief — this is ${channel}, not email. Do NOT open with a greeting or the customer's name (e.g. "Hey Lamar!") — jump straight to the answer. Repeating their name on every message feels robotic in a chat.`
+    : isFirstMessage
+    ? `\n\nWrite only the reply body. Plain conversational prose — no markdown. Keep it brief — this is ${channel}, not email. Open with a warm, natural greeting.`
+    : `\n\nWrite only the reply body. Plain conversational prose — no markdown. Keep it brief — this is ${channel}, not email. Do NOT open with a greeting or the customer's name — jump straight to the answer.`
 
   s +=
     '\n\nYou MUST call either send_reply or hold_for_human. Never respond with plain text.'
@@ -91,6 +94,7 @@ export async function generateCayeAutoReply(
     body: string
     channel: 'whatsapp' | 'instagram' | 'messenger' | 'email'
     subject?: string
+    isFirstMessage?: boolean
   },
   voiceProfile?: VoiceProfile
 ): Promise<CayeAutoReply> {
@@ -107,7 +111,7 @@ export async function generateCayeAutoReply(
     system: [
       {
         type: 'text',
-        text: buildSystem(systemPrompt, voiceProfile, inbound.channel, isEmail),
+        text: buildSystem(systemPrompt, voiceProfile, inbound.channel, isEmail, inbound.isFirstMessage ?? false),
         cache_control: { type: 'ephemeral' },
       },
     ],
