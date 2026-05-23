@@ -360,7 +360,11 @@ export default function ChatsScreen({ openCaye }: { openCaye: () => void }) {
 
       if (error) {
         setMessages((prev) =>
-          prev.map((m) => (m.id === tempMsg.id ? { ...m, status: 'failed' as const } : m))
+          prev.map((m) =>
+            m.id === tempMsg.id
+              ? { ...m, status: 'failed' as const, error_message: error }
+              : m
+          )
         )
       } else if (data) {
         setMessages((prev) => {
@@ -587,7 +591,13 @@ export default function ChatsScreen({ openCaye }: { openCaye: () => void }) {
                           {formatTime(msg.sent_at)}
                           {msg.status === 'sending' && ' · sending…'}
                           {msg.status === 'failed' && (
-                            <span style={{ color: 'var(--tc-coral)' }}> · failed to send</span>
+                            <span
+                              style={{ color: 'var(--tc-coral)' }}
+                              title={msg.error_message ?? undefined}
+                            >
+                              {' · failed to send'}
+                              {msg.error_message ? ` — ${msg.error_message}` : ''}
+                            </span>
                           )}
                         </div>
                       </div>

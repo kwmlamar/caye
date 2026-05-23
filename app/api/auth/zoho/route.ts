@@ -19,6 +19,10 @@ export async function GET(req: NextRequest) {
     scope: SCOPES,
     redirect_uri: redirectUri,
     access_type: 'offline',
+    // Force the consent dialog every time. Zoho only issues a new refresh_token
+    // when the user explicitly consents — otherwise reconnects return only an
+    // access_token and the stored refresh_token gets clobbered.
+    prompt: 'consent',
     state: `${workspaceId}:${source}`,
   })
 

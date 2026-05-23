@@ -106,6 +106,19 @@ export async function GET(req: NextRequest) {
     .eq('channel_type', 'email')
     .neq('channel_account_id', zohoAccountId)
 
+  // If Zoho didn't send a refresh_token (happens on re-consent without revoke),
+  // preserve whatever's already stored — otherwise we'd null it and break auto-renew.
+  let refreshTokenToStore: string | null = refresh_token || null
+  if (!refreshTokenToStore) {
+    const { data: existing } = await supabase
+      .from('connected_accounts')
+      .select('refresh_token')
+      .eq('channel_type', 'email')
+      .eq('channel_account_id', zohoAccountId)
+      .maybeSingle()
+    refreshTokenToStore = existing?.refresh_token ?? null
+  }
+
   // Upsert on the unique (channel_type, channel_account_id) constraint
   const { error: upsertError } = await supabase
     .from('connected_accounts')
@@ -114,7 +127,7 @@ export async function GET(req: NextRequest) {
         user_id: workspaceId,
         channel_type: 'email',
         access_token,
-        refresh_token: refresh_token || null,
+        refresh_token: refreshTokenToStore,
         token_expires_at: tokenExpiresAt,
         channel_account_id: zohoAccountId,
         channel_account_name: zohoEmail || null,
