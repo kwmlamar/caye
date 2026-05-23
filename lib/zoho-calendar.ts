@@ -245,11 +245,15 @@ async function fetchEventsChunk(
 
   const data = await res.json()
   const events: ZohoRawEvent[] = Array.isArray(data?.events) ? data.events : []
-  console.log(
-    `[zoho-calendar] list ${fromDateISO}..${toDateISO} cal=${calId} → ${events.length} events. ` +
-      `Sample keys: ${Object.keys(data || {}).join(',')}. ` +
-      `First event: ${events[0] ? JSON.stringify(events[0]).slice(0, 300) : '(none)'}`
-  )
+  if (events.length > 0 && events[0] && Object.keys(events[0]).length > 1) {
+    console.log(
+      `[zoho-calendar] list ${fromDateISO}..${toDateISO} cal=${calId} → ${events.length} events. ` +
+        `First event keys: [${Object.keys(events[0]).join(',')}]. ` +
+        `Full first event: ${JSON.stringify(events[0])}`
+    )
+  } else {
+    console.log(`[zoho-calendar] list ${fromDateISO}..${toDateISO} → 0 events`)
+  }
   return events
 }
 
