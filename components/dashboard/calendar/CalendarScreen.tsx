@@ -5,7 +5,6 @@ import CayeMark from '@/components/ui/CayeMark'
 import { getSupabase } from '@/lib/supabase'
 import { useWorkspace } from '@/lib/workspace-context'
 import BookingModal, { type BookingModalData } from './BookingModal'
-import AskCayePanel from './AskCayePanel'
 
 const ROW_H = 56
 const START = 8
@@ -121,7 +120,6 @@ export default function CalendarScreen() {
   const [bookings, setBookings] = useState<SupaBooking[]>([])
   const [loading, setLoading] = useState(true)
   const [modal, setModal] = useState<{ mode: 'new' | 'edit'; data: BookingModalData } | null>(null)
-  const [askCayeOpen, setAskCayeOpen] = useState(false)
 
   const weekDays = Array.from({ length: 7 }, (_, i) => addDays(weekOf, i))
   const weekEnd = weekDays[6]
@@ -204,13 +202,6 @@ export default function CalendarScreen() {
             <span className={view === 'DAY' ? 'on' : ''} onClick={() => setView('DAY')} style={{ cursor: 'pointer' }}>Day</span>
             <span className={view === 'MONTH' ? 'on' : ''} onClick={() => setView('MONTH')} style={{ cursor: 'pointer' }}>Month</span>
           </div>
-          <button
-            className="ghost-btn sm"
-            onClick={() => setAskCayeOpen(o => !o)}
-            title="Chat with Caye to manage bookings"
-          >
-            <CayeMark size={12} /> Ask Caye
-          </button>
           <button
             className="btn-primary sm"
             onClick={() => setModal({ mode: 'new', data: emptyBookingForm(toISO(todayDate)) })}
@@ -340,13 +331,6 @@ export default function CalendarScreen() {
           mode={modal.mode}
           onClose={() => setModal(null)}
           onSaved={() => { setModal(null); fetchBookings() }}
-        />
-      )}
-
-      {askCayeOpen && (
-        <AskCayePanel
-          onClose={() => setAskCayeOpen(false)}
-          onBookingChanged={fetchBookings}
         />
       )}
     </div>
