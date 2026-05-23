@@ -47,6 +47,7 @@ const TOOLS: Anthropic.Tool[] = [
       },
       required: ['reason', 'note'],
     },
+    cache_control: { type: 'ephemeral' },
   },
 ]
 
@@ -71,7 +72,7 @@ function buildSystem(
 
   s += isEmail
     ? '\n\nWrite only the reply body — no headers, no markdown. Plain prose, sign off naturally.'
-    : `\n\nWrite only the reply body. Plain conversational prose — no markdown. Keep it brief — this is ${channel}, not email.`
+    : `\n\nWrite only the reply body. Plain conversational prose — no markdown. Keep it brief — this is ${channel}, not email. Do NOT open with a greeting or the customer's name (e.g. "Hey Lamar!") — jump straight to the answer. Repeating their name on every message feels robotic in a chat.`
 
   s +=
     '\n\nYou MUST call either send_reply or hold_for_human. Never respond with plain text.'
@@ -103,7 +104,13 @@ export async function generateCayeAutoReply(
   const response = await client.messages.create({
     model: 'claude-sonnet-4-6',
     max_tokens: 600,
-    system: buildSystem(systemPrompt, voiceProfile, inbound.channel, isEmail),
+    system: [
+      {
+        type: 'text',
+        text: buildSystem(systemPrompt, voiceProfile, inbound.channel, isEmail),
+        cache_control: { type: 'ephemeral' },
+      },
+    ],
     tools: TOOLS,
     tool_choice: { type: 'any' },
     messages: [{ role: 'user', content: userContent }],
