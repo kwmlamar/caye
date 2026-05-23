@@ -15,6 +15,7 @@ interface ConnectedAccount {
   channel_account_id: string | null
   is_active: boolean
   needs_reauth: boolean | null
+  sync_calendar: boolean | null
   created_at: string
 }
 
