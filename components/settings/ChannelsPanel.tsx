@@ -7,8 +7,13 @@ declare global {
     FB: {
       init: (opts: { appId: string; autoLogAppEvents: boolean; xfbml: boolean; version: string }) => void
       login: (
-        callback: (response: { authResponse?: { code?: string; accessToken?: string } | null }) => void,
-        opts: { config_id: string; response_type: string; override_default_response_type: boolean }
+        callback: (response: { authResponse?: { code?: string; accessToken?: string } | null; status?: string }) => void,
+        opts: {
+          config_id: string
+          response_type: string
+          override_default_response_type: boolean
+          extras?: { setup?: object; featureType?: string; sessionInfoVersion?: string }
+        }
       ) => void
     }
     fbAsyncInit: () => void
@@ -202,8 +207,31 @@ export default function ChannelsPanel() {
     setLoading(false)
   }, [workspaceId])
 
+  // Listen for Meta's postMessage events from the Embedded Signup popup.
+  // This fires regardless of whether FB.login()'s callback gets a code, and
+  // tells us if the user finished, cancelled, or hit an error in the popup.
+  useEffect(() => {
+    const handler = (event: MessageEvent) => {
+      if (event.origin !== 'https://www.facebook.com' && event.origin !== 'https://web.facebook.com') return
+      try {
+        const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data
+        if (data?.type !== 'WA_EMBEDDED_SIGNUP') return
+        console.log('[WhatsApp ES] postMessage event:', data)
+        if (data.event === 'CANCEL' || data.event === 'ERROR') {
+          setWhatsappConnecting(false)
+          toast.error(data.event === 'CANCEL' ? 'WhatsApp signup cancelled' : `WhatsApp signup error: ${data.data?.error_message ?? 'unknown'}`)
+        }
+      } catch (err) {
+        console.warn('[WhatsApp ES] failed to parse postMessage:', err)
+      }
+    }
+    window.addEventListener('message', handler)
+    return () => window.removeEventListener('message', handler)
+  }, [])
+
   const launchWhatsAppSignup = useCallback(() => {
     const configId = process.env.NEXT_PUBLIC_META_WHATSAPP_CONFIG_ID
+    console.log('[WhatsApp ES] launch — configId:', configId, 'FB loaded:', !!window.FB)
     if (!configId) {
       toast.error('WhatsApp Embedded Signup config ID not set — check NEXT_PUBLIC_META_WHATSAPP_CONFIG_ID')
       return
@@ -213,11 +241,14 @@ export default function ChannelsPanel() {
       return
     }
     setWhatsappConnecting(true)
-    // Reset if the popup is blocked or closed without triggering the callback
-    const timeout = setTimeout(() => setWhatsappConnecting(false), 60000)
+    const timeout = setTimeout(() => {
+      console.warn('[WhatsApp ES] timeout — FB.login callback never fired')
+      setWhatsappConnecting(false)
+    }, 120000)
     window.FB.login(
       async (response) => {
         clearTimeout(timeout)
+        console.log('[WhatsApp ES] FB.login callback:', response)
         if (!response.authResponse?.code) {
           setWhatsappConnecting(false)
           toast.error('WhatsApp authorization was cancelled')
@@ -230,6 +261,7 @@ export default function ChannelsPanel() {
             body: JSON.stringify({ code: response.authResponse.code, workspaceId }),
           })
           const data = await res.json() as { success?: boolean; phoneNumbers?: { id: string; name: string; token: string; display_phone_number: string }[]; error?: string }
+          console.log('[WhatsApp ES] backend response:', data)
           if (!res.ok || !data.success) {
             toast.error(data.error ?? 'WhatsApp connection failed')
             return
@@ -240,7 +272,8 @@ export default function ChannelsPanel() {
             toast.success(`WhatsApp connected — ${data.phoneNumbers[0].display_phone_number}`)
             fetchAccounts()
           }
-        } catch {
+        } catch (err) {
+          console.error('[WhatsApp ES] backend fetch failed:', err)
           toast.error('WhatsApp connection failed')
         } finally {
           setWhatsappConnecting(false)
@@ -250,6 +283,12 @@ export default function ChannelsPanel() {
         config_id: configId,
         response_type: 'code',
         override_default_response_type: true,
+        // Meta requires sessionInfoVersion to actually launch the Embedded Signup popup
+        extras: {
+          setup: {},
+          featureType: '',
+          sessionInfoVersion: '3',
+        },
       }
     )
   }, [workspaceId, fetchAccounts])
