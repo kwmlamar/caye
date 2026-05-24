@@ -460,37 +460,48 @@ export async function GET(req: NextRequest) {
           .eq('id', account.id)
       }
 
-      // Use cached inbox folderId stored at connect time (avoids needing folders scope on every poll)
-      const inboxFolderId: string | null = meta.inbox_folder_id || null
-      if (!inboxFolderId) {
-        console.warn(`[email/poll] No cached inbox_folder_id for account ${accountId} — reconnect Zoho to resolve`)
+      // Fetch all folders so we can poll Inbox + custom folders (Zoho filters
+      // often route Web3Forms/form submissions to a sub-folder). Skip system
+      // folders that wouldn't contain inbound customer messages.
+      const foldersRes = await fetch(
+        `${base}/api/accounts/${accountId}/folders`,
+        { headers: { Authorization: `Zoho-oauthtoken ${accessToken}` } }
+      )
+      const foldersData = await foldersRes.json() as { data?: { folderId: string; folderName: string; folderType?: string }[] }
+      const allFolders = foldersData?.data ?? []
+      const SKIP_TYPES = new Set(['Sent', 'Drafts', 'Trash', 'Outbox', 'Templates'])
+      const pollFolders = allFolders.filter(f => !SKIP_TYPES.has(f.folderType ?? ''))
+
+      if (!pollFolders.length) {
+        console.warn(`[email/poll] No pollable folders for account ${accountId}`)
+        summary.errors++
+        continue
       }
 
-      // Zoho Mail messages/view only accepts: limit, start, folderId (no sort params)
-      if (!inboxFolderId) { summary.errors++; continue }
-      const listUrl = `${base}/api/accounts/${accountId}/messages/view?limit=25&folderId=${inboxFolderId}`
+      for (const folder of pollFolders) {
+        const listUrl = `${base}/api/accounts/${accountId}/messages/view?limit=25&folderId=${folder.folderId}`
+        const listRes = await fetch(listUrl, {
+          headers: { Authorization: `Zoho-oauthtoken ${accessToken}` },
+        })
+        const listData = await listRes.json()
+        const messages: Record<string, unknown>[] = Array.isArray(listData?.data) ? listData.data : []
+        const zohoStatus = listData?.status?.code ?? listData?.status
+        const detail = `account=${accountId} folder=${folder.folderName}(${folder.folderId}) type=${folder.folderType} messages=${messages.length} zohoStatus=${zohoStatus}`
+        console.log(`[email/poll] ${detail}`)
+        if (!listRes.ok) {
+          console.error(`[email/poll] Messages list failed for folder ${folder.folderName}: HTTP ${listRes.status}`, JSON.stringify(listData).slice(0, 400))
+          continue
+        }
+        ;(summary.detail as string[]).push(detail)
 
-      const listRes = await fetch(listUrl, {
-        headers: { Authorization: `Zoho-oauthtoken ${accessToken}` },
-      })
-      const listData = await listRes.json()
-      const messages: Record<string, unknown>[] = Array.isArray(listData?.data)
-        ? listData.data
-        : []
-
-      const zohoStatus = listData?.status?.code ?? listData?.status
-      const detail = `account=${accountId} folderId=${inboxFolderId} messages=${messages.length} zohoStatus=${zohoStatus}`
-      console.log(`[email/poll] ${detail}`)
-      if (!listRes.ok) {
-        console.error(`[email/poll] Messages list failed: HTTP ${listRes.status}`, JSON.stringify(listData).slice(0, 400))
-      }
-      ;(summary.detail as string[]).push(detail)
-
-      for (const msg of messages) {
-        const result = await processMessage(supabase, account, msg, accessToken, base)
-        if (result === 'processed') summary.processed++
-        else if (result === 'skipped') summary.skipped++
-        else summary.errors++
+        for (const msg of messages) {
+          // Ensure folderId is on the message so processMessage can use it for content fetch
+          if (!msg.folderId && !msg.folder_id) msg.folderId = folder.folderId
+          const result = await processMessage(supabase, account, msg, accessToken, base)
+          if (result === 'processed') summary.processed++
+          else if (result === 'skipped') summary.skipped++
+          else summary.errors++
+        }
       }
     } catch (err) {
       console.error(`[email/poll] Account ${String(account.id)} failed:`, err)
