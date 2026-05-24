@@ -479,7 +479,9 @@ export async function GET(req: NextRequest) {
       }
 
       for (const folder of pollFolders) {
-        const listUrl = `${base}/api/accounts/${accountId}/messages/view?limit=25&folderId=${folder.folderId}`
+        // Higher limit so high-volume folders (Notifications, etc.) don't drop new
+        // messages between polls
+        const listUrl = `${base}/api/accounts/${accountId}/messages/view?limit=100&folderId=${folder.folderId}`
         const listRes = await fetch(listUrl, {
           headers: { Authorization: `Zoho-oauthtoken ${accessToken}` },
         })
