@@ -55,7 +55,9 @@ function htmlToPlainText(html: string): string {
     .replace(/<[^>]+>/g, '')
     .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, ' ')
-    .replace(/[ \t]+\n/g, '\n')
+    // Normalize line endings, strip leading whitespace per line, collapse blanks
+    .replace(/\r\n?/g, '\n')
+    .split('\n').map(l => l.replace(/^[ \t]+/, '').replace(/[ \t]+$/, '')).join('\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
 }
@@ -148,14 +150,15 @@ function parseWeb3FormsFields(body: string): Web3FormsFields | null {
   // Try both.
   const get = (...fieldNames: string[]): string | null => {
     for (const field of fieldNames) {
-      // Layout A: same-line colon
-      const sameLine = body.match(new RegExp(`^${field}\\s*[:\\-]\\s*(.+)$`, 'im'))
+      // Layout A: same-line colon  ("Email: x@y.com")
+      const sameLine = body.match(new RegExp(`^\\s*${field}\\s*[:\\-]\\s*(.+)$`, 'im'))
       if (sameLine?.[1]) {
         const v = sameLine[1].trim()
         if (v && v.toLowerCase() !== 'none') return v
       }
       // Layout B: label on one line, value on the next non-empty line
-      const nextLine = body.match(new RegExp(`^${field}\\s*$\\s*\\n+\\s*(.+)$`, 'im'))
+      // (Web3Forms HTML-table emails; allow leading whitespace on both lines)
+      const nextLine = body.match(new RegExp(`^\\s*${field}\\s*$\\s*\\n+\\s*(.+)$`, 'im'))
       if (nextLine?.[1]) {
         const v = nextLine[1].trim()
         if (v && v.toLowerCase() !== 'none' && !/^[A-Z][a-z]+( name)?$/.test(v)) return v
