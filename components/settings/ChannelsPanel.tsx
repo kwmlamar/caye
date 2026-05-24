@@ -1,6 +1,19 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
+
+declare global {
+  interface Window {
+    FB: {
+      init: (opts: { appId: string; autoLogAppEvents: boolean; xfbml: boolean; version: string }) => void
+      login: (
+        callback: (response: { authResponse?: { code?: string; accessToken?: string } | null }) => void,
+        opts: { config_id: string; response_type: string; override_default_response_type: boolean }
+      ) => void
+    }
+    fbAsyncInit: () => void
+  }
+}
 import { useParams, useSearchParams, useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 import SIcon from './SIcon'
@@ -72,8 +85,10 @@ export default function ChannelsPanel() {
   const [whatsappPages, setWhatsappPages] = useState<{ id: string; name: string; token: string; display_phone_number: string }[] | null>(null)
   const [messengerPages, setMessengerPages] = useState<{ id: string; name: string; token: string }[] | null>(null)
   const [instagramPages, setInstagramPages] = useState<{ id: string; name: string; token: string }[] | null>(null)
+  const [whatsappConnecting, setWhatsappConnecting] = useState(false)
   const searchParams = useSearchParams()
   const router = useRouter()
+  const fbSdkLoaded = useRef(false)
 
   useEffect(() => {
     const zohoConnected = searchParams.get('zoho_connected')
@@ -142,6 +157,29 @@ export default function ChannelsPanel() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Load the Meta JS SDK once so FB.login() is available for Embedded Signup
+  useEffect(() => {
+    if (fbSdkLoaded.current || document.getElementById('facebook-jssdk')) {
+      fbSdkLoaded.current = true
+      return
+    }
+    window.fbAsyncInit = () => {
+      window.FB.init({
+        appId: process.env.NEXT_PUBLIC_META_APP_ID!,
+        autoLogAppEvents: true,
+        xfbml: true,
+        version: 'v19.0',
+      })
+      fbSdkLoaded.current = true
+    }
+    const script = document.createElement('script')
+    script.id = 'facebook-jssdk'
+    script.src = 'https://connect.facebook.net/en_US/sdk.js'
+    script.async = true
+    script.defer = true
+    document.body.appendChild(script)
+  }, [])
+
   const fetchAccounts = useCallback(async () => {
     const supabase = getSupabase()
     const { data, error } = await supabase
@@ -163,6 +201,55 @@ export default function ChannelsPanel() {
     setByType(best)
     setLoading(false)
   }, [workspaceId])
+
+  const launchWhatsAppSignup = useCallback(() => {
+    const configId = process.env.NEXT_PUBLIC_META_WHATSAPP_CONFIG_ID
+    if (!configId) {
+      toast.error('WhatsApp Embedded Signup config ID not set — check NEXT_PUBLIC_META_WHATSAPP_CONFIG_ID')
+      return
+    }
+    if (!window.FB) {
+      toast.error('Meta SDK not loaded yet — please try again in a moment')
+      return
+    }
+    setWhatsappConnecting(true)
+    window.FB.login(
+      async (response) => {
+        if (!response.authResponse?.code) {
+          setWhatsappConnecting(false)
+          toast.error('WhatsApp authorization was cancelled')
+          return
+        }
+        try {
+          const res = await fetch('/api/auth/meta/whatsapp-embedded', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ code: response.authResponse.code, workspaceId }),
+          })
+          const data = await res.json() as { success?: boolean; phoneNumbers?: { id: string; name: string; token: string; display_phone_number: string }[]; error?: string }
+          if (!res.ok || !data.success) {
+            toast.error(data.error ?? 'WhatsApp connection failed')
+            return
+          }
+          if (data.phoneNumbers && data.phoneNumbers.length > 1) {
+            setWhatsappPages(data.phoneNumbers)
+          } else if (data.phoneNumbers?.length === 1) {
+            toast.success(`WhatsApp connected — ${data.phoneNumbers[0].display_phone_number}`)
+            fetchAccounts()
+          }
+        } catch {
+          toast.error('WhatsApp connection failed')
+        } finally {
+          setWhatsappConnecting(false)
+        }
+      },
+      {
+        config_id: configId,
+        response_type: 'code',
+        override_default_response_type: true,
+      }
+    )
+  }, [workspaceId, fetchAccounts])
 
   useEffect(() => { fetchAccounts() }, [fetchAccounts])
 
@@ -277,18 +364,18 @@ export default function ChannelsPanel() {
                       if (type === 'email') {
                         window.location.href = `/api/auth/zoho?workspaceId=${workspaceId}`
                       } else if (type === 'whatsapp') {
-                        window.location.href = `/api/auth/meta?workspaceId=${workspaceId}&channel=whatsapp`
+                        launchWhatsAppSignup()
                       } else if (type === 'messenger') {
                         window.location.href = `/api/auth/meta?workspaceId=${workspaceId}&channel=messenger`
                       } else if (type === 'instagram') {
                         window.location.href = `/api/auth/meta?workspaceId=${workspaceId}&channel=instagram`
                       }
                     }}
-                    disabled={type !== 'email' && type !== 'whatsapp' && type !== 'messenger' && type !== 'instagram'}
+                    disabled={(type !== 'email' && type !== 'whatsapp' && type !== 'messenger' && type !== 'instagram') || (type === 'whatsapp' && whatsappConnecting)}
                     title={type !== 'email' && type !== 'whatsapp' && type !== 'messenger' && type !== 'instagram' ? 'Coming soon' : undefined}
                   >
                     <SIcon name="plus" size={12} />
-                    {needsReauth ? 'Reconnect' : 'Connect'}
+                    {type === 'whatsapp' && whatsappConnecting ? 'Connecting…' : needsReauth ? 'Reconnect' : 'Connect'}
                   </button>
                 )}
               </div>
