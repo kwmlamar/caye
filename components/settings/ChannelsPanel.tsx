@@ -164,11 +164,7 @@ export default function ChannelsPanel() {
 
   // Load the Meta JS SDK once so FB.login() is available for Embedded Signup
   useEffect(() => {
-    if (fbSdkLoaded.current || document.getElementById('facebook-jssdk')) {
-      fbSdkLoaded.current = true
-      return
-    }
-    window.fbAsyncInit = () => {
+    const initFB = () => {
       window.FB.init({
         appId: process.env.NEXT_PUBLIC_META_APP_ID!,
         autoLogAppEvents: true,
@@ -176,13 +172,23 @@ export default function ChannelsPanel() {
         version: 'v19.0',
       })
       fbSdkLoaded.current = true
+      console.log('[WhatsApp ES] FB.init complete')
     }
-    const script = document.createElement('script')
-    script.id = 'facebook-jssdk'
-    script.src = 'https://connect.facebook.net/en_US/sdk.js'
-    script.async = true
-    script.defer = true
-    document.body.appendChild(script)
+    // If the SDK is already loaded (e.g. from a previous mount), init directly.
+    // fbAsyncInit only fires once when the script is first parsed.
+    if (window.FB) {
+      initFB()
+      return
+    }
+    window.fbAsyncInit = initFB
+    if (!document.getElementById('facebook-jssdk')) {
+      const script = document.createElement('script')
+      script.id = 'facebook-jssdk'
+      script.src = 'https://connect.facebook.net/en_US/sdk.js'
+      script.async = true
+      script.defer = true
+      document.body.appendChild(script)
+    }
   }, [])
 
   const fetchAccounts = useCallback(async () => {
