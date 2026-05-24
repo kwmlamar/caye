@@ -469,8 +469,7 @@ export async function GET(req: NextRequest) {
       )
       const foldersData = await foldersRes.json() as { data?: { folderId: string; folderName: string; folderType?: string }[] }
       const allFolders = foldersData?.data ?? []
-      // Note: polling Trash too, in case Zoho filters auto-trashed form submissions
-      const SKIP_TYPES = new Set(['Sent', 'Drafts', 'Outbox', 'Templates'])
+      const SKIP_TYPES = new Set(['Sent', 'Drafts', 'Trash', 'Outbox', 'Templates'])
       const pollFolders = allFolders.filter(f => !SKIP_TYPES.has(f.folderType ?? ''))
 
       if (!pollFolders.length) {
