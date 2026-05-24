@@ -272,8 +272,9 @@ async function processMessage(
     return 'error'
   }
 
-  // Insert inbound message
-  await supabase.from('unified_messages').insert({
+  // Insert inbound message — surface failures, since a silent trigger error
+  // here previously caused empty conversations
+  const { error: inboundErr } = await supabase.from('unified_messages').insert({
     conversation_id: conversation.id,
     channel_message_id: messageId,
     sender_type: 'customer',
@@ -283,6 +284,10 @@ async function processMessage(
     status: 'delivered',
     metadata: { subject, from: fromRaw, zoho_message_id: messageId, zoho_thread_id: threadId },
   })
+  if (inboundErr) {
+    console.error('[email/poll] Inbound message insert failed:', inboundErr, { messageId, conversationId: conversation.id })
+    return 'error'
+  }
 
   await supabase
     .from('unified_conversations')
