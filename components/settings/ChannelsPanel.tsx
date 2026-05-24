@@ -245,8 +245,10 @@ export default function ChannelsPanel() {
       console.warn('[WhatsApp ES] timeout — FB.login callback never fired')
       setWhatsappConnecting(false)
     }, 120000)
+    // FB SDK explicitly rejects async functions as callbacks — wrap in a
+    // sync function that invokes an async IIFE.
     window.FB.login(
-      async (response) => {
+      (response) => {
         clearTimeout(timeout)
         console.log('[WhatsApp ES] FB.login callback:', response)
         if (!response.authResponse?.code) {
@@ -254,30 +256,33 @@ export default function ChannelsPanel() {
           toast.error('WhatsApp authorization was cancelled')
           return
         }
-        try {
-          const res = await fetch('/api/auth/meta/whatsapp-embedded', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ code: response.authResponse.code, workspaceId }),
-          })
-          const data = await res.json() as { success?: boolean; phoneNumbers?: { id: string; name: string; token: string; display_phone_number: string }[]; error?: string }
-          console.log('[WhatsApp ES] backend response:', data)
-          if (!res.ok || !data.success) {
-            toast.error(data.error ?? 'WhatsApp connection failed')
-            return
+        const code = response.authResponse.code
+        ;(async () => {
+          try {
+            const res = await fetch('/api/auth/meta/whatsapp-embedded', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ code, workspaceId }),
+            })
+            const data = await res.json() as { success?: boolean; phoneNumbers?: { id: string; name: string; token: string; display_phone_number: string }[]; error?: string }
+            console.log('[WhatsApp ES] backend response:', data)
+            if (!res.ok || !data.success) {
+              toast.error(data.error ?? 'WhatsApp connection failed')
+              return
+            }
+            if (data.phoneNumbers && data.phoneNumbers.length > 1) {
+              setWhatsappPages(data.phoneNumbers)
+            } else if (data.phoneNumbers?.length === 1) {
+              toast.success(`WhatsApp connected — ${data.phoneNumbers[0].display_phone_number}`)
+              fetchAccounts()
+            }
+          } catch (err) {
+            console.error('[WhatsApp ES] backend fetch failed:', err)
+            toast.error('WhatsApp connection failed')
+          } finally {
+            setWhatsappConnecting(false)
           }
-          if (data.phoneNumbers && data.phoneNumbers.length > 1) {
-            setWhatsappPages(data.phoneNumbers)
-          } else if (data.phoneNumbers?.length === 1) {
-            toast.success(`WhatsApp connected — ${data.phoneNumbers[0].display_phone_number}`)
-            fetchAccounts()
-          }
-        } catch (err) {
-          console.error('[WhatsApp ES] backend fetch failed:', err)
-          toast.error('WhatsApp connection failed')
-        } finally {
-          setWhatsappConnecting(false)
-        }
+        })()
       },
       {
         config_id: configId,
