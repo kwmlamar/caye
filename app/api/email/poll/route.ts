@@ -138,24 +138,41 @@ function isWeb3FormsNotification(fromEmail: string, subject: string): boolean {
  * Returns null if the required customer email is missing.
  */
 function parseWeb3FormsFields(body: string): Web3FormsFields | null {
-  const get = (field: string): string | null => {
-    const m = body.match(new RegExp(`^${field}:\\s*(.+)$`, 'im'))
-    const val = m?.[1]?.trim()
-    return val && val.toLowerCase() !== 'none' ? val : null
+  // Web3Forms emails can come in two layouts:
+  //   Layout A (legacy):  "Email: x@y.com"
+  //   Layout B (current): "Email\n  x@y.com"
+  // Try both.
+  const get = (...fieldNames: string[]): string | null => {
+    for (const field of fieldNames) {
+      // Layout A: same-line colon
+      const sameLine = body.match(new RegExp(`^${field}\\s*[:\\-]\\s*(.+)$`, 'im'))
+      if (sameLine?.[1]) {
+        const v = sameLine[1].trim()
+        if (v && v.toLowerCase() !== 'none') return v
+      }
+      // Layout B: label on one line, value on the next non-empty line
+      const nextLine = body.match(new RegExp(`^${field}\\s*$\\s*\\n+\\s*(.+)$`, 'im'))
+      if (nextLine?.[1]) {
+        const v = nextLine[1].trim()
+        if (v && v.toLowerCase() !== 'none' && !/^[A-Z][a-z]+( name)?$/.test(v)) return v
+      }
+    }
+    return null
   }
 
-  const customerEmail = get('Email')
-  const customerName = get('Name')
+  // Accept several common field aliases since Web3Forms field names vary by form
+  const customerEmail = get('Email', 'Email Address', 'email')
+  const customerName = get('Name', 'Your Name', 'Full Name', 'name')
   if (!customerEmail || !customerName) return null
 
   return {
     customerName,
     customerEmail: customerEmail.toLowerCase(),
-    phone: get('Phone'),
-    tour: get('Tour'),
-    date: get('Date'),
-    guests: get('Guests'),
-    notes: get('Notes'),
+    phone: get('Phone', 'Phone Number', 'Phone / WhatsApp'),
+    tour: get('Tour', 'Service', 'Service Interested In'),
+    date: get('Date', 'Preferred Date'),
+    guests: get('Guests', 'Number of Guests', 'Group Size'),
+    notes: get('Notes', 'Message', 'Project description', 'Tell Us About Your Project'),
   }
 }
 
@@ -230,11 +247,10 @@ async function processMessage(
     web3FormsFields = parseWeb3FormsFields(w3Body)
 
     if (!web3FormsFields) {
-      // Can't extract customer — store raw notification but don't auto-reply
-      console.warn(`[email/poll] Web3Forms notification missing customer fields: ${messageId}`)
-      return 'skipped'
+      // Couldn't extract structured customer fields — fall through and save the raw
+      // email as a regular inbound message. Better to surface it than drop it.
+      console.warn(`[email/poll] Web3Forms parse failed, saving as raw email: ${messageId}`)
     }
-
   }
 
   // Resolve the effective contact for this message
