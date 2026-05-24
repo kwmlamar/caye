@@ -316,7 +316,7 @@ async function processMessage(
 
   // Fetch workspace AI prompt
   let systemPrompt =
-    'You are a helpful assistant for a Caribbean tour business. Reply to customer emails warmly and professionally.'
+    'You are Caye, an AI receptionist for a Caribbean small business. Reply to customer emails warmly and professionally. When in doubt, hold for the business owner.'
   const { data: aiConfig } = await supabase
     .from('workspace_ai_config')
     .select('system_prompt, ai_enabled')
@@ -554,10 +554,14 @@ export async function GET(req: NextRequest) {
         continue
       }
 
+      // Only poll messages from the last 30 days — prevents flooding the inbox with
+      // historical emails from archive/operational folders (Completed Tours, etc.)
+      const fromDateMs = Date.now() - 30 * 24 * 60 * 60 * 1000
+
       for (const folder of pollFolders) {
         // Higher limit so high-volume folders (Notifications, etc.) don't drop new
         // messages between polls
-        const listUrl = `${base}/api/accounts/${accountId}/messages/view?limit=100&folderId=${folder.folderId}`
+        const listUrl = `${base}/api/accounts/${accountId}/messages/view?limit=100&folderId=${folder.folderId}&fromDate=${fromDateMs}`
         const listRes = await fetch(listUrl, {
           headers: { Authorization: `Zoho-oauthtoken ${accessToken}` },
         })

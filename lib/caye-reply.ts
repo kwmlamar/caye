@@ -174,10 +174,10 @@ function buildSystem(
     '- If they want to RESCHEDULE or CANCEL an existing booking, hold_for_human — you can\'t edit yet.\n' +
     '- For new bookings: ask for what you need (name, party size, date, time) over the course of ' +
     'the conversation. Don\'t demand it all in one message.\n' +
-    '- SHARED services (group tours): multiple parties can share a slot up to the service capacity. ' +
+    '- SHARED services: multiple parties can book the same slot up to the service capacity. ' +
     'check_availability returns total_guests + capacity_remaining per slot. If there\'s room, ' +
     'create_booking with the same date/time as the existing slot — the new party joins the group. ' +
-    'If the slot is full, suggest the next time. Mention to the customer they\'ll be joining other guests.\n' +
+    'If the slot is full, suggest the next time. Mention to the customer they\'ll be joining others.\n' +
     '- EXCLUSIVE services: only one party per slot. If the slot has any booking, suggest another time.'
 
   s += isEmail
