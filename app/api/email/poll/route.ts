@@ -49,9 +49,13 @@ function htmlToPlainText(html: string): string {
   return html
     .replace(/<br\s*\/?>/gi, '\n')
     .replace(/<\/p\s*>/gi, '\n\n')
+    // Treat block-level closings as line breaks so HTML tables/lists
+    // (used by Web3Forms etc.) don't collapse into one long line
+    .replace(/<\/(tr|td|th|li|div|h[1-6])\s*>/gi, '\n')
     .replace(/<[^>]+>/g, '')
     .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, ' ')
+    .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
 }
@@ -278,7 +282,7 @@ async function processMessage(
     'You are a helpful assistant for a Caribbean tour business. Reply to customer emails warmly and professionally.'
   const { data: aiConfig } = await supabase
     .from('workspace_ai_config')
-    .select('system_prompt')
+    .select('system_prompt, ai_enabled')
     .eq('workspace_id', workspaceId)
     .maybeSingle()
   if (aiConfig?.system_prompt) systemPrompt = aiConfig.system_prompt
@@ -341,6 +345,25 @@ async function processMessage(
   // Don't auto-reply to emails that existed before the account was connected
   if (isHistorical) {
     console.log(`[email/poll] Historical email skipped (no auto-reply): ${messageId}`)
+    return 'skipped'
+  }
+
+  if (aiConfig?.ai_enabled === false) {
+    console.log(`[email/poll] AI disabled for workspace ${workspaceId} — skipping auto-reply`)
+    return 'skipped'
+  }
+
+  // Never auto-reply to vendor/system addresses (noreply@, mailer-daemon@, etc.).
+  // For Web3Forms specifically we use effectiveEmail (the real customer) instead.
+  const replyTarget = (web3FormsFields ? effectiveEmail : fromEmail).toLowerCase()
+  const localPart = replyTarget.split('@')[0] || ''
+  const NO_REPLY_LOCAL_PARTS = /^(noreply|no-reply|donotreply|do-not-reply|mailer-daemon|postmaster|bounces?|notifications?|notify|alerts?|system|support|info|admin|root)$/i
+  const NO_REPLY_DOMAIN_KEYWORDS = ['mailer-daemon', 'postmaster']
+  if (
+    NO_REPLY_LOCAL_PARTS.test(localPart) ||
+    NO_REPLY_DOMAIN_KEYWORDS.some(k => replyTarget.includes(k))
+  ) {
+    console.log(`[email/poll] No-reply/system address — saved but not auto-replying: ${replyTarget}`)
     return 'skipped'
   }
 
