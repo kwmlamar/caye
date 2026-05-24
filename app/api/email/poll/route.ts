@@ -56,6 +56,51 @@ function htmlToPlainText(html: string): string {
     .trim()
 }
 
+/**
+ * Fetches a message body from Zoho. Tries the folder-scoped path first
+ * (the documented current API) and falls back to the legacy unscoped path.
+ * Logs full diagnostics if both fail or return empty.
+ */
+async function fetchMessageContent(
+  base: string,
+  accountId: string,
+  messageId: string,
+  accessToken: string,
+  folderId: string
+): Promise<string> {
+  const paths = [
+    folderId ? `${base}/api/accounts/${accountId}/folders/${folderId}/messages/${messageId}/content` : null,
+    `${base}/api/accounts/${accountId}/messages/${messageId}/content`,
+  ].filter(Boolean) as string[]
+
+  for (const url of paths) {
+    try {
+      const res = await fetch(url, {
+        headers: {
+          Authorization: `Zoho-oauthtoken ${accessToken}`,
+          Accept: 'application/json',
+        },
+      })
+      const json = await res.json().catch(() => null) as Record<string, unknown> | null
+      const data = (json?.data ?? {}) as Record<string, unknown>
+      const raw = String(
+        data.content || data.htmlContent || data.textContent || data.summary || ''
+      )
+      if (!res.ok) {
+        console.warn(`[email/poll] content fetch ${res.status} for ${messageId} at ${url}:`, JSON.stringify(json).slice(0, 300))
+        continue
+      }
+      if (raw) {
+        return raw.includes('<') ? htmlToPlainText(raw) : raw.trim()
+      }
+      console.warn(`[email/poll] content fetch returned empty for ${messageId} at ${url}; payload:`, JSON.stringify(json).slice(0, 300))
+    } catch (err) {
+      console.error(`[email/poll] content fetch threw for ${messageId} at ${url}:`, err)
+    }
+  }
+  return ''
+}
+
 function extractEmail(raw: string): string {
   return (
     raw.match(/<([^>]+)>/)?.[1]?.toLowerCase().trim() ||
@@ -174,18 +219,13 @@ async function processMessage(
   let web3FormsFields: Web3FormsFields | null = null
   if (isWeb3FormsNotification(fromEmail, subject)) {
     // Fetch body early so we can parse the fields
-    const w3ContentRes = await fetch(
-      `${base}/api/accounts/${accountId}/messages/${messageId}/content`,
-      { headers: { Authorization: `Zoho-oauthtoken ${accessToken}` } }
+    const w3Body = await fetchMessageContent(
+      base,
+      String(accountId),
+      messageId,
+      accessToken,
+      String(msg.folderId || msg.folder_id || '')
     )
-    const w3ContentData = await w3ContentRes.json()
-    const w3Raw = String(
-      w3ContentData?.data?.content ||
-      w3ContentData?.data?.htmlContent ||
-      w3ContentData?.data?.textContent ||
-      w3ContentData?.data?.summary || ''
-    )
-    const w3Body = w3Raw.includes('<') ? htmlToPlainText(w3Raw) : w3Raw.trim()
 
     web3FormsFields = parseWeb3FormsFields(w3Body)
 
@@ -214,19 +254,7 @@ async function processMessage(
     // Body was already fetched above; rebuild context from structured fields
     body = buildWeb3FormsContext(web3FormsFields)
   } else {
-    const contentRes = await fetch(
-      `${base}/api/accounts/${accountId}/messages/${messageId}/content`,
-      { headers: { Authorization: `Zoho-oauthtoken ${accessToken}` } }
-    )
-    const contentData = await contentRes.json()
-    const rawContent = String(
-      contentData?.data?.content ||
-      contentData?.data?.htmlContent ||
-      contentData?.data?.textContent ||
-      contentData?.data?.summary ||
-      ''
-    )
-    body = rawContent.includes('<') ? htmlToPlainText(rawContent) : rawContent.trim()
+    body = await fetchMessageContent(base, String(accountId), messageId, accessToken, String(msg.folderId || msg.folder_id || ''))
   }
 
   // Fetch workspace AI prompt
