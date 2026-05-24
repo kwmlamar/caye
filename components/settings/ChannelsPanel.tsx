@@ -213,8 +213,11 @@ export default function ChannelsPanel() {
       return
     }
     setWhatsappConnecting(true)
+    // Reset if the popup is blocked or closed without triggering the callback
+    const timeout = setTimeout(() => setWhatsappConnecting(false), 60000)
     window.FB.login(
       async (response) => {
+        clearTimeout(timeout)
         if (!response.authResponse?.code) {
           setWhatsappConnecting(false)
           toast.error('WhatsApp authorization was cancelled')
