@@ -71,11 +71,11 @@ function htmlToPlainText(html: string): string {
 function stripEmailQuotes(text: string): string {
   // Gmail / Apple Mail: "On Mon, May 24, 2026 at 5:00 PM Person <email> wrote:"
   // Allow the header to span up to ~3 lines (name wrap) before "wrote:"
-  const gmailRe = /\n[ \t]*On .{10,200}wrote:\s*\n/s
+  const gmailRe = /\n[ \t]*On [\s\S]{10,200}wrote:\s*\n/
 
   // Zoho / Outlook forwarded-message block that appears inline:
   //   "From: Name <email>\nTo: ...\nDate: ...\nSubject: ..."
-  const headerBlockRe = /\n[ \t]*From:\s+.{3,}\n[ \t]*To:\s+.{3,}\n[ \t]*(Date|Sent):/s
+  const headerBlockRe = /\n[ \t]*From:\s+[\s\S]{3,}\n[ \t]*To:\s+[\s\S]{3,}\n[ \t]*(Date|Sent):/
 
   // Classic "-----Original Message-----"
   const separatorRe = /\n[ \t]*-{3,}[ \t]*(?:Original Message|Forwarded Message)[ \t]*-{3,}/i
@@ -266,6 +266,79 @@ function buildWeb3FormsContext(parsed: Web3FormsParsed): string {
 
 type Supabase = ReturnType<typeof createServiceClient>
 type Account = Record<string, unknown>
+
+/**
+ * Imports a sent message from the Zoho Sent folder into an existing Caye
+ * conversation so the chat thread shows both sides of the exchange.
+ * Only adds the message if the thread already exists — never creates new
+ * conversations from sent mail.
+ */
+async function processSentMessage(
+  supabase: Supabase,
+  account: Account,
+  msg: Record<string, unknown>,
+  accessToken: string,
+  base: string
+): Promise<'processed' | 'skipped' | 'error'> {
+  const messageId = String(msg.messageId || msg.message_id || '')
+  if (!messageId) return 'skipped'
+
+  // Skip if already imported
+  const { data: existing } = await supabase
+    .from('unified_messages')
+    .select('id')
+    .eq('channel_message_id', messageId)
+    .maybeSingle()
+  if (existing) return 'skipped'
+
+  const threadId = String(msg.threadId || msg.thread_id || messageId)
+  const sentTime = msg.sentTime || msg.receivedTime
+    ? new Date(Number(msg.sentTime || msg.receivedTime)).toISOString()
+    : new Date().toISOString()
+  const subject = String(msg.subject || '(no subject)')
+  const meta = (account.metadata || {}) as Record<string, string>
+  const accountId = meta.zoho_account_id || String(account.channel_account_id)
+
+  // Only import into threads that are already open in Caye
+  const { data: conversation } = await supabase
+    .from('unified_conversations')
+    .select('id')
+    .eq('connected_account_id', String(account.id))
+    .eq('channel_conversation_id', threadId)
+    .maybeSingle()
+
+  if (!conversation) return 'skipped' // No matching thread — don't create one from sent mail
+
+  const raw = await fetchMessageContent(
+    base, String(accountId), messageId, accessToken,
+    String(msg.folderId || msg.folder_id || '')
+  )
+  const body = stripEmailQuotes(raw)
+  if (!body) return 'skipped' // Nothing meaningful to store
+
+  const { error } = await supabase.from('unified_messages').insert({
+    conversation_id: conversation.id,
+    channel_message_id: messageId,
+    sender_type: 'business',
+    content: body,
+    message_type: 'text',
+    sent_at: sentTime,
+    status: 'sent',
+    metadata: { subject, zoho_message_id: messageId, zoho_thread_id: threadId, source: 'zoho_sent' },
+  })
+  if (error) {
+    console.error('[email/poll] Sent message insert failed:', error)
+    return 'error'
+  }
+
+  // Update conversation preview so the last message reflects the sent reply
+  await supabase
+    .from('unified_conversations')
+    .update({ last_sender_type: 'business', last_business_sender_kind: 'human', last_message_at: sentTime, last_message_preview: body.slice(0, 100) })
+    .eq('id', conversation.id)
+
+  return 'processed'
+}
 
 async function processMessage(
   supabase: Supabase,
@@ -579,8 +652,9 @@ export async function GET(req: NextRequest) {
       )
       const foldersData = await foldersRes.json() as { data?: { folderId: string; folderName: string; folderType?: string }[] }
       const allFolders = foldersData?.data ?? []
-      const SKIP_TYPES = new Set(['Sent', 'Drafts', 'Trash', 'Outbox', 'Templates'])
-      const pollFolders = allFolders.filter(f => !SKIP_TYPES.has(f.folderType ?? ''))
+      const SKIP_TYPES = new Set(['Drafts', 'Trash', 'Outbox', 'Templates'])
+      const pollFolders = allFolders.filter(f => !SKIP_TYPES.has(f.folderType ?? '') && f.folderType !== 'Sent')
+      const sentFolders = allFolders.filter(f => f.folderType === 'Sent')
 
       if (!pollFolders.length) {
         console.warn(`[email/poll] No pollable folders for account ${accountId}`)
@@ -614,6 +688,25 @@ export async function GET(req: NextRequest) {
           // Ensure folderId is on the message so processMessage can use it for content fetch
           if (!msg.folderId && !msg.folder_id) msg.folderId = folder.folderId
           const result = await processMessage(supabase, account, msg, accessToken, base)
+          if (result === 'processed') summary.processed++
+          else if (result === 'skipped') summary.skipped++
+          else summary.errors++
+        }
+      }
+
+      // ── Sent folder: import business replies into existing threads ────────
+      // This surfaces replies Bimini sends directly from Zoho (outside Caye's
+      // dashboard) so the conversation thread shows both sides of the exchange.
+      for (const folder of sentFolders) {
+        const listUrl = `${base}/api/accounts/${accountId}/messages/view?limit=100&folderId=${folder.folderId}&fromDate=${fromDateMs}`
+        const listRes = await fetch(listUrl, { headers: { Authorization: `Zoho-oauthtoken ${accessToken}` } })
+        if (!listRes.ok) continue
+        const listData = await listRes.json()
+        const sentMsgs: Record<string, unknown>[] = Array.isArray(listData?.data) ? listData.data : []
+        console.log(`[email/poll] Sent folder: ${sentMsgs.length} messages to check for thread matches`)
+        for (const msg of sentMsgs) {
+          if (!msg.folderId && !msg.folder_id) msg.folderId = folder.folderId
+          const result = await processSentMessage(supabase, account, msg, accessToken, base)
           if (result === 'processed') summary.processed++
           else if (result === 'skipped') summary.skipped++
           else summary.errors++
