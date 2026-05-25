@@ -264,6 +264,113 @@ function buildWeb3FormsContext(parsed: Web3FormsParsed): string {
   return lines.join('\n')
 }
 
+// ── Payment receipt helpers ─────────────────────────────────────────────────
+
+interface ReceiptParsed {
+  customerName: string
+  customerEmail: string | null
+  amount: string
+  description: string
+  approvalCode: string
+  response: string
+  transactionId: string
+}
+
+/**
+ * Returns true if this email looks like a payment processor receipt
+ * rather than a direct customer message.
+ */
+function isPaymentReceipt(subject: string, body: string): boolean {
+  if (/RECEIPT PAGE/i.test(subject)) return true
+  return (
+    /^\s*Response:/im.test(body) &&
+    /^\s*ApprovalCode:/im.test(body) &&
+    /^\s*Customer Name:/im.test(body)
+  )
+}
+
+function matchReceiptField(body: string, label: string): string | null {
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const re = new RegExp(`^\\s*${escaped}:\\s*(.+)$`, 'im')
+  const m = body.match(re)
+  return m ? m[1].trim() : null
+}
+
+/**
+ * Parses a payment processor receipt into structured fields.
+ * Returns null if any required field is missing.
+ * customerEmail is optional — receipts often don't include it.
+ */
+function parseReceiptFields(body: string): ReceiptParsed | null {
+  const customerName = matchReceiptField(body, 'Customer Name')
+  const amount = matchReceiptField(body, 'Total')
+  const description = matchReceiptField(body, 'Description')
+  const approvalCode = matchReceiptField(body, 'ApprovalCode')
+  const response = matchReceiptField(body, 'Response')
+  const transactionId = matchReceiptField(body, 'Transaction ID')
+  if (!customerName || !amount || !description || !approvalCode || !response || !transactionId) {
+    return null
+  }
+  const customerEmail =
+    matchReceiptField(body, 'Customer Email') ||
+    matchReceiptField(body, 'Email') ||
+    null
+  return {
+    customerName,
+    customerEmail: customerEmail ? customerEmail.toLowerCase() : null,
+    amount,
+    description,
+    approvalCode,
+    response,
+    transactionId,
+  }
+}
+
+/**
+ * Builds the warm thank-you email body sent to the customer when a
+ * payment is approved. Plain text, signed off as Karenda.
+ */
+function buildReceiptThankYou(parsed: ReceiptParsed): string {
+  return [
+    `Hi ${parsed.customerName.split(/\s+/)[0]},`,
+    '',
+    `Thank you — your payment of ${parsed.amount} has been received for ${parsed.description}.`,
+    '',
+    'Please meet us at the Resorts World Bimini tram stop — allow 15-30 minutes before tour time.',
+    '',
+    'Looking forward to having you with us!',
+    '',
+    'Karenda',
+    'Bimini Island Tours',
+    '242-814-8687 · info@tourbimini.com',
+  ].join('\n')
+}
+
+/**
+ * Renders the receipt as an internal note that surfaces all the
+ * payment details for the business owner to review in the inbox.
+ */
+function buildReceiptInternalNote(parsed: ReceiptParsed, customerEmailed: boolean): string {
+  const lines = [
+    `Payment receipt — ${parsed.response}`,
+    `Customer: ${parsed.customerName}`,
+    `Amount: ${parsed.amount}`,
+    `Description: ${parsed.description}`,
+    `Approval Code: ${parsed.approvalCode}`,
+    `Transaction ID: ${parsed.transactionId}`,
+  ]
+  if (parsed.customerEmail) lines.push(`Customer Email: ${parsed.customerEmail}`)
+  lines.push('')
+  if (parsed.response.toUpperCase() !== 'APPROVED') {
+    lines.push('Payment was not approved — no confirmation sent to customer.')
+  } else if (customerEmailed) {
+    lines.push('Confirmation email sent to customer.')
+  } else {
+    lines.push('No customer email on receipt — confirmation not sent automatically.')
+  }
+  return lines.join('\n')
+}
+
 type Supabase = ReturnType<typeof createServiceClient>
 type Account = Record<string, unknown>
 
@@ -395,6 +502,168 @@ async function processMessage(
       // Couldn't extract structured customer fields — fall through and save the raw
       // email as a regular inbound message. Better to surface it than drop it.
       console.warn(`[email/poll] Web3Forms parse failed, saving as raw email: ${messageId}`)
+    }
+  }
+
+  // ── Payment receipt interception ──────────────────────────────────────────
+  // Karenda's payment processor sends a receipt to the business inbox. We
+  // detect it, never reply to the processor, and send the customer a
+  // thank-you confirmation only when the payment is APPROVED. Failed/declined
+  // receipts become internal notes for Karenda to review.
+  if (!web3FormsFields && /RECEIPT PAGE/i.test(subject)) {
+    const rBody = await fetchMessageContent(
+      base,
+      String(accountId),
+      messageId,
+      accessToken,
+      String(msg.folderId || msg.folder_id || '')
+    )
+
+    if (isPaymentReceipt(subject, rBody)) {
+      const receipt = parseReceiptFields(rBody)
+      if (!receipt) {
+        console.warn(`[email/poll] Receipt parse failed, saving as raw email: ${messageId}`)
+      } else {
+        const approved = receipt.response.toUpperCase() === 'APPROVED'
+        const customerEmail = receipt.customerEmail
+
+        // Find the customer's existing conversation. Prefer email match;
+        // fall back to a name match scoped to this account.
+        let conversationId: string | null = null
+        if (customerEmail) {
+          const { data: byEmail } = await supabase
+            .from('unified_conversations')
+            .select('id')
+            .eq('connected_account_id', String(account.id))
+            .eq('customer_id', customerEmail)
+            .order('last_message_at', { ascending: false })
+            .limit(1)
+            .maybeSingle()
+          if (byEmail) conversationId = String(byEmail.id)
+        }
+        if (!conversationId) {
+          const { data: byName } = await supabase
+            .from('unified_conversations')
+            .select('id')
+            .eq('connected_account_id', String(account.id))
+            .ilike('customer_name', receipt.customerName)
+            .order('last_message_at', { ascending: false })
+            .limit(1)
+            .maybeSingle()
+          if (byName) conversationId = String(byName.id)
+        }
+
+        // No existing conversation — create one keyed by the transaction ID
+        // so the receipt still surfaces in Karenda's inbox.
+        if (!conversationId) {
+          const { data: created, error: createErr } = await supabase
+            .from('unified_conversations')
+            .upsert(
+              {
+                connected_account_id: String(account.id),
+                channel_type: 'email',
+                channel_conversation_id: `receipt_${receipt.transactionId}`,
+                customer_name: receipt.customerName,
+                customer_id: customerEmail ?? `receipt_${receipt.transactionId}`,
+                status: 'open',
+                metadata: {
+                  subject,
+                  from: fromRaw,
+                  thread_id: threadId,
+                  source: 'payment_receipt',
+                  receipt,
+                },
+              },
+              { onConflict: 'connected_account_id,channel_conversation_id' }
+            )
+            .select('id')
+            .single()
+          if (createErr || !created) {
+            console.error('[email/poll] Receipt conversation upsert failed:', createErr)
+            return 'error'
+          }
+          conversationId = String(created.id)
+        }
+
+        let customerEmailed = false
+
+        // Send thank-you only when approved AND we have a customer email
+        if (approved && customerEmail) {
+          const thankYou = buildReceiptThankYou(receipt)
+          const replySubject = `Payment received — ${receipt.description}`
+          const sendRes = await fetch(`${base}/api/accounts/${accountId}/messages`, {
+            method: 'POST',
+            headers: {
+              Authorization: `Zoho-oauthtoken ${accessToken}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              fromAddress: ownEmail,
+              toAddress: customerEmail,
+              subject: replySubject,
+              content: thankYou,
+              mailFormat: 'plaintext',
+            }),
+          })
+          const sendData = await sendRes.json()
+          const code = sendData.status?.code
+          if (!sendRes.ok || (code !== 200 && code !== 201)) {
+            console.error('[email/poll] Receipt thank-you send failed:', sendData)
+          } else {
+            customerEmailed = true
+            const sentAt = new Date().toISOString()
+            await supabase.from('unified_messages').insert({
+              conversation_id: conversationId,
+              channel_message_id: `caye_receipt_${receipt.transactionId}`,
+              sender_type: 'business',
+              content: thankYou,
+              message_type: 'text',
+              sent_at: sentAt,
+              status: 'sent',
+              metadata: {
+                subject: replySubject,
+                is_automated: true,
+                generated_by: 'caye',
+                source: 'payment_receipt',
+                transaction_id: receipt.transactionId,
+              },
+            })
+            await supabase
+              .from('unified_conversations')
+              .update({
+                last_sender_type: 'business',
+                last_business_sender_kind: 'caye',
+                last_message_at: sentAt,
+                last_message_preview: thankYou.slice(0, 100),
+              })
+              .eq('id', conversationId)
+          }
+        }
+
+        // Internal note so Karenda sees the receipt in the inbox
+        const note = buildReceiptInternalNote(receipt, customerEmailed)
+        await supabase.from('unified_messages').insert({
+          conversation_id: conversationId,
+          channel_message_id: `receipt_note_${receipt.transactionId}`,
+          sender_type: 'business',
+          content: note,
+          message_type: 'text',
+          sent_at: receivedTime,
+          status: 'sent',
+          is_internal: true,
+          metadata: {
+            source: 'payment_receipt',
+            response: receipt.response,
+            transaction_id: receipt.transactionId,
+            zoho_message_id: messageId,
+          },
+        })
+
+        console.log(
+          `[email/poll] Receipt processed: ${receipt.response} for ${receipt.customerName} (tx ${receipt.transactionId}, emailed=${customerEmailed})`
+        )
+        return 'processed'
+      }
     }
   }
 
@@ -656,6 +925,20 @@ export async function GET(req: NextRequest) {
       const pollFolders = allFolders.filter(f => !SKIP_TYPES.has(f.folderType ?? '') && f.folderType !== 'Sent')
       const sentFolders = allFolders.filter(f => f.folderType === 'Sent')
 
+      // Surface folder-list failures in the summary so silent token/permission
+      // errors don't masquerade as a healthy poll.
+      ;(summary.detail as string[]).push(
+        `account=${accountId} folders_http=${foldersRes.status} all=${allFolders.length} poll=${pollFolders.length} sent=${sentFolders.length}`
+      )
+      if (!foldersRes.ok) {
+        console.error(`[email/poll] Folders list failed for ${accountId}: HTTP ${foldersRes.status}`, JSON.stringify(foldersData).slice(0, 400))
+        ;(summary.detail as string[]).push(
+          `account=${accountId} folders_error=${JSON.stringify(foldersData).slice(0, 300)}`
+        )
+        summary.errors++
+        continue
+      }
+
       if (!pollFolders.length) {
         console.warn(`[email/poll] No pollable folders for account ${accountId}`)
         summary.errors++
@@ -663,28 +946,40 @@ export async function GET(req: NextRequest) {
       }
 
       // Only poll messages from the last 30 days — prevents flooding the inbox with
-      // historical emails from archive/operational folders (Completed Tours, etc.)
+      // historical emails from archive/operational folders (Completed Tours, etc.).
+      // NOTE: Zoho's messages/view endpoint rejects a `fromDate` query param
+      // (EXTRA_PARAM_FOUND), so we filter client-side using msg.receivedTime.
       const fromDateMs = Date.now() - 30 * 24 * 60 * 60 * 1000
 
       for (const folder of pollFolders) {
         // Higher limit so high-volume folders (Notifications, etc.) don't drop new
         // messages between polls
-        const listUrl = `${base}/api/accounts/${accountId}/messages/view?limit=100&folderId=${folder.folderId}&fromDate=${fromDateMs}`
+        const listUrl = `${base}/api/accounts/${accountId}/messages/view?limit=100&folderId=${folder.folderId}`
         const listRes = await fetch(listUrl, {
           headers: { Authorization: `Zoho-oauthtoken ${accessToken}` },
         })
         const listData = await listRes.json()
         const messages: Record<string, unknown>[] = Array.isArray(listData?.data) ? listData.data : []
         const zohoStatus = listData?.status?.code ?? listData?.status
-        const detail = `account=${accountId} folder=${folder.folderName}(${folder.folderId}) type=${folder.folderType} messages=${messages.length} zohoStatus=${zohoStatus}`
+        const detail = `account=${accountId} folder=${folder.folderName}(${folder.folderId}) type=${folder.folderType} http=${listRes.status} messages=${messages.length} zohoStatus=${zohoStatus}`
         console.log(`[email/poll] ${detail}`)
+        ;(summary.detail as string[]).push(detail)
         if (!listRes.ok) {
           console.error(`[email/poll] Messages list failed for folder ${folder.folderName}: HTTP ${listRes.status}`, JSON.stringify(listData).slice(0, 400))
+          ;(summary.detail as string[]).push(
+            `account=${accountId} folder=${folder.folderName} list_error=${JSON.stringify(listData).slice(0, 300)}`
+          )
+          summary.errors++
           continue
         }
-        ;(summary.detail as string[]).push(detail)
 
-        for (const msg of messages) {
+        // Client-side 30-day filter (Zoho doesn't accept a fromDate query param)
+        const recent = messages.filter(m => {
+          const t = Number(m.receivedTime ?? m.sentTime ?? 0)
+          return !t || t >= fromDateMs
+        })
+
+        for (const msg of recent) {
           // Ensure folderId is on the message so processMessage can use it for content fetch
           if (!msg.folderId && !msg.folder_id) msg.folderId = folder.folderId
           const result = await processMessage(supabase, account, msg, accessToken, base)
@@ -698,11 +993,16 @@ export async function GET(req: NextRequest) {
       // This surfaces replies Bimini sends directly from Zoho (outside Caye's
       // dashboard) so the conversation thread shows both sides of the exchange.
       for (const folder of sentFolders) {
-        const listUrl = `${base}/api/accounts/${accountId}/messages/view?limit=100&folderId=${folder.folderId}&fromDate=${fromDateMs}`
+        const listUrl = `${base}/api/accounts/${accountId}/messages/view?limit=100&folderId=${folder.folderId}`
         const listRes = await fetch(listUrl, { headers: { Authorization: `Zoho-oauthtoken ${accessToken}` } })
         if (!listRes.ok) continue
         const listData = await listRes.json()
-        const sentMsgs: Record<string, unknown>[] = Array.isArray(listData?.data) ? listData.data : []
+        const sentMsgsAll: Record<string, unknown>[] = Array.isArray(listData?.data) ? listData.data : []
+        // Client-side 30-day filter (Zoho rejects fromDate query param)
+        const sentMsgs = sentMsgsAll.filter(m => {
+          const t = Number(m.receivedTime ?? m.sentTime ?? 0)
+          return !t || t >= fromDateMs
+        })
         console.log(`[email/poll] Sent folder: ${sentMsgs.length} messages to check for thread matches`)
         for (const msg of sentMsgs) {
           if (!msg.folderId && !msg.folder_id) msg.folderId = folder.folderId
