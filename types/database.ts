@@ -35,6 +35,8 @@ export interface Customer {
   business_brief?: unknown
   voice_profile_updated_at: string | null
   owner_messages_since_profile_update: number
+  booking_url: string | null
+  website_url: string | null
   full_name: string | null
   contact_email: string
   password_hash?: string

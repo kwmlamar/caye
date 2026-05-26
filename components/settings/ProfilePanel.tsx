@@ -12,6 +12,28 @@ interface ProfileForm {
   contact_email: string
   contact_phone: string
   timezone: string
+  booking_url: string
+  website_url: string
+}
+
+/**
+ * Light URL validation. Empty is OK (field is optional). Anything else
+ * must parse cleanly with the URL constructor AND use http(s). We don't
+ * try to fetch the URL — we just want to catch typos like "biminitours.com"
+ * (no scheme) or "htttps://" before they end up in a Caye reply.
+ */
+function validateUrl(value: string): string | null {
+  const v = value.trim()
+  if (!v) return null
+  try {
+    const u = new URL(v)
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+      return 'Must start with http:// or https://'
+    }
+    return null
+  } catch {
+    return 'Not a valid URL (include https://)'
+  }
 }
 
 const TIMEZONES: { value: string; label: string }[] = [
@@ -34,6 +56,8 @@ export default function ProfilePanel() {
     contact_email: '',
     contact_phone: '',
     timezone: 'America/Nassau',
+    booking_url: '',
+    website_url: '',
   })
   const [orig, setOrig] = useState<ProfileForm>(form)
   const [isSaving, setIsSaving] = useState(false)
@@ -49,17 +73,25 @@ export default function ProfilePanel() {
       contact_email: workspace.contact_email || '',
       contact_phone: w.contact_phone || '',
       timezone: rawTz,
+      booking_url: workspace.booking_url || '',
+      website_url: workspace.website_url || '',
     }
     setForm(initial)
     setOrig(initial)
     setLogoUrl(workspace.avatar_url || '')
   }, [workspace])
 
+  const bookingUrlError = validateUrl(form.booking_url)
+  const websiteUrlError = validateUrl(form.website_url)
+  const hasErrors = bookingUrlError !== null || websiteUrlError !== null
+
   const isDirty =
     form.business_name !== orig.business_name ||
     form.contact_email !== orig.contact_email ||
     form.contact_phone !== orig.contact_phone ||
-    form.timezone !== orig.timezone
+    form.timezone !== orig.timezone ||
+    form.booking_url !== orig.booking_url ||
+    form.website_url !== orig.website_url
 
   const set = (k: keyof ProfileForm) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setForm(f => ({ ...f, [k]: e.target.value }))
@@ -67,6 +99,10 @@ export default function ProfilePanel() {
   const handleDiscard = () => setForm(orig)
 
   const handleSave = async () => {
+    if (hasErrors) {
+      toast.error('Fix URL errors before saving')
+      return
+    }
     setIsSaving(true)
     try {
       const supabase = getSupabase()
@@ -77,6 +113,8 @@ export default function ProfilePanel() {
           contact_email: form.contact_email,
           contact_phone: form.contact_phone,
           timezone: form.timezone,
+          booking_url: form.booking_url.trim() || null,
+          website_url: form.website_url.trim() || null,
           updated_at: new Date().toISOString(),
         })
         .eq('id', workspaceId)
@@ -239,6 +277,55 @@ export default function ProfilePanel() {
                 ))}
               </select>
               <div className="s-help">Used for response delays, the daily summary, and tour scheduling.</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="s-card">
+        <div className="s-card-head">
+          <div className="h">
+            <h3>Booking & website</h3>
+            <div className="desc">
+              Caye drops these into replies when a guest asks where to book or learn more —
+              naturally, not as a footer on every message.
+            </div>
+          </div>
+        </div>
+        <div className="s-card-body">
+          <div className="s-row">
+            <div className="s-label">Booking link</div>
+            <div className="s-field">
+              <input
+                className="s-input"
+                type="url"
+                value={form.booking_url}
+                onChange={set('booking_url')}
+                placeholder="https://yourbusiness.com/book"
+              />
+              <div className="s-help">
+                {bookingUrlError
+                  ? <span style={{ color: '#e85a3c' }}>{bookingUrlError}</span>
+                  : 'Where guests can book themselves online — Squarespace, Acuity, Calendly, your own site, etc.'}
+              </div>
+            </div>
+          </div>
+
+          <div className="s-row">
+            <div className="s-label">Website</div>
+            <div className="s-field">
+              <input
+                className="s-input"
+                type="url"
+                value={form.website_url}
+                onChange={set('website_url')}
+                placeholder="https://yourbusiness.com"
+              />
+              <div className="s-help">
+                {websiteUrlError
+                  ? <span style={{ color: '#e85a3c' }}>{websiteUrlError}</span>
+                  : 'Your main site — where guests learn about your business.'}
+              </div>
             </div>
           </div>
         </div>

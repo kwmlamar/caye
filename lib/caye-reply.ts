@@ -140,10 +140,16 @@ function formatServicesList(services: ServiceRow[]): string {
     .join('\n')
 }
 
+interface BusinessLinks {
+  booking_url: string | null
+  website_url: string | null
+}
+
 function buildSystem(
   systemPrompt: string,
   voiceProfile: VoiceProfile | undefined,
   contactProfile: ContactStyleProfile | undefined,
+  businessLinks: BusinessLinks | undefined,
   channel: string,
   isEmail: boolean,
   isFirstMessage: boolean,
@@ -172,6 +178,23 @@ function buildSystem(
       'Match their energy — if they\'re brief, be brief. If they\'re formal, stay professional. ' +
       'If they use emoji, one or two is fine. Mirror their vibe without abandoning the VOICE PROFILE ' +
       'above (their style controls tone; your owner\'s voice profile controls word choice and identity).'
+  }
+
+  // Inject business links only when at least one is set — empty block adds
+  // noise to the prompt and could confuse the model into mentioning links
+  // that don't exist.
+  if (businessLinks && (businessLinks.booking_url || businessLinks.website_url)) {
+    const lines: string[] = []
+    if (businessLinks.booking_url) lines.push(`- Booking page: ${businessLinks.booking_url}`)
+    if (businessLinks.website_url) lines.push(`- Website: ${businessLinks.website_url}`)
+    s +=
+      '\n\nBUSINESS LINKS — share when relevant, do not force:\n' +
+      lines.join('\n') +
+      '\n' +
+      'Use these naturally when a customer asks "can I book online?", "where can I see your tours?", ' +
+      'or as a self-service option when you hold_for_human ("I\'ll have someone confirm — ' +
+      'meanwhile you can browse at <link>"). Never paste them as a robotic footer on every reply ' +
+      'and never invent URLs that aren\'t listed here.'
   }
 
   s +=
@@ -414,6 +437,22 @@ export async function generateCayeAutoReply(
   const services = (serviceRows ?? []) as ServiceRow[]
   const todayISO = new Date().toISOString().slice(0, 10)
 
+  // Fetch the workspace's business links so Caye can reference them when
+  // contextually appropriate. Non-fatal — no links just means Caye replies
+  // without mentioning any external URLs (the existing behaviour).
+  let businessLinks: BusinessLinks | undefined
+  const { data: workspaceRow } = await supabase
+    .from('customers')
+    .select('booking_url, website_url')
+    .eq('id', inbound.workspaceId)
+    .maybeSingle()
+  if (workspaceRow && (workspaceRow.booking_url || workspaceRow.website_url)) {
+    businessLinks = {
+      booking_url: workspaceRow.booking_url,
+      website_url: workspaceRow.website_url,
+    }
+  }
+
   // If this conversation is linked to a contact, look up their style profile
   // so Caye can mirror their energy. Fetch is non-fatal — no profile yet just
   // means we fall back to the owner's default tone.
@@ -439,6 +478,7 @@ export async function generateCayeAutoReply(
     systemPrompt,
     voiceProfile,
     contactProfile,
+    businessLinks,
     inbound.channel,
     isEmail,
     inbound.isFirstMessage ?? false,
