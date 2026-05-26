@@ -371,6 +371,65 @@ function buildReceiptInternalNote(parsed: ReceiptParsed, customerEmailed: boolea
   return lines.join('\n')
 }
 
+// ── Newsletter / marketing-blast detection ──────────────────────────────────
+// Catches things like the Kelsey Tonner "AI for tour operators" series before
+// Caye gets a chance to reply to them. We save the inbound message (so the
+// owner still sees it in the inbox) but skip the AI loop entirely and flag
+// for human review. Heuristic: requires TWO strong signals to fire — this
+// keeps real customer mail from getting mis-classified.
+
+// Strong "this is a blast" signals
+const BLAST_PHRASES = [
+  /\bunsubscribe\b/i,
+  /manage (?:your )?(?:subscription|preferences|email preferences)/i,
+  /\bopted[\s-]?in\b/i,
+  /\bview (?:this email )?in (?:your )?browser\b/i,
+  /update (?:your )?(?:email )?preferences/i,
+  /stop receiving (?:these|our|my) emails?/i,
+  /change your subscription/i,
+  /you (?:are|'re) (?:part of|receiving|getting) (?:this|the|our)/i,
+]
+
+// Invisible / zero-width characters common in mailer preheader padding
+const INVISIBLE_CHARS_RE = /[͏­​-‏⁠᠎﻿]/g
+
+function detectNewsletter(body: string, subject: string, fromEmail: string): string | null {
+  if (!body) return null
+
+  const signals: string[] = []
+
+  // Invisible/zero-width padding — count occurrences across the whole body,
+  // since mailers interleave them with spaces. >=30 is well above noise floor.
+  const invisibleCount = (body.match(INVISIBLE_CHARS_RE) || []).length
+  if (invisibleCount >= 30) signals.push(`${invisibleCount} invisible padding chars`)
+
+  let phraseHits = 0
+  for (const re of BLAST_PHRASES) if (re.test(body)) phraseHits++
+  if (phraseHits >= 2) signals.push(`${phraseHits} mass-mailer phrases`)
+
+  // Sender heuristic: common ESP/marketing-tool envelope domains
+  const fromDomain = fromEmail.split('@')[1]?.toLowerCase() || ''
+  if (/\b(mailchimp|sendgrid|sparkpost|mailgun|constantcontact|hubspot|convertkit|activecampaign|mailerlite|klaviyo|emailoctopus|aweber|cmail\d+)\b/.test(fromDomain)) {
+    signals.push(`ESP sender domain (${fromDomain})`)
+  }
+
+  // Two distinct signal categories → blast
+  if (signals.length >= 2) return signals.join('; ')
+
+  // Single-category fallbacks
+  if (invisibleCount >= 30 && phraseHits >= 1) {
+    return `${invisibleCount} invisible chars + ${phraseHits} blast phrase`
+  }
+  if (phraseHits >= 3) return `${phraseHits} mass-mailer phrases`
+
+  // Subject patterns common in mailing-list weekly series
+  if (/^(weekly|newsletter|digest|edition)\b/i.test(subject) && phraseHits >= 1) {
+    return `newsletter-pattern subject + ${phraseHits} blast phrase`
+  }
+
+  return null
+}
+
 type Supabase = ReturnType<typeof createServiceClient>
 type Account = Record<string, unknown>
 
@@ -754,6 +813,34 @@ async function processMessage(
     .from('unified_conversations')
     .update({ last_sender_type: 'customer', last_message_at: receivedTime, last_message_preview: (body || subject).slice(0, 100) })
     .eq('id', conversation.id)
+
+  // ── Newsletter / marketing-blast filter ───────────────────────────────────
+  // Skip the AI loop for mailing-list content but keep it visible in the inbox
+  // with an internal note so the owner can audit and unsubscribe if they want.
+  if (!web3FormsFields) {
+    const newsletterReason = detectNewsletter(body, subject, fromEmail)
+    if (newsletterReason) {
+      await supabase
+        .from('unified_conversations')
+        .update({ human_agent_enabled: true, human_agent_reason: 'Newsletter / marketing blast — held automatically' })
+        .eq('id', conversation.id)
+      await supabase.from('unified_messages').insert({
+        conversation_id: conversation.id,
+        channel_message_id: null,
+        sender_type: 'business',
+        content:
+          `Marketing/newsletter detected — auto-reply skipped.\n\nSignals: ${newsletterReason}\n\n` +
+          `If you want Caye to stop seeing future emails from this sender, drag the thread out of Inbox in Zoho.`,
+        message_type: 'text',
+        sent_at: new Date().toISOString(),
+        status: 'sent',
+        is_internal: true,
+        metadata: { generated_by: 'caye', hold_reason: 'newsletter', signals: newsletterReason, from: fromRaw },
+      })
+      console.log(`[email/poll] Newsletter held: ${fromEmail} — ${newsletterReason}`)
+      return 'held'
+    }
+  }
 
   // Don't auto-reply to emails that existed before the account was connected
   if (isHistorical) {

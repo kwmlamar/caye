@@ -18,6 +18,34 @@ interface ServiceRow {
 
 const MAX_TOOL_ROUNDS = 6
 
+/**
+ * Inspects a draft reply for persona/identity leaks before we send it.
+ * Returns a short reason string if a violation is found, otherwise null.
+ * Used as a safety net behind the system-prompt instructions — even if the
+ * model ignores "never sign as Caye", we catch it here and hold for the
+ * owner instead of letting the email ship.
+ */
+function detectIdentityLeak(content: string): string | null {
+  const trimmed = content.trim()
+  // Signature region = last ~250 chars, where sign-offs live
+  const tail = trimmed.slice(-250).toLowerCase()
+  const full = trimmed.toLowerCase()
+
+  // Signed as Caye (any variant)
+  const cayeSignoff = /(^|[\s,—\-–·|])caye\s*$|(regards|sincerely|best|thanks|cheers|warmly|warm regards|talk soon)[\s,]+caye\b/i
+  if (cayeSignoff.test(tail)) return 'signed as Caye instead of the owner'
+
+  // Self-identifies as AI / assistant / bot / receptionist
+  const aiSelfReference = /\b(i am|i'm|this is)\s+(an?\s+)?(ai|a\s+bot|an\s+assistant|an?\s+automated|caye)\b/i
+  if (aiSelfReference.test(full)) return 'self-identifies as AI/assistant'
+
+  // Explicit AI / automation language about itself
+  const aiDisclosure = /\b(ai\s+receptionist|ai\s+assistant|automated\s+(reply|response|system)|on behalf of\s+\w+\s+via\s+caye)\b/i
+  if (aiDisclosure.test(full)) return 'discloses AI nature'
+
+  return null
+}
+
 // Tools are declared once at module scope so prompt caching can pin them.
 const TOOLS: Anthropic.Tool[] = [
   {
@@ -181,10 +209,22 @@ function buildSystem(
     '- EXCLUSIVE services: only one party per slot. If the slot has any booking, suggest another time.'
 
   s += isEmail
-    ? '\n\nWrite only the reply body — no headers, no markdown. Plain prose, sign off naturally.'
+    ? '\n\nWrite only the reply body — no headers, no markdown, no subject line. Plain prose.' +
+      '\n\nSIGN-OFF: Use the exact sign-off block specified earlier in this system prompt — verbatim, ' +
+      'including name, business, phone, and email if given. Do NOT invent your own signature. ' +
+      'Do NOT sign as "Caye" or any variant. Do NOT mention that you are an AI, assistant, ' +
+      'receptionist, or automated system anywhere in the body or the sign-off. From the recipient\'s ' +
+      'point of view, the email is from the business owner — write as them, not on their behalf.'
     : isFirstMessage
-    ? `\n\nWrite only the reply body. Plain conversational prose — no markdown. Keep it brief — this is ${channel}, not email. Open with a warm, natural greeting.`
-    : `\n\nWrite only the reply body. Plain conversational prose — no markdown. Keep it brief — this is ${channel}, not email. Do NOT open with a greeting or the customer's name — jump straight to the answer.`
+    ? `\n\nWrite only the reply body. Plain conversational prose — no markdown. Keep it brief — this is ${channel}, not email. Open with a warm, natural greeting. Never mention that you are an AI, assistant, or automated.`
+    : `\n\nWrite only the reply body. Plain conversational prose — no markdown. Keep it brief — this is ${channel}, not email. Do NOT open with a greeting or the customer's name — jump straight to the answer. Never mention that you are an AI, assistant, or automated.`
+
+  s += '\n\nSCOPE: Only engage with messages that are actually for the business — booking inquiries, ' +
+    'customer questions, payment/logistics follow-ups. If the message is a newsletter, marketing blast, ' +
+    'industry/coaching content, cold sales outreach, partnership pitch, vendor notification, or any other ' +
+    'non-customer message, call hold_for_human with reason "not a customer message" and let the owner ' +
+    'decide. Never make commitments on the owner\'s behalf about signing up for things, attending events, ' +
+    'trying products, or replying to industry peers.'
 
   s += '\n\nYou MUST end every turn by calling either send_reply or hold_for_human.'
 
@@ -378,6 +418,17 @@ export async function generateCayeAutoReply(
     if (toolUses.length === 0) {
       const textBlock = response.content.find(b => b.type === 'text')
       if (textBlock && textBlock.type === 'text' && textBlock.text.trim()) {
+        const leak = detectIdentityLeak(textBlock.text)
+        if (leak) {
+          console.warn(`[caye-reply] Identity guard blocked freeform reply: ${leak}`)
+          return {
+            action: 'hold',
+            reason: `Identity guard: ${leak}`,
+            note:
+              `Caye drafted a reply (no tool call) but the identity guard blocked it (${leak}). ` +
+              `Review the draft below and send manually if appropriate.\n\n---\n\n${textBlock.text}`,
+          }
+        }
         return { action: 'reply', content: textBlock.text, bookingId: createdBookingId }
       }
       throw new Error('[caye-reply] No tool call or text in Claude response')
@@ -389,7 +440,21 @@ export async function generateCayeAutoReply(
     for (const tool of toolUses) {
       if (tool.name === 'send_reply') {
         const input = tool.input as { content: string }
-        terminal = { action: 'reply', content: input.content, bookingId: createdBookingId }
+        const leak = detectIdentityLeak(input.content)
+        if (leak) {
+          // Identity guard tripped — don't ship the reply. Hand to the owner
+          // with the draft attached so they can decide.
+          console.warn(`[caye-reply] Identity guard blocked reply: ${leak}`)
+          terminal = {
+            action: 'hold',
+            reason: `Identity guard: ${leak}`,
+            note:
+              `Caye drafted a reply but the identity guard blocked it (${leak}). ` +
+              `Review the draft below and send manually if appropriate.\n\n---\n\n${input.content}`,
+          }
+        } else {
+          terminal = { action: 'reply', content: input.content, bookingId: createdBookingId }
+        }
         toolResults.push({ type: 'tool_result', tool_use_id: tool.id, content: 'ok' })
       } else if (tool.name === 'hold_for_human') {
         const input = tool.input as { reason: string; note: string }
