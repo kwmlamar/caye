@@ -23,21 +23,7 @@ import { generateCayeAutoReply } from '@/lib/caye-reply'
 import { syncBookingToCalendar } from '@/lib/calendar-sync'
 import type { VoiceProfile } from '@/lib/voice-profile'
 import { maybeRefreshContactProfile } from '@/lib/contact-profile'
-
-function htmlToPlainText(html: string): string {
-  return html
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/p\s*>/gi, '\n\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&nbsp;/g, ' ')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim()
-}
+import { htmlToPlainText } from '@/lib/email-text'
 
 function verifySignature(rawBody: string, header: string | null, secret: string): boolean {
   if (!header) return false
@@ -108,7 +94,9 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
   const bodyRaw = String(
     payload.content || payload.textContent || payload.body || payload.htmlBody || payload.summary || ''
   )
-  const body = bodyRaw.includes('<') ? htmlToPlainText(bodyRaw) : bodyRaw.trim()
+  // htmlToPlainText now handles plain text input too (it just no-ops on
+  // tag-stripping) AND strips quoted-reply chains in both cases.
+  const body = htmlToPlainText(bodyRaw)
   const sentAt = payload.received_time
     ? new Date(Number(payload.received_time)).toISOString()
     : new Date().toISOString()

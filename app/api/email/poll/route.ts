@@ -12,6 +12,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase-server'
 import { generateCayeAutoReply } from '@/lib/caye-reply'
+import { htmlToPlainText } from '@/lib/email-text'
 
 const ZOHO_TOKEN_URL = 'https://accounts.zoho.com/oauth/v2/token'
 
@@ -45,53 +46,9 @@ async function refreshAccessToken(
   }
 }
 
-function htmlToPlainText(html: string): string {
-  return html
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/p\s*>/gi, '\n\n')
-    // Treat block-level closings as line breaks so HTML tables/lists
-    // (used by Web3Forms etc.) don't collapse into one long line
-    .replace(/<\/(tr|td|th|li|div|h[1-6])\s*>/gi, '\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, ' ')
-    // Normalize line endings, strip leading whitespace per line, collapse blanks
-    .replace(/\r\n?/g, '\n')
-    .split('\n').map(l => l.replace(/^[ \t]+/, '').replace(/[ \t]+$/, '')).join('\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim()
-}
-
-/**
- * Strips the quoted reply chain from an email body, keeping only the newest
- * message. Handles Gmail ("On <date>, <person> wrote:"), Outlook
- * ("-----Original Message-----"), and header-block styles
- * ("From: ...\nTo: ...\nDate: ...").
- */
-function stripEmailQuotes(text: string): string {
-  // Gmail / Apple Mail: "On Mon, May 24, 2026 at 5:00 PM Person <email> wrote:"
-  // Allow the header to span up to ~3 lines (name wrap) before "wrote:"
-  const gmailRe = /\n[ \t]*On [\s\S]{10,200}wrote:\s*\n/
-
-  // Zoho / Outlook forwarded-message block that appears inline:
-  //   "From: Name <email>\nTo: ...\nDate: ...\nSubject: ..."
-  const headerBlockRe = /\n[ \t]*From:\s+[\s\S]{3,}\n[ \t]*To:\s+[\s\S]{3,}\n[ \t]*(Date|Sent):/
-
-  // Classic "-----Original Message-----"
-  const separatorRe = /\n[ \t]*-{3,}[ \t]*(?:Original Message|Forwarded Message)[ \t]*-{3,}/i
-
-  const patterns = [gmailRe, headerBlockRe, separatorRe]
-
-  let cutAt = text.length
-  for (const pattern of patterns) {
-    const match = text.match(pattern)
-    if (match && match.index !== undefined && match.index < cutAt) {
-      cutAt = match.index
-    }
-  }
-
-  return text.slice(0, cutAt).trim()
-}
+// htmlToPlainText (with CSS/script stripping + quoted-reply removal) now
+// lives in @/lib/email-text — shared with the zoho-email webhook so both
+// ingestion paths produce identical output.
 
 /**
  * Fetches a message body from Zoho. Tries the folder-scoped path first
@@ -128,7 +85,9 @@ async function fetchMessageContent(
         continue
       }
       if (raw) {
-        return raw.includes('<') ? htmlToPlainText(raw) : raw.trim()
+        // htmlToPlainText handles plain-text input too AND strips quoted
+        // reply chains — no need to branch on tag presence or post-process.
+        return htmlToPlainText(raw)
       }
       console.warn(`[email/poll] content fetch returned empty for ${messageId} at ${url}; payload:`, JSON.stringify(json).slice(0, 300))
     } catch (err) {
@@ -504,7 +463,8 @@ async function processSentMessage(
     base, String(accountId), messageId, accessToken,
     String(msg.folderId || msg.folder_id || '')
   )
-  const body = stripEmailQuotes(raw)
+  // fetchMessageContent already returns CSS-stripped, quote-stripped text.
+  const body = raw
   if (!body) return 'skipped' // Nothing meaningful to store
 
   const { error } = await supabase.from('unified_messages').insert({
@@ -768,10 +728,9 @@ async function processMessage(
     // Body was already fetched above; rebuild context from structured fields
     body = buildWeb3FormsContext(web3FormsFields)
   } else {
-    const raw = await fetchMessageContent(base, String(accountId), messageId, accessToken, String(msg.folderId || msg.folder_id || ''))
-    // Strip quoted reply chains — Zoho returns the full email thread in every
-    // message; we only want the new content at the top.
-    body = stripEmailQuotes(raw)
+    // fetchMessageContent already returns CSS-stripped, quote-stripped text
+    // via lib/email-text — no further post-processing needed.
+    body = await fetchMessageContent(base, String(accountId), messageId, accessToken, String(msg.folderId || msg.folder_id || ''))
   }
 
   // Fetch workspace AI prompt
