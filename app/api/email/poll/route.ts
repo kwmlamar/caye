@@ -912,17 +912,19 @@ export async function GET(req: NextRequest) {
           .eq('id', account.id)
       }
 
-      // Fetch all folders so we can poll Inbox + custom folders (Zoho filters
-      // often route Web3Forms/form submissions to a sub-folder). Skip system
-      // folders that wouldn't contain inbound customer messages.
+      // Inbox-only polling for inbound mail. Everything else (Spam, Snoozed,
+      // Archive, and the business owner's custom filing folders like
+      // "Completed Tours", "Shark Lab", "Virgin", "NewsLetter") is mail that's
+      // either filtered noise or already been handled. Treating Inbox as
+      // Caye's queue gives the owner a manual escape hatch — drag anything
+      // out of Inbox to make Caye stop engaging with it.
       const foldersRes = await fetch(
         `${base}/api/accounts/${accountId}/folders`,
         { headers: { Authorization: `Zoho-oauthtoken ${accessToken}` } }
       )
       const foldersData = await foldersRes.json() as { data?: { folderId: string; folderName: string; folderType?: string }[] }
       const allFolders = foldersData?.data ?? []
-      const SKIP_TYPES = new Set(['Drafts', 'Trash', 'Outbox', 'Templates'])
-      const pollFolders = allFolders.filter(f => !SKIP_TYPES.has(f.folderType ?? '') && f.folderType !== 'Sent')
+      const pollFolders = allFolders.filter(f => f.folderType === 'Inbox' && /^inbox$/i.test(f.folderName))
       const sentFolders = allFolders.filter(f => f.folderType === 'Sent')
 
       // Surface folder-list failures in the summary so silent token/permission
