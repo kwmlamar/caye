@@ -84,17 +84,17 @@ function WorkspaceSwitcher({ workspaces, currentId, anchorRef, onSelect, onClose
         left: pos.left,
         zIndex: 9999,
         width: 240,
-        background: 'var(--tc-bg)',
-        border: '1px solid var(--tc-line)',
+        background: '#101d26',
+        border: '1px solid rgba(255,255,255,0.1)',
         borderRadius: 14,
-        boxShadow: '0 8px 32px -8px rgba(11,20,25,0.18), 0 2px 8px -2px rgba(11,20,25,0.08)',
+        boxShadow: '0 16px 48px -8px rgba(0,0,0,0.55), 0 4px 12px -4px rgba(0,0,0,0.3)',
         overflow: 'hidden',
       }}
     >
       {/* Header */}
       <div style={{
         padding: '10px 14px 8px',
-        borderBottom: '1px solid var(--tc-line)',
+        borderBottom: '1px solid rgba(255,255,255,0.08)',
       }}>
         <p style={{
           fontSize: 10,
@@ -102,7 +102,7 @@ function WorkspaceSwitcher({ workspaces, currentId, anchorRef, onSelect, onClose
           fontWeight: 600,
           letterSpacing: '0.12em',
           textTransform: 'uppercase',
-          color: 'var(--tc-ink-faint)',
+          color: 'rgba(255,255,255,0.3)',
           margin: 0,
         }}>
           Switch workspace
@@ -125,15 +125,15 @@ function WorkspaceSwitcher({ workspaces, currentId, anchorRef, onSelect, onClose
                 width: '100%',
                 padding: '7px 9px',
                 borderRadius: 9,
-                background: isActive ? 'var(--tc-ink)' : 'transparent',
-                color: isActive ? 'var(--tc-bg)' : 'var(--tc-ink)',
+                background: isActive ? 'rgba(255,255,255,0.12)' : 'transparent',
+                color: isActive ? '#fff' : 'rgba(255,255,255,0.6)',
                 fontSize: 13,
                 fontWeight: isActive ? 600 : 500,
                 textAlign: 'left',
                 transition: 'background 0.12s ease',
                 cursor: 'pointer',
               }}
-              onMouseEnter={e => { if (!isActive) (e.currentTarget as HTMLButtonElement).style.background = 'rgba(11,20,25,0.05)' }}
+              onMouseEnter={e => { if (!isActive) (e.currentTarget as HTMLButtonElement).style.background = 'rgba(255,255,255,0.08)' }}
               onMouseLeave={e => { if (!isActive) (e.currentTarget as HTMLButtonElement).style.background = 'transparent' }}
             >
               {m.customer.avatar_url ? (
@@ -154,7 +154,7 @@ function WorkspaceSwitcher({ workspaces, currentId, anchorRef, onSelect, onClose
                 </span>
               )}
               {!isActive && (
-                <span style={{ fontSize: 9.5, fontFamily: 'var(--font-mono)', color: 'var(--tc-ink-faint)', flexShrink: 0, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+                <span style={{ fontSize: 9.5, fontFamily: 'var(--font-mono)', color: 'rgba(255,255,255,0.3)', flexShrink: 0, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
                   {m.role}
                 </span>
               )}

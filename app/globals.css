@@ -2,24 +2,24 @@
 
 :root {
   /* Surfaces */
-  --tc-bg:          #f5f3ee;
-  --tc-bg-soft:     #ffffff;
-  --tc-bg-deep:     #ebe7df;
-  --tc-bg-deeper:   #e0dcd2;
+  --tc-bg:          #ede9e0;
+  --tc-bg-soft:     #f7f4ee;
+  --tc-bg-deep:     #e4dfd4;
+  --tc-bg-deeper:   #d9d3c6;
   --tc-bg-dark:     #0b1419;
-  --tc-bg-app:      #faf8f3;
+  --tc-bg-app:      #f2ede4;
   --tc-bg-rail:     #f1ede5;
 
   /* Ink */
-  --tc-ink:         #0b1419;
-  --tc-ink-soft:    #2d3a44;
-  --tc-ink-mute:    #6b7681;
-  --tc-ink-faint:   #9aa3ac;
+  --tc-ink:         #1a1510;
+  --tc-ink-soft:    #2e2318;
+  --tc-ink-mute:    #6a5c4e;
+  --tc-ink-faint:   #9a8b7c;
 
-  /* Lines */
-  --tc-line:        rgba(11,20,25,0.08);
-  --tc-line-strong: rgba(11,20,25,0.16);
-  --tc-line-soft:   rgba(11,20,25,0.05);
+  /* Lines — warm base to match ink family */
+  --tc-line:        rgba(28,22,16,0.09);
+  --tc-line-strong: rgba(28,22,16,0.18);
+  --tc-line-soft:   rgba(28,22,16,0.05);
 
   /* Brand */
   --tc-coral:       #e85a3c;
@@ -32,11 +32,11 @@
   --tc-sun-soft:    #fbeccb;
   --tc-sun-deep:    #b87f1f;
 
-  /* Shadows */
-  --tc-shadow-sm:    0 1px 2px rgba(11,20,25,0.04), 0 1px 1px rgba(11,20,25,0.03);
-  --tc-shadow-md:    0 4px 10px rgba(11,20,25,0.05), 0 12px 28px -10px rgba(11,20,25,0.10);
-  --tc-shadow-lg:    0 12px 24px rgba(11,20,25,0.07), 0 40px 80px -20px rgba(11,20,25,0.18);
-  --tc-shadow-panel: 0 0 0 1px var(--tc-line), 0 30px 60px -20px rgba(11,20,25,0.25), 0 10px 20px -10px rgba(11,20,25,0.15);
+  /* Shadows — warm tinted to match ink family */
+  --tc-shadow-sm:    0 1px 3px rgba(28,22,16,0.09), 0 2px 4px rgba(28,22,16,0.06);
+  --tc-shadow-md:    0 4px 16px rgba(28,22,16,0.11), 0 16px 40px -12px rgba(28,22,16,0.17);
+  --tc-shadow-lg:    0 20px 40px rgba(28,22,16,0.13), 0 60px 120px -30px rgba(28,22,16,0.28);
+  --tc-shadow-panel: 0 0 0 1px rgba(28,22,16,0.13), 0 40px 80px -20px rgba(28,22,16,0.35), 0 12px 24px -8px rgba(28,22,16,0.18);
 }
 
 @layer base {
@@ -44,7 +44,7 @@
   html, body { height: 100%; }
 
   body {
-    background: #e6e2d8;
+    background: #d8d2c5;
     color: var(--tc-ink);
     font-family: var(--font-sans), ui-sans-serif, system-ui, -apple-system, sans-serif;
     font-feature-settings: "ss01", "cv11";
@@ -159,7 +159,7 @@
   border: 1px solid transparent;
   position: relative;
 }
-.set-nav-item:hover { background: rgba(11,20,25,0.04); color: var(--tc-ink); }
+.set-nav-item:hover { background: rgba(28,22,16,0.04); color: var(--tc-ink); }
 .set-nav-item.active {
   background: var(--tc-bg-soft);
   color: var(--tc-ink);
@@ -300,8 +300,8 @@
   --lp-ink-soft:    #2d3a44;
   --lp-ink-mute:    #6b7681;
   --lp-ink-faint:   #9aa3ac;
-  --lp-line:        rgba(11,20,25,0.09);
-  --lp-line-strong: rgba(11,20,25,0.16);
+  --lp-line:        rgba(28,22,16,0.09);
+  --lp-line-strong: rgba(28,22,16,0.16);
   --lp-line-dark:   rgba(245,243,238,0.10);
   --lp-coral:       #e85a3c;
   --lp-coral-deep:  #c94824;
@@ -310,9 +310,9 @@
   --lp-teal-soft:   #e0eeea;
   --lp-sun:         #f4b942;
   --lp-sun-soft:    #fbeccb;
-  --lp-shadow-sm:   0 1px 2px rgba(11,20,25,0.04), 0 1px 1px rgba(11,20,25,0.03);
-  --lp-shadow-md:   0 4px 10px rgba(11,20,25,0.05), 0 12px 28px -10px rgba(11,20,25,0.10);
-  --lp-shadow-lg:   0 12px 24px rgba(11,20,25,0.06), 0 40px 80px -20px rgba(11,20,25,0.18);
+  --lp-shadow-sm:   0 1px 2px rgba(28,22,16,0.04), 0 1px 1px rgba(28,22,16,0.03);
+  --lp-shadow-md:   0 4px 10px rgba(28,22,16,0.05), 0 12px 28px -10px rgba(28,22,16,0.10);
+  --lp-shadow-lg:   0 12px 24px rgba(28,22,16,0.06), 0 40px 80px -20px rgba(28,22,16,0.18);
 
   background: var(--lp-bg);
   color: var(--lp-ink);
@@ -414,7 +414,7 @@
   transition: background .2s, color .2s;
   font-weight: 500;
 }
-.lp-nav-links a:hover { color: var(--lp-ink); background: rgba(11,20,25,0.04); }
+.lp-nav-links a:hover { color: var(--lp-ink); background: rgba(28,22,16,0.04); }
 .lp-nav-link-ghost {
   font-size: 14px !important; color: var(--lp-ink-soft) !important;
   padding: 8px 14px !important;
@@ -422,7 +422,7 @@
   transition: background .2s, color .2s !important;
   font-weight: 500 !important;
 }
-.lp-nav-link-ghost:hover { color: var(--lp-ink) !important; background: rgba(11,20,25,0.04) !important; }
+.lp-nav-link-ghost:hover { color: var(--lp-ink) !important; background: rgba(28,22,16,0.04) !important; }
 .lp-nav-cta {
   background: var(--lp-ink) !important;
   color: var(--lp-bg) !important;

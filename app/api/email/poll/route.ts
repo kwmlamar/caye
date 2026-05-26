@@ -468,12 +468,37 @@ async function processSentMessage(
   // Only import into threads that are already open in Caye
   const { data: conversation } = await supabase
     .from('unified_conversations')
-    .select('id')
+    .select('id, last_business_sender_kind')
     .eq('connected_account_id', String(account.id))
     .eq('channel_conversation_id', threadId)
     .maybeSingle()
 
   if (!conversation) return 'skipped' // No matching thread — don't create one from sent mail
+
+  // Check if this Zoho Sent message is actually a Caye auto-reply that was already stored
+  // with a synthetic `caye_auto_*` channel_message_id. Match within a 5-minute window.
+  const sentMs = Number(msg.sentTime || msg.receivedTime || Date.now())
+  const windowStart = new Date(sentMs - 5 * 60 * 1000).toISOString()
+  const windowEnd   = new Date(sentMs + 5 * 60 * 1000).toISOString()
+  const { data: cayeAutoMsg } = await supabase
+    .from('unified_messages')
+    .select('id')
+    .eq('conversation_id', conversation.id)
+    .eq('sender_type', 'business')
+    .like('channel_message_id', 'caye_auto_%')
+    .gte('sent_at', windowStart)
+    .lte('sent_at', windowEnd)
+    .maybeSingle()
+
+  if (cayeAutoMsg) {
+    // Backfill the real Zoho message ID so future polls skip it cleanly
+    await supabase
+      .from('unified_messages')
+      .update({ channel_message_id: messageId })
+      .eq('id', cayeAutoMsg.id)
+    // Conversation sender_kind is already 'caye' — don't overwrite it
+    return 'skipped'
+  }
 
   const raw = await fetchMessageContent(
     base, String(accountId), messageId, accessToken,
@@ -497,7 +522,7 @@ async function processSentMessage(
     return 'error'
   }
 
-  // Update conversation preview so the last message reflects the sent reply
+  // Update conversation — this is a human-sent message (Caye auto-replies are caught above)
   await supabase
     .from('unified_conversations')
     .update({ last_sender_type: 'business', last_business_sender_kind: 'human', last_message_at: sentTime, last_message_preview: body.slice(0, 100) })

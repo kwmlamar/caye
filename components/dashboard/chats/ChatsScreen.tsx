@@ -22,6 +22,12 @@ import type {
   UnifiedConversation,
 } from '@/types/unified-inbox'
 import type { ChannelType } from '@/lib/types'
+import { useWorkspace } from '@/lib/workspace-context'
+import { getSupabase } from '@/lib/supabase'
+import { toast } from 'sonner'
+import BookingModal, { type BookingModalData } from '../calendar/BookingModal'
+import type { Contact } from '@/types/database'
+import ContactDetailPanel from '../contacts/ContactDetailPanel'
 
 // DB channel_type → UI ChannelType
 function toUiChannel(ch: string): ChannelType {
@@ -93,12 +99,12 @@ function ConversationRow({
           </div>
         ) : conv.last_sender_type === 'business' ? (
           conv.last_business_sender_kind === 'human' ? (
-            <div className="conv-caye replied">
+            <div className="conv-caye replied by-human">
               <span className="caye-pip" />
               <span>You replied</span>
             </div>
           ) : (
-            <div className="conv-caye replied">
+            <div className="conv-caye replied by-caye">
               <span className="caye-pip" />
               <span>Caye replied</span>
             </div>
@@ -110,10 +116,17 @@ function ConversationRow({
 }
 
 export default function ChatsScreen({ openCaye }: { openCaye: () => void }) {
-  const { pendingContactChannelId, setPendingContactChannelId } = useDashboard()
+  const { setScreen, pendingContactChannelId, setPendingContactChannelId } = useDashboard()
+  const { workspaceId } = useWorkspace()
+
   const [conversations, setConversations] = useState<ConversationWithAccount[]>([])
   const [selectedConv, setSelectedConv] = useState<ConversationWithAccount | null>(null)
   const [messages, setMessages] = useState<UnifiedMessage[]>([])
+
+  const [bookingModalOpen, setBookingModalOpen] = useState(false)
+  const [bookingInitialData, setBookingInitialData] = useState<BookingModalData | null>(null)
+  const [contactPanelOpen, setContactPanelOpen] = useState(false)
+  const [contactForPanel, setContactForPanel] = useState<Contact | null>(null)
   const [loadingConvs, setLoadingConvs] = useState(true)
   const [loadingMsgs, setLoadingMsgs] = useState(false)
   const [filter, setFilter] = useState<Filter>('all')
@@ -432,11 +445,87 @@ export default function ChatsScreen({ openCaye }: { openCaye: () => void }) {
   const unreadCount = conversations.filter((c) => c.unread_count > 0).length
   const heldCount = conversations.filter((c) => c.human_agent_enabled).length
 
+  const handleViewContact = async () => {
+    if (!selectedConv) return
+    
+    try {
+      const supabase = getSupabase()
+      const { data } = await supabase
+        .from('contacts')
+        .select('*')
+        .eq('channel_id', selectedConv.customer_id)
+        .maybeSingle()
+      if (data) {
+        setContactForPanel(data)
+        setContactPanelOpen(true)
+      } else {
+        toast.error('Could not find contact details for this chat.')
+      }
+    } catch (err) {
+      console.error('Error loading contact:', err)
+      toast.error('Failed to load contact details.')
+    }
+  }
+
+  useEffect(() => {
+    if (!contactPanelOpen || !selectedConv) return
+
+    let ignore = false
+    async function loadContact() {
+      const supabase = getSupabase()
+      const { data } = await supabase
+        .from('contacts')
+        .select('*')
+        .eq('channel_id', selectedConv!.customer_id)
+        .maybeSingle()
+      if (!ignore && data) {
+        setContactForPanel(data)
+      }
+    }
+    loadContact()
+    return () => { ignore = true }
+  }, [selectedConv?.id, contactPanelOpen])
+
+  const handleNewBookingClick = async () => {
+    if (!selectedConv) return
+
+    let phone = ''
+    let email = ''
+    try {
+      const supabase = getSupabase()
+      const { data } = await supabase
+        .from('contacts')
+        .select('*')
+        .eq('channel_id', selectedConv.customer_id)
+        .maybeSingle()
+      if (data) {
+        phone = data.phone_number || ''
+        email = data.email || ''
+      }
+    } catch (err) {
+      console.error('Error fetching contact for booking:', err)
+    }
+
+    setBookingInitialData({
+      service_id: null,
+      customer_name: selectedConv.customer_name || '',
+      customer_phone: phone,
+      customer_email: email,
+      booking_date: new Date().toISOString().slice(0, 10),
+      booking_time: '10:00',
+      number_of_people: 1,
+      duration_minutes: null,
+      status: 'confirmed',
+      notes: '',
+    })
+    setBookingModalOpen(true)
+  }
+
   const selName = selectedConv?.customer_name || 'Unknown'
   const selCh = selectedConv ? toUiChannel(selectedConv.channel_type) : 'wa'
 
   return (
-    <div className="chats-screen">
+    <div className={'chats-screen' + (contactPanelOpen && contactForPanel ? ' contact-info-open' : '')}>
 
       {/* INBOX LIST */}
       <aside className="inbox-col">
@@ -539,8 +628,8 @@ export default function ChatsScreen({ openCaye }: { openCaye: () => void }) {
                   </span>
                   Caye auto-reply
                 </button>
-                <button className="ghost-btn" title="Open contact">View contact</button>
-                <button className="ghost-btn" title="Book this guest">+ Booking</button>
+                 <button className="ghost-btn" title="Open contact" onClick={handleViewContact}>View contact</button>
+                <button className="ghost-btn" title="Book this guest" onClick={handleNewBookingClick}>+ Booking</button>
                 <button className="ghost-btn icon-only" title="More">⋯</button>
               </div>
             </header>
@@ -588,6 +677,7 @@ export default function ChatsScreen({ openCaye }: { openCaye: () => void }) {
                   const isEmail = selectedConv?.channel_type === 'email'
                   const meta = (msg.metadata || {}) as Record<string, string>
                   const emailSubject = isEmail && meta.subject ? meta.subject : null
+                  const isByCaye = side === 'out' && (msg.metadata as Record<string, unknown>)?.generated_by === 'caye'
                   return (
                     <div key={msg.id} className={'msg-row ' + side}>
                       {side === 'in' && <Avatar name={selName} size={28} />}
@@ -606,7 +696,7 @@ export default function ChatsScreen({ openCaye }: { openCaye: () => void }) {
                             {emailSubject}
                           </div>
                         )}
-                        <div className={'bubble ' + side} style={{ whiteSpace: 'pre-wrap' }}>{msg.content || ''}</div>
+                        <div className={'bubble ' + side + (isByCaye ? ' by-caye' : '')} style={{ whiteSpace: 'pre-wrap' }}>{msg.content || ''}</div>
                         <div className="msg-time">
                           {formatTime(msg.sent_at)}
                           {msg.status === 'sending' && ' · sending…'}
@@ -684,7 +774,32 @@ export default function ChatsScreen({ openCaye }: { openCaye: () => void }) {
             </footer>
           </>
         )}
-      </section>
+       </section>
+
+      {contactPanelOpen && contactForPanel && (
+        <ContactDetailPanel
+          contact={contactForPanel}
+          workspaceId={workspaceId}
+          hideMessageAction={true}
+          onClose={() => setContactPanelOpen(false)}
+          onContactUpdated={(updated) => {
+            setContactForPanel(updated)
+          }}
+        />
+      )}
+
+      {bookingModalOpen && bookingInitialData && workspaceId && (
+        <BookingModal
+          workspaceId={workspaceId}
+          initial={bookingInitialData}
+          mode="new"
+          onClose={() => setBookingModalOpen(false)}
+          onSaved={() => {
+            setBookingModalOpen(false)
+            toast.success('Booking created successfully!')
+          }}
+        />
+      )}
     </div>
   )
 }
