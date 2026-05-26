@@ -14,6 +14,7 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { sendMetaMessage } from '@/lib/meta-reply'
 import { sendWhatsAppMessage } from '@/lib/whatsapp'
 import { sendZohoReply } from '@/lib/email-ai'
+import { maybeRefreshOwnerVoiceProfile } from '@/lib/owner-voice-learning'
 
 export async function POST(request: NextRequest) {
   // ── Auth ────────────────────────────────────────────────────────────────────
@@ -154,6 +155,13 @@ export async function POST(request: NextRequest) {
       last_business_sender_kind: 'human',
     })
     .eq('id', conversation_id)
+
+  // Fire-and-forget owner voice learning. Re-extracts the voice profile
+  // every 10 trusted-channel owner messages. Non-blocking — silently
+  // logged on failure since voice learning is non-critical.
+  maybeRefreshOwnerVoiceProfile(account.user_id, conv.channel_type).catch(err =>
+    console.error('[messages/send] Owner voice refresh failed:', err)
+  )
 
   return NextResponse.json({ success: true, message })
 }

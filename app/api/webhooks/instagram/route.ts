@@ -21,6 +21,7 @@ import { createHmac } from 'crypto'
 import { createServiceClient } from '@/lib/supabase-server'
 import { sendMetaMessage, fetchMetaSenderName } from '@/lib/meta-reply'
 import { generateCayeAutoReply } from '@/lib/caye-reply'
+import { maybeRefreshContactProfile } from '@/lib/contact-profile'
 import { syncBookingToCalendar } from '@/lib/calendar-sync'
 import type { VoiceProfile } from '@/lib/voice-profile'
 
@@ -138,7 +139,7 @@ async function processInboundInstagram(payload: Record<string, unknown>): Promis
       const [{ data: aiConfig }, { data: customer }, senderName] = await Promise.all([
         supabase
           .from('workspace_ai_config')
-          .select('system_prompt')
+          .select('system_prompt, ai_enabled')
           .eq('workspace_id', workspaceId)
           .maybeSingle(),
         supabase
@@ -176,7 +177,7 @@ async function processInboundInstagram(payload: Record<string, unknown>): Promis
           },
           { onConflict: 'connected_account_id,channel_conversation_id' }
         )
-        .select('id')
+        .select('id, contact_id')
         .single()
 
       if (convErr || !conversation) {
@@ -211,7 +212,16 @@ async function processInboundInstagram(payload: Record<string, unknown>): Promis
         })
         if (inboundErr) {
           console.error('[instagram webhook] Inbound message insert failed:', inboundErr)
+        } else if (conversation.contact_id) {
+          maybeRefreshContactProfile(conversation.contact_id).catch(err =>
+            console.error('[instagram webhook] Contact profile refresh failed:', err)
+          )
         }
+      }
+
+      if (aiConfig?.ai_enabled === false) {
+        console.log(`[instagram webhook] AI disabled for workspace ${workspaceId} — skipping auto-reply`)
+        continue
       }
 
       let decision: Awaited<ReturnType<typeof generateCayeAutoReply>>
@@ -225,6 +235,7 @@ async function processInboundInstagram(payload: Record<string, unknown>): Promis
             isFirstMessage,
             workspaceId,
             conversationId: conversation.id,
+            currentChannelMessageId: messageId,
           },
           voiceProfile
         )

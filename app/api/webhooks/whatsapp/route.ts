@@ -21,6 +21,7 @@ import { createHmac } from 'crypto'
 import { createServiceClient } from '@/lib/supabase-server'
 import { sendWhatsAppMessage } from '@/lib/whatsapp'
 import { generateCayeAutoReply } from '@/lib/caye-reply'
+import { maybeRefreshContactProfile } from '@/lib/contact-profile'
 import { syncBookingToCalendar } from '@/lib/calendar-sync'
 import type { VoiceProfile } from '@/lib/voice-profile'
 
@@ -158,7 +159,7 @@ async function processInboundWhatsApp(payload: Record<string, unknown>): Promise
   const [{ data: aiConfig }, { data: customer }] = await Promise.all([
     supabase
       .from('workspace_ai_config')
-      .select('system_prompt')
+      .select('system_prompt, ai_enabled')
       .eq('workspace_id', workspaceId)
       .maybeSingle(),
     supabase
@@ -212,7 +213,7 @@ async function processInboundWhatsApp(payload: Record<string, unknown>): Promise
         },
         { onConflict: 'connected_account_id,channel_conversation_id' }
       )
-      .select('id')
+      .select('id, contact_id')
       .single()
 
     if (convErr || !conversation) {
@@ -248,11 +249,22 @@ async function processInboundWhatsApp(payload: Record<string, unknown>): Promise
       })
       if (inboundErr) {
         console.error('[whatsapp webhook] Inbound message insert failed:', inboundErr)
+      } else if (conversation.contact_id) {
+        // Fire-and-forget customer style learning — no-op when no contact
+        // exists yet for this conversation (true today for social channels).
+        maybeRefreshContactProfile(conversation.contact_id).catch(err =>
+          console.error('[whatsapp webhook] Contact profile refresh failed:', err)
+        )
       }
     }
 
     // Non-text messages get no AI reply — human agent flag already set above
     if (!isTextMessage || !body) continue
+
+    if (aiConfig?.ai_enabled === false) {
+      console.log(`[whatsapp webhook] AI disabled for workspace ${workspaceId} — skipping auto-reply`)
+      continue
+    }
 
     // Generate Caye response (reply or hold decision)
     let decision: Awaited<ReturnType<typeof generateCayeAutoReply>>
@@ -266,6 +278,7 @@ async function processInboundWhatsApp(payload: Record<string, unknown>): Promise
           isFirstMessage,
           workspaceId,
           conversationId: conversation.id,
+          currentChannelMessageId: messageId,
         },
         voiceProfile
       )

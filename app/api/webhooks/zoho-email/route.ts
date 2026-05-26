@@ -22,6 +22,7 @@ import { sendZohoReply } from '@/lib/email-ai'
 import { generateCayeAutoReply } from '@/lib/caye-reply'
 import { syncBookingToCalendar } from '@/lib/calendar-sync'
 import type { VoiceProfile } from '@/lib/voice-profile'
+import { maybeRefreshContactProfile } from '@/lib/contact-profile'
 
 function htmlToPlainText(html: string): string {
   return html
@@ -154,7 +155,7 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
   const [{ data: aiConfig }, { data: customer }] = await Promise.all([
     supabase
       .from('workspace_ai_config')
-      .select('system_prompt')
+      .select('system_prompt, ai_enabled')
       .eq('workspace_id', workspaceId)
       .maybeSingle(),
     supabase
@@ -170,7 +171,34 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
 
   const voiceProfile = (customer?.ai_voice_profile ?? undefined) as VoiceProfile | undefined
 
-  // Upsert conversation keyed on threadId
+  // Upsert a contact row for this email sender so per-customer learning has
+  // somewhere to live. Keyed on (workspace, lowercase email) — the partial
+  // unique index `contacts_email_workspace_unique` enforces dedup.
+  const nowISO = new Date().toISOString()
+  const { data: contactRow, error: contactErr } = await supabase
+    .from('contacts')
+    .upsert(
+      {
+        customer_id: workspaceId,
+        email: fromEmail,
+        name: fromName || fromEmail,
+        channel_type: 'email',
+        channel_id: fromEmail,
+        first_message_at: sentAt,
+        last_message_at: sentAt,
+        updated_at: nowISO,
+      },
+      { onConflict: 'customer_id,email', ignoreDuplicates: false }
+    )
+    .select('id')
+    .single()
+
+  if (contactErr) {
+    console.warn('[zoho-email webhook] Contact upsert failed (continuing):', contactErr.message)
+  }
+
+  // Upsert conversation keyed on threadId. Link to the contact we just
+  // resolved so customer-style learning can find it.
   const { data: conversation, error: convErr } = await supabase
     .from('unified_conversations')
     .upsert(
@@ -180,6 +208,7 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
         channel_conversation_id: threadId,
         customer_name: fromName || fromEmail,
         customer_id: fromEmail,
+        contact_id: contactRow?.id ?? null,
         status: 'open',
         metadata: { subject, from: fromRaw, thread_id: threadId },
       },
@@ -223,7 +252,19 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
         .from('unified_conversations')
         .update({ last_sender_type: 'customer', last_message_at: sentAt, last_message_preview: (body || subject).slice(0, 100) })
         .eq('id', conversation.id)
+
+      // Fire-and-forget customer style learning. Never blocks the reply path.
+      if (contactRow?.id) {
+        maybeRefreshContactProfile(contactRow.id).catch(err =>
+          console.error('[zoho-email webhook] Contact profile refresh failed:', err)
+        )
+      }
     }
+  }
+
+  if (aiConfig?.ai_enabled === false) {
+    console.log(`[zoho-email webhook] AI disabled for workspace ${workspaceId} — skipping auto-reply`)
+    return
   }
 
   // Generate Caye response
@@ -239,6 +280,7 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
         workspaceId,
         conversationId: conversation.id,
         senderEmail: fromEmail,
+        currentChannelMessageId: messageId,
       },
       voiceProfile
     )

@@ -33,6 +33,8 @@ export interface Customer {
   default_tour_start_time: string | null
   notification_level: NotificationLevel
   business_brief?: unknown
+  voice_profile_updated_at: string | null
+  owner_messages_since_profile_update: number
   full_name: string | null
   contact_email: string
   password_hash?: string
@@ -72,11 +74,21 @@ export interface Contact {
   total_messages_received: number
   is_blocked: boolean
   opted_out: boolean
-  channel_type: 'whatsapp' | 'instagram' | 'messenger' | null
+  channel_type: 'whatsapp' | 'instagram' | 'messenger' | 'email' | 'sms' | null
   channel_id: string | null
   avatar_url: string | null
+  ai_contact_profile: ContactStyleProfile | null
+  inbound_message_count: number
   created_at: string
   updated_at: string
+}
+
+// Customer-side communication style learned from a contact's inbound messages.
+// Used by Caye to mirror the customer's energy in replies.
+export interface ContactStyleProfile {
+  formality: 'casual' | 'formal'
+  message_style: 'brief' | 'chatty' | 'detailed'
+  language_notes: string
 }
 
 // Conversation table

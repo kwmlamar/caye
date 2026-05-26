@@ -1,7 +1,10 @@
 import 'server-only'
 import Anthropic from '@anthropic-ai/sdk'
 import type { VoiceProfile } from '@/lib/voice-profile'
+import type { ContactStyleProfile } from '@/types/database'
 import { createServiceClient } from './supabase-server'
+import { detectIdentityLeak } from './caye-identity-guard'
+import { formatHistoryBlock } from './conversation-history'
 
 export type CayeAutoReply =
   | { action: 'reply'; content: string; bookingId?: string }
@@ -17,34 +20,6 @@ interface ServiceRow {
 }
 
 const MAX_TOOL_ROUNDS = 6
-
-/**
- * Inspects a draft reply for persona/identity leaks before we send it.
- * Returns a short reason string if a violation is found, otherwise null.
- * Used as a safety net behind the system-prompt instructions — even if the
- * model ignores "never sign as Caye", we catch it here and hold for the
- * owner instead of letting the email ship.
- */
-function detectIdentityLeak(content: string): string | null {
-  const trimmed = content.trim()
-  // Signature region = last ~250 chars, where sign-offs live
-  const tail = trimmed.slice(-250).toLowerCase()
-  const full = trimmed.toLowerCase()
-
-  // Signed as Caye (any variant)
-  const cayeSignoff = /(^|[\s,—\-–·|])caye\s*$|(regards|sincerely|best|thanks|cheers|warmly|warm regards|talk soon)[\s,]+caye\b/i
-  if (cayeSignoff.test(tail)) return 'signed as Caye instead of the owner'
-
-  // Self-identifies as AI / assistant / bot / receptionist
-  const aiSelfReference = /\b(i am|i'm|this is)\s+(an?\s+)?(ai|a\s+bot|an\s+assistant|an?\s+automated|caye)\b/i
-  if (aiSelfReference.test(full)) return 'self-identifies as AI/assistant'
-
-  // Explicit AI / automation language about itself
-  const aiDisclosure = /\b(ai\s+receptionist|ai\s+assistant|automated\s+(reply|response|system)|on behalf of\s+\w+\s+via\s+caye)\b/i
-  if (aiDisclosure.test(full)) return 'discloses AI nature'
-
-  return null
-}
 
 // Tools are declared once at module scope so prompt caching can pin them.
 const TOOLS: Anthropic.Tool[] = [
@@ -168,6 +143,7 @@ function formatServicesList(services: ServiceRow[]): string {
 function buildSystem(
   systemPrompt: string,
   voiceProfile: VoiceProfile | undefined,
+  contactProfile: ContactStyleProfile | undefined,
   channel: string,
   isEmail: boolean,
   isFirstMessage: boolean,
@@ -185,6 +161,17 @@ function buildSystem(
       `- Typical greeting: ${voiceProfile.greeting_style}\n` +
       `- Typical sign-off: ${voiceProfile.signoff_style}\n` +
       `- Tone notes: ${voiceProfile.tone_notes}`
+  }
+
+  if (contactProfile) {
+    s +=
+      '\n\nCUSTOMER STYLE — adapt your reply to match this person\'s communication style:\n' +
+      `- Formality: ${contactProfile.formality}\n` +
+      `- Style: ${contactProfile.message_style}\n` +
+      `- Language notes: ${contactProfile.language_notes}\n` +
+      'Match their energy — if they\'re brief, be brief. If they\'re formal, stay professional. ' +
+      'If they use emoji, one or two is fine. Mirror their vibe without abandoning the VOICE PROFILE ' +
+      'above (their style controls tone; your owner\'s voice profile controls word choice and identity).'
   }
 
   s +=
@@ -354,7 +341,53 @@ export interface CayeAutoReplyInput {
   workspaceId: string
   conversationId?: string | null
   senderEmail?: string | null
+  /**
+   * channel_message_id of the inbound message we're replying to.
+   * Used to exclude the current message from the fetched history so we
+   * don't echo it back as prior context.
+   */
+  currentChannelMessageId?: string | null
 }
+
+const HISTORY_LIMIT = 10
+
+interface HistoryRow {
+  sender_type: 'customer' | 'business'
+  content: string | null
+  sent_at: string
+  channel_message_id: string | null
+  metadata: Record<string, unknown> | null
+}
+
+/**
+ * Pull the last N messages from this conversation so Caye sees what was
+ * already said. Excludes the current inbound (by channel_message_id) so
+ * it isn't echoed back as prior context.
+ */
+async function fetchConversationHistory(
+  conversationId: string,
+  excludeChannelMessageId: string | null
+): Promise<HistoryRow[]> {
+  const supabase = createServiceClient()
+  const { data, error } = await supabase
+    .from('unified_messages')
+    .select('sender_type, content, sent_at, channel_message_id, metadata')
+    .eq('conversation_id', conversationId)
+    .eq('is_internal', false)
+    .order('sent_at', { ascending: false })
+    .limit(HISTORY_LIMIT + 1)
+
+  if (error || !data) return []
+
+  const rows = data as HistoryRow[]
+  const filtered = excludeChannelMessageId
+    ? rows.filter(r => r.channel_message_id !== excludeChannelMessageId)
+    : rows
+
+  // Reverse to chronological order (oldest first) and cap at limit
+  return filtered.slice(0, HISTORY_LIMIT).reverse()
+}
+
 
 /**
  * Core Caye auto-reply engine used by all channel webhooks.
@@ -381,9 +414,31 @@ export async function generateCayeAutoReply(
   const services = (serviceRows ?? []) as ServiceRow[]
   const todayISO = new Date().toISOString().slice(0, 10)
 
+  // If this conversation is linked to a contact, look up their style profile
+  // so Caye can mirror their energy. Fetch is non-fatal — no profile yet just
+  // means we fall back to the owner's default tone.
+  let contactProfile: ContactStyleProfile | undefined
+  if (inbound.conversationId) {
+    const { data: convRow } = await supabase
+      .from('unified_conversations')
+      .select('contact_id')
+      .eq('id', inbound.conversationId)
+      .maybeSingle()
+    if (convRow?.contact_id) {
+      const { data: contactRow } = await supabase
+        .from('contacts')
+        .select('ai_contact_profile')
+        .eq('id', convRow.contact_id)
+        .maybeSingle()
+      contactProfile =
+        (contactRow?.ai_contact_profile as ContactStyleProfile | null) ?? undefined
+    }
+  }
+
   const system = buildSystem(
     systemPrompt,
     voiceProfile,
+    contactProfile,
     inbound.channel,
     isEmail,
     inbound.isFirstMessage ?? false,
@@ -391,9 +446,22 @@ export async function generateCayeAutoReply(
     todayISO
   )
 
-  const userContent = isEmail
+  // Pull prior conversation history (if we have a conversation to query) so
+  // Caye sees what was already said. Non-fatal — empty history just means
+  // first message or a fetch failure.
+  const history = inbound.conversationId
+    ? await fetchConversationHistory(
+        inbound.conversationId,
+        inbound.currentChannelMessageId ?? null
+      )
+    : []
+  const historyBlock = formatHistoryBlock(history)
+
+  const newMessageBlock = isEmail
     ? `Reply to this email:\n\nFrom: ${inbound.senderName}\nSubject: ${inbound.subject || '(no subject)'}\n\n${inbound.body}`
     : `Reply to this ${inbound.channel} message:\n\nFrom: ${inbound.senderName}\n\n${inbound.body}`
+
+  const userContent = `${historyBlock}${newMessageBlock}`
 
   const messages: Anthropic.MessageParam[] = [{ role: 'user', content: userContent }]
 
