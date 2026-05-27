@@ -7,6 +7,12 @@ import { detectIdentityLeak } from './caye-identity-guard'
 import { formatHistoryBlock } from './conversation-history'
 import { checkBookingAutonomy, AUTONOMY_WINDOW_HOURS } from './booking-policy'
 import { syncBookingToCalendar } from './calendar-sync'
+import {
+  summarizeBookingHistory,
+  formatCustomerHistoryBlock,
+  type CustomerHistorySummary,
+  type BookingHistoryRow,
+} from './customer-history'
 
 export type CayeAutoReply =
   | { action: 'reply'; content: string; bookingId?: string }
@@ -252,6 +258,7 @@ function buildSystem(
   voiceProfile: VoiceProfile | undefined,
   contactProfile: ContactStyleProfile | undefined,
   businessLinks: BusinessLinks | undefined,
+  customerHistory: CustomerHistorySummary | undefined,
   channel: string,
   isEmail: boolean,
   isFirstMessage: boolean,
@@ -280,6 +287,13 @@ function buildSystem(
       'Match their energy — if they\'re brief, be brief. If they\'re formal, stay professional. ' +
       'If they use emoji, one or two is fine. Mirror their vibe without abandoning the VOICE PROFILE ' +
       'above (their style controls tone; your owner\'s voice profile controls word choice and identity).'
+  }
+
+  // Customer history (returning customer signal). The block renders empty
+  // for first-timers so this is safe to call unconditionally.
+  if (customerHistory) {
+    const historyBlock = formatCustomerHistoryBlock(customerHistory)
+    if (historyBlock) s += '\n\n' + historyBlock
   }
 
   // Inject business links only when at least one is set — empty block adds
@@ -946,11 +960,43 @@ export async function generateCayeAutoReply(
     }
   }
 
+  // Returning-customer history. Match on sender email + workspace. Skipped
+  // entirely when we don't have an email (DM channels with no captured
+  // address) — those contacts are handled when WhatsApp/IG/Messenger get
+  // real per-workspace connections. Non-fatal on error: empty history just
+  // means Caye treats them as a first-timer (the existing behaviour).
+  let customerHistory: CustomerHistorySummary | undefined
+  const lookupEmail = inbound.senderEmail?.trim().toLowerCase()
+  if (lookupEmail) {
+    const { data: bookingRows } = await supabase
+      .from('bookings')
+      .select('booking_date, status, number_of_people, service:booking_services(name)')
+      .eq('user_id', inbound.workspaceId)
+      .ilike('customer_email', lookupEmail)
+    if (bookingRows && bookingRows.length > 0) {
+      type Row = {
+        booking_date: string
+        status: string
+        number_of_people: number
+        service: { name: string }[] | null
+      }
+      const rows = bookingRows as unknown as Row[]
+      const historyRows: BookingHistoryRow[] = rows.map(r => ({
+        booking_date: r.booking_date,
+        service_name: r.service?.[0]?.name ?? null,
+        status: r.status,
+        number_of_people: r.number_of_people,
+      }))
+      customerHistory = summarizeBookingHistory(historyRows)
+    }
+  }
+
   const system = buildSystem(
     systemPrompt,
     voiceProfile,
     contactProfile,
     businessLinks,
+    customerHistory,
     inbound.channel,
     isEmail,
     inbound.isFirstMessage ?? false,
