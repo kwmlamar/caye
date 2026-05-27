@@ -14,6 +14,7 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { generateCayeAutoReply } from '@/lib/caye-reply'
 import { htmlToPlainText } from '@/lib/email-text'
 import { maybeRefreshOwnerVoiceProfile } from '@/lib/owner-voice-learning'
+import { detectOwnerCorrection } from '@/lib/owner-correction'
 
 const ZOHO_TOKEN_URL = 'https://accounts.zoho.com/oauth/v2/token'
 
@@ -468,6 +469,46 @@ async function processSentMessage(
   const body = raw
   if (!body) return 'skipped' // Nothing meaningful to store
 
+  // Look at the message immediately preceding this one in the conversation.
+  // If it was a Caye auto-reply (and no customer message came after it),
+  // this owner reply is an override/correction — the highest-signal voice
+  // training sample we can capture from a Zoho-only owner workflow.
+  // Excludes internal notes (e.g. hold-for-human handoffs) from the lookup.
+  const { data: priorRow } = await supabase
+    .from('unified_messages')
+    .select('id, sender_type, metadata')
+    .eq('conversation_id', conversation.id)
+    .eq('is_internal', false)
+    .lt('sent_at', sentTime)
+    .order('sent_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  const correction = detectOwnerCorrection(
+    priorRow
+      ? {
+          id: priorRow.id,
+          sender_type: priorRow.sender_type as 'customer' | 'business',
+          metadata: priorRow.metadata as Record<string, unknown> | null,
+        }
+      : null
+  )
+
+  const ownerMetadata: Record<string, unknown> = {
+    subject,
+    zoho_message_id: messageId,
+    zoho_thread_id: threadId,
+    source: 'zoho_sent',
+    // sent_by='human' makes this row eligible as a voice-learning sample.
+    // The owner-voice-learning filter rejects rows without this flag so it
+    // can distinguish owner replies from Caye auto-replies.
+    sent_by: 'human',
+  }
+  if (correction.is_correction) {
+    ownerMetadata.is_correction = true
+    ownerMetadata.corrected_caye_message_id = correction.corrected_caye_message_id
+  }
+
   const { error } = await supabase.from('unified_messages').insert({
     conversation_id: conversation.id,
     channel_message_id: messageId,
@@ -476,10 +517,7 @@ async function processSentMessage(
     message_type: 'text',
     sent_at: sentTime,
     status: 'sent',
-    // sent_by='human' makes this row eligible as a voice-learning sample.
-    // The owner-voice-learning filter rejects rows without this flag so it
-    // can distinguish owner replies from Caye auto-replies.
-    metadata: { subject, zoho_message_id: messageId, zoho_thread_id: threadId, source: 'zoho_sent', sent_by: 'human' },
+    metadata: ownerMetadata,
   })
   if (error) {
     console.error('[email/poll] Sent message insert failed:', error)
@@ -510,6 +548,13 @@ async function processSentMessage(
   maybeRefreshOwnerVoiceProfile(String(account.user_id), 'email').catch(err =>
     console.error('[email/poll] Owner voice refresh failed:', err)
   )
+
+  if (correction.is_correction) {
+    console.log(
+      `[email/poll] Owner correction detected on conv ${conversation.id} ` +
+        `(overrode Caye message ${correction.corrected_caye_message_id})`
+    )
+  }
 
   return 'processed'
 }
