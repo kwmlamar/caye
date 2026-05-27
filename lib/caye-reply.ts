@@ -154,17 +154,59 @@ const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: 'reschedule_booking',
+    description:
+      'Move an existing booking to a new date/time of the SAME service. Only call after ' +
+      'find_bookings has returned exactly the booking the customer means. The service stays ' +
+      'the same — if the customer wants a different service (e.g. switching from Full Bimini ' +
+      'Experience to Eat Like a Local), hold_for_human (different price, different operation). ' +
+      'Returns { ok: false, reason: "within_policy_window" } when the CURRENT booking is ' +
+      'within 48 hours — last-minute changes are the owner\'s call. Returns ' +
+      '{ ok: false, reason: "slot_unavailable" } when the new slot is exclusively booked ' +
+      'or has no remaining shared capacity — in that case, run check_availability for the ' +
+      'new date and suggest an alternative time. If new_time is omitted, the booking\'s ' +
+      'existing time is preserved on the new date — tell the customer what you did. After ' +
+      'success, you MUST call send_reply with a warm confirmation that restates the new ' +
+      'date and time.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        booking_id: {
+          type: 'string',
+          description: 'The booking id (uuid) from find_bookings.',
+        },
+        new_date: {
+          type: 'string',
+          description: 'New date in YYYY-MM-DD.',
+        },
+        new_time: {
+          type: 'string',
+          description:
+            'New start time in 24-hour HH:MM. Omit to preserve the booking\'s existing ' +
+            'time on the new date — natural default when the customer says "move to Sunday" ' +
+            'without specifying a time.',
+        },
+        duration_minutes: {
+          type: 'number',
+          description:
+            'Override duration. Omit to keep the existing duration — usually correct.',
+        },
+      },
+      required: ['booking_id', 'new_date'],
+    },
+  },
+  {
     name: 'hold_for_human',
     description:
       'Hold this conversation for the business owner to handle personally. Use this when: ' +
       'the customer has a complaint or is upset; the request needs specific info you don\'t have ' +
       '(exact pricing beyond what services list, custom quotes, special arrangements); the ' +
-      'customer wants to reschedule an existing booking (reschedule tool not built yet); the ' +
-      'customer wants to change to a different service (pricing implication); cancel_booking ' +
+      'customer wants to change to a different SERVICE (pricing implication — your reschedule ' +
+      'tool only moves date/time of the same service); cancel_booking or reschedule_booking ' +
       'returned within_policy_window or booking_in_past; the message is ambiguous and risky ' +
       'to answer wrong; or anything that feels like it needs a human touch. Do NOT hold just ' +
-      'because they want to book — use create_booking. Do NOT hold for cancels that are >48h ' +
-      'out — use cancel_booking.',
+      'because they want to book / cancel / reschedule — use the dedicated tools when the ' +
+      'booking is >48h out.',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -274,8 +316,10 @@ function buildSystem(
     'After a successful cancel, send_reply with: confirmation of the cancel, mention that they\'re eligible ' +
     `for a full refund per the ${AUTONOMY_WINDOW_HOURS}h policy, and say the owner will follow up to process the refund. ` +
     'Do NOT promise refund timelines or amounts — you can\'t process payments.\n' +
-    '- If they want to RESCHEDULE an existing booking: hold_for_human (the reschedule tool is not built yet — ' +
-    'coming soon).\n' +
+    '- If they want to RESCHEDULE: call find_bookings → reschedule_booking with new_date (and new_time ' +
+    'if they specified one — omit to preserve the existing time on the new date). Same 48h policy applies. ' +
+    'If reschedule_booking returns slot_unavailable, call check_availability for the new date and reply ' +
+    'with alternative times. After success, send_reply with a warm confirmation restating the new date+time.\n' +
     '- If they want to change to a different SERVICE: hold_for_human (different price, different operation).\n' +
     '- For new bookings: ask for what you need (name, party size, date, time) over the course of ' +
     'the conversation. Don\'t demand it all in one message.\n' +
@@ -605,6 +649,187 @@ async function cancelBookingFromCaye(
 
 // ── end find_bookings + cancel_booking ──────────────────────────────────────
 
+// ── reschedule_booking ──────────────────────────────────────────────────────
+
+type RescheduleResult =
+  | {
+      ok: true
+      booking_id: string
+      new_date: string
+      new_time: string
+      time_was_preserved: boolean
+      hours_until_original_booking: number
+    }
+  | {
+      ok: false
+      reason:
+        | 'within_policy_window'
+        | 'booking_in_past'
+        | 'not_found'
+        | 'already_cancelled'
+        | 'slot_unavailable'
+        | 'db_error'
+      detail?: string
+    }
+
+/**
+ * Move an existing booking to a new date/time of the SAME service.
+ *
+ * Policy gate runs against the booking's CURRENT start (you can't sneak in
+ * a reschedule on a booking that's 12h out). Availability check runs for
+ * the new slot — exclusive-taken or shared-full rejects with
+ * 'slot_unavailable' so Caye can suggest alternatives.
+ *
+ * Time-preservation default: if newTime is omitted, the booking's existing
+ * time is used on the new date. The caller (Caye via the tool description)
+ * is told to mention this in the reply.
+ */
+async function rescheduleBookingFromCaye(
+  workspaceId: string,
+  bookingId: string,
+  newDate: string,
+  newTime: string | undefined,
+  newDurationMinutes: number | undefined,
+  workspaceTimezone: string
+): Promise<RescheduleResult> {
+  const supabase = createServiceClient()
+
+  // Pull the booking + its service config (capacity, sharing).
+  type BookingRow = {
+    id: string
+    status: string
+    booking_date: string
+    booking_time: string
+    number_of_people: number
+    service_id: string | null
+    duration_minutes: number | null
+    notes: string | null
+    service: { is_shared: boolean; max_capacity: number }[] | null
+  }
+  const { data: bookingRaw, error: readErr } = await supabase
+    .from('bookings')
+    .select(
+      'id, status, booking_date, booking_time, number_of_people, service_id, ' +
+        'duration_minutes, notes, ' +
+        'service:booking_services(is_shared, max_capacity)'
+    )
+    .eq('id', bookingId)
+    .eq('user_id', workspaceId)
+    .maybeSingle()
+
+  const booking = bookingRaw as unknown as BookingRow | null
+  if (readErr || !booking) return { ok: false, reason: 'not_found' }
+  if (booking.status === 'cancelled') return { ok: false, reason: 'already_cancelled' }
+
+  // Policy gate against the CURRENT booking time. Prevents the move-then-cancel
+  // loophole on near-term bookings.
+  const gate = checkBookingAutonomy({
+    bookingDate: booking.booking_date,
+    bookingTime: booking.booking_time.slice(0, 5),
+    timezone: workspaceTimezone,
+  })
+  if (!gate.ok) {
+    return {
+      ok: false,
+      reason: gate.reason,
+      detail: `~${gate.hoursUntilBooking.toFixed(1)}h until original booking`,
+    }
+  }
+
+  // Default to existing time when the customer didn't specify a new one.
+  const existingTime = booking.booking_time.slice(0, 5)
+  const targetTime = (newTime ?? existingTime).slice(0, 5)
+  const targetTimeWithSec = `${targetTime}:00`
+  const time_was_preserved = !newTime || newTime === existingTime
+
+  // No-op short-circuit: same date and same time = nothing to do.
+  if (newDate === booking.booking_date && targetTime === existingTime) {
+    return {
+      ok: true,
+      booking_id: bookingId,
+      new_date: newDate,
+      new_time: targetTime,
+      time_was_preserved,
+      hours_until_original_booking: gate.hoursUntilBooking,
+    }
+  }
+
+  // Availability check at the new slot. Find conflicting bookings at the
+  // SAME service + date + time, excluding the booking being rescheduled.
+  const svc = booking.service?.[0]
+  const isShared = svc?.is_shared ?? false
+  const maxCapacity = svc?.max_capacity ?? 1
+
+  if (booking.service_id) {
+    const { data: conflicts } = await supabase
+      .from('bookings')
+      .select('id, number_of_people')
+      .eq('user_id', workspaceId)
+      .eq('booking_date', newDate)
+      .eq('booking_time', targetTimeWithSec)
+      .eq('service_id', booking.service_id)
+      .neq('status', 'cancelled')
+      .neq('id', bookingId)
+
+    const others = (conflicts ?? []) as Array<{ id: string; number_of_people: number }>
+
+    if (isShared) {
+      const otherGuests = others.reduce((a, b) => a + b.number_of_people, 0)
+      if (otherGuests + booking.number_of_people > maxCapacity) {
+        return {
+          ok: false,
+          reason: 'slot_unavailable',
+          detail: `shared slot has ${maxCapacity - otherGuests} seat(s) remaining, party is ${booking.number_of_people}`,
+        }
+      }
+    } else if (others.length > 0) {
+      return {
+        ok: false,
+        reason: 'slot_unavailable',
+        detail: 'exclusive slot already booked',
+      }
+    }
+  }
+
+  const rescheduleNote = `[Caye reschedule] ${booking.booking_date} ${existingTime} → ${newDate} ${targetTime}`
+  const noteWithLog = booking.notes
+    ? `${booking.notes}\n\n${rescheduleNote}`
+    : rescheduleNote
+
+  const updates: Record<string, unknown> = {
+    booking_date: newDate,
+    booking_time: targetTimeWithSec,
+    notes: noteWithLog,
+  }
+  if (newDurationMinutes && newDurationMinutes > 0) {
+    updates.duration_minutes = newDurationMinutes
+  }
+
+  const { error: updErr } = await supabase
+    .from('bookings')
+    .update(updates)
+    .eq('id', bookingId)
+
+  if (updErr) return { ok: false, reason: 'db_error', detail: updErr.message }
+
+  // Calendar upsert fire-and-forget — booking is already moved in DB,
+  // calendar sync failure is recoverable manually.
+  syncBookingToCalendar(workspaceId, bookingId, 'upsert').catch(err =>
+    console.error('[caye-reply] reschedule calendar sync failed:', err)
+  )
+
+  return {
+    ok: true,
+    booking_id: bookingId,
+    new_date: newDate,
+    new_time: targetTime,
+    time_was_preserved,
+    hours_until_original_booking: gate.hoursUntilBooking,
+  }
+}
+
+// ── end reschedule_booking ──────────────────────────────────────────────────
+
 const HISTORY_LIMIT = 10
 
 interface HistoryRow {
@@ -844,6 +1069,27 @@ export async function generateCayeAutoReply(
           input.booking_id,
           workspaceTimezone,
           input.reason
+        )
+        toolResults.push({
+          type: 'tool_result',
+          tool_use_id: tool.id,
+          content: JSON.stringify(result),
+          is_error: !result.ok,
+        })
+      } else if (tool.name === 'reschedule_booking') {
+        const input = tool.input as {
+          booking_id: string
+          new_date: string
+          new_time?: string
+          duration_minutes?: number
+        }
+        const result = await rescheduleBookingFromCaye(
+          inbound.workspaceId,
+          input.booking_id,
+          input.new_date,
+          input.new_time,
+          input.duration_minutes,
+          workspaceTimezone
         )
         toolResults.push({
           type: 'tool_result',
