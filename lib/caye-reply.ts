@@ -5,6 +5,8 @@ import type { ContactStyleProfile } from '@/types/database'
 import { createServiceClient } from './supabase-server'
 import { detectIdentityLeak } from './caye-identity-guard'
 import { formatHistoryBlock } from './conversation-history'
+import { checkBookingAutonomy, AUTONOMY_WINDOW_HOURS } from './booking-policy'
+import { syncBookingToCalendar } from './calendar-sync'
 
 export type CayeAutoReply =
   | { action: 'reply'; content: string; bookingId?: string }
@@ -97,14 +99,72 @@ const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: 'find_bookings',
+    description:
+      'Look up existing bookings for a customer. ALWAYS call this BEFORE cancel_booking ' +
+      'when a customer asks to cancel — you need the booking_id to act. Match by ' +
+      'customer_email first; fall back to customer_name only when email lookup returns ' +
+      'nothing. Returns active (confirmed/pending) bookings dated today or later. If the ' +
+      'result has 0 rows, hold_for_human (customer claims a booking we have no record of). ' +
+      'If it has 2+ rows, reply asking which one (date + service) — DO NOT guess.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        customer_email: {
+          type: 'string',
+          description: 'The sender\'s email address — primary match key.',
+        },
+        customer_name: {
+          type: 'string',
+          description:
+            'Customer name — fallback when email lookup returns nothing (some older ' +
+            'bookings were created without an email captured). Use exact spelling from ' +
+            'the conversation.',
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'cancel_booking',
+    description:
+      'Cancel an existing booking. Only call after find_bookings has returned exactly ' +
+      'the booking the customer means. Returns { ok: false, reason: "within_policy_window" } ' +
+      'when the booking is within 48 hours of starting — in that case, hold_for_human ' +
+      '(last-minute changes are the owner\'s call, not yours). Returns ' +
+      '{ ok: false, reason: "booking_in_past" } if the booking has already started — ' +
+      'also hold_for_human. On success, you MUST then call send_reply with a brief ' +
+      'confirmation. Reply rules: confirm the cancellation, mention they\'re eligible for ' +
+      'a full refund per the 48h policy, say the owner will follow up to process the ' +
+      'refund. Do NOT promise refund timelines or dollar amounts.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        booking_id: {
+          type: 'string',
+          description: 'The booking id (uuid) from find_bookings.',
+        },
+        reason: {
+          type: 'string',
+          description:
+            'Why the customer is cancelling — for the internal record. One short sentence.',
+        },
+      },
+      required: ['booking_id'],
+    },
+  },
+  {
     name: 'hold_for_human',
     description:
       'Hold this conversation for the business owner to handle personally. Use this when: ' +
       'the customer has a complaint or is upset; the request needs specific info you don\'t have ' +
       '(exact pricing beyond what services list, custom quotes, special arrangements); the ' +
-      'customer wants to reschedule or cancel an existing booking (you can\'t do that yet); ' +
-      'the message is ambiguous and risky to answer wrong; or anything that feels like it ' +
-      'needs a human touch. Do NOT hold just because they want to book — use create_booking.',
+      'customer wants to reschedule an existing booking (reschedule tool not built yet); the ' +
+      'customer wants to change to a different service (pricing implication); cancel_booking ' +
+      'returned within_policy_window or booking_in_past; the message is ambiguous and risky ' +
+      'to answer wrong; or anything that feels like it needs a human touch. Do NOT hold just ' +
+      'because they want to book — use create_booking. Do NOT hold for cancels that are >48h ' +
+      'out — use cancel_booking.',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -209,7 +269,14 @@ function buildSystem(
     '- Always check availability for a date before creating a booking on it.\n' +
     '- Only create a booking when the customer has clearly agreed to a specific date and time.\n' +
     '- If they\'re vague ("sometime next week"), reply asking for a specific day and time first.\n' +
-    '- If they want to RESCHEDULE or CANCEL an existing booking, hold_for_human — you can\'t edit yet.\n' +
+    `- If they want to CANCEL: call find_bookings → cancel_booking. The tool enforces a ${AUTONOMY_WINDOW_HOURS}h policy ` +
+    'window — bookings inside that window return an error and you must hold_for_human (Karenda\'s decision). ' +
+    'After a successful cancel, send_reply with: confirmation of the cancel, mention that they\'re eligible ' +
+    `for a full refund per the ${AUTONOMY_WINDOW_HOURS}h policy, and say the owner will follow up to process the refund. ` +
+    'Do NOT promise refund timelines or amounts — you can\'t process payments.\n' +
+    '- If they want to RESCHEDULE an existing booking: hold_for_human (the reschedule tool is not built yet — ' +
+    'coming soon).\n' +
+    '- If they want to change to a different SERVICE: hold_for_human (different price, different operation).\n' +
     '- For new bookings: ask for what you need (name, party size, date, time) over the course of ' +
     'the conversation. Don\'t demand it all in one message.\n' +
     '- SHARED services: multiple parties can book the same slot up to the service capacity. ' +
@@ -372,6 +439,172 @@ export interface CayeAutoReplyInput {
   currentChannelMessageId?: string | null
 }
 
+// ── find_bookings + cancel_booking ──────────────────────────────────────────
+
+interface FoundBooking {
+  booking_id: string
+  customer_name: string
+  service_name: string | null
+  booking_date: string
+  booking_time: string
+  number_of_people: number
+  status: string
+  duration_minutes: number | null
+}
+
+interface FindBookingsResult {
+  match_count: number
+  bookings: FoundBooking[]
+  /** Set when we fell back to name-match because email returned zero. Tells
+   *  Caye to confirm with the customer before acting on a name-only hit. */
+  matched_by: 'email' | 'name' | 'none'
+}
+
+/**
+ * Look up active (confirmed/pending), future-dated bookings for a customer.
+ * Email-first; name fallback only when email returns zero. The fallback
+ * marker (`matched_by: 'name'`) tells Caye to verify before acting.
+ */
+async function findBookings(
+  workspaceId: string,
+  input: { customer_email?: string; customer_name?: string }
+): Promise<FindBookingsResult> {
+  const supabase = createServiceClient()
+  const today = new Date().toISOString().slice(0, 10)
+  const email = input.customer_email?.trim().toLowerCase()
+  const name = input.customer_name?.trim()
+
+  const selectCols =
+    'id, customer_name, booking_date, booking_time, number_of_people, status, duration_minutes, ' +
+    'service:booking_services(name)'
+
+  type Row = {
+    id: string
+    customer_name: string
+    booking_date: string
+    booking_time: string
+    number_of_people: number
+    status: string
+    duration_minutes: number | null
+    service: { name: string }[] | null
+  }
+
+  let rows: Row[] = []
+  let matched_by: 'email' | 'name' | 'none' = 'none'
+
+  if (email) {
+    const { data } = await supabase
+      .from('bookings')
+      .select(selectCols)
+      .eq('user_id', workspaceId)
+      .in('status', ['confirmed', 'pending'])
+      .gte('booking_date', today)
+      .ilike('customer_email', email)
+      .order('booking_date')
+      .order('booking_time')
+    rows = (data ?? []) as unknown as Row[]
+    if (rows.length) matched_by = 'email'
+  }
+
+  if (!rows.length && name) {
+    const { data } = await supabase
+      .from('bookings')
+      .select(selectCols)
+      .eq('user_id', workspaceId)
+      .in('status', ['confirmed', 'pending'])
+      .gte('booking_date', today)
+      .ilike('customer_name', name)
+      .order('booking_date')
+      .order('booking_time')
+    rows = (data ?? []) as unknown as Row[]
+    if (rows.length) matched_by = 'name'
+  }
+
+  const bookings: FoundBooking[] = rows.map(r => ({
+    booking_id: r.id,
+    customer_name: r.customer_name,
+    service_name: r.service?.[0]?.name ?? null,
+    booking_date: r.booking_date,
+    booking_time: r.booking_time.slice(0, 5),
+    number_of_people: r.number_of_people,
+    status: r.status,
+    duration_minutes: r.duration_minutes,
+  }))
+
+  return { match_count: bookings.length, bookings, matched_by }
+}
+
+type CancelResult =
+  | { ok: true; booking_id: string; hours_until_booking: number }
+  | { ok: false; reason: 'within_policy_window' | 'booking_in_past' | 'not_found' | 'already_cancelled' | 'db_error'; detail?: string }
+
+/**
+ * Cancel an existing booking. Enforces the autonomy policy window
+ * (defense in depth — the prompt also instructs Caye, but we don't trust
+ * the prompt for irreversible operations). On success, syncs the Zoho
+ * Calendar event delete in the background.
+ */
+async function cancelBookingFromCaye(
+  workspaceId: string,
+  bookingId: string,
+  workspaceTimezone: string,
+  reason: string | undefined
+): Promise<CancelResult> {
+  const supabase = createServiceClient()
+
+  const { data: booking, error: readErr } = await supabase
+    .from('bookings')
+    .select('id, status, booking_date, booking_time, notes')
+    .eq('id', bookingId)
+    .eq('user_id', workspaceId)
+    .maybeSingle()
+
+  if (readErr || !booking) {
+    return { ok: false, reason: 'not_found' }
+  }
+  if (booking.status === 'cancelled') {
+    return { ok: false, reason: 'already_cancelled' }
+  }
+
+  const gate = checkBookingAutonomy({
+    bookingDate: booking.booking_date,
+    bookingTime: booking.booking_time.slice(0, 5),
+    timezone: workspaceTimezone,
+  })
+
+  if (!gate.ok) {
+    return { ok: false, reason: gate.reason, detail: `~${gate.hoursUntilBooking.toFixed(1)}h until booking` }
+  }
+
+  const cancellationNote = reason ? `[Caye cancel] ${reason}` : '[Caye cancel]'
+  const noteWithReason = booking.notes
+    ? `${booking.notes}\n\n${cancellationNote}`
+    : cancellationNote
+
+  const { error: updErr } = await supabase
+    .from('bookings')
+    .update({
+      status: 'cancelled',
+      cancelled_at: new Date().toISOString(),
+      notes: noteWithReason,
+    })
+    .eq('id', bookingId)
+
+  if (updErr) {
+    return { ok: false, reason: 'db_error', detail: updErr.message }
+  }
+
+  // Calendar delete fire-and-forget — booking is already cancelled in DB,
+  // calendar sync failure is recoverable manually.
+  syncBookingToCalendar(workspaceId, bookingId, 'delete').catch(err =>
+    console.error('[caye-reply] cancel calendar sync failed:', err)
+  )
+
+  return { ok: true, booking_id: bookingId, hours_until_booking: gate.hoursUntilBooking }
+}
+
+// ── end find_bookings + cancel_booking ──────────────────────────────────────
+
 const HISTORY_LIMIT = 10
 
 interface HistoryRow {
@@ -437,20 +670,25 @@ export async function generateCayeAutoReply(
   const services = (serviceRows ?? []) as ServiceRow[]
   const todayISO = new Date().toISOString().slice(0, 10)
 
-  // Fetch the workspace's business links so Caye can reference them when
-  // contextually appropriate. Non-fatal — no links just means Caye replies
-  // without mentioning any external URLs (the existing behaviour).
+  // Fetch the workspace's business links + timezone in one query. Links
+  // are non-fatal (empty = no BUSINESS LINKS block). Timezone is needed
+  // for the cancel/reschedule policy gate so Caye doesn't misjudge the
+  // 48h window for workspaces outside Nassau.
   let businessLinks: BusinessLinks | undefined
+  let workspaceTimezone = 'America/Nassau' // sane default
   const { data: workspaceRow } = await supabase
     .from('customers')
-    .select('booking_url, website_url')
+    .select('booking_url, website_url, timezone')
     .eq('id', inbound.workspaceId)
     .maybeSingle()
-  if (workspaceRow && (workspaceRow.booking_url || workspaceRow.website_url)) {
-    businessLinks = {
-      booking_url: workspaceRow.booking_url,
-      website_url: workspaceRow.website_url,
+  if (workspaceRow) {
+    if (workspaceRow.booking_url || workspaceRow.website_url) {
+      businessLinks = {
+        booking_url: workspaceRow.booking_url,
+        website_url: workspaceRow.website_url,
+      }
     }
+    if (workspaceRow.timezone) workspaceTimezone = workspaceRow.timezone
   }
 
   // If this conversation is linked to a contact, look up their style profile
@@ -590,6 +828,28 @@ export async function generateCayeAutoReply(
           tool_use_id: tool.id,
           content: JSON.stringify(result),
           is_error: !result.success,
+        })
+      } else if (tool.name === 'find_bookings') {
+        const input = tool.input as { customer_email?: string; customer_name?: string }
+        const result = await findBookings(inbound.workspaceId, input)
+        toolResults.push({
+          type: 'tool_result',
+          tool_use_id: tool.id,
+          content: JSON.stringify(result),
+        })
+      } else if (tool.name === 'cancel_booking') {
+        const input = tool.input as { booking_id: string; reason?: string }
+        const result = await cancelBookingFromCaye(
+          inbound.workspaceId,
+          input.booking_id,
+          workspaceTimezone,
+          input.reason
+        )
+        toolResults.push({
+          type: 'tool_result',
+          tool_use_id: tool.id,
+          content: JSON.stringify(result),
+          is_error: !result.ok,
         })
       } else {
         toolResults.push({
