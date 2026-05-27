@@ -261,7 +261,17 @@ export default function CayePanel({ open, onClose }: { open: boolean; onClose: (
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') onSend() }}
           />
-          <button onClick={onSend} className="cp-send">↵</button>
+          <button className="cp-attach-btn" title="Attach file" type="button" style={{ opacity: 0.5, marginRight: 4, transition: 'opacity 0.2s', cursor: 'pointer', display: 'flex', alignItems: 'center' }} onMouseEnter={(e) => e.currentTarget.style.opacity = '1'} onMouseLeave={(e) => e.currentTarget.style.opacity = '0.5'}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+            </svg>
+          </button>
+          <button onClick={onSend} className="cp-send" aria-label="Send message">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="12" y1="19" x2="12" y2="5"></line>
+              <polyline points="5 12 12 5 19 12"></polyline>
+            </svg>
+          </button>
         </div>
         <div className="cp-foot-meta">
           <span>just tell me to change anything</span>

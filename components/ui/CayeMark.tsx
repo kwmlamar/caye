@@ -11,7 +11,7 @@ export default function CayeMark({ size = 22 }: { size?: number }) {
         justifyContent: 'center',
         flexShrink: 0,
         position: 'relative',
-        boxShadow: '0 0 0 2px rgba(30,97,87,0.18)',
+        boxShadow: '0 0 0 2px rgba(28,22,16,0.08)',
       }}
     >
       <span
@@ -25,7 +25,7 @@ export default function CayeMark({ size = 22 }: { size?: number }) {
           justifyContent: 'center',
           fontSize: size * 0.32,
           fontWeight: 700,
-          color: 'var(--tc-teal)',
+          color: 'var(--tc-ink)',
           fontFamily: 'var(--font-sans)',
           letterSpacing: '-0.02em',
         }}

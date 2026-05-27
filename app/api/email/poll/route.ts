@@ -13,6 +13,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase-server'
 import { generateCayeAutoReply } from '@/lib/caye-reply'
 import { htmlToPlainText } from '@/lib/email-text'
+import { maybeRefreshOwnerVoiceProfile } from '@/lib/owner-voice-learning'
 
 const ZOHO_TOKEN_URL = 'https://accounts.zoho.com/oauth/v2/token'
 
@@ -475,18 +476,40 @@ async function processSentMessage(
     message_type: 'text',
     sent_at: sentTime,
     status: 'sent',
-    metadata: { subject, zoho_message_id: messageId, zoho_thread_id: threadId, source: 'zoho_sent' },
+    // sent_by='human' makes this row eligible as a voice-learning sample.
+    // The owner-voice-learning filter rejects rows without this flag so it
+    // can distinguish owner replies from Caye auto-replies.
+    metadata: { subject, zoho_message_id: messageId, zoho_thread_id: threadId, source: 'zoho_sent', sent_by: 'human' },
   })
   if (error) {
     console.error('[email/poll] Sent message insert failed:', error)
     return 'error'
   }
 
-  // Update conversation — this is a human-sent message (Caye auto-replies are caught above)
+  // Update conversation:
+  // - Refresh preview/sender so the inbox renders correctly
+  // - Clear the human_agent_enabled hold flag: the owner has now responded,
+  //   so Caye should resume monitoring (she will re-evaluate on the customer's
+  //   next message and re-hold if still uncertain).
   await supabase
     .from('unified_conversations')
-    .update({ last_sender_type: 'business', last_business_sender_kind: 'human', last_message_at: sentTime, last_message_preview: body.slice(0, 100) })
+    .update({
+      last_sender_type: 'business',
+      last_business_sender_kind: 'human',
+      last_message_at: sentTime,
+      last_message_preview: body.slice(0, 100),
+      human_agent_enabled: false,
+      human_agent_reason: null,
+    })
     .eq('id', conversation.id)
+
+  // Fire-and-forget owner voice learning. Identical to the in-app send path
+  // — re-extracts the voice profile every REFRESH_EVERY trusted-channel
+  // owner messages. Without this, Karenda's Zoho-direct replies never train
+  // the voice profile because she rarely uses the app.
+  maybeRefreshOwnerVoiceProfile(account.user_id, 'email').catch(err =>
+    console.error('[email/poll] Owner voice refresh failed:', err)
+  )
 
   return 'processed'
 }

@@ -6,7 +6,7 @@ import type { Screen } from "@/lib/types"
 
 interface DashboardContextValue {
   screen: Screen
-  setScreen: (s: Screen) => void
+  setScreen: (s: Screen, extraParams?: Record<string, string>) => void
   sidebarExpanded: boolean
   setSidebarExpanded: (v: boolean) => void
   cayeOpen: boolean
@@ -33,13 +33,23 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
   const [activeChatId, setActiveChatId] = useState('c1')
   const [pendingContactChannelId, setPendingContactChannelId] = useState<string | null>(null)
 
-  const setScreen = (s: Screen) => {
+  const setScreen = (s: Screen, extraParams?: Record<string, string>) => {
     const searchVal = new URLSearchParams(searchParams.toString())
+    // Clear transient params by default
+    searchVal.delete('contactChannelId')
+
     if (s === 'chats') {
       searchVal.delete('tab')
     } else {
       searchVal.set('tab', s)
     }
+
+    if (extraParams) {
+      Object.entries(extraParams).forEach(([k, v]) => {
+        searchVal.set(k, v)
+      })
+    }
+
     const queryString = searchVal.toString()
     router.push(`/dashboard/${workspaceId}${queryString ? `?${queryString}` : ''}`)
   }

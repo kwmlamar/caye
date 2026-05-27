@@ -145,7 +145,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: true, message: null })
   }
 
-  // Update conversation preview
+  // Update conversation preview. Also clear the human_agent_enabled hold
+  // flag — the owner is responding, so Caye should resume monitoring on
+  // the customer's next message (she'll re-hold if the thread is still
+  // outside her envelope).
   await supabase
     .from('unified_conversations')
     .update({
@@ -153,6 +156,8 @@ export async function POST(request: NextRequest) {
       last_message_preview: text.slice(0, 100),
       last_sender_type: 'business',
       last_business_sender_kind: 'human',
+      human_agent_enabled: false,
+      human_agent_reason: null,
     })
     .eq('id', conversation_id)
 

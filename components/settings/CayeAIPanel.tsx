@@ -16,6 +16,7 @@ interface EscalationTopic {
 }
 
 interface AiForm {
+  aiEnabled: boolean
   autoReply: boolean
   holdHours: boolean
   tone: string
@@ -26,6 +27,7 @@ interface AiForm {
 }
 
 const DEFAULT_FORM: AiForm = {
+  aiEnabled: true,
   autoReply: true,
   holdHours: true,
   tone: 'friendly',
@@ -66,7 +68,7 @@ export default function CayeAIPanel() {
       const [aiRes, accountsRes] = await Promise.all([
         supabase
           .from('workspace_ai_config')
-          .select('tone, system_prompt, escalation_rules, never_say, hold_hours, reply_delay')
+          .select('tone, system_prompt, escalation_rules, never_say, hold_hours, reply_delay, ai_enabled')
           .eq('workspace_id', workspaceId)
           .maybeSingle(),
         supabase
@@ -76,6 +78,7 @@ export default function CayeAIPanel() {
       ])
 
       const initial: AiForm = {
+        aiEnabled: aiRes.data?.ai_enabled ?? true,
         autoReply: workspace.auto_reply_enabled ?? true,
         holdHours: aiRes.data?.hold_hours ?? true,
         tone: aiRes.data?.tone || 'friendly',
@@ -171,6 +174,7 @@ export default function CayeAIPanel() {
         .upsert(
           {
             workspace_id: workspaceId,
+            ai_enabled: form.aiEnabled,
             tone: form.tone,
             reply_delay: form.delay,
             hold_hours: form.holdHours,
@@ -235,6 +239,13 @@ export default function CayeAIPanel() {
           </div>
         </div>
         <div className="s-card-body" style={{ gap: 0 }}>
+          <div className="s-toggle-row">
+            <div className="tr-left">
+              <div className="tr-title">Caye AI on</div>
+              <div className="tr-desc">Master switch. When off, Caye stops generating and sending AI replies on every channel — messages still arrive in your inbox, nothing is disconnected.</div>
+            </div>
+            <Toggle on={form.aiEnabled} onChange={v => setField('aiEnabled', v)} />
+          </div>
           <div className="s-toggle-row">
             <div className="tr-left">
               <div className="tr-title">Auto-reply enabled</div>

@@ -317,6 +317,12 @@ input, textarea{ font-family:inherit; font-size:inherit; color:inherit; backgrou
   grid-template-columns: 340px 1fr;
   overflow:hidden; min-height:0;
 }
+.chats-screen.contact-info-open{
+  grid-template-columns: 340px 1fr 380px;
+}
+.chats-screen .contact-detail{
+  border-left:1px solid var(--line);
+}
 
 .inbox-col{
   background:var(--bg-app);
