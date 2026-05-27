@@ -81,6 +81,7 @@ export interface Contact {
   channel_id: string | null
   avatar_url: string | null
   ai_contact_profile: ContactStyleProfile | null
+  ai_contact_facts: CustomerFacts | null
   inbound_message_count: number
   created_at: string
   updated_at: string
@@ -92,6 +93,16 @@ export interface ContactStyleProfile {
   formality: 'casual' | 'formal'
   message_style: 'brief' | 'chatty' | 'detailed'
   language_notes: string
+}
+
+// Operational facts the customer told us across their messages.
+// All optional — only populated when extraction found something explicit.
+export interface CustomerFacts {
+  dietary?: string[]
+  mobility?: string[]
+  group_composition?: string | null
+  preferences?: string[]
+  occasions?: string[]
 }
 
 // Conversation table

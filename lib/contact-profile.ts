@@ -6,8 +6,14 @@ import {
   FIRST_EXTRACTION_AT,
   shouldExtractContactProfile,
 } from '@/lib/contact-profile-trigger'
+import type { CustomerFacts } from '@/lib/customer-facts'
 
-export type { ContactStyleProfile }
+export type { ContactStyleProfile, CustomerFacts }
+
+export interface ContactStyleAndFacts {
+  style: ContactStyleProfile
+  facts: CustomerFacts
+}
 
 /**
  * How many of the contact's most recent inbound messages we feed Claude
@@ -16,13 +22,18 @@ export type { ContactStyleProfile }
 const SAMPLE_SIZE = 20
 
 /**
- * Ask Claude to summarise a customer's communication style from their
- * inbound messages. The output is intentionally narrow — 3 fields, used
- * by Caye to mirror the customer's energy, not to impersonate them.
+ * Ask Claude to summarise a customer's communication style AND extract
+ * operational facts they've told us (allergies, mobility, group, etc.)
+ * from their inbound messages. Single Claude call returns both — saves
+ * tokens vs. two separate calls.
+ *
+ * The style fields are intentionally narrow (3 fields, used by Caye to
+ * mirror tone). The facts fields are intentionally optional (only return
+ * facts the customer ACTUALLY mentioned — don't invent them).
  */
-export async function extractContactStyleProfile(
+export async function extractContactStyleAndFacts(
   samples: string[]
-): Promise<ContactStyleProfile> {
+): Promise<ContactStyleAndFacts> {
   const client = new Anthropic()
 
   const samplesText = samples
@@ -31,27 +42,59 @@ export async function extractContactStyleProfile(
 
   const message = await client.messages.create({
     model: 'claude-sonnet-4-6',
-    max_tokens: 512,
-    system: `Analyze these inbound messages from a single customer and summarise their communication style.
+    max_tokens: 768,
+    system: `Analyze these inbound messages from a single customer.
+Return TWO things in a single JSON object — communication style AND operational facts.
 Return ONLY valid JSON — no markdown, no explanation:
 {
-  "formality": "casual",
-  "message_style": "brief",
-  "language_notes": "1-2 short sentences on notable patterns — emoji use, dialect, abbreviations, punctuation habits, etc."
+  "style": {
+    "formality": "casual",
+    "message_style": "brief",
+    "language_notes": "1-2 short sentences on notable patterns — emoji use, dialect, abbreviations, punctuation habits, etc."
+  },
+  "facts": {
+    "dietary": [],
+    "mobility": [],
+    "group_composition": null,
+    "preferences": [],
+    "occasions": []
+  }
 }
-The formality field must be exactly one of: "casual" or "formal".
-The message_style field must be exactly one of: "brief" or "chatty" or "detailed".`,
+
+Style rules:
+- formality: exactly one of "casual" or "formal"
+- message_style: exactly one of "brief" or "chatty" or "detailed"
+
+Facts rules — be conservative. Only include facts the customer ACTUALLY mentioned.
+Do NOT invent or infer. Empty arrays / null are fine and preferred when nothing was said:
+- dietary: short strings, e.g. ["vegetarian", "shellfish allergy"]. Only when explicitly stated.
+- mobility: e.g. ["wheelchair user", "limited walking"]. Only when explicitly stated.
+- group_composition: one sentence if a clear party composition was mentioned (e.g. "2 adults + 1 child age 5"), otherwise null.
+- preferences: stated preferences only — "morning tours", "private over group", etc.
+- occasions: noted occasions — "anniversary", "honeymoon", "bachelorette", etc.`,
     messages: [
       {
         role: 'user',
-        content: `Analyze these customer messages and extract their style profile:\n\n${samplesText}`,
+        content: `Analyze these customer messages and extract their style profile + operational facts:\n\n${samplesText}`,
       },
     ],
   })
 
   const raw = message.content[0].type === 'text' ? message.content[0].text : ''
   const text = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim()
-  return JSON.parse(text) as ContactStyleProfile
+  return JSON.parse(text) as ContactStyleAndFacts
+}
+
+/**
+ * @deprecated Use extractContactStyleAndFacts which returns both style
+ * and operational facts in a single call. Kept as a thin wrapper for
+ * any older callers.
+ */
+export async function extractContactStyleProfile(
+  samples: string[]
+): Promise<ContactStyleProfile> {
+  const result = await extractContactStyleAndFacts(samples)
+  return result.style
 }
 
 /**
@@ -113,17 +156,24 @@ export async function maybeRefreshContactProfile(contactId: string): Promise<voi
   if (bodies.length < FIRST_EXTRACTION_AT) return
 
   try {
-    const profile = await extractContactStyleProfile(bodies)
+    const { style, facts } = await extractContactStyleAndFacts(bodies)
     await supabase
       .from('contacts')
       .update({
-        ai_contact_profile: profile,
+        ai_contact_profile: style,
+        ai_contact_facts: facts,
         updated_at: new Date().toISOString(),
       })
       .eq('id', contactId)
+    const factCount =
+      (facts.dietary?.length ?? 0) +
+      (facts.mobility?.length ?? 0) +
+      (facts.group_composition ? 1 : 0) +
+      (facts.preferences?.length ?? 0) +
+      (facts.occasions?.length ?? 0)
     console.log(
       `[contact-profile] Refreshed profile for contact ${contactId} ` +
-        `(count=${newCount}, samples=${bodies.length}, ${profile.formality}/${profile.message_style})`
+        `(count=${newCount}, samples=${bodies.length}, ${style.formality}/${style.message_style}, facts=${factCount})`
     )
   } catch (err) {
     console.error(`[contact-profile] Extraction failed for contact ${contactId}:`, err)

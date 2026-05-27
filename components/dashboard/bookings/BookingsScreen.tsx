@@ -119,7 +119,7 @@ export default function BookingsScreen({ inPanel = false }: { inPanel?: boolean 
   }
 
   return (
-    <div className={`flex-1 flex flex-col bg-cream overflow-hidden font-sans ${inPanel ? 'p-3' : 'p-6 md:p-8'}`}>
+    <div className={`flex-1 flex flex-col ${inPanel ? 'bg-transparent p-3' : 'bg-cream p-6 md:p-8'} overflow-hidden font-sans`}>
       {/* Header */}
       <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
         {!inPanel && (

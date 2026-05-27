@@ -14,6 +14,7 @@ import {
   type BookingHistoryRow,
 } from './customer-history'
 import { classifyInbound, toneHintFor, type InboundCategory } from './inbound-classifier'
+import { formatCustomerFactsBlock, type CustomerFacts } from './customer-facts'
 
 export type CayeAutoReply =
   | { action: 'reply'; content: string; bookingId?: string }
@@ -258,6 +259,7 @@ function buildSystem(
   systemPrompt: string,
   voiceProfile: VoiceProfile | undefined,
   contactProfile: ContactStyleProfile | undefined,
+  contactFacts: CustomerFacts | undefined,
   businessLinks: BusinessLinks | undefined,
   customerHistory: CustomerHistorySummary | undefined,
   inboundCategory: InboundCategory | null,
@@ -296,6 +298,13 @@ function buildSystem(
   if (customerHistory) {
     const historyBlock = formatCustomerHistoryBlock(customerHistory)
     if (historyBlock) s += '\n\n' + historyBlock
+  }
+
+  // Customer facts (operational truths they told us — allergies, mobility,
+  // group, etc.). The block renders empty when no facts are populated.
+  if (contactFacts) {
+    const factsBlock = formatCustomerFactsBlock(contactFacts)
+    if (factsBlock) s += '\n\n' + factsBlock
   }
 
   // Inbound-context tone modifier. Pure classifier picks a category from
@@ -949,9 +958,10 @@ export async function generateCayeAutoReply(
   }
 
   // If this conversation is linked to a contact, look up their style profile
-  // so Caye can mirror their energy. Fetch is non-fatal — no profile yet just
-  // means we fall back to the owner's default tone.
+  // + operational facts so Caye can mirror their energy AND avoid re-asking
+  // for things already on file. Fetch is non-fatal.
   let contactProfile: ContactStyleProfile | undefined
+  let contactFacts: CustomerFacts | undefined
   if (inbound.conversationId) {
     const { data: convRow } = await supabase
       .from('unified_conversations')
@@ -961,11 +971,13 @@ export async function generateCayeAutoReply(
     if (convRow?.contact_id) {
       const { data: contactRow } = await supabase
         .from('contacts')
-        .select('ai_contact_profile')
+        .select('ai_contact_profile, ai_contact_facts')
         .eq('id', convRow.contact_id)
         .maybeSingle()
       contactProfile =
         (contactRow?.ai_contact_profile as ContactStyleProfile | null) ?? undefined
+      contactFacts =
+        (contactRow?.ai_contact_facts as CustomerFacts | null) ?? undefined
     }
   }
 
@@ -1012,6 +1024,7 @@ export async function generateCayeAutoReply(
     systemPrompt,
     voiceProfile,
     contactProfile,
+    contactFacts,
     businessLinks,
     customerHistory,
     inboundCategory,
