@@ -1196,9 +1196,11 @@
   top: 0; right: 0; bottom: 0;
   width: 480px;
   max-width: 90vw;
-  background: #ffffff;
-  border-left: 1px solid rgba(28, 22, 16, 0.08);
-  box-shadow: -4px 0 24px -8px rgba(14, 26, 26, 0.12);
+  background: rgba(255, 255, 255, 0.90);
+  backdrop-filter: blur(28px);
+  -webkit-backdrop-filter: blur(28px);
+  border-left: 1px solid rgba(28, 22, 16, 0.06);
+  box-shadow: -4px 0 24px -8px rgba(14, 26, 26, 0.08);
   display: flex; flex-direction: column;
   z-index: 10;
   transform: translateX(100%);
@@ -1206,6 +1208,24 @@
   will-change: transform;
 }
 .caye-panel.open { transform: translateX(0); }
+
+/* Remove background from inner sections to let the glassmorphism bleed through */
+.caye-panel .cp-head,
+.caye-panel .inbox-col,
+.caye-panel .thread-col,
+.caye-panel .thread-head,
+.caye-panel .thread-body,
+.caye-panel .contacts-list,
+.caye-panel .ct-head,
+.caye-panel .cal-screen,
+.caye-panel .cal-head,
+.caye-panel .cal-week-head,
+.caye-panel .cal-day-head,
+.caye-panel .bk-inline-container,
+.caye-panel .bk-inline-foot,
+.caye-panel .contact-detail {
+  background: transparent !important;
+}
 
 @media (max-width: 640px) {
   .caye-panel {
