@@ -38,6 +38,8 @@ export default function SIcon({ name, size = 16 }: { name: string; size?: number
       return <svg width={s} height={s} viewBox="0 0 20 20" {...st}><path d="M10 3.5 17 16H3l7-12.5zM10 8.5v3.5M10 13.5h.01" /></svg>
     case 'svc':
       return <svg width={s} height={s} viewBox="0 0 20 20" {...st}><rect x="3.5" y="5.5" width="13" height="10" rx="1.5" /><path d="M7 5.5V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1.5M10 9v4M8 11h4" /></svg>
+    case 'pulse':
+      return <svg width={s} height={s} viewBox="0 0 20 20" {...st}><path d="M3 10.5h3l2-5 4 9 2-4h3" /></svg>
     default:
       return null
   }

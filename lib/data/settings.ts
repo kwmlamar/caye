@@ -4,6 +4,7 @@ export const SET_NAV: NavItem[] = [
   { id: 'profile', label: 'Profile', sub: 'Business identity', icon: 'biz' },
   { id: 'channels', label: 'Channels', sub: '5 connections', icon: 'ch' },
   { id: 'caye', label: 'Caye AI', sub: 'Auto-reply assistant', icon: 'caye', badge: 'AI' },
+  { id: 'health', label: 'Caye health', sub: 'What she\'s been doing', icon: 'pulse' },
   { id: 'services', label: 'Services', sub: 'Tours & offerings', icon: 'svc' },
   { id: 'notifications', label: 'Notifications', sub: 'Alerts & summaries', icon: 'bell' },
   { id: 'team', label: 'Team', sub: '4 members', icon: 'ppl' },

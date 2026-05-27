@@ -443,6 +443,15 @@ async function createBookingFromCaye(
 
   const timeWithSeconds = input.booking_time.length === 5 ? `${input.booking_time}:00` : input.booking_time
 
+  // Mark bookings created by Caye in the notes so the observability panel
+  // can distinguish them from owner-created bookings. Cancels/reschedules
+  // use the same pattern ([Caye cancel], [Caye reschedule]).
+  const createNote = '[Caye create]'
+  const trimmedInputNote = input.notes?.trim()
+  const notesWithMarker = trimmedInputNote
+    ? `${trimmedInputNote}\n\n${createNote}`
+    : createNote
+
   const payload = {
     user_id: workspaceId,
     conversation_id: conversationId,
@@ -456,7 +465,7 @@ async function createBookingFromCaye(
     duration_minutes:
       input.duration_minutes && input.duration_minutes > 0 ? input.duration_minutes : null,
     status: input.status ?? 'confirmed',
-    notes: input.notes?.trim() || null,
+    notes: notesWithMarker,
   }
 
   const { data, error } = await supabase.from('bookings').insert(payload).select('id').single()

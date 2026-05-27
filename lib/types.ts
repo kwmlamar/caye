@@ -136,6 +136,6 @@ export interface NotificationPrefs {
   email: boolean
 }
 
-export type Screen = 'chats' | 'contacts' | 'calendar'
-export type SettingsSection = 'profile' | 'channels' | 'caye' | 'notifications' | 'team' | 'billing' | 'services'
+export type Screen = 'home' | 'chats' | 'bookings' | 'calendar' | 'contacts'
+export type SettingsSection = 'profile' | 'channels' | 'caye' | 'health' | 'notifications' | 'team' | 'billing' | 'services'
 export type ActiveSection = Screen | 'settings'
