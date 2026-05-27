@@ -37,6 +37,7 @@ export interface Customer {
   owner_messages_since_profile_update: number
   booking_url: string | null
   website_url: string | null
+  proactive_nudges_enabled: boolean
   full_name: string | null
   contact_email: string
   password_hash?: string
