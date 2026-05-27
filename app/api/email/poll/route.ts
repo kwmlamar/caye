@@ -507,7 +507,7 @@ async function processSentMessage(
   // — re-extracts the voice profile every REFRESH_EVERY trusted-channel
   // owner messages. Without this, Karenda's Zoho-direct replies never train
   // the voice profile because she rarely uses the app.
-  maybeRefreshOwnerVoiceProfile(account.user_id, 'email').catch(err =>
+  maybeRefreshOwnerVoiceProfile(String(account.user_id), 'email').catch(err =>
     console.error('[email/poll] Owner voice refresh failed:', err)
   )
 
