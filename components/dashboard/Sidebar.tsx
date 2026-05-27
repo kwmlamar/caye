@@ -292,7 +292,7 @@ export default function Sidebar({ workspaceId }: SidebarProps) {
         <div className="sb-top" style={{ flexShrink: 0 }}>
           {/* Brand Logo Header */}
           <Link href={`/dashboard/${workspaceId}`} className="sb-brand-link">
-            <CayeLogo size={24} />
+            <CayeLogo size={30} />
           </Link>
 
           {/* Workspace Switcher at the top */}
