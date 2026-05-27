@@ -510,6 +510,128 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // Intercept suggestion chips and natural language panel triggers for the demo path
+  const lowercaseMsg = message.toLowerCase().trim()
+  if (lowercaseMsg.includes('bookings came in overnight')) {
+    return NextResponse.json({
+      reply: "Here are the bookings that came in overnight while you were asleep. I've automatically checked your calendar and confirmed both of them.",
+      cards: [
+        {
+          type: 'booking',
+          data: {
+            id: 'b-mock-1',
+            customer_name: 'Marcus Ferreira',
+            tour: 'Bimini Snorkeling Tour',
+            date: '2026-05-29',
+            time: '09:30',
+            guests: 4,
+            status: 'confirmed'
+          }
+        },
+        {
+          type: 'booking',
+          data: {
+            id: 'b-mock-2',
+            customer_name: 'Jessamyn Pyfrom',
+            tour: 'Bimini Island Half-Day Tour',
+            date: '2026-05-28',
+            time: '14:00',
+            guests: 2,
+            status: 'confirmed'
+          }
+        }
+      ]
+    })
+  } else if (lowercaseMsg.includes('needs my call')) {
+    return NextResponse.json({
+      reply: "I've held 1 message that needs your call. Sandra Sweeting is asking if we can do a custom full-day charter this Sunday, which is our scheduled day off.",
+      cards: [
+        {
+          type: 'inbox',
+          data: [
+            {
+              id: 'caye-held-mock-1',
+              customer_id: 'ssweeting@yahoo.com', // Sandra Sweeting channel_id / customer_id
+              customer_name: 'Sandra Sweeting',
+              channel_type: 'whatsapp',
+              preview: "Can you do a custom full-day charter for 6 people this Sunday? Let me know the price.",
+              status: 'held',
+              last_message_at: new Date().toISOString(),
+              unread_count: 1
+            }
+          ]
+        }
+      ]
+    })
+  } else if (lowercaseMsg.includes('draft a reply to the next pending message') || lowercaseMsg.includes('draft a reply')) {
+    return NextResponse.json({
+      reply: "Here is the next pending message from Marvin Cartwright. He is asking about bookings and deposits for a large group. I've drafted a reply for your review.",
+      cards: [
+        {
+          type: 'inbox',
+          data: [
+            {
+              id: 'caye-draft-mock-1',
+              customer_id: 'marvin.c@hey.com', // Marvin Cartwright channel_id / customer_id
+              customer_name: 'Marvin Cartwright',
+              channel_type: 'email',
+              preview: "Draft response: Hey Marvin! For groups larger than 8, we require a 50% deposit to lock in the charter. Let me know if you would like me to draft a confirmation invoice.",
+              status: 'drafted',
+              last_message_at: new Date().toISOString(),
+              unread_count: 0
+            }
+          ]
+        }
+      ]
+    })
+  } else if (lowercaseMsg.includes('open my inbox') || lowercaseMsg.includes('open inbox') || lowercaseMsg.includes('show my inbox')) {
+    return NextResponse.json({
+      reply: "Opening your inbox →"
+    })
+  } else if (lowercaseMsg.includes('open my calendar') || lowercaseMsg.includes('open calendar') || lowercaseMsg.includes('show my calendar')) {
+    return NextResponse.json({
+      reply: "Opening your calendar →"
+    })
+  } else if (
+    lowercaseMsg.includes('what do you know about my business') ||
+    lowercaseMsg.includes('what do you know about the business') ||
+    lowercaseMsg.includes('what have you learned') ||
+    lowercaseMsg.includes('what did you learn') ||
+    lowercaseMsg.includes('what do you know so far')
+  ) {
+    // Read discovery knowledge from workspace_ai_config and summarize it
+    const { data: configRow } = await supabase
+      .from('workspace_ai_config')
+      .select('system_prompt, pricing_info, metadata')
+      .eq('workspace_id', workspaceId)
+      .maybeSingle()
+
+    const discoveredPrompt = (configRow?.system_prompt as string | null) || ''
+    const pricingInfo = (configRow?.pricing_info as string | null) || ''
+    const meta = (configRow?.metadata as Record<string, unknown> | null) || {}
+    const discoveryStatus = meta.discovery_status as string | undefined
+
+    if (!discoveredPrompt && !pricingInfo) {
+      const notStarted = discoveryStatus === 'no_account' || !discoveryStatus
+      return NextResponse.json({
+        reply: notStarted
+          ? "I haven't read your inbox yet — connect your Zoho Mail account first and I'll take a look."
+          : "I haven't picked up much yet. Try sending me some emails and I'll start learning from them."
+      })
+    }
+
+    // Build a compact human-readable summary
+    const sections = discoveredPrompt
+      .split(/\n---\n|\n\n/)
+      .map(s => s.trim())
+      .filter(Boolean)
+
+    const lines = sections.slice(0, 6).join('\n\n')
+    const reply = `Here's what I know so far:\n\n${lines}${pricingInfo ? `\n\nPricing: ${pricingInfo}` : ''}\n\nI'll keep learning as more emails come through.`
+    return NextResponse.json({ reply })
+  }
+
+
   const [{ data: workspace }, { data: aiConfig }, { data: serviceRows }] = await Promise.all([
     supabase.from('customers').select('business_name').eq('id', workspaceId).maybeSingle(),
     supabase.from('workspace_ai_config').select('*').eq('workspace_id', workspaceId).maybeSingle(),

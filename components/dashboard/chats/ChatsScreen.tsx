@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import Avatar from '@/components/ui/Avatar'
 import ChannelIcon from '@/components/ui/ChannelIcon'
-import CayeMark from '@/components/ui/CayeMark'
+import { CayeMark } from '@/components/brand/CayeMark'
 import {
   getConnectedAccounts,
   getUnifiedConversations,
@@ -115,8 +115,8 @@ function ConversationRow({
   )
 }
 
-export default function ChatsScreen({ openCaye }: { openCaye: () => void }) {
-  const { setScreen, pendingContactChannelId, setPendingContactChannelId } = useDashboard()
+export default function ChatsScreen({ openCaye, inPanel = false }: { openCaye: () => void; inPanel?: boolean }) {
+  const { setPanelScreen, pendingContactChannelId, setPendingContactChannelId, isPanelDetail, setIsPanelDetail } = useDashboard()
   const { workspaceId } = useWorkspace()
 
   const [conversations, setConversations] = useState<ConversationWithAccount[]>([])
@@ -146,6 +146,13 @@ export default function ChatsScreen({ openCaye }: { openCaye: () => void }) {
     mountedRef.current = true
     return () => { mountedRef.current = false }
   }, [])
+
+  useEffect(() => {
+    if (inPanel && !isPanelDetail) {
+      setSelectedConv(null)
+      setContactPanelOpen(false)
+    }
+  }, [isPanelDetail, inPanel])
 
   useEffect(() => {
     selectedRef.current = selectedConv
@@ -178,13 +185,13 @@ export default function ChatsScreen({ openCaye }: { openCaye: () => void }) {
     if (!mountedRef.current) return
     if (!error) {
       setConversations(data)
-      // Auto-select first if nothing selected
-      if (!selectedRef.current && data.length > 0) {
+      // Auto-select first if nothing selected (only if not inPanel)
+      if (!inPanel && !selectedRef.current && data.length > 0) {
         setSelectedConv(data[0])
       }
     }
     if (mountedRef.current) setLoadingConvs(false)
-  }, [searchQuery])
+  }, [searchQuery, inPanel])
 
   useEffect(() => {
     fetchConvsRef.current = fetchConversations
@@ -524,16 +531,307 @@ export default function ChatsScreen({ openCaye }: { openCaye: () => void }) {
   const selName = selectedConv?.customer_name || 'Unknown'
   const selCh = selectedConv ? toUiChannel(selectedConv.channel_type) : 'wa'
 
+  if (inPanel) {
+    return (
+      <div className="chats-screen" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+        {contactPanelOpen && contactForPanel ? (
+          <ContactDetailPanel
+            contact={contactForPanel}
+            workspaceId={workspaceId}
+            hideMessageAction={true}
+            onClose={() => setContactPanelOpen(false)}
+            onContactUpdated={(updated) => {
+              setContactForPanel(updated)
+            }}
+          />
+        ) : selectedConv ? (
+          <section className="thread-col" style={{ flex: 1, display: 'flex', flexDirection: 'column', border: 'none', height: '100%' }}>
+            <header className="thread-head">
+              <div className="thread-who">
+                <Avatar name={selName} size={42} />
+                <div>
+                  <div className="thread-name">{selName}</div>
+                  <div className="thread-role">
+                    <ChannelIcon ch={selCh} size={14} /> {channelLabel(selCh)}
+                  </div>
+                </div>
+              </div>
+              <div className="thread-actions">
+                <button
+                  className={'ai-toggle header' + (togglingAutoReply ? ' toggling' : '')}
+                  onClick={handleToggleAutoReply}
+                  disabled={togglingAutoReply}
+                  title={selectedConv.human_agent_enabled ? 'Caye is paused — click to resume auto-reply' : 'Caye is replying — click to pause'}
+                >
+                  <span className={'ai-toggle-track' + (!selectedConv.human_agent_enabled ? ' on' : '')}>
+                    <span className="ai-toggle-thumb" />
+                  </span>
+                  Caye auto-reply
+                </button>
+                <button className="ghost-btn" title="Open contact" onClick={handleViewContact}>View contact</button>
+                <button className="ghost-btn" title="Book this guest" onClick={handleNewBookingClick}>+ Booking</button>
+                <button className="ghost-btn icon-only" title="More">⋯</button>
+              </div>
+            </header>
+
+            {selectedConv.human_agent_enabled && (
+              <div className="caye-strip held">
+                <CayeMark size={14} />
+                <span className="caye-strip-text">
+                  {selectedConv.human_agent_reason || 'Caye held — needs your attention'}
+                </span>
+              </div>
+            )}
+
+            <div className="thread-body">
+              {loadingMsgs ? (
+                <div style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--tc-ink-faint)', fontSize: 13 }}>
+                  Loading messages…
+                </div>
+              ) : messages.length === 0 ? (
+                <div style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--tc-ink-faint)', fontSize: 13 }}>
+                  No messages yet
+                </div>
+              ) : (
+                messages.map((msg) => {
+                  if (msg.is_internal) {
+                    const byCaye = (msg.metadata as Record<string, unknown>)?.generated_by === 'caye'
+                    return (
+                      <div key={msg.id} className={'msg-row internal' + (byCaye ? ' caye-note' : '')}>
+                        <div className={'note-bubble' + (byCaye ? ' caye' : '')}>
+                          <div className="note-header">
+                            {byCaye ? <CayeMark size={13} /> : <span className="note-icon">🔒</span>}
+                            <span className="note-label">{byCaye ? 'Caye note' : 'Internal note'}</span>
+                            <span className="note-time">{formatTime(msg.sent_at)}</span>
+                          </div>
+                          <div className="note-body" style={{ whiteSpace: 'pre-wrap' }}>{msg.content || ''}</div>
+                          {msg.status === 'failed' && (
+                            <div className="note-error">Failed to save</div>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  }
+
+                  const side = msg.sender_type === 'customer' ? 'in' : 'out'
+                  const isEmail = selectedConv?.channel_type === 'email'
+                  const meta = (msg.metadata || {}) as Record<string, string>
+                  const emailSubject = isEmail && meta.subject ? meta.subject : null
+                  const isByCaye = side === 'out' && (msg.metadata as Record<string, unknown>)?.generated_by === 'caye'
+                  return (
+                    <div key={msg.id} className={'msg-row ' + side}>
+                      {side === 'in' && <Avatar name={selName} size={28} />}
+                      <div className="msg-stack">
+                        {emailSubject && (
+                          <div style={{
+                            fontSize: 10.5,
+                            fontWeight: 600,
+                            color: 'var(--tc-ink-mute)',
+                            letterSpacing: '.04em',
+                            textTransform: 'uppercase',
+                            marginBottom: 3,
+                            paddingLeft: side === 'in' ? 2 : 0,
+                            textAlign: side === 'out' ? 'right' : 'left',
+                          }}>
+                            {emailSubject}
+                          </div>
+                        )}
+                        <div className={'bubble ' + side + (isByCaye ? ' by-caye' : '')} style={{ whiteSpace: 'pre-wrap' }}>{msg.content || ''}</div>
+                        <div className="msg-time">
+                          {formatTime(msg.sent_at)}
+                          {msg.status === 'sending' && ' · sending…'}
+                          {msg.status === 'failed' && (
+                            <span
+                              style={{ color: 'var(--tc-coral)' }}
+                              title={msg.error_message ?? undefined}
+                            >
+                              {' · failed to send'}
+                              {msg.error_message ? ` — ${msg.error_message}` : ''}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })
+              )}
+              <div ref={messagesEndRef} />
+            </div>
+
+            <footer 
+              className={replyMode === 'note' ? 'note-mode' : ''} 
+              style={{
+                background: '#ffffff',
+                border: '1px solid rgba(14, 26, 26, 0.08)',
+                borderRadius: '1rem',
+                margin: '10px 16px 16px',
+                padding: '10px',
+                boxShadow: '0 8px 24px -12px rgba(14,26,26,0.12), 0 2px 4px -2px rgba(14,26,26,0.06)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 8,
+                flexShrink: 0
+              }}
+            >
+              <div className="reply-tabs" style={{ padding: 0 }}>
+                <button
+                  className={'rt' + (replyMode === 'reply' ? ' on' : '')}
+                  onClick={() => setReplyMode('reply')}
+                  style={{ padding: '2px 8px 4px', fontSize: 11.5 }}
+                >
+                  Reply
+                </button>
+                <button
+                  className={'rt' + (replyMode === 'note' ? ' on note' : '')}
+                  onClick={() => setReplyMode('note')}
+                  style={{ padding: '2px 8px 4px', fontSize: 11.5 }}
+                >
+                  Internal note
+                </button>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <textarea
+                  placeholder={replyMode === 'note' ? 'Leave a note (only visible to you)…' : `Reply to ${selName.split(' ')[0]}…`}
+                  value={replyText}
+                  onChange={(e) => setReplyText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault()
+                      handleSend()
+                    }
+                  }}
+                  style={{
+                    flex: 1,
+                    minHeight: 36,
+                    maxHeight: 120,
+                    fontSize: 13,
+                    padding: '4px 6px',
+                    background: 'transparent',
+                    border: 'none',
+                    outline: 'none',
+                    resize: 'none'
+                  }}
+                />
+
+                <button
+                  onClick={handleSend}
+                  disabled={!replyText.trim() || sending}
+                  style={{
+                    width: 32,
+                    height: 32,
+                    borderRadius: 10,
+                    background: '#0FB5A1',
+                    color: '#ffffff',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    cursor: 'pointer',
+                    opacity: !replyText.trim() || sending ? 0.45 : 1,
+                    transition: 'all 0.15s',
+                    flexShrink: 0
+                  }}
+                  aria-label="Send reply"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="12" y1="19" x2="12" y2="5"></line>
+                    <polyline points="5 12 12 5 19 12"></polyline>
+                  </svg>
+                </button>
+              </div>
+            </footer>
+          </section>
+        ) : (
+          <aside className="inbox-col" style={{ flex: 1, display: 'flex', flexDirection: 'column', border: 'none', height: '100%' }}>
+            <div className="inbox-head">
+              <div className="search">
+                <span className="ico">⌕</span>
+                <input
+                  placeholder="Search messages, names…"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
+              </div>
+              <div className="seg">
+                <button
+                  className={filter === 'all' ? 'on' : ''}
+                  onClick={() => setFilter('all')}
+                >
+                  All
+                </button>
+                <button
+                  className={filter === 'unread' ? 'on' : ''}
+                  onClick={() => setFilter('unread')}
+                >
+                  Unread
+                  {unreadCount > 0 && <span className="seg-count">{unreadCount}</span>}
+                </button>
+                <button
+                  className={filter === 'caye-held' ? 'on' : ''}
+                  onClick={() => setFilter('caye-held')}
+                >
+                  <span className="caye-dot" /> Caye held
+                  {heldCount > 0 && <span className="seg-count">{heldCount}</span>}
+                </button>
+              </div>
+            </div>
+
+            <div className="inbox-list">
+              {loadingConvs ? (
+                <div style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--tc-ink-faint)', fontSize: 13 }}>
+                  Loading…
+                </div>
+              ) : filtered.length === 0 ? (
+                <div style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--tc-ink-faint)', fontSize: 13 }}>
+                  {searchQuery ? 'No results' : 'No conversations yet'}
+                </div>
+              ) : (
+                filtered.map((c) => (
+                  <ConversationRow
+                    key={c.id}
+                    conv={c}
+                    active={false}
+                    onClick={() => {
+                      setSelectedConv(c)
+                      if (inPanel) {
+                        setIsPanelDetail(true)
+                      }
+                    }}
+                  />
+                ))
+              )}
+            </div>
+          </aside>
+        )}
+
+        {bookingModalOpen && bookingInitialData && workspaceId && (
+          <BookingModal
+            workspaceId={workspaceId}
+            initial={bookingInitialData}
+            mode="new"
+            onClose={() => setBookingModalOpen(false)}
+            onSaved={() => {
+              setBookingModalOpen(false)
+              toast.success('Booking created successfully!')
+            }}
+          />
+        )}
+      </div>
+    )
+  }
+
   return (
     <div className={'chats-screen' + (contactPanelOpen && contactForPanel ? ' contact-info-open' : '')}>
 
       {/* INBOX LIST */}
       <aside className="inbox-col">
         <div className="inbox-head">
-          <div className="inbox-title">
-            <h2>Chats</h2>
-            <span className="count-pill">{conversations.length}</span>
-          </div>
+          {!inPanel && (
+            <div className="inbox-title">
+              <h2>Chats</h2>
+              <span className="count-pill">{conversations.length}</span>
+            </div>
+          )}
           <div className="search">
             <span className="ico">⌕</span>
             <input

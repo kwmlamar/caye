@@ -5,16 +5,18 @@ import { useSearchParams, useRouter, useParams } from "next/navigation"
 import type { Screen } from "@/lib/types"
 
 interface DashboardContextValue {
-  screen: Screen
-  setScreen: (s: Screen, extraParams?: Record<string, string>) => void
+  panelScreen: Screen
+  setPanelScreen: (s: Screen, extraParams?: Record<string, string>) => void
+  panelOpen: boolean
+  setPanelOpen: (v: boolean) => void
   sidebarExpanded: boolean
   setSidebarExpanded: (v: boolean) => void
-  cayeOpen: boolean
-  setCayeOpen: React.Dispatch<React.SetStateAction<boolean>>
   activeChatId: string
   setActiveChatId: (id: string) => void
   pendingContactChannelId: string | null
   setPendingContactChannelId: (id: string | null) => void
+  isPanelDetail: boolean
+  setIsPanelDetail: (v: boolean) => void
 }
 
 const DashboardContext = createContext<DashboardContextValue | null>(null)
@@ -26,19 +28,30 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
   const workspaceId = params?.workspaceId as string
 
   const tab = searchParams.get('tab') as Screen | null
-  const screen = (tab === 'contacts' || tab === 'calendar') ? tab : 'chats'
+  
+  const [panelOpen, setPanelOpenState] = useState(!!tab && tab !== 'home')
+  const [panelScreen, setPanelScreenState] = useState<Screen>(
+    (tab && tab !== 'home') ? tab : 'chats'
+  )
 
   const [sidebarExpanded, setSidebarExpanded] = useState(false)
-  const [cayeOpen, setCayeOpen] = useState(false)
   const [activeChatId, setActiveChatId] = useState('c1')
   const [pendingContactChannelId, setPendingContactChannelId] = useState<string | null>(null)
+  const [isPanelDetail, setIsPanelDetail] = useState(false)
 
-  const setScreen = (s: Screen, extraParams?: Record<string, string>) => {
+  const setPanelScreen = (s: Screen, extraParams?: Record<string, string>) => {
+    setIsPanelDetail(false)
+    setPanelScreenState(s)
+    if (s === 'home') {
+      setPanelOpenState(false)
+    } else {
+      setPanelOpenState(true)
+    }
+
     const searchVal = new URLSearchParams(searchParams.toString())
-    // Clear transient params by default
     searchVal.delete('contactChannelId')
 
-    if (s === 'chats') {
+    if (s === 'home') {
       searchVal.delete('tab')
     } else {
       searchVal.set('tab', s)
@@ -54,13 +67,30 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
     router.push(`/dashboard/${workspaceId}${queryString ? `?${queryString}` : ''}`)
   }
 
+  const setPanelOpen = (open: boolean) => {
+    if (!open) {
+      setIsPanelDetail(false)
+    }
+    setPanelOpenState(open)
+    const searchVal = new URLSearchParams(searchParams.toString())
+    if (!open) {
+      searchVal.delete('tab')
+      searchVal.delete('contactChannelId')
+    } else {
+      searchVal.set('tab', panelScreen)
+    }
+    const queryString = searchVal.toString()
+    router.push(`/dashboard/${workspaceId}${queryString ? `?${queryString}` : ''}`)
+  }
+
   return (
     <DashboardContext.Provider value={{
-      screen, setScreen,
+      panelScreen, setPanelScreen,
+      panelOpen, setPanelOpen,
       sidebarExpanded, setSidebarExpanded,
-      cayeOpen, setCayeOpen,
       activeChatId, setActiveChatId,
       pendingContactChannelId, setPendingContactChannelId,
+      isPanelDetail, setIsPanelDetail,
     }}>
       {children}
     </DashboardContext.Provider>

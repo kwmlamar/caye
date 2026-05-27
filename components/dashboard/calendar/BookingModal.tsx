@@ -29,9 +29,10 @@ interface Props {
   mode: 'new' | 'edit'
   onClose: () => void
   onSaved: () => void
+  inline?: boolean
 }
 
-export default function BookingModal({ workspaceId, initial, mode, onClose, onSaved }: Props) {
+export default function BookingModal({ workspaceId, initial, mode, onClose, onSaved, inline = false }: Props) {
   const [form, setForm] = useState<BookingModalData>(initial)
   const [services, setServices] = useState<Service[]>([])
   const [saving, setSaving] = useState(false)
@@ -140,6 +141,160 @@ export default function BookingModal({ workspaceId, initial, mode, onClose, onSa
     onSaved()
   }
 
+  const fields = (
+    <>
+      <div className="bk-field">
+        <label>Service</label>
+        <select
+          className="s-input"
+          value={form.service_id ?? ''}
+          onChange={e => set('service_id', e.target.value || null)}
+        >
+          <option value="">— None —</option>
+          {services.map(s => (
+            <option key={s.id} value={s.id}>{s.name} ({s.duration_minutes} min)</option>
+          ))}
+        </select>
+      </div>
+
+      <div className="bk-field">
+        <label>Customer name *</label>
+        <input
+          className="s-input"
+          value={form.customer_name}
+          onChange={e => set('customer_name', e.target.value)}
+          placeholder="Jane Doe"
+        />
+      </div>
+
+      <div className="bk-field-row">
+        <div className="bk-field">
+          <label>Phone</label>
+          <input
+            className="s-input"
+            value={form.customer_phone}
+            onChange={e => set('customer_phone', e.target.value)}
+            placeholder="+1 (242) 555-0142"
+          />
+        </div>
+        <div className="bk-field">
+          <label>Email</label>
+          <input
+            className="s-input"
+            type="email"
+            value={form.customer_email}
+            onChange={e => set('customer_email', e.target.value)}
+            placeholder="jane@example.com"
+          />
+        </div>
+      </div>
+
+      <div className="bk-field-row">
+        <div className="bk-field">
+          <label>Date *</label>
+          <input
+            className="s-input"
+            type="date"
+            value={form.booking_date}
+            onChange={e => set('booking_date', e.target.value)}
+          />
+        </div>
+        <div className="bk-field">
+          <label>Time *</label>
+          <input
+            className="s-input"
+            type="time"
+            value={form.booking_time.slice(0, 5)}
+            onChange={e => set('booking_time', e.target.value)}
+          />
+        </div>
+        <div className="bk-field" style={{ maxWidth: 100 }}>
+          <label>Guests</label>
+          <input
+            className="s-input"
+            type="number"
+            min={1}
+            value={form.number_of_people}
+            onChange={e => set('number_of_people', Math.max(1, Number(e.target.value) || 1))}
+          />
+        </div>
+        <div className="bk-field" style={{ maxWidth: 140 }}>
+          <label>Duration (min)</label>
+          <input
+            className="s-input"
+            type="number"
+            min={15}
+            step={15}
+            placeholder={
+              services.find(s => s.id === form.service_id)?.duration_minutes?.toString() ?? '120'
+            }
+            value={form.duration_minutes ?? ''}
+            onChange={e => {
+              const v = e.target.value
+              set('duration_minutes', v === '' ? null : Math.max(15, Number(v) || 0))
+            }}
+          />
+        </div>
+      </div>
+
+      <div className="bk-field">
+        <label>Status</label>
+        <select
+          className="s-input"
+          value={form.status}
+          onChange={e => set('status', e.target.value as BookingModalData['status'])}
+        >
+          <option value="pending">Pending</option>
+          <option value="confirmed">Confirmed</option>
+          <option value="completed">Completed</option>
+          <option value="cancelled">Cancelled</option>
+        </select>
+      </div>
+
+      <div className="bk-field">
+        <label>Notes</label>
+        <textarea
+          className="s-textarea"
+          rows={3}
+          value={form.notes}
+          onChange={e => set('notes', e.target.value)}
+          placeholder="Anything Caye should know about this booking…"
+        />
+      </div>
+
+      {error && <div className="bk-modal-error">{error}</div>}
+    </>
+  )
+
+  const footerActions = (
+    <>
+      {mode === 'edit' && form.status !== 'cancelled' && (
+        <button className="ghost-btn danger" onClick={handleCancel} disabled={saving}>
+          Cancel booking
+        </button>
+      )}
+      <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+        <button className="ghost-btn" onClick={onClose} disabled={saving}>Close</button>
+        <button className="btn-primary" onClick={handleSave} disabled={saving}>
+          {saving ? 'Saving…' : mode === 'edit' ? 'Save changes' : 'Create booking'}
+        </button>
+      </div>
+    </>
+  )
+
+  if (inline) {
+    return (
+      <div className="bk-inline-container">
+        <div className="bk-inline-body">
+          {fields}
+        </div>
+        <footer className="bk-inline-foot">
+          {footerActions}
+        </footer>
+      </div>
+    )
+  }
+
   return (
     <div className="bk-modal-backdrop" onClick={onClose}>
       <div className="bk-modal" onClick={e => e.stopPropagation()}>
@@ -149,140 +304,11 @@ export default function BookingModal({ workspaceId, initial, mode, onClose, onSa
         </header>
 
         <div className="bk-modal-body">
-          <div className="bk-field">
-            <label>Service</label>
-            <select
-              className="s-input"
-              value={form.service_id ?? ''}
-              onChange={e => set('service_id', e.target.value || null)}
-            >
-              <option value="">— None —</option>
-              {services.map(s => (
-                <option key={s.id} value={s.id}>{s.name} ({s.duration_minutes} min)</option>
-              ))}
-            </select>
-          </div>
-
-          <div className="bk-field">
-            <label>Customer name *</label>
-            <input
-              className="s-input"
-              value={form.customer_name}
-              onChange={e => set('customer_name', e.target.value)}
-              placeholder="Jane Doe"
-            />
-          </div>
-
-          <div className="bk-field-row">
-            <div className="bk-field">
-              <label>Phone</label>
-              <input
-                className="s-input"
-                value={form.customer_phone}
-                onChange={e => set('customer_phone', e.target.value)}
-                placeholder="+1 (242) 555-0142"
-              />
-            </div>
-            <div className="bk-field">
-              <label>Email</label>
-              <input
-                className="s-input"
-                type="email"
-                value={form.customer_email}
-                onChange={e => set('customer_email', e.target.value)}
-                placeholder="jane@example.com"
-              />
-            </div>
-          </div>
-
-          <div className="bk-field-row">
-            <div className="bk-field">
-              <label>Date *</label>
-              <input
-                className="s-input"
-                type="date"
-                value={form.booking_date}
-                onChange={e => set('booking_date', e.target.value)}
-              />
-            </div>
-            <div className="bk-field">
-              <label>Time *</label>
-              <input
-                className="s-input"
-                type="time"
-                value={form.booking_time.slice(0, 5)}
-                onChange={e => set('booking_time', e.target.value)}
-              />
-            </div>
-            <div className="bk-field" style={{ maxWidth: 100 }}>
-              <label>Guests</label>
-              <input
-                className="s-input"
-                type="number"
-                min={1}
-                value={form.number_of_people}
-                onChange={e => set('number_of_people', Math.max(1, Number(e.target.value) || 1))}
-              />
-            </div>
-            <div className="bk-field" style={{ maxWidth: 140 }}>
-              <label>Duration (min)</label>
-              <input
-                className="s-input"
-                type="number"
-                min={15}
-                step={15}
-                placeholder={
-                  services.find(s => s.id === form.service_id)?.duration_minutes?.toString() ?? '120'
-                }
-                value={form.duration_minutes ?? ''}
-                onChange={e => {
-                  const v = e.target.value
-                  set('duration_minutes', v === '' ? null : Math.max(15, Number(v) || 0))
-                }}
-              />
-            </div>
-          </div>
-
-          <div className="bk-field">
-            <label>Status</label>
-            <select
-              className="s-input"
-              value={form.status}
-              onChange={e => set('status', e.target.value as BookingModalData['status'])}
-            >
-              <option value="pending">Pending</option>
-              <option value="confirmed">Confirmed</option>
-              <option value="completed">Completed</option>
-              <option value="cancelled">Cancelled</option>
-            </select>
-          </div>
-
-          <div className="bk-field">
-            <label>Notes</label>
-            <textarea
-              className="s-textarea"
-              rows={3}
-              value={form.notes}
-              onChange={e => set('notes', e.target.value)}
-              placeholder="Anything Caye should know about this booking…"
-            />
-          </div>
-
-          {error && <div className="bk-modal-error">{error}</div>}
+          {fields}
         </div>
 
         <footer className="bk-modal-foot">
-          {mode === 'edit' && form.status !== 'cancelled' && (
-            <button className="ghost-btn danger" onClick={handleCancel} disabled={saving}>
-              Cancel booking
-            </button>
-          )}
-          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-            <button className="ghost-btn" onClick={onClose} disabled={saving}>Close</button>
-            <button className="btn-primary" onClick={handleSave} disabled={saving}>
-              {saving ? 'Saving…' : mode === 'edit' ? 'Save changes' : 'Create booking'}
-            </button>
-          </div>
+          {footerActions}
         </footer>
       </div>
     </div>

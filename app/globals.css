@@ -1,5 +1,14 @@
 @import "tailwindcss";
 
+@theme {
+  --color-cream: #FAF7F2;
+  --color-near-black: #0E1A1A;
+  --color-caribbean-teal: #0FB5A1;
+  --color-caribbean-teal-hover: #0D9C8B;
+  --font-serif: var(--font-serif);
+  --font-logo: var(--font-logo);
+}
+
 :root {
   /* Surfaces */
   --tc-bg:          #edebe6; /* Crisp warm gray background */
@@ -1314,4 +1323,48 @@
   font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase;
   color: rgba(245,243,238,0.5);
   flex-wrap: wrap; gap: 12px; font-weight: 500;
+}
+
+/* Warm gradient canvas for the chat dashboard page */
+.tc-canvas {
+  background:
+    radial-gradient(ellipse 80% 50% at 50% 0%, rgba(255, 220, 190, 0.25), transparent 70%),
+    radial-gradient(ellipse 60% 40% at 100% 100%, rgba(15, 181, 161, 0.04), transparent 70%),
+    #FAF7F2 !important;
+}
+
+/* Scrollbar styles - thin and invisible until hovered */
+.tc-content {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(14, 26, 26, 0.12) transparent;
+}
+.tc-content::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.tc-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+.tc-content::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 8px;
+}
+.tc-content:hover::-webkit-scrollbar-thumb {
+  background: rgba(14, 26, 26, 0.12);
+}
+
+/* Nested scrollbars inside tc-content should also follow this */
+.tc-content ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.tc-content ::-webkit-scrollbar-track {
+  background: transparent;
+}
+.tc-content ::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 8px;
+}
+.tc-content:hover ::-webkit-scrollbar-thumb {
+  background: rgba(14, 26, 26, 0.12);
 }

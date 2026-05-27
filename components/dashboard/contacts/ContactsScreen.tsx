@@ -24,8 +24,8 @@ const CH_LABEL: Record<ChannelType, string> = {
   wa: 'WhatsApp', ig: 'Instagram', fb: 'Messenger', em: 'Email',
 }
 
-export default function ContactsScreen() {
-  const { setScreen, setPendingContactChannelId } = useDashboard()
+export default function ContactsScreen({ inPanel = false }: { inPanel?: boolean }) {
+  const { setPanelScreen, setPendingContactChannelId, isPanelDetail, setIsPanelDetail } = useDashboard()
   const { workspaceId } = useWorkspace()
   const searchParams = useSearchParams()
   const contactChannelId = searchParams.get('contactChannelId')
@@ -43,6 +43,12 @@ export default function ContactsScreen() {
   }, [q])
 
   useEffect(() => {
+    if (inPanel && !isPanelDetail) {
+      setActive(null)
+    }
+  }, [isPanelDetail, inPanel])
+
+  useEffect(() => {
     let ignore = false
     async function load() {
       setLoading(true)
@@ -57,7 +63,8 @@ export default function ContactsScreen() {
               if (matched) return matched
             }
             if (prev && data.some(c => c.id === prev.id)) return prev
-            return data.length > 0 ? data[0] : null
+            // Auto-select first if not in panel
+            return (!inPanel && data.length > 0) ? data[0] : null
           })
         }
         setLoading(false)
@@ -65,7 +72,7 @@ export default function ContactsScreen() {
     }
     load()
     return () => { ignore = true }
-  }, [debouncedQ, contactChannelId])
+  }, [debouncedQ, contactChannelId, inPanel])
 
   // Derive top 3 tags from loaded contacts for filter tabs
   const tagCounts = contacts.reduce<Record<string, number>>((acc, c) => {
@@ -83,17 +90,118 @@ export default function ContactsScreen() {
 
   const handleMessage = () => {
     if (active?.channel_id) setPendingContactChannelId(active.channel_id)
-    setScreen('chats')
+    setPanelScreen('chats')
+  }
+
+  if (inPanel) {
+    return (
+      <div className="contacts-screen" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+        {active ? (
+          <ContactDetailPanel
+            contact={active}
+            workspaceId={workspaceId}
+            onMessageClick={handleMessage}
+            onClose={() => {
+              setActive(null)
+              setIsPanelDetail(false)
+            }}
+            onContactUpdated={(updated) => {
+              setContacts(p => p.map(c => c.id === updated.id ? updated : c))
+              setActive(updated)
+            }}
+          />
+        ) : (
+          <aside className="contacts-list" style={{ borderRight: 'none', flex: 1, display: 'flex', flexDirection: 'column' }}>
+            <div className="ct-head">
+              <div className="search">
+                <span className="ico">⌕</span>
+                <input
+                  placeholder="Find by name, phone, email…"
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                />
+              </div>
+              <div className="seg">
+                <button className={tagFilter === null ? 'on' : ''} onClick={() => setTagFilter(null)}>
+                  All
+                </button>
+                {topTags.map(tag => (
+                  <button
+                    key={tag}
+                    className={tagFilter === tag ? 'on' : ''}
+                    onClick={() => setTagFilter(tagFilter === tag ? null : tag)}
+                  >
+                    {tag} <span className="seg-count">{tagCounts[tag]}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="ct-table" style={{ padding: '0 4px 16px' }}>
+              <div className="ct-table-head" style={{ gridTemplateColumns: '1fr 60px 1fr' }}>
+                <span>Name</span>
+                <span>Ch</span>
+                <span>Last seen</span>
+              </div>
+
+              {loading ? (
+                [...Array(7)].map((_, i) => (
+                  <div key={i} className="ct-row" style={{ opacity: 0.35, pointerEvents: 'none' }}>
+                    <span className="ct-name">
+                      <span style={{ width: 28, height: 28, borderRadius: '50%', background: 'var(--tc-ink-faint)', display: 'inline-block', flexShrink: 0 }} />
+                      <div>
+                        <div style={{ width: 80, height: 9, background: 'var(--tc-ink-faint)', borderRadius: 4 }} />
+                      </div>
+                    </span>
+                  </div>
+                ))
+              ) : filtered.length === 0 ? (
+                <div style={{ padding: '48px 24px', textAlign: 'center', color: 'var(--tc-ink-faint)', fontSize: 13 }}>
+                  {q ? 'No contacts match' : 'No contacts yet'}
+                </div>
+              ) : (
+                filtered.map(c => (
+                  <button
+                    key={c.id}
+                    className="ct-row"
+                    onClick={() => {
+                      setActive(c)
+                      setIsPanelDetail(true)
+                    }}
+                    style={{ gridTemplateColumns: '1fr 60px 1fr' }}
+                  >
+                    <span className="ct-name">
+                      <Avatar name={c.name || c.phone_number || '?'} size={28} />
+                      <div className="truncate text-left">
+                        <div className="n truncate">{c.name || 'Unknown'}</div>
+                      </div>
+                    </span>
+                    <span className="ct-ch">
+                      <ChannelIcon ch={toChannelType(c.channel_type)} size={18} />
+                    </span>
+                    <span className="ct-ls text-right">
+                      {c.last_message_at ? formatDistanceToNow(c.last_message_at) : '—'}
+                    </span>
+                  </button>
+                ))
+              )}
+            </div>
+          </aside>
+        )}
+      </div>
+    )
   }
 
   return (
     <div className="contacts-screen">
       <aside className="contacts-list">
         <div className="ct-head">
-          <div className="inbox-title">
-            <h2>Contacts</h2>
-            <span className="count-pill">{contacts.length}</span>
-          </div>
+          {!inPanel && (
+            <div className="inbox-title">
+              <h2>Contacts</h2>
+              <span className="count-pill">{contacts.length}</span>
+            </div>
+          )}
           <div className="search">
             <span className="ico">⌕</span>
             <input

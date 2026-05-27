@@ -42,7 +42,7 @@ export default function SettingsPage() {
     tabParam && VALID_SECTIONS.has(tabParam) ? tabParam : 'caye'
   )
 
-  const { cayeOpen, setCayeOpen } = useDashboard()
+  const { panelOpen, setPanelOpen } = useDashboard()
   const mainRef = useRef<HTMLDivElement>(null)
 
   const setActive = useCallback((section: SettingsSection) => {
@@ -74,11 +74,11 @@ export default function SettingsPage() {
             <input placeholder="Search settings…" />
           </div>
           <button
-            className={`tb-caye${cayeOpen ? ' on' : ''}`}
-            onClick={() => setCayeOpen(v => !v)}
+            className={`tb-caye${panelOpen ? ' on' : ''}`}
+            onClick={() => setPanelOpen(!panelOpen)}
           >
             <span className="caye-dot" style={{ width: 8, height: 8 }}></span>
-            {cayeOpen ? 'Caye is on' : 'Ask Caye'}
+            {panelOpen ? 'Caye is on' : 'Ask Caye'}
             <span className="kbd">⌘J</span>
           </button>
         </div>

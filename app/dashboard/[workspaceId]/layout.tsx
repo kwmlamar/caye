@@ -3,7 +3,6 @@
 import { useEffect, useState, use, Suspense } from "react"
 import { useRouter } from "next/navigation"
 import Sidebar from "@/components/dashboard/Sidebar"
-import CayePanel from "@/components/dashboard/CayePanel"
 import ViewportRedirect from "@/components/mobile/ViewportRedirect"
 import { getSession, getSupabase } from "@/lib/supabase"
 import { WorkspaceProvider, type WorkspaceMembership } from "@/lib/workspace-context"
@@ -20,18 +19,18 @@ interface ShellProps {
 
 // Separate inner component so it can access DashboardContext
 function DashboardShell({ children, workspace, workspaceId, workspaces, isOwner }: ShellProps) {
-  const { cayeOpen, setCayeOpen } = useDashboard()
+  const { panelOpen, setPanelOpen } = useDashboard()
 
   useEffect(() => {
     const fn = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'j') {
         e.preventDefault()
-        setCayeOpen(v => !v)
+        setPanelOpen(!panelOpen)
       }
     }
     window.addEventListener('keydown', fn)
     return () => window.removeEventListener('keydown', fn)
-  }, [setCayeOpen])
+  }, [panelOpen, setPanelOpen])
 
   return (
     <WorkspaceProvider value={{ workspace, workspaceId, workspaces, isOwner }}>
@@ -39,10 +38,9 @@ function DashboardShell({ children, workspace, workspaceId, workspaces, isOwner 
       <div className="tc-root">
         <div className="tc-frame">
           <Sidebar workspaceId={workspaceId} />
-          <div className={`tc-main${cayeOpen ? ' caye-open' : ''}`}>
+          <div className={`tc-main${panelOpen ? ' caye-open' : ''}`}>
             {children}
           </div>
-          <CayePanel open={cayeOpen} onClose={() => setCayeOpen(false)} />
         </div>
       </div>
     </WorkspaceProvider>

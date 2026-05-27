@@ -150,5 +150,21 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(fail('zoho_error=db_save'))
   }
 
+  // Fire discovery job (fire-and-forget — don't block the redirect)
+  try {
+    const discoveryUrl = `${appUrl}/api/caye/discovery`
+    fetch(discoveryUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-discovery-secret': process.env.DISCOVERY_SECRET || '',
+      },
+      body: JSON.stringify({ workspaceId }),
+    }).catch(err => console.error('[zoho/callback] Discovery trigger failed:', err))
+  } catch (err) {
+    console.error('[zoho/callback] Discovery fetch setup failed:', err)
+  }
+
   return NextResponse.redirect(ok('zoho_connected=1'))
 }
+

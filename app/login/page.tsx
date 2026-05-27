@@ -4,6 +4,8 @@ import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { signIn, signInWithOAuth, getSession } from "@/lib/supabase"
+import { CayeMark } from "@/components/brand/CayeMark"
+import { CayeLogo } from "@/components/brand/CayeLogo"
 
 function isMobileViewport() {
   return typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches
@@ -51,8 +53,8 @@ export default function LoginPage() {
   if (loading && !error && !email) {
     return (
       <div className="login-root">
-        <div className="login-card" style={{ alignItems: 'center', justifyContent: 'center', minHeight: 220 }}>
-          <span className="sb-mark" style={{ width: 36, height: 36, fontSize: 17, opacity: 0.6 }}>C</span>
+        <div className="login-card" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 220 }}>
+          <CayeMark size={48} className="opacity-60" />
         </div>
       </div>
     )
@@ -61,9 +63,8 @@ export default function LoginPage() {
   return (
     <div className="login-root">
       <div className="login-card">
-        <div className="login-brand">
-          <span className="sb-mark" style={{ width: 36, height: 36, fontSize: 17 }}>C</span>
-          <span style={{ fontSize: 22, fontWeight: 600, letterSpacing: '-0.02em', color: 'var(--tc-ink)' }}>Caye</span>
+        <div className="flex justify-center mb-6">
+          <CayeLogo size={32} />
         </div>
 
         <h1 className="login-heading">Sign in</h1>

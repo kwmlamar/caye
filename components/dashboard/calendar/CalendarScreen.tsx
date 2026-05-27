@@ -1,10 +1,9 @@
-'use client'
-
 import { useState, useEffect, useCallback } from 'react'
-import CayeMark from '@/components/ui/CayeMark'
+import { CayeMark } from '@/components/brand/CayeMark'
 import { getSupabase } from '@/lib/supabase'
 import { useWorkspace } from '@/lib/workspace-context'
 import BookingModal, { type BookingModalData } from './BookingModal'
+import { useDashboard } from '@/lib/dashboard-context'
 
 const ROW_H = 56
 const START = 8
@@ -174,21 +173,22 @@ function buildMonthGrid(date: Date): (Date | null)[] {
   return cells
 }
 
-export default function CalendarScreen() {
+export default function CalendarScreen({ inPanel = false }: { inPanel?: boolean }) {
   const { workspaceId } = useWorkspace()
+  const { isPanelDetail, setIsPanelDetail } = useDashboard()
 
   const todayDate = new Date()
   todayDate.setHours(0, 0, 0, 0)
 
-  const [view, setView] = useState<'WEEK' | 'DAY' | 'MONTH'>('WEEK')
+  const [view, setView] = useState<'WEEK' | 'DAY' | 'MONTH'>(inPanel ? 'DAY' : 'WEEK')
   const [weekOf, setWeekOf] = useState<Date>(weekStart(todayDate))
   const [monthOf, setMonthOf] = useState<Date>(new Date(todayDate.getFullYear(), todayDate.getMonth(), 1))
   const [bookings, setBookings] = useState<SupaBooking[]>([])
   const [loading, setLoading] = useState(true)
   const [modal, setModal] = useState<{ mode: 'new' | 'edit'; data: BookingModalData } | null>(null)
 
-  const weekDays = Array.from({ length: 7 }, (_, i) => addDays(weekOf, i))
-  const weekEnd = weekDays[6]
+  const weekDays = view === 'DAY' ? [todayDate] : Array.from({ length: 7 }, (_, i) => addDays(weekOf, i))
+  const weekEnd = weekDays[weekDays.length - 1]
 
   const fetchBookings = useCallback(async () => {
     setLoading(true)
@@ -199,6 +199,9 @@ export default function CalendarScreen() {
       const y = monthOf.getFullYear(), mo = monthOf.getMonth()
       start = toISO(new Date(y, mo, 1))
       end = toISO(new Date(y, mo + 1, 0))
+    } else if (view === 'DAY') {
+      start = toISO(todayDate)
+      end = toISO(todayDate)
     } else {
       start = toISO(weekOf)
       end = toISO(weekEnd)
@@ -220,11 +223,36 @@ export default function CalendarScreen() {
 
   useEffect(() => { fetchBookings() }, [fetchBookings])
 
+  useEffect(() => {
+    if (inPanel && !isPanelDetail) {
+      setModal(null)
+    }
+  }, [isPanelDetail, inPanel])
+
   const bookingsForDate = (iso: string) => bookings.filter(b => b.booking_date === iso)
   const isToday = (d: Date) => toISO(d) === toISO(todayDate)
 
-  const navPrev = () => view === 'MONTH' ? setMonthOf(m => addMonths(m, -1)) : setWeekOf(w => addDays(w, -7))
-  const navNext = () => view === 'MONTH' ? setMonthOf(m => addMonths(m, 1)) : setWeekOf(w => addDays(w, 7))
+  const navPrev = () => {
+    if (view === 'MONTH') {
+      setMonthOf(m => addMonths(m, -1))
+    } else if (view === 'DAY') {
+      // In Day view, we can just move todayDate forward/backward. For simplicity:
+      todayDate.setDate(todayDate.getDate() - 1)
+      fetchBookings()
+    } else {
+      setWeekOf(w => addDays(w, -7))
+    }
+  }
+  const navNext = () => {
+    if (view === 'MONTH') {
+      setMonthOf(m => addMonths(m, 1))
+    } else if (view === 'DAY') {
+      todayDate.setDate(todayDate.getDate() + 1)
+      fetchBookings()
+    } else {
+      setWeekOf(w => addDays(w, 7))
+    }
+  }
   const goToday = () => {
     setWeekOf(weekStart(todayDate))
     setMonthOf(new Date(todayDate.getFullYear(), todayDate.getMonth(), 1))
@@ -232,6 +260,8 @@ export default function CalendarScreen() {
 
   const rangeLabel = view === 'MONTH'
     ? monthOf.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+    : view === 'DAY'
+    ? todayDate.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' })
     : (() => {
         const f = (d: Date, o: Intl.DateTimeFormatOptions) => d.toLocaleDateString('en-US', o)
         return `${f(weekOf, { month: 'short', day: 'numeric' })} – ${f(weekEnd, { month: 'short', day: 'numeric', year: 'numeric' })}`
@@ -244,11 +274,31 @@ export default function CalendarScreen() {
 
   const monthGrid = view === 'MONTH' ? buildMonthGrid(monthOf) : []
 
+  if (inPanel && modal && workspaceId) {
+    return (
+      <BookingModal
+        workspaceId={workspaceId}
+        initial={modal.data}
+        mode={modal.mode}
+        inline={true}
+        onClose={() => {
+          setModal(null)
+          setIsPanelDetail(false)
+        }}
+        onSaved={() => {
+          setModal(null)
+          setIsPanelDetail(false)
+          fetchBookings()
+        }}
+      />
+    )
+  }
+
   return (
-    <div className="cal-screen">
-      <header className="cal-head">
+    <div className="cal-screen" style={inPanel ? { padding: 12 } : {}}>
+      <header className="cal-head" style={inPanel ? { flexWrap: 'wrap', gap: 12 } : {}}>
         <div className="cal-left">
-          <h2>Calendar</h2>
+          {!inPanel && <h2>Calendar</h2>}
           <div className="cal-nav">
             <button className="ico-btn" onClick={navPrev}>←</button>
             <span className="cal-range">{loading ? '…' : rangeLabel}</span>
@@ -256,21 +306,28 @@ export default function CalendarScreen() {
             <button className="ghost-btn sm" onClick={goToday}>Today</button>
           </div>
         </div>
-        <div className="cal-right">
-          <div className="cal-stats">
-            <span><b>{confirmed}</b> confirmed</span>
-            <span><b>{pending}</b> pending</span>
-            <span className="caye"><CayeMark size={12} /> <b>{byCaye}</b> by Caye</span>
-            <span><b>{guests}</b> guests</span>
-          </div>
+        <div className="cal-right" style={inPanel ? { width: '100%', justifyContent: 'space-between', marginTop: 4, flexWrap: 'wrap', gap: 8 } : {}}>
+          {!inPanel && (
+            <div className="cal-stats">
+              <span><b>{confirmed}</b> confirmed</span>
+              <span><b>{pending}</b> pending</span>
+              <span className="caye"><CayeMark size={12} /> <b>{byCaye}</b> by Caye</span>
+              <span><b>{guests}</b> guests</span>
+            </div>
+          )}
           <div className="seg-2">
             <span className={view === 'WEEK' ? 'on' : ''} onClick={() => setView('WEEK')} style={{ cursor: 'pointer' }}>Week</span>
             <span className={view === 'DAY' ? 'on' : ''} onClick={() => setView('DAY')} style={{ cursor: 'pointer' }}>Day</span>
             <span className={view === 'MONTH' ? 'on' : ''} onClick={() => setView('MONTH')} style={{ cursor: 'pointer' }}>Month</span>
           </div>
           <button
-            className="btn-primary sm"
-            onClick={() => setModal({ mode: 'new', data: emptyBookingForm(toISO(todayDate)) })}
+            className="btn-primary sm cursor-pointer"
+            onClick={() => {
+              setModal({ mode: 'new', data: emptyBookingForm(toISO(todayDate)) })
+              if (inPanel) {
+                setIsPanelDetail(true)
+              }
+            }}
           >
             + New booking
           </button>
@@ -297,7 +354,12 @@ export default function CalendarScreen() {
                         key={b.id}
                         className={`cal-month-bk ${b.status}`}
                         style={{ cursor: 'pointer' }}
-                        onClick={() => setModal({ mode: 'edit', data: bookingToForm(b) })}
+                        onClick={() => {
+                          setModal({ mode: 'edit', data: bookingToForm(b) })
+                          if (inPanel) {
+                            setIsPanelDetail(true)
+                          }
+                        }}
                       >
                         <span className="cmb-time">{fmtTime(b.booking_time)}</span>
                         <span className="cmb-name">{b.customer_name}</span>
@@ -317,7 +379,7 @@ export default function CalendarScreen() {
 
       {/* ── WEEK / DAY VIEW ── */}
       {view !== 'MONTH' && (
-        <div className="cal-grid-wrap">
+        <div className="cal-grid-wrap font-sans">
           <div className="cal-week-head">
             <div className="time-gutter" />
             {weekDays.map(date => {
@@ -362,7 +424,12 @@ export default function CalendarScreen() {
                           key={b.id}
                           className={cls}
                           style={{ top, height, cursor: 'pointer' }}
-                          onClick={() => setModal({ mode: 'edit', data: bookingToForm(b) })}
+                          onClick={() => {
+                            setModal({ mode: 'edit', data: bookingToForm(b) })
+                            if (inPanel) {
+                              setIsPanelDetail(true)
+                            }
+                          }}
                         >
                           <div className="bk-top">
                             <span className="bk-time">
@@ -416,7 +483,12 @@ export default function CalendarScreen() {
                             <li
                               key={b.id}
                               className="bk-party"
-                              onClick={() => setModal({ mode: 'edit', data: bookingToForm(b) })}
+                              onClick={() => {
+                                setModal({ mode: 'edit', data: bookingToForm(b) })
+                                if (inPanel) {
+                                  setIsPanelDetail(true)
+                                }
+                              }}
                               style={{ cursor: 'pointer' }}
                             >
                               <span className="bk-party-name">
@@ -445,7 +517,8 @@ export default function CalendarScreen() {
         </div>
       )}
 
-      {modal && workspaceId && (
+      {/* Editing Booking Modal Integration (when not in panel) */}
+      {!inPanel && modal && workspaceId && (
         <BookingModal
           workspaceId={workspaceId}
           initial={modal.data}

@@ -1,4 +1,4 @@
-import CayeMark from '@/components/ui/CayeMark'
+import { CayeMark } from '@/components/brand/CayeMark'
 
 export default function CayeFab({ onClick }: { onClick: () => void }) {
   return (
