@@ -13,6 +13,7 @@ import {
   type CustomerHistorySummary,
   type BookingHistoryRow,
 } from './customer-history'
+import { classifyInbound, toneHintFor, type InboundCategory } from './inbound-classifier'
 
 export type CayeAutoReply =
   | { action: 'reply'; content: string; bookingId?: string }
@@ -259,6 +260,7 @@ function buildSystem(
   contactProfile: ContactStyleProfile | undefined,
   businessLinks: BusinessLinks | undefined,
   customerHistory: CustomerHistorySummary | undefined,
+  inboundCategory: InboundCategory | null,
   channel: string,
   isEmail: boolean,
   isFirstMessage: boolean,
@@ -295,6 +297,13 @@ function buildSystem(
     const historyBlock = formatCustomerHistoryBlock(customerHistory)
     if (historyBlock) s += '\n\n' + historyBlock
   }
+
+  // Inbound-context tone modifier. Pure classifier picks a category from
+  // the inbound body (or returns null when uncertain); toneHintFor maps
+  // the category to a short prompt addendum. When category is null the
+  // hint is empty — Caye falls back to her default tone.
+  const toneHint = toneHintFor(inboundCategory)
+  if (toneHint) s += '\n\n' + toneHint
 
   // Inject business links only when at least one is set — empty block adds
   // noise to the prompt and could confuse the model into mentioning links
@@ -991,12 +1000,21 @@ export async function generateCayeAutoReply(
     }
   }
 
+  // Classify the inbound so buildSystem can append a situational tone
+  // hint. Cheap regex/keyword pass — no API call. Returns null on
+  // uncertainty (default tone takes over).
+  const { category: inboundCategory } = classifyInbound(
+    inbound.body,
+    inbound.subject ?? ''
+  )
+
   const system = buildSystem(
     systemPrompt,
     voiceProfile,
     contactProfile,
     businessLinks,
     customerHistory,
+    inboundCategory,
     inbound.channel,
     isEmail,
     inbound.isFirstMessage ?? false,
