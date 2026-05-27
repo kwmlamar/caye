@@ -513,7 +513,7 @@ export default function HomeScreen() {
               </div>
 
               {/* Chat Input anchored at bottom in active view */}
-              <div className="space-y-4 pt-6 border-t border-near-black/5 mt-auto flex-shrink-0">
+              <div className="space-y-4 pt-6 pb-6 border-t border-near-black/5 mt-auto flex-shrink-0">
                 {renderInputBox()}
               </div>
             </div>

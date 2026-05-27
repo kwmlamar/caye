@@ -16,7 +16,7 @@
   --tc-bg-deep:     #e2dfd7; /* Distinct card borders & accents */
   --tc-bg-deeper:   #d8d4cb;
   --tc-bg-dark:     #0b1419;
-  --tc-bg-app:      #faf8f5; /* Light pearlescent main page backdrop */
+  --tc-bg-app:      #E8E3D9; /* Warm linen canvas — creates contrast for glass sidebar */
   --tc-bg-rail:     #f4f1ea;
 
   /* Ink */
@@ -1328,9 +1328,10 @@
 /* Warm gradient canvas for the chat dashboard page */
 .tc-canvas {
   background:
-    radial-gradient(ellipse 80% 50% at 50% 0%, rgba(255, 220, 190, 0.25), transparent 70%),
-    radial-gradient(ellipse 60% 40% at 100% 100%, rgba(15, 181, 161, 0.04), transparent 70%),
-    #FAF7F2 !important;
+    radial-gradient(circle 800px at 90% 10%, rgba(15, 181, 161, 0.12), transparent 70%),
+    radial-gradient(circle 800px at 10% 90%, rgba(200, 169, 110, 0.14), transparent 70%),
+    radial-gradient(circle 1000px at 50% 50%, rgba(255, 255, 255, 0.35), transparent 80%),
+    #E8E3D9 !important;
 }
 
 /* Scrollbar styles - thin and invisible until hovered */
