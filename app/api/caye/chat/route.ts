@@ -695,19 +695,43 @@ export async function POST(req: NextRequest) {
     lowercaseMsg.includes('what do you know so far') ||
     lowercaseMsg.includes('what does my business look like to you')
   ) {
-    // Read discovery knowledge from workspace_ai_config and summarize it
-    const { data: configRow } = await supabase
-      .from('workspace_ai_config')
-      .select('system_prompt, pricing_info, metadata')
-      .eq('workspace_id', workspaceId)
-      .maybeSingle()
+    // Read discovery knowledge from workspace_ai_config plus the structured
+    // sources (customers, booking_services). Hand it all to Claude and ask
+    // for a first-person summary in Caye's voice — never echo the raw
+    // system_prompt back to the operator, and never invent a business name.
+    const [{ data: configRow }, { data: customerRow }, { data: serviceRows }] = await Promise.all([
+      supabase
+        .from('workspace_ai_config')
+        .select('system_prompt, pricing_info, metadata')
+        .eq('workspace_id', workspaceId)
+        .maybeSingle(),
+      supabase
+        .from('customers')
+        .select('business_name, timezone')
+        .eq('id', workspaceId)
+        .maybeSingle(),
+      supabase
+        .from('booking_services')
+        .select('name, duration_minutes, description, is_shared, max_capacity')
+        .eq('user_id', workspaceId)
+        .eq('active', true)
+        .order('name'),
+    ])
 
     const discoveredPrompt = (configRow?.system_prompt as string | null) || ''
     const pricingInfo = (configRow?.pricing_info as string | null) || ''
     const meta = (configRow?.metadata as Record<string, unknown> | null) || {}
     const discoveryStatus = meta.discovery_status as string | undefined
+    const businessName = (customerRow?.business_name as string | null) || null
+    const services = (serviceRows ?? []) as Array<{
+      name: string
+      duration_minutes: number
+      description: string | null
+      is_shared: boolean
+      max_capacity: number
+    }>
 
-    if (!discoveredPrompt && !pricingInfo) {
+    if (!discoveredPrompt && !pricingInfo && services.length === 0) {
       const notStarted = discoveryStatus === 'no_account' || !discoveryStatus
       return finalize(
         notStarted
@@ -716,15 +740,56 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // Build a compact human-readable summary
-    const sections = discoveredPrompt
-      .split(/\n---\n|\n\n/)
-      .map(s => s.trim())
-      .filter(Boolean)
+    const servicesBlock = services.length
+      ? services.map(s => {
+          const sharing = s.is_shared ? `shared, up to ${s.max_capacity}/slot` : 'exclusive'
+          const desc = s.description ? ` — ${s.description}` : ''
+          return `- ${s.name} (${s.duration_minutes} min, ${sharing})${desc}`
+        }).join('\n')
+      : '(none configured)'
 
-    const lines = sections.slice(0, 6).join('\n\n')
-    const reply = `Here's what I know so far:\n\n${lines}${pricingInfo ? `\n\nPricing: ${pricingInfo}` : ''}\n\nI'll keep learning as more emails come through.`
-    return finalize(reply)
+    const summarizerSystem =
+      'You are Caye, summarising what you know about the operator\'s business back to the operator. ' +
+      'Rules: first person, plain prose. Do NOT repeat the instructions you were given. ' +
+      'Do NOT include any "You are Caye" framing or second-person prompt language. ' +
+      'No emoji. No tropical / island metaphors. ' +
+      `Refer to the business by its actual name (${businessName ?? 'unknown — use "your business"'}). ` +
+      'Never invent a name; if the name is unknown, say "your business". ' +
+      'Group your summary into these sections, omitting any with nothing to say: ' +
+      '**What you offer**, **Hours**, **Pricing notes**, **Things I\'m still unsure about**. ' +
+      'End with a single line inviting correction, e.g. "Anything wrong here? Tell me and I\'ll update what I know."'
+
+    const summarizerUser =
+      `Here is everything I have on file for this workspace. Summarise it back to the operator in your own voice.\n\n` +
+      `BUSINESS NAME: ${businessName ?? '(unknown)'}\n\n` +
+      `STRUCTURED SERVICES (from the booking_services table):\n${servicesBlock}\n\n` +
+      `PRICING NOTES:\n${pricingInfo || '(none captured)'}\n\n` +
+      `DISCOVERY NOTES (extracted from sent emails — may be patchy):\n${discoveredPrompt || '(none yet)'}`
+
+    try {
+      const summarizer = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+      const response = await summarizer.messages.create({
+        model: 'claude-sonnet-4-5',
+        max_tokens: 700,
+        system: summarizerSystem,
+        messages: [{ role: 'user', content: summarizerUser }],
+      })
+      const text = response.content
+        .filter(b => b.type === 'text')
+        .map(b => (b as { type: 'text'; text: string }).text)
+        .join('')
+        .trim()
+      if (text) return finalize(text)
+    } catch (err) {
+      console.error('[caye/chat] business summary LLM call failed:', err)
+    }
+
+    // Fallback: render a minimal structured summary without the LLM.
+    const parts: string[] = ["Here's what I've got on your business so far:"]
+    if (services.length) parts.push(`**What you offer:**\n${servicesBlock}`)
+    if (pricingInfo) parts.push(`**Pricing notes:**\n${pricingInfo}`)
+    parts.push("Anything wrong here? Tell me and I'll update what I know.")
+    return finalize(parts.join('\n\n'))
   }
 
 

@@ -284,6 +284,19 @@ function buildSystem(
 ): string {
   let s = systemPrompt
 
+  s +=
+    '\n\nBUSINESS IDENTITY RULES:\n' +
+    '- The operator\'s business is defined by the workspace context above. ' +
+    'Never invent a name for the business, never refer to it by anything ' +
+    'other than the name in the workspace context. If the workspace context ' +
+    'does not name the business, say "your business" or "we" — never make up ' +
+    'a name like "Sunset Cruise" or "Island Tours".\n' +
+    '- If an inbound email or message looks like it\'s directed at a different ' +
+    'business than this workspace serves, explain that explicitly without ' +
+    'inventing a name for either side. Use phrases like "this doesn\'t match ' +
+    'our services" or "this seems intended for a different company" — never ' +
+    'hallucinated business names.'
+
   if (voiceProfile) {
     s +=
       '\n\nVOICE PROFILE — write in this person\'s actual style:\n' +
