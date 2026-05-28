@@ -461,8 +461,8 @@ export default function HomeScreen() {
                   if (m.from === 'caye') {
                     return (
                       <div key={idx} className="flex items-start gap-4 w-full">
-                        <div className="w-10 h-10 rounded-xl bg-near-black flex items-center justify-center text-white flex-shrink-0 mt-1">
-                          <CayeMark size={20} />
+                        <div className="w-12 h-12 rounded-xl bg-near-black flex items-center justify-center text-white flex-shrink-0 mt-1">
+                          <CayeMark size={26} />
                         </div>
                         <div className="flex-1 min-w-0">
                           <div className="text-[15px] leading-[1.7] text-near-black/85 font-sans">
@@ -493,8 +493,8 @@ export default function HomeScreen() {
                 {/* Typing Indicator */}
                 {typing && (
                   <div className="flex items-start gap-4">
-                    <div className="w-10 h-10 rounded-xl bg-near-black flex items-center justify-center text-white flex-shrink-0 mt-1">
-                      <CayeMark size={20} />
+                    <div className="w-12 h-12 rounded-xl bg-near-black flex items-center justify-center text-white flex-shrink-0 mt-1">
+                      <CayeMark size={26} />
                     </div>
                     <div className="flex-1 min-w-0 flex items-center">
                       <div className="px-1 py-3 flex items-center gap-1">
