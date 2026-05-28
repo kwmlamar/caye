@@ -477,14 +477,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  let body: { message: string; workspaceId: string; history?: HistoryMessage[] }
+  let body: { message: string; workspaceId: string; threadId?: string | null; history?: HistoryMessage[] }
   try {
     body = await req.json()
   } catch {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
   }
 
-  const { message, workspaceId, history = [] } = body
+  const { message, workspaceId } = body
+  let { threadId, history = [] } = body
   if (!message || !workspaceId) {
     return NextResponse.json({ error: 'message and workspaceId are required' }, { status: 400 })
   }
@@ -510,88 +511,176 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // Thread setup: create if missing, verify ownership otherwise, then load history from DB.
+  let threadTitle: string | null = null
+  if (threadId) {
+    const { data: thread } = await supabase
+      .from('caye_threads')
+      .select('user_id, title')
+      .eq('id', threadId)
+      .maybeSingle()
+    if (!thread || thread.user_id !== user.id) {
+      return NextResponse.json({ error: 'Thread not found' }, { status: 404 })
+    }
+    threadTitle = (thread.title as string | null) ?? null
+
+    // Load full history from DB so client-side state can't desync the conversation.
+    const { data: prior } = await supabase
+      .from('caye_messages')
+      .select('role, content')
+      .eq('thread_id', threadId)
+      .order('created_at', { ascending: true })
+    history = (prior || []).map(r => ({
+      from: r.role === 'caye' ? 'caye' : 'user',
+      text: r.content as string,
+    }))
+  } else {
+    const { data: created, error: createErr } = await supabase
+      .from('caye_threads')
+      .insert({ workspace_id: workspaceId, user_id: user.id })
+      .select('id')
+      .single()
+    if (createErr || !created) {
+      return NextResponse.json({ error: 'Could not create thread' }, { status: 500 })
+    }
+    threadId = created.id
+    history = []
+  }
+
+  // Set the thread title from the first user message immediately so the sidebar
+  // shows it before the (slower) LLM call returns. Truncate to 40 chars.
+  if (!threadTitle) {
+    threadTitle = message.length > 40 ? message.slice(0, 40) : message
+    await supabase
+      .from('caye_threads')
+      .update({ title: threadTitle, updated_at: new Date().toISOString() })
+      .eq('id', threadId)
+  }
+
+  // Persist the user's message immediately.
+  await supabase.from('caye_messages').insert({
+    thread_id: threadId,
+    role: 'user',
+    content: message,
+  })
+
+  // Helper to persist Caye's reply, bump the thread, and return the response.
+  const finalize = async (reply: string, extras: {
+    cards?: unknown
+    configUpdates?: { field: string; summary: string }[]
+    bookingId?: string
+    cancelledBookingId?: string
+  } = {}) => {
+    const { data: inserted } = await supabase
+      .from('caye_messages')
+      .insert({
+        thread_id: threadId,
+        role: 'caye',
+        content: reply,
+        cards: extras.cards ?? null,
+      })
+      .select('id, created_at')
+      .single()
+    await supabase
+      .from('caye_threads')
+      .update({ updated_at: new Date().toISOString() })
+      .eq('id', threadId)
+    return NextResponse.json({
+      reply,
+      cards: extras.cards,
+      threadId,
+      messageId: inserted?.id,
+      createdAt: inserted?.created_at,
+      configUpdates: extras.configUpdates ?? [],
+      bookingId: extras.bookingId,
+      cancelledBookingId: extras.cancelledBookingId,
+    })
+  }
+
   // Intercept suggestion chips and natural language panel triggers for the demo path
   const lowercaseMsg = message.toLowerCase().trim()
   if (lowercaseMsg.includes('bookings came in overnight')) {
-    return NextResponse.json({
-      reply: "Here are the bookings that came in overnight while you were asleep. I've automatically checked your calendar and confirmed both of them.",
-      cards: [
-        {
-          type: 'booking',
-          data: {
-            id: 'b-mock-1',
-            customer_name: 'Marcus Ferreira',
-            tour: 'Bimini Snorkeling Tour',
-            date: '2026-05-29',
-            time: '09:30',
-            guests: 4,
-            status: 'confirmed'
+    return finalize(
+      "Here are the bookings that came in overnight while you were asleep. I've automatically checked your calendar and confirmed both of them.",
+      {
+        cards: [
+          {
+            type: 'booking',
+            data: {
+              id: 'b-mock-1',
+              customer_name: 'Marcus Ferreira',
+              tour: 'Bimini Snorkeling Tour',
+              date: '2026-05-29',
+              time: '09:30',
+              guests: 4,
+              status: 'confirmed'
+            }
+          },
+          {
+            type: 'booking',
+            data: {
+              id: 'b-mock-2',
+              customer_name: 'Jessamyn Pyfrom',
+              tour: 'Bimini Island Half-Day Tour',
+              date: '2026-05-28',
+              time: '14:00',
+              guests: 2,
+              status: 'confirmed'
+            }
           }
-        },
-        {
-          type: 'booking',
-          data: {
-            id: 'b-mock-2',
-            customer_name: 'Jessamyn Pyfrom',
-            tour: 'Bimini Island Half-Day Tour',
-            date: '2026-05-28',
-            time: '14:00',
-            guests: 2,
-            status: 'confirmed'
-          }
-        }
-      ]
-    })
+        ]
+      }
+    )
   } else if (lowercaseMsg.includes('needs my call')) {
-    return NextResponse.json({
-      reply: "I've held 1 message that needs your call. Sandra Sweeting is asking if we can do a custom full-day charter this Sunday, which is our scheduled day off.",
-      cards: [
-        {
-          type: 'inbox',
-          data: [
-            {
-              id: 'caye-held-mock-1',
-              customer_id: 'ssweeting@yahoo.com', // Sandra Sweeting channel_id / customer_id
-              customer_name: 'Sandra Sweeting',
-              channel_type: 'whatsapp',
-              preview: "Can you do a custom full-day charter for 6 people this Sunday? Let me know the price.",
-              status: 'held',
-              last_message_at: new Date().toISOString(),
-              unread_count: 1
-            }
-          ]
-        }
-      ]
-    })
+    return finalize(
+      "I've held 1 message that needs your call. Sandra Sweeting is asking if we can do a custom full-day charter this Sunday, which is our scheduled day off.",
+      {
+        cards: [
+          {
+            type: 'inbox',
+            data: [
+              {
+                id: 'caye-held-mock-1',
+                customer_id: 'ssweeting@yahoo.com',
+                customer_name: 'Sandra Sweeting',
+                channel_type: 'whatsapp',
+                preview: "Can you do a custom full-day charter for 6 people this Sunday? Let me know the price.",
+                status: 'held',
+                last_message_at: new Date().toISOString(),
+                unread_count: 1
+              }
+            ]
+          }
+        ]
+      }
+    )
   } else if (lowercaseMsg.includes('draft a reply to the next pending message') || lowercaseMsg.includes('draft a reply')) {
-    return NextResponse.json({
-      reply: "Here is the next pending message from Marvin Cartwright. He is asking about bookings and deposits for a large group. I've drafted a reply for your review.",
-      cards: [
-        {
-          type: 'inbox',
-          data: [
-            {
-              id: 'caye-draft-mock-1',
-              customer_id: 'marvin.c@hey.com', // Marvin Cartwright channel_id / customer_id
-              customer_name: 'Marvin Cartwright',
-              channel_type: 'email',
-              preview: "Draft response: Hey Marvin! For groups larger than 8, we require a 50% deposit to lock in the charter. Let me know if you would like me to draft a confirmation invoice.",
-              status: 'drafted',
-              last_message_at: new Date().toISOString(),
-              unread_count: 0
-            }
-          ]
-        }
-      ]
-    })
+    return finalize(
+      "Here is the next pending message from Marvin Cartwright. He is asking about bookings and deposits for a large group. I've drafted a reply for your review.",
+      {
+        cards: [
+          {
+            type: 'inbox',
+            data: [
+              {
+                id: 'caye-draft-mock-1',
+                customer_id: 'marvin.c@hey.com',
+                customer_name: 'Marvin Cartwright',
+                channel_type: 'email',
+                preview: "Draft response: Hey Marvin! For groups larger than 8, we require a 50% deposit to lock in the charter. Let me know if you would like me to draft a confirmation invoice.",
+                status: 'drafted',
+                last_message_at: new Date().toISOString(),
+                unread_count: 0
+              }
+            ]
+          }
+        ]
+      }
+    )
   } else if (lowercaseMsg.includes('open my inbox') || lowercaseMsg.includes('open inbox') || lowercaseMsg.includes('show my inbox')) {
-    return NextResponse.json({
-      reply: "Opening your inbox →"
-    })
+    return finalize("Opening your inbox →")
   } else if (lowercaseMsg.includes('open my calendar') || lowercaseMsg.includes('open calendar') || lowercaseMsg.includes('show my calendar')) {
-    return NextResponse.json({
-      reply: "Opening your calendar →"
-    })
+    return finalize("Opening your calendar →")
   } else if (
     lowercaseMsg.includes('what do you know about my business') ||
     lowercaseMsg.includes('what do you know about the business') ||
@@ -613,11 +702,11 @@ export async function POST(req: NextRequest) {
 
     if (!discoveredPrompt && !pricingInfo) {
       const notStarted = discoveryStatus === 'no_account' || !discoveryStatus
-      return NextResponse.json({
-        reply: notStarted
+      return finalize(
+        notStarted
           ? "I haven't read your inbox yet — connect your Zoho Mail account first and I'll take a look."
           : "I haven't picked up much yet. Try sending me some emails and I'll start learning from them."
-      })
+      )
     }
 
     // Build a compact human-readable summary
@@ -628,7 +717,7 @@ export async function POST(req: NextRequest) {
 
     const lines = sections.slice(0, 6).join('\n\n')
     const reply = `Here's what I know so far:\n\n${lines}${pricingInfo ? `\n\nPricing: ${pricingInfo}` : ''}\n\nI'll keep learning as more emails come through.`
-    return NextResponse.json({ reply })
+    return finalize(reply)
   }
 
 
@@ -769,8 +858,7 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  return NextResponse.json({
-    reply,
+  return finalize(reply, {
     configUpdates,
     bookingId: createdBookingId,
     cancelledBookingId,

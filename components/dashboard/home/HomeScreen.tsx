@@ -16,12 +16,16 @@ interface Message {
   cards?: CardPayload[]
 }
 
-function getGreeting(name?: string) {
+function getFirstName(fullName?: string | null): string | undefined {
+  if (!fullName) return undefined
+  const first = fullName.trim().split(/\s+/)[0]
+  return first || undefined
+}
+
+function getGreeting(firstName?: string) {
   const h = new Date().getHours()
-  const first = name?.split(' ')[0]
-  if (h < 12) return first ? `Morning, ${first}.` : 'Morning.'
-  if (h < 18) return first ? `Afternoon, ${first}.` : 'Afternoon.'
-  return first ? `Evening, ${first}.` : 'Evening.'
+  const base = h < 12 ? 'Morning' : h < 18 ? 'Afternoon' : 'Evening'
+  return firstName ? `${base}, ${firstName}.` : `${base}.`
 }
 
 function parseCayeMessageText(text: string) {
@@ -115,82 +119,94 @@ export default function HomeScreen() {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const discoveryPolledRef = useRef(false)
 
-  // Fetch real workspace context for the tagline
+  // Fetch real workspace context for the tagline (held, today's bookings, overnight handled)
   useEffect(() => {
     if (!workspaceId) return
+    let cancelled = false
+
     async function loadContext() {
       try {
-        const supabase = getSupabase()
-        
-        // 1. Get Caye held count
-        const { count: heldCount } = await supabase
-          .from('unified_conversations')
-          .select('id', { count: 'exact', head: true })
-          .eq('human_agent_enabled', true)
-          .eq('is_archived', false)
+        const { data: { session } } = await getSupabase().auth.getSession()
+        const token = session?.access_token || ''
+        const res = await fetch(`/api/caye/home-summary?workspaceId=${workspaceId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        if (!res.ok || cancelled) return
+        const { heldCount = 0, todayBookings = 0, overnightHandled = 0 } =
+          (await res.json()) as { heldCount?: number; todayBookings?: number; overnightHandled?: number }
 
-        // 2. Get bookings created in last 24h
-        const yesterdayIso = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
-        const { count: bookingsCount } = await supabase
-          .from('bookings')
-          .select('id', { count: 'exact', head: true })
-          .eq('user_id', workspaceId)
-          .eq('status', 'confirmed')
-          .gte('created_at', yesterdayIso)
-
-        if (heldCount && heldCount > 0) {
-          setContextText(`${heldCount} ${heldCount === 1 ? 'message is' : 'messages are'} waiting on your call.`)
-        } else if (bookingsCount && bookingsCount > 0) {
-          setContextText(`${bookingsCount} new booking${bookingsCount === 1 ? '' : 's'} since you last checked.`)
+        if (heldCount > 0) {
+          setContextText(`${heldCount} ${heldCount > 1 ? 'messages are' : 'message is'} waiting on your call.`)
+        } else if (todayBookings > 0) {
+          setContextText(`${todayBookings} booking${todayBookings > 1 ? 's' : ''} on the schedule today.`)
+        } else if (overnightHandled > 0) {
+          setContextText(`Caye handled ${overnightHandled} message${overnightHandled > 1 ? 's' : ''} overnight. Inbox is clear.`)
         } else {
-          setContextText('Inbox is clear. Caye is running. Ask her anything.')
+          setContextText('Caye is running. Ask her anything.')
         }
       } catch (err) {
         console.error('Failed to load greeting context:', err)
         setContextText('Caye is running. Ask her anything.')
       }
     }
+
     loadContext()
+    const onFocus = () => loadContext()
+    window.addEventListener('focus', onFocus)
+    return () => {
+      cancelled = true
+      window.removeEventListener('focus', onFocus)
+    }
   }, [workspaceId])
 
-  // Load threads/active thread from local storage
+  type DbMessage = {
+    id: string
+    role: 'user' | 'caye'
+    content: string
+    cards: CardPayload[] | null
+    created_at: string
+  }
+
+  const fetchMessagesForThread = useCallback(async (threadId: string) => {
+    const { data: { session } } = await getSupabase().auth.getSession()
+    const token = session?.access_token || ''
+    const res = await fetch(`/api/caye/threads/${threadId}/messages`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (res.status === 404) {
+      // Thread was deleted elsewhere — drop it and fall back to empty state.
+      localStorage.removeItem(`caye_active_thread_id_${workspaceId}`)
+      setActiveThreadId(null)
+      setMessages([])
+      return
+    }
+    if (!res.ok) {
+      setMessages([])
+      return
+    }
+    const rows = (await res.json()) as DbMessage[]
+    setMessages(rows.map(r => ({
+      from: r.role,
+      text: r.content,
+      timestamp: r.created_at,
+      cards: r.cards || undefined,
+    })))
+  }, [workspaceId])
+
+  // Initial load: pick up the previously active thread (if any). We do NOT
+  // auto-create a thread here — one gets created when the operator sends
+  // their first message.
   const loadActiveThread = useCallback(() => {
     if (!workspaceId) return
     const activeId = localStorage.getItem(`caye_active_thread_id_${workspaceId}`)
     if (activeId) {
       setActiveThreadId(activeId)
-      const storedHistory = localStorage.getItem(`caye_messages_${workspaceId}_${activeId}`)
-      if (storedHistory) {
-        try {
-          const parsed = JSON.parse(storedHistory) as Message[]
-          // Filter out default Caye welcome message from old runs
-          const filtered = parsed.filter(m => {
-            if (m.from === 'caye') {
-              const textLower = m.text.toLowerCase()
-              if (
-                textLower.includes('receptionist') ||
-                textLower.includes('caribbean') ||
-                textLower.includes('ask me anything about your bookings')
-              ) {
-                return false
-              }
-            }
-            return true
-          })
-          setMessages(filtered)
-        } catch (e) {
-          setMessages([])
-        }
-      } else {
-        // Start completely empty
-        setMessages([])
-      }
+      fetchMessagesForThread(activeId)
     } else {
-      localStorage.setItem(`caye_active_thread_id_${workspaceId}`, 't-1')
-      setActiveThreadId('t-1')
+      setActiveThreadId(null)
       setMessages([])
     }
-  }, [workspaceId])
+  }, [workspaceId, fetchMessagesForThread])
 
   // After thread loads, poll once for a pending discovery greeting
   useEffect(() => {
@@ -212,22 +228,20 @@ export default function HomeScreen() {
 
         if (!greeting || status === 'greeting_shown') return
 
-        // Insert as Caye's first message
-        const cayeMsg: Message = {
-          from: 'caye',
-          text: greeting,
-          timestamp: new Date().toISOString(),
-        }
-
-        const threadKey = localStorage.getItem(`caye_active_thread_id_${workspaceId}`) || 't-1'
-        const existingRaw = localStorage.getItem(`caye_messages_${workspaceId}_${threadKey}`)
-        const existing: Message[] = existingRaw ? JSON.parse(existingRaw) : []
-
-        // Only prepend if the thread is empty (no prior messages)
-        if (existing.length === 0) {
-          const withGreeting = [cayeMsg]
-          localStorage.setItem(`caye_messages_${workspaceId}_${threadKey}`, JSON.stringify(withGreeting))
-          setMessages(withGreeting)
+        // Create a new thread server-side, seeded with the greeting as Caye's first message.
+        const { data: { session } } = await getSupabase().auth.getSession()
+        const token = session?.access_token || ''
+        const res = await fetch('/api/caye/threads', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ workspaceId, initialCayeMessage: greeting, title: 'Welcome' }),
+        })
+        if (res.ok) {
+          const thread = (await res.json()) as { id: string }
+          localStorage.setItem(`caye_active_thread_id_${workspaceId}`, thread.id)
+          setActiveThreadId(thread.id)
+          setMessages([{ from: 'caye', text: greeting, timestamp: new Date().toISOString() }])
+          window.dispatchEvent(new CustomEvent('caye-threads-updated'))
         }
 
         // Mark greeting as shown so we don't re-insert on next load
@@ -252,13 +266,14 @@ export default function HomeScreen() {
   useEffect(() => {
     loadActiveThread()
     const handleSelected = (e: Event) => {
-      const threadId = (e as CustomEvent).detail
+      const threadId = (e as CustomEvent).detail as string
       setActiveThreadId(threadId)
-      loadActiveThread()
+      setMessages([])
+      fetchMessagesForThread(threadId)
     }
     window.addEventListener('caye-thread-selected', handleSelected)
     return () => window.removeEventListener('caye-thread-selected', handleSelected)
-  }, [loadActiveThread])
+  }, [loadActiveThread, fetchMessagesForThread])
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -282,32 +297,10 @@ export default function HomeScreen() {
     setMessages(updatedMessages)
     setTyping(true)
 
-    // Save history to localStorage
-    if (activeThreadId) {
-      localStorage.setItem(`caye_messages_${workspaceId}_${activeThreadId}`, JSON.stringify(updatedMessages))
-      // Update thread title based on the first user message if it was empty/default
-      const threadsStored = localStorage.getItem(`caye_threads_${workspaceId}`)
-      if (threadsStored) {
-        const threads = JSON.parse(threadsStored)
-        const threadIndex = threads.findIndex((t: any) => t.id === activeThreadId)
-        if (threadIndex !== -1 && (threads[threadIndex].title === 'New conversation' || threads[threadIndex].title === 'What bookings came in overnight?')) {
-          threads[threadIndex].title = text.length > 28 ? text.slice(0, 28) + '...' : text
-          threads[threadIndex].updated_at = new Date().toISOString()
-          localStorage.setItem(`caye_threads_${workspaceId}`, JSON.stringify(threads))
-          window.dispatchEvent(new CustomEvent('caye-threads-updated'))
-        }
-      }
-    }
-
     try {
       const client = getSupabase()
       const { data: { session } } = await client.auth.getSession()
       const token = session?.access_token || ''
-
-      const historyPayload = messages.map(m => ({
-        from: m.from,
-        text: m.text,
-      }))
 
       const res = await fetch('/api/caye/chat', {
         method: 'POST',
@@ -315,24 +308,28 @@ export default function HomeScreen() {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ message: text, workspaceId, history: historyPayload }),
+        body: JSON.stringify({ message: text, workspaceId, threadId: activeThreadId }),
       })
 
       const data = await res.json()
       const replyText = data.reply || "I couldn't reach the server. Let's try again in a bit."
 
+      // The server creates the thread on the first message if we didn't have one.
+      if (data.threadId && data.threadId !== activeThreadId) {
+        setActiveThreadId(data.threadId)
+        localStorage.setItem(`caye_active_thread_id_${workspaceId}`, data.threadId)
+      }
+
       const cayeMsg: Message = {
         from: 'caye',
         text: replyText,
-        timestamp: new Date().toISOString(),
+        timestamp: data.createdAt || new Date().toISOString(),
         cards: data.cards || undefined,
       }
+      setMessages([...updatedMessages, cayeMsg])
 
-      const finalMessages = [...updatedMessages, cayeMsg]
-      setMessages(finalMessages)
-      if (activeThreadId) {
-        localStorage.setItem(`caye_messages_${workspaceId}_${activeThreadId}`, JSON.stringify(finalMessages))
-      }
+      // Refresh the sidebar so the new title / ordering shows up.
+      window.dispatchEvent(new CustomEvent('caye-threads-updated'))
 
       // Natural language side-panel triggers
       if (replyText.toLowerCase().includes('opening your inbox')) {
@@ -437,7 +434,7 @@ export default function HomeScreen() {
             <div className="flex-1 flex flex-col justify-center space-y-6 my-auto pb-8">
               <div className="space-y-3 text-center md:text-left">
                 <h1 className="text-[44px] md:text-[52px] font-normal tracking-tight text-near-black font-serif italic text-center md:text-left">
-                  {getGreeting(workspace?.full_name || undefined)}
+                  {getGreeting(getFirstName(workspace?.full_name))}
                 </h1>
                 <p className="text-[14px] text-near-black/55 font-sans not-italic text-center md:text-left truncate">
                   {contextText}
@@ -464,8 +461,8 @@ export default function HomeScreen() {
                   if (m.from === 'caye') {
                     return (
                       <div key={idx} className="flex items-start gap-4 w-full">
-                        <div className="w-8 h-8 rounded-lg bg-near-black flex items-center justify-center text-white flex-shrink-0 mt-1">
-                          <CayeMark size={14} />
+                        <div className="w-10 h-10 rounded-xl bg-near-black flex items-center justify-center text-white flex-shrink-0 mt-1">
+                          <CayeMark size={20} />
                         </div>
                         <div className="flex-1 min-w-0">
                           <div className="text-[15px] leading-[1.7] text-near-black/85 font-sans">
@@ -496,8 +493,8 @@ export default function HomeScreen() {
                 {/* Typing Indicator */}
                 {typing && (
                   <div className="flex items-start gap-4">
-                    <div className="w-8 h-8 rounded-lg bg-near-black flex items-center justify-center text-white flex-shrink-0 mt-1">
-                      <CayeMark size={14} />
+                    <div className="w-10 h-10 rounded-xl bg-near-black flex items-center justify-center text-white flex-shrink-0 mt-1">
+                      <CayeMark size={20} />
                     </div>
                     <div className="flex-1 min-w-0 flex items-center">
                       <div className="px-1 py-3 flex items-center gap-1">

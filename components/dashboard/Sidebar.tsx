@@ -8,7 +8,17 @@ import Avatar from '@/components/ui/Avatar'
 import { useDashboard } from '@/lib/dashboard-context'
 import { useWorkspace } from '@/lib/workspace-context'
 import { CayeLogo } from '@/components/brand/CayeLogo'
+import { getSupabase } from '@/lib/supabase'
+import ThreadRowMenu from './ThreadRowMenu'
 import type { Screen } from '@/lib/types'
+
+async function authHeaders(): Promise<HeadersInit> {
+  const { data: { session } } = await getSupabase().auth.getSession()
+  return {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${session?.access_token || ''}`,
+  }
+}
 
 const SCREENS = [
   { id: 'home' as Screen, label: 'Home', icon: 'home' },
@@ -176,7 +186,7 @@ function WorkspaceSwitcher({ workspaces, currentId, anchorRef, onSelect, onClose
 
 interface CayeThread {
   id: string
-  title: string
+  title: string | null
   updated_at: string
 }
 
@@ -212,30 +222,27 @@ export default function Sidebar({ workspaceId }: SidebarProps) {
 
   const hasMultiple = workspaces.length > 1
 
-  const loadThreads = useCallback(() => {
+  const [menuFor, setMenuFor] = useState<{ id: string; el: HTMLElement } | null>(null)
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+
+  const fetchThreads = useCallback(async () => {
     try {
-      const stored = localStorage.getItem(`caye_threads_${workspaceId}`)
-      if (stored) {
-        setThreads(JSON.parse(stored))
-      } else {
-        const defaults: CayeThread[] = [
-          { id: 't-1', title: 'What bookings came in overnight?', updated_at: new Date().toISOString() },
-          { id: 't-2', title: 'Anything waiting on me?', updated_at: new Date(Date.now() - 86400000).toISOString() },
-          { id: 't-3', title: 'Show me this week\'s tours.', updated_at: new Date(Date.now() - 172800000).toISOString() },
-        ]
-        localStorage.setItem(`caye_threads_${workspaceId}`, JSON.stringify(defaults))
-        setThreads(defaults)
-      }
+      const res = await fetch(`/api/caye/threads?workspaceId=${workspaceId}`, {
+        headers: await authHeaders(),
+      })
+      if (res.ok) setThreads(await res.json())
     } catch (e) {
       console.error(e)
     }
   }, [workspaceId])
 
   useEffect(() => {
-    loadThreads()
-    window.addEventListener('caye-threads-updated', loadThreads)
-    return () => window.removeEventListener('caye-threads-updated', loadThreads)
-  }, [loadThreads])
+    fetchThreads()
+    const handler = () => fetchThreads()
+    window.addEventListener('caye-threads-updated', handler)
+    return () => window.removeEventListener('caye-threads-updated', handler)
+  }, [fetchThreads])
 
   const groupedThreads = useMemo(() => {
     const now = new Date()
@@ -266,19 +273,59 @@ export default function Sidebar({ workspaceId }: SidebarProps) {
     window.dispatchEvent(new CustomEvent('caye-thread-selected', { detail: threadId }))
   }
 
-  const handleAskCaye = () => {
-    const newId = `t-${Date.now()}`
-    const newThread: CayeThread = {
-      id: newId,
-      title: 'New conversation',
-      updated_at: new Date().toISOString(),
+  const newChatInFlightRef = useRef(false)
+  const handleAskCaye = async () => {
+    if (newChatInFlightRef.current) return
+
+    // If the most recent thread has no title (i.e. has no messages yet), reuse it
+    // instead of creating another empty one.
+    if (threads.length > 0 && !threads[0].title) {
+      handleSelectThread(threads[0].id)
+      return
     }
-    const updated = [newThread, ...threads]
-    localStorage.setItem(`caye_threads_${workspaceId}`, JSON.stringify(updated))
-    localStorage.setItem(`caye_active_thread_id_${workspaceId}`, newId)
-    setThreads(updated)
-    setPanelOpen(false)
-    window.dispatchEvent(new CustomEvent('caye-thread-selected', { detail: newId }))
+
+    newChatInFlightRef.current = true
+    try {
+      const res = await fetch('/api/caye/threads', {
+        method: 'POST',
+        headers: await authHeaders(),
+        body: JSON.stringify({ workspaceId }),
+      })
+      if (!res.ok) return
+      const thread = (await res.json()) as CayeThread
+      setThreads(prev => [{ id: thread.id, title: thread.title, updated_at: thread.updated_at }, ...prev])
+      localStorage.setItem(`caye_active_thread_id_${workspaceId}`, thread.id)
+      setPanelOpen(false)
+      window.dispatchEvent(new CustomEvent('caye-thread-selected', { detail: thread.id }))
+    } finally {
+      setTimeout(() => { newChatInFlightRef.current = false }, 400)
+    }
+  }
+
+  const commitRename = async (threadId: string) => {
+    const title = renameValue.trim()
+    setRenamingId(null)
+    if (!title) return
+    setThreads(prev => prev.map(t => t.id === threadId ? { ...t, title } : t))
+    await fetch(`/api/caye/threads/${threadId}`, {
+      method: 'PATCH',
+      headers: await authHeaders(),
+      body: JSON.stringify({ title }),
+    })
+  }
+
+  const handleDeleteThread = async (threadId: string) => {
+    if (!window.confirm("Delete this conversation? Caye won't remember it.")) return
+    setThreads(prev => prev.filter(t => t.id !== threadId))
+    const activeId = localStorage.getItem(`caye_active_thread_id_${workspaceId}`)
+    await fetch(`/api/caye/threads/${threadId}`, {
+      method: 'DELETE',
+      headers: await authHeaders(),
+    })
+    if (activeId === threadId) {
+      localStorage.removeItem(`caye_active_thread_id_${workspaceId}`)
+      handleAskCaye()
+    }
   }
 
   return (
@@ -341,61 +388,82 @@ export default function Sidebar({ workspaceId }: SidebarProps) {
 
         {/* Recent threads list (Caye conversations) filling the middle */}
         <div className="flex-1 overflow-y-auto py-2 transition-opacity duration-200" style={{ display: sidebarExpanded ? 'block' : 'none', minHeight: 0 }}>
-          <span className="sb-section-label px-2" style={{ paddingLeft: 8, display: 'block', marginBottom: 8 }}>Recent Chats</span>
-          
+          {threads.length > 0 && (
+            <span className="sb-section-label px-2" style={{ paddingLeft: 8, display: 'block', marginBottom: 8 }}>Recent Chats</span>
+          )}
+
           <div className="space-y-1 px-2">
-            {/* Today Section */}
-            {groupedThreads.today.length > 0 && (
-              <div style={{ marginBottom: 12 }}>
-                <div className="text-[10px] uppercase font-mono font-semibold tracking-wider text-near-black/35 px-2 py-1">Today</div>
-                {groupedThreads.today.map(t => (
-                  <button
-                    key={t.id}
-                    onClick={() => handleSelectThread(t.id)}
-                    className="w-full text-left px-2 py-1.5 rounded hover:bg-[#0E1A1A]/5 text-[12.5px] text-near-black/60 hover:text-near-black truncate block"
-                    style={{ textAlign: 'left' }}
-                  >
-                    {t.title}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {/* Yesterday Section */}
-            {groupedThreads.yesterday.length > 0 && (
-              <div style={{ marginBottom: 12 }}>
-                <div className="text-[10px] uppercase font-mono font-semibold tracking-wider text-near-black/35 px-2 py-1">Yesterday</div>
-                {groupedThreads.yesterday.map(t => (
-                  <button
-                    key={t.id}
-                    onClick={() => handleSelectThread(t.id)}
-                    className="w-full text-left px-2 py-1.5 rounded hover:bg-[#0E1A1A]/5 text-[12.5px] text-near-black/60 hover:text-near-black truncate block"
-                    style={{ textAlign: 'left' }}
-                  >
-                    {t.title}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {/* This Week Section */}
-            {groupedThreads.thisWeek.length > 0 && (
-              <div style={{ marginBottom: 12 }}>
-                <div className="text-[10px] uppercase font-mono font-semibold tracking-wider text-near-black/35 px-2 py-1">This week</div>
-                {groupedThreads.thisWeek.map(t => (
-                  <button
-                    key={t.id}
-                    onClick={() => handleSelectThread(t.id)}
-                    className="w-full text-left px-2 py-1.5 rounded hover:bg-[#0E1A1A]/5 text-[12.5px] text-near-black/60 hover:text-near-black truncate block"
-                    style={{ textAlign: 'left' }}
-                  >
-                    {t.title}
-                  </button>
-                ))}
-              </div>
-            )}
+            {(['today', 'yesterday', 'thisWeek'] as const).map(group => {
+              const list = groupedThreads[group]
+              if (list.length === 0) return null
+              const label = group === 'today' ? 'Today' : group === 'yesterday' ? 'Yesterday' : 'This week'
+              return (
+                <div key={group} style={{ marginBottom: 12 }}>
+                  <div className="text-[10px] uppercase font-mono font-semibold tracking-wider text-near-black/35 px-2 py-1">{label}</div>
+                  {list.map(t => {
+                    const isRenaming = renamingId === t.id
+                    const displayTitle = t.title?.trim() || 'New chat'
+                    return (
+                      <div key={t.id} className="group relative flex items-center rounded hover:bg-[#0E1A1A]/5">
+                        {isRenaming ? (
+                          <input
+                            autoFocus
+                            value={renameValue}
+                            onChange={e => setRenameValue(e.target.value)}
+                            onBlur={() => commitRename(t.id)}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') { e.preventDefault(); commitRename(t.id) }
+                              else if (e.key === 'Escape') { e.preventDefault(); setRenamingId(null) }
+                            }}
+                            className="flex-1 bg-white border border-[rgba(14,26,26,0.15)] rounded px-2 py-1 mx-1 text-[12.5px] text-near-black outline-none"
+                          />
+                        ) : (
+                          <button
+                            onClick={() => handleSelectThread(t.id)}
+                            className="flex-1 text-left px-2 py-1.5 text-[12.5px] text-near-black/60 group-hover:text-near-black truncate min-w-0"
+                            style={{ textAlign: 'left' }}
+                          >
+                            {displayTitle}
+                          </button>
+                        )}
+                        {!isRenaming && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setMenuFor({ id: t.id, el: e.currentTarget })
+                            }}
+                            className="opacity-0 group-hover:opacity-100 px-1.5 py-1 mr-1 rounded text-near-black/50 hover:text-near-black hover:bg-[#0E1A1A]/5 transition-opacity"
+                            title="More"
+                            aria-label="Thread options"
+                          >
+                            <svg width="14" height="14" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                              <circle cx="4" cy="10" r="1.5" />
+                              <circle cx="10" cy="10" r="1.5" />
+                              <circle cx="16" cy="10" r="1.5" />
+                            </svg>
+                          </button>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )
+            })}
           </div>
         </div>
+
+        {menuFor && (
+          <ThreadRowMenu
+            anchorEl={menuFor.el}
+            onClose={() => setMenuFor(null)}
+            onRename={() => {
+              const t = threads.find(x => x.id === menuFor.id)
+              setRenameValue(t?.title || '')
+              setRenamingId(menuFor.id)
+            }}
+            onDelete={() => handleDeleteThread(menuFor.id)}
+          />
+        )}
 
         {/* Settings Link at the very bottom */}
         <div className="sb-settings-container">
