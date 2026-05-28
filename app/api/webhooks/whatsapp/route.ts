@@ -302,7 +302,11 @@ async function processInboundWhatsApp(payload: Record<string, unknown>): Promise
         sent_at: new Date().toISOString(),
         status: 'sent',
         is_internal: true,
-        metadata: { generated_by: 'caye', hold_reason: decision.reason },
+        metadata: {
+          generated_by: 'caye',
+          hold_reason: decision.reason,
+          proposed_reply: decision.proposedReply ?? null,
+        },
       })
       console.log(`[whatsapp webhook] Held for human: ${from} — ${decision.reason}`)
       continue

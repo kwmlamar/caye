@@ -258,7 +258,11 @@ async function processInboundInstagram(payload: Record<string, unknown>): Promis
           sent_at: new Date().toISOString(),
           status: 'sent',
           is_internal: true,
-          metadata: { generated_by: 'caye', hold_reason: decision.reason },
+          metadata: {
+            generated_by: 'caye',
+            hold_reason: decision.reason,
+            proposed_reply: decision.proposedReply ?? null,
+          },
         })
         console.log(`[instagram webhook] Held for human: ${senderId} — ${decision.reason}`)
         continue

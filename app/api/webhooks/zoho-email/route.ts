@@ -291,7 +291,11 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
       sent_at: new Date().toISOString(),
       status: 'sent',
       is_internal: true,
-      metadata: { generated_by: 'caye', hold_reason: decision.reason },
+      metadata: {
+        generated_by: 'caye',
+        hold_reason: decision.reason,
+        proposed_reply: decision.proposedReply ?? null,
+      },
     })
     console.log(`[zoho-email webhook] Held for human: ${fromEmail} — ${decision.reason}`)
     return

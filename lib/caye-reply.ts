@@ -18,7 +18,7 @@ import { formatCustomerFactsBlock, type CustomerFacts } from './customer-facts'
 
 export type CayeAutoReply =
   | { action: 'reply'; content: string; bookingId?: string }
-  | { action: 'hold'; reason: string; note: string }
+  | { action: 'hold'; reason: string; note: string; proposedReply?: string }
 
 interface ServiceRow {
   id: string
@@ -214,7 +214,13 @@ const TOOLS: Anthropic.Tool[] = [
       'returned within_policy_window or booking_in_past; the message is ambiguous and risky ' +
       'to answer wrong; or anything that feels like it needs a human touch. Do NOT hold just ' +
       'because they want to book / cancel / reschedule — use the dedicated tools when the ' +
-      'booking is >48h out.',
+      'booking is >48h out. ' +
+      'IMPORTANT: when you hold, ALSO populate proposed_reply with the reply you WOULD have sent ' +
+      'if you were confident. This becomes the operator\'s starting draft — they will review it, ' +
+      'edit it, and send it themselves. Voice rules apply to proposed_reply exactly as they apply ' +
+      'to send_reply content: no emoji, no tropical / island metaphors, match the operator voice ' +
+      'profile. Skip proposed_reply only if you genuinely can\'t draft anything useful (e.g. ' +
+      'angry complaint with zero context).',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -227,6 +233,13 @@ const TOOLS: Anthropic.Tool[] = [
           description:
             'A brief internal note for the business owner. Write it like a handoff: what the ' +
             'customer needs, any relevant context, what you\'d suggest doing. 2-4 sentences max.',
+        },
+        proposed_reply: {
+          type: 'string',
+          description:
+            'The reply you would have sent if you were confident — used as the operator\'s ' +
+            'starting draft. Same voice rules as send_reply content. Optional: omit only if ' +
+            'you genuinely can\'t draft anything useful.',
         },
       },
       required: ['reason', 'note'],
@@ -1114,8 +1127,17 @@ export async function generateCayeAutoReply(
         }
         toolResults.push({ type: 'tool_result', tool_use_id: tool.id, content: 'ok' })
       } else if (tool.name === 'hold_for_human') {
-        const input = tool.input as { reason: string; note: string }
-        terminal = { action: 'hold', reason: input.reason, note: input.note }
+        const input = tool.input as { reason: string; note: string; proposed_reply?: string }
+        const draft = input.proposed_reply?.trim() || undefined
+        // Identity guard the proposed draft too — never surface a draft that
+        // would have been blocked from sending.
+        const draftLeak = draft ? detectIdentityLeak(draft) : null
+        terminal = {
+          action: 'hold',
+          reason: input.reason,
+          note: input.note,
+          proposedReply: draftLeak ? undefined : draft,
+        }
         toolResults.push({ type: 'tool_result', tool_use_id: tool.id, content: 'ok' })
       } else if (tool.name === 'check_availability') {
         const input = tool.input as { date: string }

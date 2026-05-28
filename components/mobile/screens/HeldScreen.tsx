@@ -71,7 +71,7 @@ export default function HeldScreen({ onResolved }: { onResolved: () => void }) {
 }
 
 function HeldCard({ held, onResolved }: { held: HeldDetail; onResolved: () => void }) {
-  const [reply, setReply] = useState('')
+  const [reply, setReply] = useState(held.proposedReply ?? '')
   const [busy, setBusy] = useState(false)
 
   const submit = async (withReply: boolean) => {
@@ -125,6 +125,24 @@ function HeldCard({ held, onResolved }: { held: HeldDetail; onResolved: () => vo
             Caye&apos;s note to you
           </div>
           <div className="txt">{held.cayeNote}</div>
+        </div>
+      )}
+
+      {held.proposedReply && (
+        <div className="draft-label" style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          fontSize: 11,
+          fontWeight: 600,
+          letterSpacing: '0.04em',
+          color: 'var(--tc-near-black, #0E1A1A)',
+          opacity: 0.7,
+          marginTop: 12,
+          marginBottom: 6,
+        }}>
+          <span className="caye-pip" />
+          Caye&apos;s draft — edit and send
         </div>
       )}
 

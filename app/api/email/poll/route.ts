@@ -953,7 +953,11 @@ async function processMessage(
       sent_at: new Date().toISOString(),
       status: 'sent',
       is_internal: true,
-      metadata: { generated_by: 'caye', hold_reason: decision.reason },
+      metadata: {
+        generated_by: 'caye',
+        hold_reason: decision.reason,
+        proposed_reply: decision.proposedReply ?? null,
+      },
     })
     console.log(`[email/poll] Held for human: ${effectiveEmail} — ${decision.reason}`)
     return 'held'

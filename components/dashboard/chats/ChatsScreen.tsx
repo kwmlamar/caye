@@ -133,6 +133,7 @@ export default function ChatsScreen({ openCaye, inPanel = false }: { openCaye: (
   const [searchQuery, setSearchQuery] = useState('')
   const [replyText, setReplyText] = useState('')
   const [replyMode, setReplyMode] = useState<'reply' | 'note'>('reply')
+  const [composerIsCayeDraft, setComposerIsCayeDraft] = useState(false)
   const [sending, setSending] = useState(false)
   const [togglingAutoReply, setTogglingAutoReply] = useState(false)
   const [accountIds, setAccountIds] = useState<string[]>([])
@@ -141,6 +142,51 @@ export default function ChatsScreen({ openCaye, inPanel = false }: { openCaye: (
   const selectedRef = useRef(selectedConv)
   const fetchConvsRef = useRef<() => void>(() => {})
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const prefilledForConvRef = useRef<string | null>(null)
+
+  // Latest Caye-drafted reply on the currently selected held conversation, if any.
+  // Reads metadata.proposed_reply off the most recent Caye internal note.
+  const latestCayeDraft = (() => {
+    if (!selectedConv?.human_agent_enabled) return null
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i]
+      if (!m.is_internal) continue
+      const meta = (m.metadata || {}) as Record<string, unknown>
+      if (meta.generated_by !== 'caye') continue
+      const draft = meta.proposed_reply
+      if (typeof draft === 'string' && draft.trim()) return draft
+      return null
+    }
+    return null
+  })()
+
+  // Pre-fill the composer with Caye's proposed reply once when entering a held
+  // thread that has one. We use a ref so subsequent edits/clears by the operator
+  // don't get re-overwritten. Switching to a different conversation re-arms.
+  useEffect(() => {
+    const convId = selectedConv?.id ?? null
+    if (prefilledForConvRef.current === convId) return
+    if (!convId) {
+      prefilledForConvRef.current = null
+      return
+    }
+    if (latestCayeDraft && !replyText) {
+      setReplyText(latestCayeDraft)
+      setComposerIsCayeDraft(true)
+      prefilledForConvRef.current = convId
+    } else if (latestCayeDraft !== null) {
+      // Draft exists but composer not empty (or we already prefilled this conv) — still mark as armed.
+      prefilledForConvRef.current = convId
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedConv?.id, latestCayeDraft])
+
+  // Clear the "Caye's draft" badge once the operator edits the prefilled text.
+  useEffect(() => {
+    if (composerIsCayeDraft && latestCayeDraft !== null && replyText !== latestCayeDraft) {
+      setComposerIsCayeDraft(false)
+    }
+  }, [replyText, latestCayeDraft, composerIsCayeDraft])
 
   useEffect(() => {
     mountedRef.current = true
@@ -595,7 +641,10 @@ export default function ChatsScreen({ openCaye, inPanel = false }: { openCaye: (
               ) : (
                 messages.map((msg) => {
                   if (msg.is_internal) {
-                    const byCaye = (msg.metadata as Record<string, unknown>)?.generated_by === 'caye'
+                    const noteMeta = (msg.metadata || {}) as Record<string, unknown>
+                    const byCaye = noteMeta.generated_by === 'caye'
+                    const rawDraft = byCaye ? noteMeta.proposed_reply : null
+                    const draftText = typeof rawDraft === 'string' && rawDraft.trim() ? rawDraft : null
                     return (
                       <div key={msg.id} className={'msg-row internal' + (byCaye ? ' caye-note' : '')}>
                         <div className={'note-bubble' + (byCaye ? ' caye' : '')}>
@@ -605,6 +654,57 @@ export default function ChatsScreen({ openCaye, inPanel = false }: { openCaye: (
                             <span className="note-time">{formatTime(msg.sent_at)}</span>
                           </div>
                           <div className="note-body" style={{ whiteSpace: 'pre-wrap' }}>{msg.content || ''}</div>
+                          {draftText && (
+                            <div style={{
+                              marginTop: 10,
+                              paddingLeft: 10,
+                              borderLeft: '2px solid var(--tc-caribbean-teal, #0FB5A1)',
+                            }}>
+                              <div style={{
+                                fontSize: 10.5,
+                                letterSpacing: '.06em',
+                                textTransform: 'uppercase',
+                                fontWeight: 600,
+                                marginBottom: 4,
+                                opacity: 0.6,
+                                color: 'var(--tc-near-black)',
+                              }}>
+                                Proposed reply
+                              </div>
+                              <div style={{
+                                whiteSpace: 'pre-wrap',
+                                fontSize: 13,
+                                lineHeight: 1.5,
+                                fontWeight: 400,
+                                color: 'var(--tc-ink-mute, #4a5757)',
+                              }}>
+                                {draftText}
+                              </div>
+                              <button
+                                onClick={() => {
+                                  if (!replyText.trim()) {
+                                    setReplyText(draftText)
+                                    setComposerIsCayeDraft(true)
+                                  }
+                                }}
+                                disabled={!!replyText.trim()}
+                                title={replyText.trim() ? 'Clear the composer first' : 'Copy this draft into the composer'}
+                                style={{
+                                  marginTop: 8,
+                                  fontSize: 11.5,
+                                  background: 'transparent',
+                                  border: '1px solid rgba(14,26,26,0.12)',
+                                  borderRadius: 6,
+                                  padding: '3px 8px',
+                                  cursor: replyText.trim() ? 'default' : 'pointer',
+                                  color: 'var(--tc-near-black)',
+                                  opacity: replyText.trim() ? 0.5 : 1,
+                                }}
+                              >
+                                Use this draft
+                              </button>
+                            </div>
+                          )}
                           {msg.status === 'failed' && (
                             <div className="note-error">Failed to save</div>
                           )}
@@ -689,6 +789,18 @@ export default function ChatsScreen({ openCaye, inPanel = false }: { openCaye: (
                   Internal note
                 </button>
               </div>
+
+              {composerIsCayeDraft && replyMode === 'reply' && (
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: 6,
+                  fontSize: 11, fontWeight: 600, letterSpacing: '.04em',
+                  color: 'var(--tc-near-black)', opacity: 0.7,
+                  marginTop: -2,
+                }}>
+                  <CayeMark size={11} />
+                  Caye&apos;s draft — edit and send
+                </div>
+              )}
 
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <textarea
@@ -953,7 +1065,10 @@ export default function ChatsScreen({ openCaye, inPanel = false }: { openCaye: (
               ) : (
                 messages.map((msg) => {
                   if (msg.is_internal) {
-                    const byCaye = (msg.metadata as Record<string, unknown>)?.generated_by === 'caye'
+                    const noteMeta = (msg.metadata || {}) as Record<string, unknown>
+                    const byCaye = noteMeta.generated_by === 'caye'
+                    const rawDraft = byCaye ? noteMeta.proposed_reply : null
+                    const draftText = typeof rawDraft === 'string' && rawDraft.trim() ? rawDraft : null
                     return (
                       <div key={msg.id} className={'msg-row internal' + (byCaye ? ' caye-note' : '')}>
                         <div className={'note-bubble' + (byCaye ? ' caye' : '')}>
@@ -963,6 +1078,57 @@ export default function ChatsScreen({ openCaye, inPanel = false }: { openCaye: (
                             <span className="note-time">{formatTime(msg.sent_at)}</span>
                           </div>
                           <div className="note-body" style={{ whiteSpace: 'pre-wrap' }}>{msg.content || ''}</div>
+                          {draftText && (
+                            <div style={{
+                              marginTop: 10,
+                              paddingLeft: 10,
+                              borderLeft: '2px solid var(--tc-caribbean-teal, #0FB5A1)',
+                            }}>
+                              <div style={{
+                                fontSize: 10.5,
+                                letterSpacing: '.06em',
+                                textTransform: 'uppercase',
+                                fontWeight: 600,
+                                marginBottom: 4,
+                                opacity: 0.6,
+                                color: 'var(--tc-near-black)',
+                              }}>
+                                Proposed reply
+                              </div>
+                              <div style={{
+                                whiteSpace: 'pre-wrap',
+                                fontSize: 13,
+                                lineHeight: 1.5,
+                                fontWeight: 400,
+                                color: 'var(--tc-ink-mute, #4a5757)',
+                              }}>
+                                {draftText}
+                              </div>
+                              <button
+                                onClick={() => {
+                                  if (!replyText.trim()) {
+                                    setReplyText(draftText)
+                                    setComposerIsCayeDraft(true)
+                                  }
+                                }}
+                                disabled={!!replyText.trim()}
+                                title={replyText.trim() ? 'Clear the composer first' : 'Copy this draft into the composer'}
+                                style={{
+                                  marginTop: 8,
+                                  fontSize: 11.5,
+                                  background: 'transparent',
+                                  border: '1px solid rgba(14,26,26,0.12)',
+                                  borderRadius: 6,
+                                  padding: '3px 8px',
+                                  cursor: replyText.trim() ? 'default' : 'pointer',
+                                  color: 'var(--tc-near-black)',
+                                  opacity: replyText.trim() ? 0.5 : 1,
+                                }}
+                              >
+                                Use this draft
+                              </button>
+                            </div>
+                          )}
                           {msg.status === 'failed' && (
                             <div className="note-error">Failed to save</div>
                           )}
@@ -1031,6 +1197,17 @@ export default function ChatsScreen({ openCaye, inPanel = false }: { openCaye: (
                   Internal note
                 </button>
               </div>
+              {composerIsCayeDraft && replyMode === 'reply' && (
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: 6,
+                  fontSize: 11, fontWeight: 600, letterSpacing: '.04em',
+                  color: 'var(--tc-near-black)', opacity: 0.7,
+                  margin: '4px 2px 0',
+                }}>
+                  <CayeMark size={11} />
+                  Caye&apos;s draft — edit and send
+                </div>
+              )}
               <textarea
                 placeholder={replyMode === 'note' ? 'Leave a note (only visible to you)…' : `Write back to ${selName.split(' ')[0]}…`}
                 value={replyText}

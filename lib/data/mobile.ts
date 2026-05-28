@@ -340,6 +340,12 @@ export interface HeldDetail {
   channelName: string
   reason: string
   cayeNote: string | null
+  /**
+   * The reply Caye would have sent if she'd been confident. Pulled from the
+   * most recent Caye internal note's metadata.proposed_reply. Null when the
+   * hold predates the draft feature or when Caye genuinely couldn't draft.
+   */
+  proposedReply: string | null
   time: string
   transcript: HeldThreadMsg[]
 }
@@ -384,8 +390,13 @@ export async function getHeldConversations(workspaceId: string): Promise<HeldDet
       text: m.content ?? '',
     }))
     // Caye's hold note — the owner-brief written when she paused the thread.
-    const cayeNote =
-      [...msgs].reverse().find(m => m.is_internal && isCayeAuthored(m.metadata))?.content ?? null
+    const cayeNoteRow = [...msgs].reverse().find(m => m.is_internal && isCayeAuthored(m.metadata))
+    const cayeNote = cayeNoteRow?.content ?? null
+    const rawDraft = cayeNoteRow?.metadata && typeof cayeNoteRow.metadata === 'object'
+      ? (cayeNoteRow.metadata as Record<string, unknown>).proposed_reply
+      : null
+    const proposedReply =
+      typeof rawDraft === 'string' && rawDraft.trim().length > 0 ? rawDraft : null
     const ch = channelCode(c.channel_type)
     return {
       id: c.id,
@@ -394,6 +405,7 @@ export async function getHeldConversations(workspaceId: string): Promise<HeldDet
       channelName: channelName(ch),
       reason: c.human_agent_reason || 'Caye paused this conversation for your review.',
       cayeNote,
+      proposedReply,
       time: relTime(c.human_agent_marked_at || c.last_message_at),
       transcript,
     }
