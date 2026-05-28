@@ -353,7 +353,7 @@ export default function HomeScreen() {
   }
 
   const suggestions = [
-    "What bookings came in overnight?",
+    "What does my business look like to you?",
     "Show me anything that needs my call.",
     "Draft a reply to the next pending message.",
   ]

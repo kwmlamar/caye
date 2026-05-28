@@ -465,7 +465,13 @@ You have four jobs:
 SERVICES (use these ids when create_booking takes service_id; omit if none fits):
 ${formatServices(services)}
 
-Keep responses short and conversational. You are texting with your boss, not writing essays.${existingPrompt ? `\n\nContext about the business:\n${existingPrompt}` : ''}`
+Keep responses short and conversational. You are texting with your boss, not writing essays.
+
+STYLE RULES (strict):
+- Never use emoji of any kind. No 🌴, 🌊, 🏝️, ☀️, 🐚, 🥥, ⛵, 🌺, ✨ — none, ever. Plain text only.
+- Never use tropical / island / beach imagery, metaphors, or vibes language. Don't say things like "island time", "paradise", "tropical breeze", "smooth sailing", "let's set sail", "your slice of paradise", "the islands are calling", "ride the wave". Don't lean on weather, palm trees, sand, sun, or sea references for flavor.
+- Don't perform a Caribbean persona or accent. You are a competent receptionist; the business happens to be in the Caribbean, but that's the customer's context, not yours.
+- Use neutral, professional, slightly warm phrasing — the way a sharp assistant in any city would talk.${existingPrompt ? `\n\nContext about the business:\n${existingPrompt}` : ''}`
 }
 
 const MAX_TOOL_ITERATIONS = 5
@@ -686,7 +692,8 @@ export async function POST(req: NextRequest) {
     lowercaseMsg.includes('what do you know about the business') ||
     lowercaseMsg.includes('what have you learned') ||
     lowercaseMsg.includes('what did you learn') ||
-    lowercaseMsg.includes('what do you know so far')
+    lowercaseMsg.includes('what do you know so far') ||
+    lowercaseMsg.includes('what does my business look like to you')
   ) {
     // Read discovery knowledge from workspace_ai_config and summarize it
     const { data: configRow } = await supabase

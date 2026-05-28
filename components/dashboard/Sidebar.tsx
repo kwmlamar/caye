@@ -225,6 +225,22 @@ export default function Sidebar({ workspaceId }: SidebarProps) {
   const [menuFor, setMenuFor] = useState<{ id: string; el: HTMLElement } | null>(null)
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
+  const [activeId, setActiveId] = useState<string | null>(null)
+
+  // Track which thread is currently active (read from localStorage). We need
+  // this so we can hide *other* empty/untitled threads from the sidebar — only
+  // the active untitled thread should appear.
+  useEffect(() => {
+    const read = () => setActiveId(localStorage.getItem(`caye_active_thread_id_${workspaceId}`))
+    read()
+    const onSelected = () => read()
+    window.addEventListener('caye-thread-selected', onSelected)
+    window.addEventListener('caye-threads-updated', onSelected)
+    return () => {
+      window.removeEventListener('caye-thread-selected', onSelected)
+      window.removeEventListener('caye-threads-updated', onSelected)
+    }
+  }, [workspaceId])
 
   const fetchThreads = useCallback(async () => {
     try {
@@ -250,7 +266,12 @@ export default function Sidebar({ workspaceId }: SidebarProps) {
     const yesterday: CayeThread[] = []
     const thisWeek: CayeThread[] = []
 
-    threads.forEach(t => {
+    // Hide zero-message / untitled threads. Title gets set the moment the first
+    // message lands, so "no title" is the proxy for "no messages". A fresh
+    // `+ New chat` shows as an empty-state canvas, not a sidebar row.
+    const visibleThreads = threads.filter(t => t.title && t.title.trim().length > 0)
+
+    visibleThreads.forEach(t => {
       const date = new Date(t.updated_at)
       const diffTime = Math.abs(now.getTime() - date.getTime())
       const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24))
@@ -388,7 +409,7 @@ export default function Sidebar({ workspaceId }: SidebarProps) {
 
         {/* Recent threads list (Caye conversations) filling the middle */}
         <div className="flex-1 overflow-y-auto py-2 transition-opacity duration-200" style={{ display: sidebarExpanded ? 'block' : 'none', minHeight: 0 }}>
-          {threads.length > 0 && (
+          {(groupedThreads.today.length + groupedThreads.yesterday.length + groupedThreads.thisWeek.length) > 0 && (
             <span className="sb-section-label px-2" style={{ paddingLeft: 8, display: 'block', marginBottom: 8 }}>Recent Chats</span>
           )}
 
