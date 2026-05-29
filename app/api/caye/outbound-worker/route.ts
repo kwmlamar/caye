@@ -1,0 +1,373 @@
+/**
+ * GET /api/caye/outbound-worker
+ *
+ * Cron tick (every ~30s) — drains caye_outbound_queue.
+ *
+ * For each pending row whose scheduled_for has passed:
+ *   1. Re-check preconditions (workspace flag, mute state, conversation still held,
+ *      operator not unreachable/blocked, race suppression).
+ *   2. Pick free-form vs template based on the 24h window + the row's kind.
+ *   3. Send via Meta Cloud API (lib/whatsapp/outbound.ts).
+ *   4. On success: mark sent, reset failure streak.
+ *   5. On transient failure (first time): re-schedule +5 min.
+ *      On second failure: mark failed, increment streak, trigger email fallback
+ *      for urgent kinds, set whatsapp_unreachable if streak ≥ 3.
+ *   6. On block-specific error: mark dead_letter, set whatsapp_blocked.
+ *
+ * Secured by CRON_SECRET via x-cron-secret header.
+ */
+
+import { NextRequest, NextResponse } from 'next/server'
+import { createServiceClient } from '@/lib/supabase-server'
+import {
+  sendFreeFormWhatsApp,
+  sendTemplateWhatsApp,
+  type SendResult,
+} from '@/lib/whatsapp/outbound'
+import { isWhatsAppWindowOpen } from '@/lib/whatsapp/window'
+import { emailFallbackForFailedPing } from '@/lib/whatsapp/email-fallback'
+
+const CONCURRENCY = 10
+const RETRY_DELAY_MS = 5 * 60 * 1000
+const UNREACHABLE_STREAK_THRESHOLD = 3
+
+// Kinds that always require a template (the 24h window may be closed).
+const TEMPLATE_REQUIRED_KINDS = new Set([
+  'otp',
+  'welcome',
+  'morning_digest',
+  'urgent_hold',
+  'auth_failure',
+])
+
+// Kinds where silence is dangerous → email fallback if WhatsApp fails.
+const EMAIL_FALLBACK_KINDS = new Set(['urgent_hold', 'same_day_booking', 'auth_failure'])
+
+// Kinds that bypass the operator mute.
+const MUTE_BYPASS_KINDS = new Set(['auth_failure'])
+
+interface QueueRow {
+  id: string
+  workspace_id: string
+  kind: string
+  conversation_id: string | null
+  payload: Record<string, unknown>
+  scheduled_for: string
+  failure_count: number
+  idempotency_key: string | null
+}
+
+interface WorkspaceConfig {
+  workspace_id: string
+  whatsapp_outbound_enabled: boolean
+  operator_whatsapp_number: string | null
+  operator_whatsapp_verified_at: string | null
+  whatsapp_muted_until: string | null
+  whatsapp_unreachable: boolean
+  whatsapp_blocked: boolean
+  whatsapp_failure_streak: number
+}
+
+export async function GET(request: NextRequest) {
+  const secret = process.env.CRON_SECRET
+  if (secret) {
+    const provided = request.headers.get('x-cron-secret')
+    if (provided !== secret) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+  }
+
+  const supabase = createServiceClient()
+  const nowIso = new Date().toISOString()
+
+  const { data: rows, error } = await supabase
+    .from('caye_outbound_queue')
+    .select('id, workspace_id, kind, conversation_id, payload, scheduled_for, failure_count, idempotency_key')
+    .eq('status', 'pending')
+    .lte('scheduled_for', nowIso)
+    .order('scheduled_for', { ascending: true })
+    .limit(100)
+
+  if (error) {
+    console.error('[outbound-worker] queue fetch failed:', error)
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+
+  const summary = { scanned: rows?.length ?? 0, sent: 0, failed: 0, cancelled: 0, retried: 0 }
+  if (!rows?.length) return NextResponse.json(summary)
+
+  // Process with a small concurrency limit.
+  for (let i = 0; i < rows.length; i += CONCURRENCY) {
+    const slice = rows.slice(i, i + CONCURRENCY)
+    const results = await Promise.all(slice.map((row) => processRow(row)))
+    for (const r of results) summary[r] = (summary[r] ?? 0) + 1
+  }
+
+  return NextResponse.json(summary)
+}
+
+type RowOutcome = 'sent' | 'failed' | 'cancelled' | 'retried'
+
+async function processRow(row: QueueRow): Promise<RowOutcome> {
+  const supabase = createServiceClient()
+
+  const { data: config, error: configErr } = await supabase
+    .from('workspace_ai_config')
+    .select(
+      'workspace_id, whatsapp_outbound_enabled, operator_whatsapp_number, ' +
+        'operator_whatsapp_verified_at, whatsapp_muted_until, whatsapp_unreachable, ' +
+        'whatsapp_blocked, whatsapp_failure_streak'
+    )
+    .eq('workspace_id', row.workspace_id)
+    .maybeSingle<WorkspaceConfig>()
+
+  if (configErr || !config) {
+    return cancel(row, `workspace_ai_config missing: ${configErr?.message ?? 'no row'}`)
+  }
+
+  // Precondition: feature flag on, operator verified, not blocked / unreachable.
+  if (!config.whatsapp_outbound_enabled) return cancel(row, 'flag off')
+  if (!config.operator_whatsapp_number || !config.operator_whatsapp_verified_at) {
+    return cancel(row, 'operator number not verified')
+  }
+  if (config.whatsapp_blocked) return cancel(row, 'whatsapp_blocked')
+  if (config.whatsapp_unreachable && !EMAIL_FALLBACK_KINDS.has(row.kind)) {
+    return cancel(row, 'whatsapp_unreachable')
+  }
+
+  // Mute (auth_failure bypasses).
+  if (
+    config.whatsapp_muted_until &&
+    new Date(config.whatsapp_muted_until).getTime() > Date.now() &&
+    !MUTE_BYPASS_KINDS.has(row.kind)
+  ) {
+    // Defer past the mute window rather than cancelling.
+    await supabase
+      .from('caye_outbound_queue')
+      .update({ scheduled_for: config.whatsapp_muted_until, updated_at: new Date().toISOString() })
+      .eq('id', row.id)
+    return 'retried'
+  }
+
+  // For urgent_hold rows, confirm the conversation is still held.
+  if (row.kind === 'urgent_hold' && row.conversation_id) {
+    const { data: conv } = await supabase
+      .from('unified_conversations')
+      .select('human_agent_enabled')
+      .eq('id', row.conversation_id)
+      .maybeSingle()
+    if (!conv?.human_agent_enabled) {
+      return cancel(row, 'conversation resolved before send')
+    }
+
+    // Race-aware suppression: operator may have replied directly through their
+    // own channel after we queued. Detect by looking for any outbound automated=false
+    // message on the conversation since the row was created.
+    if (await operatorRepliedDirectly(row)) {
+      return cancel(row, 'operator handled directly')
+    }
+  }
+
+  // Build & send.
+  const sendOutcome = await dispatch(row, config)
+  return handleResult(row, config, sendOutcome)
+}
+
+async function dispatch(row: QueueRow, config: WorkspaceConfig): Promise<SendResult> {
+  const phone = config.operator_whatsapp_number!
+  const idem = row.idempotency_key ?? `queue-${row.id}`
+
+  const windowOpen = await isWhatsAppWindowOpen(row.workspace_id)
+  const mustUseTemplate = TEMPLATE_REQUIRED_KINDS.has(row.kind) || !windowOpen
+
+  if (mustUseTemplate) {
+    const tmpl = templateForKind(row.kind, row.payload)
+    if (!tmpl) {
+      return { status: 'failed', error: `no template mapped for kind=${row.kind}`, transient: false }
+    }
+    return sendTemplateWhatsApp(phone, tmpl.name, tmpl.placeholders, idem)
+  }
+
+  const body = freeFormBodyForKind(row.kind, row.payload)
+  if (!body) {
+    return { status: 'failed', error: `no free-form body for kind=${row.kind}`, transient: false }
+  }
+  return sendFreeFormWhatsApp(phone, body, idem)
+}
+
+async function handleResult(
+  row: QueueRow,
+  config: WorkspaceConfig,
+  result: SendResult
+): Promise<RowOutcome> {
+  const supabase = createServiceClient()
+  const now = new Date().toISOString()
+
+  if (result.status === 'sent') {
+    await supabase
+      .from('caye_outbound_queue')
+      .update({ status: 'sent', sent_at: now, updated_at: now })
+      .eq('id', row.id)
+    await supabase
+      .from('workspace_ai_config')
+      .update({
+        whatsapp_failure_streak: 0,
+        last_whatsapp_outbound_status: 'sent',
+      })
+      .eq('workspace_id', row.workspace_id)
+    return 'sent'
+  }
+
+  // Blocked → terminal, mark workspace blocked.
+  if (result.blocked) {
+    await supabase
+      .from('caye_outbound_queue')
+      .update({
+        status: 'dead_letter',
+        last_error: result.error,
+        failure_count: row.failure_count + 1,
+        updated_at: now,
+      })
+      .eq('id', row.id)
+    await supabase
+      .from('workspace_ai_config')
+      .update({ whatsapp_blocked: true, last_whatsapp_outbound_status: 'blocked' })
+      .eq('workspace_id', row.workspace_id)
+    if (EMAIL_FALLBACK_KINDS.has(row.kind)) await fireFallback(row)
+    return 'failed'
+  }
+
+  // Transient + first attempt → retry once after 5 min.
+  if (result.transient && row.failure_count < 1) {
+    await supabase
+      .from('caye_outbound_queue')
+      .update({
+        failure_count: row.failure_count + 1,
+        last_error: result.error,
+        scheduled_for: new Date(Date.now() + RETRY_DELAY_MS).toISOString(),
+        updated_at: now,
+      })
+      .eq('id', row.id)
+    return 'retried'
+  }
+
+  // Otherwise: mark failed, bump streak, possibly flip unreachable, fire fallback.
+  const newStreak = config.whatsapp_failure_streak + 1
+  await supabase
+    .from('caye_outbound_queue')
+    .update({
+      status: 'failed',
+      failure_count: row.failure_count + 1,
+      last_error: result.error,
+      updated_at: now,
+    })
+    .eq('id', row.id)
+  await supabase
+    .from('workspace_ai_config')
+    .update({
+      whatsapp_failure_streak: newStreak,
+      whatsapp_unreachable: newStreak >= UNREACHABLE_STREAK_THRESHOLD,
+      last_whatsapp_outbound_status: 'failed',
+    })
+    .eq('workspace_id', row.workspace_id)
+
+  if (EMAIL_FALLBACK_KINDS.has(row.kind)) await fireFallback(row)
+  return 'failed'
+}
+
+async function cancel(row: QueueRow, reason: string): Promise<RowOutcome> {
+  const supabase = createServiceClient()
+  await supabase
+    .from('caye_outbound_queue')
+    .update({
+      status: 'cancelled',
+      last_error: reason,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', row.id)
+  return 'cancelled'
+}
+
+async function fireFallback(row: QueueRow): Promise<void> {
+  if (!EMAIL_FALLBACK_KINDS.has(row.kind)) return
+  await emailFallbackForFailedPing({
+    workspaceId: row.workspace_id,
+    kind: row.kind as 'urgent_hold' | 'same_day_booking' | 'auth_failure',
+    payload: row.payload,
+  })
+}
+
+async function operatorRepliedDirectly(row: QueueRow): Promise<boolean> {
+  if (!row.conversation_id) return false
+  const supabase = createServiceClient()
+  const { data } = await supabase
+    .from('unified_messages')
+    .select('id, metadata, direction, created_at')
+    .eq('conversation_id', row.conversation_id)
+    .eq('direction', 'outbound')
+    .gt('created_at', row.scheduled_for)
+    .limit(5)
+
+  if (!data?.length) return false
+  // Anything outbound that wasn't auto-generated by Caye counts as an operator reply.
+  return data.some((m) => {
+    const meta = (m.metadata ?? {}) as Record<string, unknown>
+    return meta.is_automated !== true && meta.generated_by !== 'caye'
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Template + free-form body composers (kept in-route until Phase 3 expands them)
+// ---------------------------------------------------------------------------
+
+function templateForKind(
+  kind: string,
+  payload: Record<string, unknown>
+): { name: string; placeholders: string[] } | null {
+  const str = (k: string, fallback = ''): string =>
+    typeof payload[k] === 'string' ? (payload[k] as string) : fallback
+
+  switch (kind) {
+    case 'otp':
+      return { name: 'caye_otp', placeholders: [str('code')] }
+    case 'welcome':
+      return { name: 'caye_welcome', placeholders: [str('firstName', 'there')] }
+    case 'morning_digest':
+      return {
+        name: 'caye_morning_digest',
+        placeholders: [
+          str('firstName', 'there'),
+          String(payload.heldCount ?? 0),
+          String(payload.bookingsTodayCount ?? 0),
+        ],
+      }
+    case 'urgent_hold':
+      return {
+        name: 'caye_urgent_hold',
+        placeholders: [str('contactName', 'A guest'), str('reason', 'needs your call')],
+      }
+    case 'auth_failure':
+      return {
+        name: 'caye_auth_failure',
+        placeholders: [str('service', 'a connected service'), str('reconnectUrl', '')],
+      }
+    case 'same_day_booking':
+      // No dedicated template in v1 — fall back to urgent_hold framing.
+      return {
+        name: 'caye_urgent_hold',
+        placeholders: [str('guest', 'A guest'), 'booked for today'],
+      }
+    default:
+      return null
+  }
+}
+
+function freeFormBodyForKind(kind: string, payload: Record<string, unknown>): string | null {
+  if (kind === 'ack') {
+    return typeof payload.body === 'string' ? (payload.body as string) : null
+  }
+  // All other kinds prefer their template; this is only used when the 24h
+  // window is open AND the kind isn't in TEMPLATE_REQUIRED_KINDS. In v1
+  // that's effectively ack only.
+  return null
+}
