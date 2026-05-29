@@ -6,6 +6,7 @@ import { useWorkspace } from '@/lib/workspace-context'
 import { getSupabase } from '@/lib/supabase'
 import SuggestionChip from '../SuggestionChip'
 import SetupChecklist from '../SetupChecklist'
+import WhatsAppStatusBanner from '../WhatsAppStatusBanner'
 import { RichReply, type CardPayload } from './RichReply'
 import { useDashboard } from '@/lib/dashboard-context'
 
@@ -441,6 +442,7 @@ export default function HomeScreen() {
                 </p>
               </div>
 
+              <WhatsAppStatusBanner />
               <SetupChecklist />
 
               {/* Chat input inside the empty stack */}

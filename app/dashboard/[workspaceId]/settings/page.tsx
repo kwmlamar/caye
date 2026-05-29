@@ -8,13 +8,14 @@ import ChannelsPanel from '@/components/settings/ChannelsPanel'
 import CayeAIPanel from '@/components/settings/CayeAIPanel'
 import CayeHealthPanel from '@/components/settings/CayeHealthPanel'
 import NotificationsPanel from '@/components/settings/NotificationsPanel'
+import WhatsAppPanel from '@/components/settings/WhatsAppPanel'
 import TeamPanel from '@/components/settings/TeamPanel'
 import BillingPanel from '@/components/settings/BillingPanel'
 import ServicesPanel from '@/components/settings/ServicesPanel'
 import { useDashboard } from '@/lib/dashboard-context'
 import type { SettingsSection } from '@/lib/types'
 
-const VALID_SECTIONS = new Set<SettingsSection>(['profile', 'channels', 'caye', 'health', 'notifications', 'team', 'billing', 'services'])
+const VALID_SECTIONS = new Set<SettingsSection>(['profile', 'channels', 'caye', 'health', 'notifications', 'team', 'billing', 'services', 'whatsapp'])
 
 const SearchIcon = () => (
   <svg width={14} height={14} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
@@ -29,6 +30,7 @@ const SECTION_LABELS: Record<SettingsSection, string> = {
   health: 'Caye health',
   services: 'Services',
   notifications: 'Notifications',
+  whatsapp: 'WhatsApp',
   team: 'Team',
   billing: 'Billing',
 }
@@ -93,6 +95,7 @@ export default function SettingsPage() {
             {active === 'caye'          && <CayeAIPanel />}
             {active === 'health'        && <CayeHealthPanel />}
             {active === 'notifications' && <NotificationsPanel />}
+            {active === 'whatsapp'      && <WhatsAppPanel />}
             {active === 'team'          && <TeamPanel />}
             {active === 'billing'       && <BillingPanel />}
             {active === 'services'     && <ServicesPanel />}

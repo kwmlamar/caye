@@ -7,6 +7,7 @@ export const SET_NAV: NavItem[] = [
   { id: 'health', label: 'Caye health', sub: 'What she\'s been doing', icon: 'pulse' },
   { id: 'services', label: 'Services', sub: 'Tours & offerings', icon: 'svc' },
   { id: 'notifications', label: 'Notifications', sub: 'Alerts & summaries', icon: 'bell' },
+  { id: 'whatsapp', label: 'WhatsApp', sub: 'How Caye reaches you', icon: 'bell' },
   { id: 'team', label: 'Team', sub: '4 members', icon: 'ppl' },
   { id: 'billing', label: 'Billing', sub: 'Growth · trial 12d', icon: 'card' },
 ]

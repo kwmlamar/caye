@@ -137,5 +137,5 @@ export interface NotificationPrefs {
 }
 
 export type Screen = 'home' | 'chats' | 'bookings' | 'calendar' | 'contacts'
-export type SettingsSection = 'profile' | 'channels' | 'caye' | 'health' | 'notifications' | 'team' | 'billing' | 'services'
+export type SettingsSection = 'profile' | 'channels' | 'caye' | 'health' | 'notifications' | 'team' | 'billing' | 'services' | 'whatsapp'
 export type ActiveSection = Screen | 'settings'

@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import Avatar from '@/components/ui/Avatar'
 import ChannelIcon from '@/components/ui/ChannelIcon'
 import { CayeMark } from '@/components/brand/CayeMark'
+import WhatsAppPingIndicator from './WhatsAppPingIndicator'
 import {
   getConnectedAccounts,
   getUnifiedConversations,
@@ -628,6 +629,11 @@ export default function ChatsScreen({ openCaye, inPanel = false }: { openCaye: (
                 </span>
               </div>
             )}
+            <WhatsAppPingIndicator
+              conversationId={selectedConv.id}
+              resolved={!selectedConv.human_agent_enabled}
+              resolvedAt={selectedConv.last_message_at}
+            />
 
             <div className="thread-body">
               {loadingMsgs ? (
@@ -1052,6 +1058,11 @@ export default function ChatsScreen({ openCaye, inPanel = false }: { openCaye: (
                 </span>
               </div>
             )}
+            <WhatsAppPingIndicator
+              conversationId={selectedConv.id}
+              resolved={!selectedConv.human_agent_enabled}
+              resolvedAt={selectedConv.last_message_at}
+            />
 
             <div className="thread-body">
               {loadingMsgs ? (
