@@ -70,6 +70,8 @@ export async function getZohoContext(workspaceId: string): Promise<ZohoAccountCo
     .maybeSingle()
 
   if (!account) {
+    // "No account" usually means the operator never connected Zoho — that's a
+    // setup state, not a disconnection event. Don't ping for it.
     throw new Error(`No active Zoho account for workspace ${workspaceId}`)
   }
 
@@ -81,10 +83,12 @@ export async function getZohoContext(workspaceId: string): Promise<ZohoAccountCo
 
   if (tokenExpiresSoon(account.token_expires_at)) {
     if (!account.refresh_token) {
+      await fireZohoAuthFailurePing(workspaceId, 'Zoho Mail')
       throw new Error(`No refresh token for Zoho account ${zohoAccountId} — user must reconnect`)
     }
     const refreshed = await refreshZohoToken(account.refresh_token)
     if (!refreshed) {
+      await fireZohoAuthFailurePing(workspaceId, 'Zoho Mail')
       throw new Error(`Token refresh failed for Zoho account ${zohoAccountId}`)
     }
     accessToken = refreshed.accessToken
@@ -95,4 +99,29 @@ export async function getZohoContext(workspaceId: string): Promise<ZohoAccountCo
   }
 
   return { accountRow: account, accessToken, apiDomain, zohoAccountId }
+}
+
+/**
+ * Fire-and-forget operator ping for Zoho auth failures. Idempotency (one per
+ * workspace/service/day) is enforced inside enqueueAuthFailurePing, so this
+ * is safe to invoke from every call that hits the broken state — flapping
+ * connections won't spam.
+ */
+async function fireZohoAuthFailurePing(
+  workspaceId: string,
+  service: 'Zoho Mail' | 'Zoho Calendar'
+): Promise<void> {
+  try {
+    // Dynamic import to avoid bringing the whatsapp outbound queue into
+    // every Zoho call site at module load time.
+    const { enqueueAuthFailurePing } = await import('./whatsapp/triggers')
+    const base = process.env.NEXT_PUBLIC_APP_URL ?? 'https://meetcaye.com'
+    await enqueueAuthFailurePing({
+      workspaceId,
+      service,
+      reconnectUrl: `${base}/dashboard/${workspaceId}/settings?tab=channels`,
+    })
+  } catch (err) {
+    console.error('[zoho-token] auth-failure ping enqueue failed:', err)
+  }
 }
