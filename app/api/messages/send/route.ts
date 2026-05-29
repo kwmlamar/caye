@@ -65,8 +65,29 @@ export async function POST(request: NextRequest) {
     ? conv.connected_account[0]
     : conv.connected_account
 
-  if (!account || account.user_id !== user.id) {
+  if (!account) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
+
+  // The connected_account's user_id IS the workspace id (customers.id == owner's
+  // auth.users.id by design). Access is granted if the caller is either:
+  //   (a) the owner themselves, or
+  //   (b) an active member of that workspace via workspace_members.
+  if (account.user_id !== user.id) {
+    const { data: membership } = await supabase
+      .from('workspace_members')
+      .select('workspace_id')
+      .eq('workspace_id', account.user_id)
+      .eq('user_id', user.id)
+      .maybeSingle()
+
+    if (!membership) {
+      console.warn(
+        `[messages/send] Forbidden: user ${user.id} has no access to workspace ${account.user_id} ` +
+          `(conversation ${conversation_id})`
+      )
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
   }
 
   const text = content.trim()
