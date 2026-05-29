@@ -21,6 +21,7 @@ import { createHmac } from 'crypto'
 import { createServiceClient } from '@/lib/supabase-server'
 import { sendMetaMessage, fetchMetaSenderName } from '@/lib/meta-reply'
 import { generateCayeAutoReply } from '@/lib/caye-reply'
+import { enqueueHoldPing } from '@/lib/whatsapp/triggers'
 import { maybeRefreshContactProfile } from '@/lib/contact-profile'
 import { syncBookingToCalendar } from '@/lib/calendar-sync'
 import type { VoiceProfile } from '@/lib/voice-profile'
@@ -265,6 +266,15 @@ async function processInboundInstagram(payload: Record<string, unknown>): Promis
           },
         })
         console.log(`[instagram webhook] Held for human: ${senderId} — ${decision.reason}`)
+        enqueueHoldPing({
+          workspaceId,
+          conversationId: conversation.id,
+          contactName: customerName,
+          reason: decision.reason,
+          proposedReply: decision.proposedReply,
+          inboundBody: body,
+          urgency: decision.urgency,
+        }).catch((err) => console.error('[instagram webhook] enqueueHoldPing failed:', err))
         continue
       }
 

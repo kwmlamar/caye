@@ -21,6 +21,7 @@ import { createHmac } from 'crypto'
 import { createServiceClient } from '@/lib/supabase-server'
 import { sendWhatsAppMessage } from '@/lib/whatsapp'
 import { generateCayeAutoReply } from '@/lib/caye-reply'
+import { enqueueHoldPing } from '@/lib/whatsapp/triggers'
 import { maybeRefreshContactProfile } from '@/lib/contact-profile'
 import { syncBookingToCalendar } from '@/lib/calendar-sync'
 import type { VoiceProfile } from '@/lib/voice-profile'
@@ -309,6 +310,17 @@ async function processInboundWhatsApp(payload: Record<string, unknown>): Promise
         },
       })
       console.log(`[whatsapp webhook] Held for human: ${from} — ${decision.reason}`)
+      // Fire-and-forget WhatsApp ping to the operator. Internally no-ops if
+      // the workspace flag is off or the operator number isn't verified.
+      enqueueHoldPing({
+        workspaceId,
+        conversationId: conversation.id,
+        contactName: customerName,
+        reason: decision.reason,
+        proposedReply: decision.proposedReply,
+        inboundBody: body,
+        urgency: decision.urgency,
+      }).catch((err) => console.error('[whatsapp webhook] enqueueHoldPing failed:', err))
       continue
     }
 

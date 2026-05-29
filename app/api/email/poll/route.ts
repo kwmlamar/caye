@@ -12,6 +12,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase-server'
 import { generateCayeAutoReply } from '@/lib/caye-reply'
+import { enqueueHoldPing } from '@/lib/whatsapp/triggers'
 import { htmlToPlainText } from '@/lib/email-text'
 import { maybeRefreshOwnerVoiceProfile } from '@/lib/owner-voice-learning'
 import { detectOwnerCorrection } from '@/lib/owner-correction'
@@ -960,6 +961,15 @@ async function processMessage(
       },
     })
     console.log(`[email/poll] Held for human: ${effectiveEmail} — ${decision.reason}`)
+    enqueueHoldPing({
+      workspaceId,
+      conversationId: conversation.id,
+      contactName: effectiveName || effectiveEmail,
+      reason: decision.reason,
+      proposedReply: decision.proposedReply,
+      inboundBody: body || subject,
+      urgency: decision.urgency,
+    }).catch((err) => console.error('[email/poll] enqueueHoldPing failed:', err))
     return 'held'
   }
 

@@ -20,6 +20,7 @@ import { createHmac } from 'crypto'
 import { createServiceClient } from '@/lib/supabase-server'
 import { sendZohoReply } from '@/lib/email-ai'
 import { generateCayeAutoReply } from '@/lib/caye-reply'
+import { enqueueHoldPing } from '@/lib/whatsapp/triggers'
 import { syncBookingToCalendar } from '@/lib/calendar-sync'
 import type { VoiceProfile } from '@/lib/voice-profile'
 import { maybeRefreshContactProfile } from '@/lib/contact-profile'
@@ -298,6 +299,15 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
       },
     })
     console.log(`[zoho-email webhook] Held for human: ${fromEmail} — ${decision.reason}`)
+    enqueueHoldPing({
+      workspaceId,
+      conversationId: conversation.id,
+      contactName: fromName || fromEmail,
+      reason: decision.reason,
+      proposedReply: decision.proposedReply,
+      inboundBody: body,
+      urgency: decision.urgency,
+    }).catch((err) => console.error('[zoho-email webhook] enqueueHoldPing failed:', err))
     return
   }
 

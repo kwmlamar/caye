@@ -18,7 +18,19 @@ import { formatCustomerFactsBlock, type CustomerFacts } from './customer-facts'
 
 export type CayeAutoReply =
   | { action: 'reply'; content: string; bookingId?: string }
-  | { action: 'hold'; reason: string; note: string; proposedReply?: string }
+  | {
+      action: 'hold'
+      reason: string
+      note: string
+      proposedReply?: string
+      /**
+       * Operator-ping urgency. Used by the WhatsApp outbound trigger layer to
+       * decide whether to ping immediately or batch into the morning digest.
+       * If absent, the caller should compute it with classifyHoldUrgency()
+       * from lib/whatsapp/urgency.ts.
+       */
+      urgency?: 'urgent' | 'routine'
+    }
 
 interface ServiceRow {
   id: string
