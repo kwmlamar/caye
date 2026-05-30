@@ -7,6 +7,7 @@ import { detectIdentityLeak } from './caye-identity-guard'
 import { formatHistoryBlock } from './conversation-history'
 import { checkBookingAutonomy, AUTONOMY_WINDOW_HOURS } from './booking-policy'
 import { syncBookingToCalendar } from './calendar-sync'
+import { resolveTier, type PricingTier } from './services/resolve-tier'
 import {
   summarizeBookingHistory,
   formatCustomerHistoryBlock,
@@ -116,6 +117,37 @@ const TOOLS: Anthropic.Tool[] = [
         content: { type: 'string', description: 'The reply to send to the customer.' },
       },
       required: ['content'],
+    },
+  },
+  {
+    name: 'lookup_price',
+    description:
+      'Resolve the EXACT price for a given service + group size. ALWAYS call this ' +
+      'before mentioning any price in send_reply. NEVER quote a price from memory or ' +
+      'from the system prompt — call this tool every time.\n\n' +
+      'Returns either:\n' +
+      '  { ok: true, price_label, total_label, total_amount } — quote these verbatim. ' +
+      'price_label is the per-tier rate (e.g. "$110/person"); total_label is the party ' +
+      'total (e.g. "$300 total"). Both are pre-formatted for the email/message.\n' +
+      '  { ok: false, hold, message } — DO NOT quote a price. Call hold_for_human with ' +
+      'reason="pricing_unresolved" and include the message field in the note.\n\n' +
+      'Examples of when to hold:\n' +
+      '  - group_size falls in a gap between tiers (e.g. 3 people, when tiers are 1, 2, 4+)\n' +
+      '  - "starting at $X" pricing where the actual quote depends on details\n' +
+      '  - service has no pricing tiers configured yet',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        service_id: {
+          type: 'string',
+          description: 'Service id from the AVAILABLE SERVICES list. Required.',
+        },
+        group_size: {
+          type: 'number',
+          description: 'Number of guests in the party. Must be a positive integer.',
+        },
+      },
+      required: ['service_id', 'group_size'],
     },
   },
   {
@@ -399,6 +431,20 @@ function buildSystem(
     'If the slot is full, suggest the next time. Mention to the customer they\'ll be joining others.\n' +
     '- EXCLUSIVE services: only one party per slot. If the slot has any booking, suggest another time.'
 
+  s +=
+    '\n\nPRICING POLICY (CRITICAL):\n' +
+    '- NEVER quote a price from memory, from the system prompt, or by reading pricing text. ' +
+    'ALWAYS call lookup_price(service_id, group_size) and quote the values it returns verbatim.\n' +
+    '- If lookup_price returns ok=true: use price_label and total_label exactly as given. ' +
+    'Do not round, do not paraphrase, do not multiply on your own. Example: ' +
+    'if total_label is "$375 total" you write "$375 total" — not "$187.50/person" or "$300".\n' +
+    '- If lookup_price returns ok=false: DO NOT mention any number in your reply. ' +
+    'Call hold_for_human with reason="pricing_unresolved" and include the returned message ' +
+    'field in the note. The owner will quote manually.\n' +
+    '- Before quoting any price you have not yet looked up in this turn, call lookup_price first. ' +
+    'This is non-negotiable — past pricing mistakes (e.g. quoting the per-person group rate for a 2-person ' +
+    'Private tour) cost the owner real money and trust.'
+
   s += isEmail
     ? '\n\nWrite only the reply body — no headers, no markdown, no subject line. Plain prose.' +
       '\n\nSIGN-OFF: Use the exact sign-off block specified earlier in this system prompt — verbatim, ' +
@@ -503,6 +549,79 @@ interface CreateBookingInput {
   status?: 'confirmed' | 'pending'
 }
 
+/**
+ * Fetch pricing tiers for a service and resolve the exact price for a group size.
+ * Returns a structure Caye can quote verbatim, or a hold instruction.
+ *
+ * Deterministic — never paraphrases prices. The Stallings 2026-05-29 case
+ * (see Clients/bimini-island-tours.md) traced to a human mis-typing pricing
+ * by tier confusion; this function eliminates that class of error for Caye.
+ */
+async function lookupPriceForCaye(
+  workspaceId: string,
+  serviceId: string,
+  groupSize: number
+): Promise<
+  | { ok: true; price_label: string; total_label: string; total_amount: number; tier_name: string }
+  | { ok: false; hold: string; message: string }
+> {
+  const supabase = createServiceClient()
+
+  // Verify the service belongs to this workspace before fetching tiers.
+  const { data: service } = await supabase
+    .from('booking_services')
+    .select('id, user_id, name')
+    .eq('id', serviceId)
+    .eq('user_id', workspaceId)
+    .maybeSingle()
+
+  if (!service) {
+    return {
+      ok: false,
+      hold: 'service_not_found',
+      message: `Service ${serviceId} not found in this workspace. Pick a service_id from AVAILABLE SERVICES.`,
+    }
+  }
+
+  const { data: tierRows, error } = await supabase
+    .from('service_pricing_tiers')
+    .select('id, tier_name, group_size_min, group_size_max, price_amount, price_label, is_flat, is_ambiguous_above, display_order')
+    .eq('service_id', serviceId)
+    .eq('workspace_id', workspaceId)
+    .order('display_order', { ascending: true })
+
+  if (error) {
+    return { ok: false, hold: 'lookup_error', message: `Pricing lookup failed: ${error.message}` }
+  }
+
+  // price_amount comes back as string from postgres NUMERIC; coerce to number.
+  const tiers: PricingTier[] = (tierRows ?? []).map(r => ({
+    id: r.id,
+    tier_name: r.tier_name,
+    group_size_min: r.group_size_min,
+    group_size_max: r.group_size_max,
+    price_amount: typeof r.price_amount === 'string' ? parseFloat(r.price_amount) : r.price_amount,
+    price_label: r.price_label,
+    is_flat: r.is_flat,
+    is_ambiguous_above: r.is_ambiguous_above,
+    display_order: r.display_order,
+  }))
+
+  const result = resolveTier(tiers, groupSize)
+
+  if (result.ok) {
+    return {
+      ok: true,
+      price_label: result.priceLabel,
+      total_label: result.totalLabel,
+      total_amount: result.totalAmount,
+      tier_name: result.tier.tier_name,
+    }
+  }
+
+  return { ok: false, hold: result.hold, message: result.message }
+}
+
 async function createBookingFromCaye(
   workspaceId: string,
   conversationId: string | null,
@@ -534,7 +653,13 @@ async function createBookingFromCaye(
     number_of_people: input.number_of_people && input.number_of_people > 0 ? input.number_of_people : 1,
     duration_minutes:
       input.duration_minutes && input.duration_minutes > 0 ? input.duration_minutes : null,
-    status: input.status ?? 'confirmed',
+    // Default to 'pending' (= tentative, customer hasn't confirmed details yet).
+    // Caye must explicitly pass status='confirmed' when the customer has agreed
+    // to a specific date/time AND availability has been verified. The Stallings
+    // 2026-05-29 case showed why the default matters: a confirmed-on-inquiry
+    // booking row created a phantom commitment before any customer agreement.
+    // See _Ops/Brain/decisions-log.md and Clients/bimini-island-tours.md.
+    status: input.status ?? 'pending',
     notes: notesWithMarker,
   }
 
@@ -1171,6 +1296,19 @@ export async function generateCayeAutoReply(
           type: 'tool_result',
           tool_use_id: tool.id,
           content: JSON.stringify(result),
+        })
+      } else if (tool.name === 'lookup_price') {
+        const input = tool.input as { service_id: string; group_size: number }
+        const result = await lookupPriceForCaye(
+          inbound.workspaceId,
+          input.service_id,
+          input.group_size
+        )
+        toolResults.push({
+          type: 'tool_result',
+          tool_use_id: tool.id,
+          content: JSON.stringify(result),
+          is_error: !result.ok,
         })
       } else if (tool.name === 'create_booking') {
         const input = tool.input as CreateBookingInput
