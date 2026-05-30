@@ -812,19 +812,53 @@ async function processMessage(
     .maybeSingle()
   if (aiConfig?.system_prompt) systemPrompt = aiConfig.system_prompt
 
-  // Upsert conversation — for Web3Forms submissions use the customer's email
-  // as the channel_conversation_id so follow-up direct emails thread correctly
-  const convChannelId = web3FormsFields
-    ? `w3f_${web3FormsFields.customerEmail}_${threadId}`
-    : threadId
-
-  const { data: conversation, error: convErr } = await supabase
+  // Find-or-create conversation by customer email (NOT by threadId).
+  //
+  // The previous `w3f_${email}_${threadId}` prefix was a half-attempt at
+  // deduping web3forms submissions with direct replies, but still produced
+  // N conversations for one customer when different threadIds appeared
+  // (multiple form submissions, direct reply on a new thread, Caye outbound
+  // starting a new thread). The Stallings 2026-05-29 case had 3 rows for
+  // jdstallings@protonmail.com. See Clients/bimini-island-tours.md.
+  //
+  // Rule: one conversation per (connected_account, email). Track the new
+  // threadId in metadata.related_thread_ids so we keep audit trail.
+  let conversation: { id: string }
+  const { data: existingConv } = await supabase
     .from('unified_conversations')
-    .upsert(
-      {
+    .select('id, metadata')
+    .eq('connected_account_id', String(account.id))
+    .eq('channel_type', 'email')
+    .eq('customer_id', effectiveEmail)
+    .maybeSingle()
+
+  if (existingConv) {
+    const existingMeta = (existingConv.metadata ?? {}) as Record<string, unknown>
+    const existingThreads = (existingMeta.related_thread_ids as string[] | undefined) ?? [existingMeta.thread_id as string | undefined].filter(Boolean) as string[]
+    const relatedThreads = Array.from(new Set([...existingThreads, threadId]))
+    await supabase
+      .from('unified_conversations')
+      .update({
+        metadata: {
+          ...existingMeta,
+          subject: existingMeta.subject ?? subject,
+          from: existingMeta.from ?? (web3FormsFields ? effectiveEmail : fromRaw),
+          thread_id: existingMeta.thread_id ?? threadId,
+          related_thread_ids: relatedThreads,
+          ...(web3FormsFields && !existingMeta.form_fields
+            ? { source: 'web3forms', form_fields: web3FormsFields }
+            : {}),
+        },
+      })
+      .eq('id', existingConv.id)
+    conversation = { id: existingConv.id }
+  } else {
+    const { data: created, error: convErr } = await supabase
+      .from('unified_conversations')
+      .insert({
         connected_account_id: String(account.id),
         channel_type: 'email',
-        channel_conversation_id: convChannelId,
+        channel_conversation_id: threadId,
         customer_name: effectiveName,
         customer_id: effectiveEmail,
         status: 'open',
@@ -832,17 +866,18 @@ async function processMessage(
           subject,
           from: web3FormsFields ? effectiveEmail : fromRaw,
           thread_id: threadId,
+          related_thread_ids: [threadId],
           ...(web3FormsFields ? { source: 'web3forms', form_fields: web3FormsFields } : {}),
         },
-      },
-      { onConflict: 'connected_account_id,channel_conversation_id' }
-    )
-    .select('id')
-    .single()
+      })
+      .select('id')
+      .single()
 
-  if (convErr || !conversation) {
-    console.error('[email/poll] Conversation upsert failed:', convErr)
-    return 'error'
+    if (convErr || !created) {
+      console.error('[email/poll] Conversation insert failed:', convErr)
+      return 'error'
+    }
+    conversation = created
   }
 
   // Insert inbound message — surface failures, since a silent trigger error

@@ -186,12 +186,48 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
     console.warn('[zoho-email webhook] Contact upsert failed (continuing):', contactErr.message)
   }
 
-  // Upsert conversation keyed on threadId. Link to the contact we just
-  // resolved so customer-style learning can find it.
-  const { data: conversation, error: convErr } = await supabase
+  // Find-or-create conversation by customer email (NOT by threadId).
+  //
+  // Previously keyed on threadId — same human across multiple Zoho threads
+  // (web3forms submission, direct reply, Caye-initiated outbound that started
+  // a new thread) produced N separate conversations. The Stallings 2026-05-29
+  // case had 3 rows for jdstallings@protonmail.com. See
+  // Clients/bimini-island-tours.md + lib/services/resolve-tier.ts.
+  //
+  // Rule: one conversation per (connected_account, email). Meta channels
+  // (WA/IG/Messenger) keep threadId-based dedup since per-channel identity
+  // is already stable there.
+  let conversation: { id: string }
+  const { data: existingConv } = await supabase
     .from('unified_conversations')
-    .upsert(
-      {
+    .select('id, metadata')
+    .eq('connected_account_id', account.id)
+    .eq('channel_type', 'email')
+    .eq('customer_id', fromEmail)
+    .maybeSingle()
+
+  if (existingConv) {
+    const existingMeta = (existingConv.metadata ?? {}) as Record<string, unknown>
+    const existingThreads = (existingMeta.related_thread_ids as string[] | undefined) ?? [existingMeta.thread_id as string | undefined].filter(Boolean) as string[]
+    const relatedThreads = Array.from(new Set([...existingThreads, threadId]))
+    await supabase
+      .from('unified_conversations')
+      .update({
+        contact_id: contactRow?.id ?? null,
+        metadata: {
+          ...existingMeta,
+          subject: existingMeta.subject ?? subject,
+          from: existingMeta.from ?? fromRaw,
+          thread_id: existingMeta.thread_id ?? threadId,
+          related_thread_ids: relatedThreads,
+        },
+      })
+      .eq('id', existingConv.id)
+    conversation = { id: existingConv.id }
+  } else {
+    const { data: created, error: convErr } = await supabase
+      .from('unified_conversations')
+      .insert({
         connected_account_id: account.id,
         channel_type: 'email',
         channel_conversation_id: threadId,
@@ -199,16 +235,16 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
         customer_id: fromEmail,
         contact_id: contactRow?.id ?? null,
         status: 'open',
-        metadata: { subject, from: fromRaw, thread_id: threadId },
-      },
-      { onConflict: 'connected_account_id,channel_conversation_id' }
-    )
-    .select('id')
-    .single()
+        metadata: { subject, from: fromRaw, thread_id: threadId, related_thread_ids: [threadId] },
+      })
+      .select('id')
+      .single()
 
-  if (convErr || !conversation) {
-    console.error('[zoho-email webhook] Conversation upsert failed:', convErr)
-    return
+    if (convErr || !created) {
+      console.error('[zoho-email webhook] Conversation insert failed:', convErr)
+      return
+    }
+    conversation = created
   }
 
   // Dedup inbound message
