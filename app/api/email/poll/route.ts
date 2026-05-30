@@ -941,6 +941,52 @@ async function processMessage(
     return 'skipped'
   }
 
+  // Active-operator guard: if the owner has manually replied on this thread
+  // recently (typed directly in Zoho, not through Caye UI), they're actively
+  // engaged. Caye holds instead of autopiloting to avoid sending a competing
+  // or contradictory reply on top of their work. The owner can resume Caye's
+  // autopilot by clearing the held state in the UI, OR after a quiet period
+  // (no human activity in HUMAN_ACTIVE_WINDOW_MS), Caye re-engages on her own.
+  //
+  // Surfaced 2026-05-30 from the data review: 95 human_via_external sends
+  // vs 16 caye_autopilot — without this gate, Caye and Karenda race on
+  // every conversation Karenda touches in Zoho.
+  const HUMAN_ACTIVE_WINDOW_MS = 60 * 60 * 1000 // 60 minutes
+  const { data: lastBizMsg } = await supabase
+    .from('unified_messages')
+    .select('sent_at, metadata, sender_attribution')
+    .eq('conversation_id', conversation.id)
+    .eq('sender_type', 'business')
+    .eq('is_internal', false)
+    .order('sent_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (lastBizMsg) {
+    const lastMeta = (lastBizMsg.metadata ?? {}) as Record<string, unknown>
+    const isHumanLast =
+      lastBizMsg.sender_attribution === 'human_via_external' ||
+      lastBizMsg.sender_attribution === 'human_via_caye' ||
+      lastMeta.sent_by === 'human' ||
+      lastMeta.source === 'zoho_sent'
+    const ageMs = Date.now() - new Date(lastBizMsg.sent_at).getTime()
+    if (isHumanLast && ageMs < HUMAN_ACTIVE_WINDOW_MS) {
+      const ageMin = Math.round(ageMs / 60000)
+      await supabase
+        .from('unified_conversations')
+        .update({
+          human_agent_enabled: true,
+          human_agent_reason: `Owner replied directly ${ageMin}m ago — Caye paused on this thread`,
+        })
+        .eq('id', conversation.id)
+      console.log(
+        `[email/poll] Skipping autopilot — owner active on this thread ` +
+        `(last human reply ${ageMin}m ago, within ${HUMAN_ACTIVE_WINDOW_MS / 60000}m window)`
+      )
+      return 'skipped'
+    }
+  }
+
   // Never auto-reply to vendor/system addresses (noreply@, mailer-daemon@, etc.).
   // For Web3Forms specifically we use effectiveEmail (the real customer) instead.
   const replyTarget = (web3FormsFields ? effectiveEmail : fromEmail).toLowerCase()
