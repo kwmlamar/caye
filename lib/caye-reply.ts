@@ -18,7 +18,24 @@ import { classifyInbound, toneHintFor, type InboundCategory } from './inbound-cl
 import { formatCustomerFactsBlock, type CustomerFacts } from './customer-facts'
 
 export type CayeAutoReply =
-  | { action: 'reply'; content: string; bookingId?: string }
+  | {
+      action: 'reply'
+      content: string
+      bookingId?: string
+      /**
+       * Acknowledge-and-defer mode (2B): Caye sent the customer a reply, but
+       * the request still needs an owner decision (off-menu service, custom
+       * pricing tier, special arrangement). When true, the conversation has
+       * been marked `human_agent_enabled=true` so the operator sees it in
+       * their attention queue even though Caye replied autonomously.
+       *
+       * Locked 2026-05-31 — see decisions-log "Caye catalog behavior: upon-
+       * request tiers use acknowledge + qualify + defer (2B)".
+       */
+      needsOwnerFollowup?: boolean
+      /** Short note explaining what the owner needs to follow up on. */
+      ownerNote?: string
+    }
   | {
       action: 'hold'
       reason: string
@@ -110,11 +127,40 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: 'send_reply',
     description:
-      'Send a reply to the customer. Use this when you can confidently handle the message.',
+      'Send a reply to the customer. Use this when you can confidently handle the message.\n\n' +
+      'ACKNOWLEDGE-AND-DEFER (2B mode): When the customer asks for something genuinely ' +
+      'off-menu (a service not in AVAILABLE SERVICES), or asks for a service with ' +
+      'custom/upon-request pricing you cannot quote, send_reply with an acknowledgment ' +
+      'and 1-2 qualifying questions — and set flag_for_owner_followup=true with an ' +
+      'owner_note describing what the owner needs to decide. The customer gets an ' +
+      'immediate reply (no silent hold); the conversation is flagged in the operator\'s ' +
+      'queue as "needs your decision." Do NOT quote any price in this mode.\n\n' +
+      'CLARIFYING QUESTION mode: When lookup_price returns ok:false due to a multi-tier ' +
+      'or ambiguous-match issue the CUSTOMER can resolve in one reply (e.g. "Golf Cart ' +
+      'Guided Tour" matches both the 1hr Orientation and the 2hr Fully Guided), send_reply ' +
+      'with a clarifying question naming the tier options — do NOT hold_for_human. The ' +
+      'customer answers, you re-run lookup_price, you book. No owner action needed, so ' +
+      'flag_for_owner_followup stays unset.',
     input_schema: {
       type: 'object' as const,
       properties: {
         content: { type: 'string', description: 'The reply to send to the customer.' },
+        flag_for_owner_followup: {
+          type: 'boolean',
+          description:
+            'Set to true ONLY in acknowledge-and-defer (2B) mode: customer-facing ' +
+            'acknowledgment goes out, but the underlying decision (pricing, custom ' +
+            'arrangement) still needs the owner. Conversation will be flagged in the ' +
+            'operator\'s attention queue. Do NOT set for clarifying questions or ' +
+            'normal sends — those don\'t need owner follow-up.',
+        },
+        owner_note: {
+          type: 'string',
+          description:
+            'When flag_for_owner_followup=true: one short sentence telling the owner ' +
+            'what they need to do (e.g. "Quote Bimini Beach Experience for 2 adults on ' +
+            'Sept 6 — Alice Town + beach with amenities"). Shown in the inbox.',
+        },
       },
       required: ['content'],
     },
@@ -129,12 +175,20 @@ const TOOLS: Anthropic.Tool[] = [
       '  { ok: true, price_label, total_label, total_amount } — quote these verbatim. ' +
       'price_label is the per-tier rate (e.g. "$110/person"); total_label is the party ' +
       'total (e.g. "$300 total"). Both are pre-formatted for the email/message.\n' +
-      '  { ok: false, hold, message } — DO NOT quote a price. Call hold_for_human with ' +
-      'reason="pricing_unresolved" and include the message field in the note.\n\n' +
-      'Examples of when to hold:\n' +
-      '  - group_size falls in a gap between tiers (e.g. 3 people, when tiers are 1, 2, 4+)\n' +
-      '  - "starting at $X" pricing where the actual quote depends on details\n' +
-      '  - service has no pricing tiers configured yet',
+      '  { ok: false, hold, message } — DO NOT quote a price. Decide between three paths:\n' +
+      '    (a) CLARIFY: if the customer can resolve the ambiguity in one reply (multi-tier ' +
+      'match like Golf Cart Guided Tour 1hr Orientation vs 2hr Fully Guided, OR a gap ' +
+      'between tiers the customer could clarify by saying which option they want), call ' +
+      'send_reply with a clarifying question naming the options. No hold needed.\n' +
+      '    (b) DEFER (2B mode): if the service has custom/upon-request pricing OR the ' +
+      'request is genuinely off-menu, call send_reply with an acknowledgment + qualifying ' +
+      'questions + flag_for_owner_followup=true. Owner decides the price; customer gets ' +
+      'an immediate reply.\n' +
+      '    (c) HOLD: only when neither (a) nor (b) fits — e.g. customer is upset, request ' +
+      'is unclear in ways even the customer can\'t resolve, or you genuinely don\'t know ' +
+      'what to acknowledge. Call hold_for_human with reason="pricing_unresolved" and ' +
+      'include the message field in the note.\n\n' +
+      'Default order to try: (a) → (b) → (c). Holding is the last resort, not the first.',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -250,15 +304,21 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: 'hold_for_human',
     description:
-      'Hold this conversation for the business owner to handle personally. Use this when: ' +
-      'the customer has a complaint or is upset; the request needs specific info you don\'t have ' +
-      '(exact pricing beyond what services list, custom quotes, special arrangements); the ' +
-      'customer wants to change to a different SERVICE (pricing implication — your reschedule ' +
-      'tool only moves date/time of the same service); cancel_booking or reschedule_booking ' +
-      'returned within_policy_window or booking_in_past; the message is ambiguous and risky ' +
-      'to answer wrong; or anything that feels like it needs a human touch. Do NOT hold just ' +
-      'because they want to book / cancel / reschedule — use the dedicated tools when the ' +
-      'booking is >48h out. ' +
+      'Hold this conversation for the business owner to handle personally. HOLD IS THE LAST ' +
+      'RESORT — before holding, consider whether send_reply could handle it instead with ' +
+      'either a clarifying question (customer can resolve) or acknowledge-and-defer ' +
+      '(flag_for_owner_followup=true, customer still gets an immediate reply while the ' +
+      'underlying decision goes to the owner). Hold only when send_reply genuinely cannot ' +
+      'do the job.\n\nUse hold when: ' +
+      'the customer has a complaint or is upset; cancel_booking or reschedule_booking ' +
+      'returned within_policy_window or booking_in_past; the message is ambiguous in a way ' +
+      'that even the customer cannot clarify (you cannot draft any sensible acknowledgment); ' +
+      'or the request is genuinely outside what the business does (not just "off-menu but ' +
+      'related" — those use 2B acknowledge-and-defer). ' +
+      'Do NOT hold just because: pricing requires an owner decision (use 2B instead); the ' +
+      'service is off-menu but in the business\'s lane (use 2B); a tier match is ambiguous ' +
+      '(send a clarifying question); they want to book / cancel / reschedule (use the ' +
+      'dedicated tools when the booking is >48h out). ' +
       'IMPORTANT: when you hold, ALSO populate proposed_reply with the reply you WOULD have sent ' +
       'if you were confident. This becomes the operator\'s starting draft — they will review it, ' +
       'edit it, and send it themselves. Voice rules apply to proposed_reply exactly as they apply ' +
@@ -439,11 +499,45 @@ function buildSystem(
     'Do not round, do not paraphrase, do not multiply on your own. Example: ' +
     'if total_label is "$375 total" you write "$375 total" — not "$187.50/person" or "$300".\n' +
     '- If lookup_price returns ok=false: DO NOT mention any number in your reply. ' +
-    'Call hold_for_human with reason="pricing_unresolved" and include the returned message ' +
-    'field in the note. The owner will quote manually.\n' +
+    'Choose your action by the AUTONOMY DECISION TREE below — clarify if the customer can ' +
+    'resolve it, defer if it needs the owner (send_reply + flag_for_owner_followup=true), ' +
+    'hold only as the last resort.\n' +
     '- Before quoting any price you have not yet looked up in this turn, call lookup_price first. ' +
     'This is non-negotiable — past pricing mistakes (e.g. quoting the per-person group rate for a 2-person ' +
     'Private tour) cost the owner real money and trust.'
+
+  s +=
+    '\n\nAUTONOMY DECISION TREE (when you cannot directly send a booking confirmation):\n' +
+    'Holding is the last resort, not the first. Try these in order:\n' +
+    '\n' +
+    '1. CLARIFY — send_reply with a clarifying question.\n' +
+    '   Use when: the customer can resolve the issue in one reply.\n' +
+    '   Examples: multi-tier match ("Golf Cart Guided Tour" → 1hr Orientation OR 2hr Fully ' +
+    'Guided), ambiguous group size, ambiguous date, missing pickup info.\n' +
+    '   Reply pattern: name the options clearly, ask one specific question, do NOT quote prices.\n' +
+    '   No flag_for_owner_followup — the customer\'s reply will unblock the booking, owner ' +
+    'doesn\'t need to do anything.\n' +
+    '\n' +
+    '2. DEFER (2B mode) — send_reply with flag_for_owner_followup=true.\n' +
+    '   Use when: the service exists but pricing is custom / upon-request, OR the customer ' +
+    'asks for something genuinely off-menu that is still in the business\'s lane.\n' +
+    '   Examples: custom transport day, off-menu specialty experience, group/corporate ' +
+    'arrangement, "starting at $X" pricing where the actual quote depends on details.\n' +
+    '   Reply pattern: warm acknowledgment of what they want, 1-2 qualifying questions ' +
+    '(cruise/hotel/fly-in, start/finish times, group composition), explicit "I\'ll be back to ' +
+    'you shortly with details and pricing." Do NOT quote any number.\n' +
+    '   Set flag_for_owner_followup=true and owner_note describing what the owner needs ' +
+    'to decide (e.g. "Quote custom transport day for 4 adults Sept 25 — Max requested").\n' +
+    '\n' +
+    '3. HOLD — hold_for_human (last resort).\n' +
+    '   Use when: customer is upset/complaining, request is genuinely outside the business\'s ' +
+    'scope, message is ambiguous in ways even the customer cannot clarify, or you genuinely ' +
+    'cannot draft a sensible acknowledgment.\n' +
+    '   When holding, always include proposed_reply with the draft you would have sent.\n' +
+    '\n' +
+    'Default to (1) or (2) whenever possible. The customer always gets an immediate response ' +
+    'in those modes; the owner gets a clean queue of "decision needed" items instead of a ' +
+    'queue of "messages I need to read and respond to."'
 
   s += isEmail
     ? '\n\nWrite only the reply body — no headers, no markdown, no subject line. Plain prose.' +
@@ -462,6 +556,13 @@ function buildSystem(
     'non-customer message, call hold_for_human with reason "not a customer message" and let the owner ' +
     'decide. Never make commitments on the owner\'s behalf about signing up for things, attending events, ' +
     'trying products, or replying to industry peers.'
+
+  s += '\n\nTIME COMMITMENTS: Do NOT commit the owner to specific response windows. ' +
+    'Never say "within 24 hours", "by tomorrow", "later today", or any other fixed time promise ' +
+    'unless the system prompt or a prior owner instruction explicitly authorizes one for this context. ' +
+    'Use "shortly", "soon", "as soon as we can", or omit the time reference entirely. ' +
+    'The owner\'s actual response time is unpredictable — every fixed promise you make becomes a ' +
+    'broken promise we cannot control.'
 
   s += '\n\nYou MUST end every turn by calling either send_reply or hold_for_human.'
 
@@ -1259,7 +1360,11 @@ export async function generateCayeAutoReply(
 
     for (const tool of toolUses) {
       if (tool.name === 'send_reply') {
-        const input = tool.input as { content: string }
+        const input = tool.input as {
+          content: string
+          flag_for_owner_followup?: boolean
+          owner_note?: string
+        }
         const leak = detectIdentityLeak(input.content)
         if (leak) {
           // Identity guard tripped — don't ship the reply. Hand to the owner
@@ -1273,7 +1378,38 @@ export async function generateCayeAutoReply(
               `Review the draft below and send manually if appropriate.\n\n---\n\n${input.content}`,
           }
         } else {
-          terminal = { action: 'reply', content: input.content, bookingId: createdBookingId }
+          const needsFollowup = !!input.flag_for_owner_followup
+          terminal = {
+            action: 'reply',
+            content: input.content,
+            bookingId: createdBookingId,
+            ...(needsFollowup
+              ? {
+                  needsOwnerFollowup: true,
+                  ownerNote: input.owner_note?.trim() || 'Owner follow-up requested',
+                }
+              : {}),
+          }
+          // Acknowledge-and-defer (2B mode): flag the conversation in the
+          // operator's attention queue so they see it even though Caye
+          // replied autonomously. Best-effort — a flag failure should not
+          // block the reply from going out.
+          if (needsFollowup && inbound.conversationId) {
+            try {
+              const followupClient = createServiceClient()
+              await followupClient
+                .from('unified_conversations')
+                .update({
+                  human_agent_enabled: true,
+                  human_agent_reason:
+                    input.owner_note?.trim() || 'Caye acknowledged; owner decision needed.',
+                  human_agent_marked_at: new Date().toISOString(),
+                })
+                .eq('id', inbound.conversationId)
+            } catch (err) {
+              console.error('[caye-reply] Failed to flag conversation for owner followup:', err)
+            }
+          }
         }
         toolResults.push({ type: 'tool_result', tool_use_id: tool.id, content: 'ok' })
       } else if (tool.name === 'hold_for_human') {
