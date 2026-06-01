@@ -367,11 +367,12 @@ export default function ServicesPanel() {
       const supabase = getSupabase()
       const { data, error } = await supabase
         .from('booking_services')
-        .select('id, name, description, duration_minutes, price, currency, is_active, is_shared, max_capacity, color, created_at')
+        .select('id, name, description, duration_minutes, price, active, is_shared, max_capacity, color, created_at')
         .eq('user_id', workspaceId)
         .order('created_at', { ascending: true })
       if (error) throw new Error(error.message)
-      setServices((data ?? []) as Service[])
+      const rows = (data ?? []) as Array<Omit<Service, 'is_active' | 'currency'> & { active: boolean }>
+      setServices(rows.map(r => ({ ...r, is_active: r.active, currency: 'USD' } as Service)))
     } catch (err) {
       toast.error('Failed to load services')
       console.error(err)
@@ -396,18 +397,19 @@ export default function ServicesPanel() {
           description: form.description.trim() || null,
           duration_minutes: form.duration_minutes ? Number(form.duration_minutes) : null,
           price: form.price !== '' ? Number(form.price) : null,
-          currency: form.currency || 'USD',
-          is_active: form.is_active,
+          active: form.is_active,
           is_shared: form.is_shared,
-          max_capacity: form.is_shared ? (form.max_capacity ? Number(form.max_capacity) : 10) : null,
+          max_capacity: form.max_capacity ? Number(form.max_capacity) : 10,
           color: form.color || null,
         })
         .select()
         .single()
       if (error) throw new Error(error.message)
-      setServices(prev => [...prev, data as Service])
+      const row = data as Omit<Service, 'is_active' | 'currency'> & { active: boolean }
+      const created = { ...row, is_active: row.active, currency: 'USD' } as Service
+      setServices(prev => [...prev, created])
       setMode('list')
-      toast.success(`"${(data as Service).name}" created`)
+      toast.success(`"${created.name}" created`)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Create failed')
     } finally {
@@ -428,10 +430,9 @@ export default function ServicesPanel() {
           description: form.description.trim() || null,
           duration_minutes: form.duration_minutes ? Number(form.duration_minutes) : null,
           price: form.price !== '' ? Number(form.price) : null,
-          currency: form.currency || 'USD',
-          is_active: form.is_active,
+          active: form.is_active,
           is_shared: form.is_shared,
-          max_capacity: form.is_shared ? (form.max_capacity ? Number(form.max_capacity) : 10) : null,
+          max_capacity: form.max_capacity ? Number(form.max_capacity) : 10,
           color: form.color || null,
         })
         .eq('id', editTarget.id)
@@ -439,10 +440,12 @@ export default function ServicesPanel() {
         .select()
         .single()
       if (error) throw new Error(error.message)
-      setServices(prev => prev.map(s => s.id === (data as Service).id ? data as Service : s))
+      const row = data as Omit<Service, 'is_active' | 'currency'> & { active: boolean }
+      const updated = { ...row, is_active: row.active, currency: 'USD' } as Service
+      setServices(prev => prev.map(s => s.id === updated.id ? updated : s))
       setMode('list')
       setEditTarget(null)
-      toast.success(`"${(data as Service).name}" updated`)
+      toast.success(`"${updated.name}" updated`)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Update failed')
     } finally {
@@ -457,14 +460,16 @@ export default function ServicesPanel() {
       const supabase = getSupabase()
       const { data, error } = await supabase
         .from('booking_services')
-        .update({ is_active: !svc.is_active })
+        .update({ active: !svc.is_active })
         .eq('id', svc.id)
         .eq('user_id', workspaceId)
         .select()
         .single()
       if (error) throw new Error(error.message)
-      setServices(prev => prev.map(s => s.id === (data as Service).id ? data as Service : s))
-      toast.success((data as Service).is_active ? `"${svc.name}" activated` : `"${svc.name}" deactivated`)
+      const row = data as Omit<Service, 'is_active' | 'currency'> & { active: boolean }
+      const toggled = { ...row, is_active: row.active, currency: 'USD' } as Service
+      setServices(prev => prev.map(s => s.id === toggled.id ? toggled : s))
+      toast.success(toggled.is_active ? `"${svc.name}" activated` : `"${svc.name}" deactivated`)
     } catch {
       toast.error('Could not update service')
     }
@@ -487,13 +492,15 @@ export default function ServicesPanel() {
         // Soft-delete: deactivate
         const { data, error } = await supabase
           .from('booking_services')
-          .update({ is_active: false })
+          .update({ active: false })
           .eq('id', svc.id)
           .eq('user_id', workspaceId)
           .select()
           .single()
         if (error) throw new Error(error.message)
-        setServices(prev => prev.map(s => s.id === (data as Service).id ? data as Service : s))
+        const row = data as Omit<Service, 'is_active' | 'currency'> & { active: boolean }
+        const deactivated = { ...row, is_active: row.active, currency: 'USD' } as Service
+        setServices(prev => prev.map(s => s.id === deactivated.id ? deactivated : s))
         toast.success(`"${svc.name}" deactivated (${count} booking${count !== 1 ? 's' : ''} reference it)`)
       } else {
         // Hard-delete

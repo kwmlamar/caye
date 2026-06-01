@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import { getSupabase } from '@/lib/supabase'
 import { useWorkspace } from '@/lib/workspace-context'
 import { CayeMark } from '@/components/brand/CayeMark'
@@ -23,11 +23,65 @@ interface BookingRow {
   service: { name: string; duration_minutes: number; is_shared: boolean; max_capacity: number }[] | null
 }
 
+type BucketKey = 'today' | 'tomorrow' | 'thisWeek' | 'later' | 'past'
+
+const BUCKET_LABELS: Record<BucketKey, string> = {
+  today: 'Today',
+  tomorrow: 'Tomorrow',
+  thisWeek: 'This week',
+  later: 'Later',
+  past: 'Past',
+}
+
 function fmtTime(timeStr: string): string {
   if (!timeStr) return ''
   const [h, m] = timeStr.split(':').map(Number)
   const ampm = h >= 12 ? 'pm' : 'am'
   return `${h % 12 || 12}:${String(m).padStart(2, '0')}${ampm}`
+}
+
+function ymdToDate(ymd: string): Date {
+  return new Date(`${ymd}T00:00:00`)
+}
+
+function daysBetween(a: Date, b: Date): number {
+  const ms = b.getTime() - a.getTime()
+  return Math.round(ms / 86_400_000)
+}
+
+function bucketFor(bookingDate: Date, today: Date): BucketKey {
+  const delta = daysBetween(today, bookingDate)
+  if (delta < 0) return 'past'
+  if (delta === 0) return 'today'
+  if (delta === 1) return 'tomorrow'
+  if (delta <= 7) return 'thisWeek'
+  return 'later'
+}
+
+function smartDateLabel(bookingDate: Date, today: Date): { primary: string; secondary: string | null } {
+  const delta = daysBetween(today, bookingDate)
+  if (delta === 0) return { primary: 'Today', secondary: null }
+  if (delta === 1) return { primary: 'Tomorrow', secondary: null }
+  if (delta === -1) return { primary: 'Yesterday', secondary: null }
+  if (delta > 1 && delta <= 6) {
+    return {
+      primary: bookingDate.toLocaleDateString('en-US', { weekday: 'long' }),
+      secondary: bookingDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+    }
+  }
+  return {
+    primary: bookingDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+    secondary: bookingDate.getFullYear() !== today.getFullYear()
+      ? String(bookingDate.getFullYear())
+      : null,
+  }
+}
+
+function statusAccent(status: BookingRow['status'], isPast: boolean): string {
+  if (isPast) return 'bg-near-black/15'
+  if (status === 'confirmed') return 'bg-[#0FB5A1]'
+  if (status === 'pending') return 'bg-[#e85a3c]'
+  return 'bg-near-black/15'
 }
 
 function bookingToForm(b: BookingRow): BookingModalData {
@@ -41,7 +95,7 @@ function bookingToForm(b: BookingRow): BookingModalData {
     booking_time: b.booking_time.slice(0, 5),
     number_of_people: b.number_of_people,
     duration_minutes: b.duration_minutes,
-    status: b.status === 'completed' || b.status === 'cancelled' ? 'confirmed' : b.status, // clamp to modal active states
+    status: b.status === 'completed' || b.status === 'cancelled' ? 'confirmed' : b.status,
     notes: b.notes ?? '',
   }
 }
@@ -55,6 +109,12 @@ export default function BookingsScreen({ inPanel = false }: { inPanel?: boolean 
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'CONFIRMED' | 'PENDING'>('ALL')
   const [selectedBooking, setSelectedBooking] = useState<{ mode: 'edit'; data: BookingModalData } | null>(null)
 
+  const today = useMemo(() => {
+    const t = new Date()
+    t.setHours(0, 0, 0, 0)
+    return t
+  }, [])
+
   const fetchBookings = useCallback(async () => {
     if (!workspaceId) return
     setLoading(true)
@@ -65,7 +125,8 @@ export default function BookingsScreen({ inPanel = false }: { inPanel?: boolean 
         .select('id, customer_name, customer_phone, customer_email, service_id, booking_date, booking_time, number_of_people, duration_minutes, status, notes, conversation_id, service:booking_services(name, duration_minutes, is_shared, max_capacity)')
         .eq('user_id', workspaceId)
         .neq('status', 'cancelled')
-        .order('booking_date', { ascending: false })
+        .order('booking_date', { ascending: true })
+        .order('booking_time', { ascending: true })
 
       if (!error && data) {
         setBookings(data as unknown as BookingRow[])
@@ -88,15 +149,41 @@ export default function BookingsScreen({ inPanel = false }: { inPanel?: boolean 
   }, [isPanelDetail, inPanel])
 
   const filteredBookings = bookings.filter(b => {
-    const matchesSearch = b.customer_name.toLowerCase().includes(search.toLowerCase()) ||
+    const matchesSearch = !search ||
+      b.customer_name.toLowerCase().includes(search.toLowerCase()) ||
       (b.service?.[0]?.name || 'Island Tour').toLowerCase().includes(search.toLowerCase())
-    
     const matchesStatus = statusFilter === 'ALL' ||
       (statusFilter === 'CONFIRMED' && b.status === 'confirmed') ||
       (statusFilter === 'PENDING' && b.status === 'pending')
-
     return matchesSearch && matchesStatus
   })
+
+  // Group and re-order: future buckets ASC, then past DESC (most recent past first).
+  const groupedBookings = useMemo(() => {
+    const groups: Record<BucketKey, BookingRow[]> = {
+      today: [], tomorrow: [], thisWeek: [], later: [], past: [],
+    }
+    for (const b of filteredBookings) {
+      const date = ymdToDate(b.booking_date)
+      groups[bucketFor(date, today)].push(b)
+    }
+    // past list comes back ASC; flip so newest past is at top of the past group.
+    groups.past.reverse()
+    return groups
+  }, [filteredBookings, today])
+
+  // Attention strip: today's count + pending count across the next 7 days.
+  const attention = useMemo(() => {
+    const todayCount = groupedBookings.today.length
+    const pendingSoon = [...groupedBookings.today, ...groupedBookings.tomorrow, ...groupedBookings.thisWeek]
+      .filter(b => b.status === 'pending').length
+    const nextUp = groupedBookings.today[0]
+      ?? groupedBookings.tomorrow[0]
+      ?? groupedBookings.thisWeek[0]
+      ?? groupedBookings.later[0]
+      ?? null
+    return { todayCount, pendingSoon, nextUp }
+  }, [groupedBookings])
 
   if (inPanel && selectedBooking && workspaceId) {
     return (
@@ -118,6 +205,10 @@ export default function BookingsScreen({ inPanel = false }: { inPanel?: boolean 
     )
   }
 
+  const orderedBuckets: BucketKey[] = ['today', 'tomorrow', 'thisWeek', 'later', 'past']
+  const hasAnyBookings = filteredBookings.length > 0
+  const hasAttention = attention.todayCount > 0 || attention.pendingSoon > 0
+
   return (
     <div className={`flex-1 flex flex-col ${inPanel ? 'bg-transparent p-3' : 'bg-cream p-6 md:p-8'} overflow-hidden font-sans`}>
       {/* Header */}
@@ -129,9 +220,7 @@ export default function BookingsScreen({ inPanel = false }: { inPanel?: boolean 
           </div>
         )}
 
-        {/* Search & Filter bar */}
         <div className="flex items-center gap-2 flex-wrap">
-          {/* Search */}
           <div className="flex items-center gap-2 bg-white border border-near-black/10 rounded-xl px-3 py-1.5 w-full sm:w-64 shadow-sm focus-within:border-near-black/20">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="opacity-45">
               <circle cx="11" cy="11" r="8"></circle>
@@ -146,7 +235,6 @@ export default function BookingsScreen({ inPanel = false }: { inPanel?: boolean 
             />
           </div>
 
-          {/* Status Segment */}
           <div className="flex bg-near-black/5 rounded-xl p-1 text-[11px] font-semibold">
             <button
               onClick={() => setStatusFilter('ALL')}
@@ -170,13 +258,41 @@ export default function BookingsScreen({ inPanel = false }: { inPanel?: boolean 
         </div>
       </header>
 
-      {/* Main Table Area */}
+      {/* Attention strip — only renders when there's signal to surface. */}
+      {!loading && hasAttention && (
+        <div className="mb-3 bg-white border border-near-black/10 rounded-xl px-3.5 py-2.5 shadow-sm flex items-center gap-4 flex-wrap">
+          {attention.todayCount > 0 && (
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-[#0FB5A1] animate-pulse" />
+              <span className="text-[11px] font-semibold tracking-wide uppercase text-near-black/55">Today</span>
+              <span className="text-sm font-semibold text-near-black">{attention.todayCount}</span>
+            </div>
+          )}
+          {attention.pendingSoon > 0 && (
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-[#e85a3c]" />
+              <span className="text-[11px] font-semibold tracking-wide uppercase text-near-black/55">Pending · next 7d</span>
+              <span className="text-sm font-semibold text-near-black">{attention.pendingSoon}</span>
+            </div>
+          )}
+          {attention.nextUp && (
+            <div className="flex items-center gap-2 ml-auto min-w-0">
+              <span className="text-[11px] font-semibold tracking-wide uppercase text-near-black/45 shrink-0">Next up</span>
+              <span className="text-xs text-near-black/85 truncate">
+                {attention.nextUp.customer_name} · {fmtTime(attention.nextUp.booking_time)}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Main list */}
       <div className="flex-1 bg-white rounded-2xl border border-near-black/10 shadow-sm overflow-hidden flex flex-col">
         {loading ? (
           <div className="flex-1 flex items-center justify-center text-near-black/45 text-sm py-12">
             Loading bookings…
           </div>
-        ) : filteredBookings.length === 0 ? (
+        ) : !hasAnyBookings ? (
           <div className="flex-1 flex flex-col items-center justify-center text-near-black/45 text-center p-8 py-20">
             <div className="w-12 h-12 rounded-full bg-near-black/5 flex items-center justify-center mb-3">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -191,86 +307,93 @@ export default function BookingsScreen({ inPanel = false }: { inPanel?: boolean 
           </div>
         ) : (
           <div className="flex-1 overflow-y-auto">
-            <table className="w-full text-left text-xs border-collapse">
-              <thead>
-                <tr className="border-b border-near-black/5 text-near-black/40 font-mono tracking-wider uppercase font-semibold bg-near-black/[0.01]">
-                  <th className="p-3 pl-4">Date & Time</th>
-                  <th className="p-3">Guest Name</th>
-                  {!inPanel && <th className="p-3">Excursion</th>}
-                  {!inPanel && <th className="p-3">Guests</th>}
-                  {!inPanel && <th className="p-3">Status</th>}
-                  {!inPanel && <th className="p-3">Source</th>}
-                  <th className="p-3 pr-4 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-near-black/5 text-near-black/85">
-                {filteredBookings.map((b) => {
-                  const isCaye = !!b.conversation_id
-                  const tourName = b.service?.[0]?.name || 'Island Tour'
-                  return (
-                    <tr key={b.id} className="hover:bg-near-black/[0.01] transition-colors">
-                      <td className="p-3 pl-4 font-semibold">
-                        <div className="font-mono text-near-black/90">
-                          {new Date(b.booking_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', ...(inPanel ? {} : { year: 'numeric' }) })}
-                        </div>
-                        <div className="text-[10px] text-near-black/45 mt-0.5">{fmtTime(b.booking_time)}</div>
-                      </td>
-                      <td className="p-3 font-semibold">
-                        <div>{b.customer_name}</div>
-                        {inPanel && (
-                          <div className="text-[10px] text-near-black/45 font-normal mt-0.5">
-                            {tourName} · {b.number_of_people} guests
-                          </div>
-                        )}
-                      </td>
-                      {!inPanel && <td className="p-3">{tourName}</td>}
-                      {!inPanel && <td className="p-3 font-mono font-medium">{b.number_of_people}</td>}
-                      {!inPanel && (
-                        <td className="p-3">
-                          <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider ${
-                            b.status === 'confirmed'
-                              ? 'bg-[#E6F2F0] text-[#1E6157]'
-                              : 'bg-[#fce8e1] text-[#c94824]'
-                          }`}>
-                            <span className={`w-1.5 h-1.5 rounded-full ${b.status === 'confirmed' ? 'bg-[#0FB5A1]' : 'bg-[#e85a3c]'}`} />
-                            {b.status}
-                          </span>
-                        </td>
-                      )}
-                      {!inPanel && (
-                        <td className="p-3">
-                          {isCaye ? (
-                            <span className="inline-flex items-center gap-1 text-[#1E6157] font-mono text-[10px] font-semibold bg-[#E6F2F0] px-2 py-0.5 rounded">
-                              <CayeMark size={10} /> Caye
-                            </span>
-                          ) : (
-                            <span className="text-near-black/40 font-mono text-[10px]">Manual</span>
-                          )}
-                        </td>
-                      )}
-                      <td className="p-3 pr-4 text-right">
-                        <button
-                          onClick={() => {
-                            setSelectedBooking({ mode: 'edit', data: bookingToForm(b) })
-                            if (inPanel) {
-                              setIsPanelDetail(true)
-                            }
-                          }}
-                          className="text-near-black hover:text-caribbean-teal text-xs font-semibold px-2.5 py-1.5 border border-near-black/10 hover:border-caribbean-teal/30 rounded-lg bg-white shadow-sm hover:scale-[1.01] transition-all cursor-pointer"
+            {orderedBuckets.map(bucket => {
+              const rows = groupedBookings[bucket]
+              if (rows.length === 0) return null
+              const isPastBucket = bucket === 'past'
+              return (
+                <section key={bucket}>
+                  <div className="sticky top-0 z-10 bg-white/95 backdrop-blur-sm border-b border-near-black/5 px-4 py-2 flex items-center justify-between">
+                    <span className="text-[10px] font-mono tracking-[0.18em] uppercase text-near-black/45 font-semibold">
+                      {BUCKET_LABELS[bucket]}
+                    </span>
+                    <span className="text-[10px] font-mono text-near-black/35">{rows.length}</span>
+                  </div>
+                  <ul className="divide-y divide-near-black/5">
+                    {rows.map(b => {
+                      const isCaye = !!b.conversation_id
+                      const tourName = b.service?.[0]?.name || 'Island Tour'
+                      const date = ymdToDate(b.booking_date)
+                      const label = smartDateLabel(date, today)
+                      const accent = statusAccent(b.status, isPastBucket)
+                      return (
+                        <li
+                          key={b.id}
+                          className={`group relative flex items-stretch gap-3 px-4 py-3 hover:bg-near-black/[0.015] transition-colors ${isPastBucket ? 'opacity-70' : ''}`}
                         >
-                          Edit
-                        </button>
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
+                          <span
+                            aria-hidden
+                            className={`absolute left-0 top-3 bottom-3 w-[3px] rounded-r ${accent}`}
+                          />
+
+                          <div className="flex-shrink-0 w-[88px] pl-1">
+                            <div className="text-[13px] font-semibold text-near-black leading-tight">
+                              {label.primary}
+                            </div>
+                            {label.secondary && (
+                              <div className="text-[10px] text-near-black/45 font-mono mt-0.5">
+                                {label.secondary}
+                              </div>
+                            )}
+                            <div className="text-[10px] text-near-black/55 font-mono mt-0.5">
+                              {fmtTime(b.booking_time)}
+                            </div>
+                          </div>
+
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-[13px] font-semibold text-near-black truncate">
+                                {b.customer_name}
+                              </span>
+                              {b.status === 'pending' && !isPastBucket && (
+                                <span className="text-[9px] font-bold tracking-wider uppercase text-[#c94824] bg-[#fce8e1] px-1.5 py-0.5 rounded">
+                                  Pending
+                                </span>
+                              )}
+                              {isCaye && (
+                                <span className="inline-flex items-center gap-1 text-[9px] font-mono font-semibold text-[#1E6157] bg-[#E6F2F0] px-1.5 py-0.5 rounded">
+                                  <CayeMark size={9} />
+                                  Caye
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-[11px] text-near-black/55 mt-0.5 truncate">
+                              {tourName} · {b.number_of_people} {b.number_of_people === 1 ? 'guest' : 'guests'}
+                            </div>
+                          </div>
+
+                          <div className="flex items-center">
+                            <button
+                              onClick={() => {
+                                setSelectedBooking({ mode: 'edit', data: bookingToForm(b) })
+                                if (inPanel) setIsPanelDetail(true)
+                              }}
+                              className="text-near-black/70 hover:text-near-black text-[11px] font-semibold px-2.5 py-1 border border-near-black/10 hover:border-near-black/25 rounded-md bg-white opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity"
+                            >
+                              Edit
+                            </button>
+                          </div>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </section>
+              )
+            })}
           </div>
         )}
       </div>
 
-      {/* Editing Booking Modal Integration (when not in panel) */}
       {!inPanel && selectedBooking && workspaceId && (
         <BookingModal
           workspaceId={workspaceId}
