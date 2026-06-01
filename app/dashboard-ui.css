@@ -1148,6 +1148,139 @@
 .cal-col.today { background: #fffaf7; }
 .cal-cell { height: 56px; border-bottom: 1px solid var(--tc-line-soft); }
 
+/* ── Month view ───────────────────────────────────────────────────────────── */
+.cal-month-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: white;
+}
+.cal-month-dow-row {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  background: var(--tc-bg-app);
+  border-bottom: 1px solid var(--tc-line);
+  flex-shrink: 0;
+}
+.cal-month-dow {
+  padding: 8px 10px;
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--tc-ink-faint);
+  border-right: 1px solid var(--tc-line);
+}
+.cal-month-dow:last-child { border-right: none; }
+
+.cal-month-grid {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  grid-auto-rows: minmax(76px, 1fr);
+  overflow: auto;
+}
+.cal-month-cell {
+  border-right: 1px solid var(--tc-line);
+  border-bottom: 1px solid var(--tc-line);
+  padding: 6px 7px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-height: 76px;
+  background: white;
+}
+.cal-month-cell:nth-child(7n) { border-right: none; }
+.cal-month-cell.empty { background: var(--tc-bg-soft); }
+.cal-month-cell.today .cal-month-dnum {
+  background: var(--tc-coral, #e85a3c);
+  color: white;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.cal-month-dnum {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--tc-ink);
+  line-height: 1;
+  margin-bottom: 1px;
+}
+.cal-month-events {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.cal-month-bk {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 5px;
+  border-radius: 4px;
+  font-size: 10.5px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: opacity .15s;
+  min-width: 0;
+}
+.cal-month-bk:hover { opacity: .8; }
+.cal-month-bk.confirmed { background: var(--tc-coral-soft, #fce8e1); }
+.cal-month-bk.pending { background: var(--tc-sun-soft, #fdf0d8); }
+.cmb-time {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--tc-ink-faint);
+  flex-shrink: 0;
+}
+.cmb-name {
+  font-weight: 600;
+  color: var(--tc-ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+.cmb-guests {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 9px;
+  color: var(--tc-ink-mute);
+  flex-shrink: 0;
+}
+.cal-month-more {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--tc-ink-mute);
+  padding: 0 5px;
+}
+
+/* Panel narrow-month tweaks: hide guest count + abbreviate name to give events room. */
+.caye-panel .cal-month-cell { padding: 4px 5px; }
+.caye-panel .cal-month-bk { padding: 2px 4px; font-size: 10px; gap: 3px; }
+.caye-panel .cmb-guests { display: none; }
+
+/* Panel narrow-week tweaks: compact day headers + denser booking cards
+   so 7 columns + time gutter remain legible in ~350px. */
+.caye-panel .cal-day-head { padding: 5px 4px; gap: 0; }
+.caye-panel .cal-day-head .dow { font-size: 8.5px; letter-spacing: 0.08em; }
+.caye-panel .cal-day-head .dnum { font-size: 11px; line-height: 1.1; }
+.caye-panel .cal-day-head .dcount { display: none; }
+.caye-panel .cal-grid { grid-template-columns: 36px repeat(7, 1fr); }
+.caye-panel .cal-time { font-size: 8.5px; right: 4px; }
+.caye-panel .bk-card { padding: 4px 5px; font-size: 9.5px; left: 1px; right: 1px; border-radius: 4px; gap: 0; }
+.caye-panel .bk-card .bk-time { font-size: 8px; }
+.caye-panel .bk-card .bk-tour { font-size: 9px; line-height: 1.15; }
+.caye-panel .bk-card .bk-name { font-size: 9.5px; line-height: 1.15; }
+.caye-panel .bk-card .bk-foot,
+.caye-panel .bk-card .bk-parties { display: none; }
+
 .bk-card {
   position: absolute;
   left: 4px; right: 4px;

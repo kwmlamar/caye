@@ -211,15 +211,15 @@ function OperatorOtpModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-      <div className="bg-[#0E1A1A] text-white rounded-2xl p-6 w-[400px] max-w-[90vw] space-y-4 font-sans">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-near-black/35 backdrop-blur-[2px]">
+      <div className="bg-white text-near-black rounded-2xl p-6 w-[400px] max-w-[90vw] space-y-4 font-sans border border-near-black/10 shadow-[0_24px_60px_-20px_rgba(14,26,26,0.25)]">
         <div>
-          <h4 className="text-[15px] font-semibold">
+          <h4 className="text-[15px] font-semibold tracking-tight">
             {stage === 'enter-phone'
               ? 'Share your WhatsApp with Caye'
               : 'Enter the 6-digit code'}
           </h4>
-          <p className="text-[12px] text-white/50 mt-1">
+          <p className="text-[12px] text-near-black/55 mt-1 leading-snug">
             {stage === 'enter-phone'
               ? "I'll DM you when something needs your call. One number, your personal WhatsApp."
               : 'Check WhatsApp for a message from Caye.'}
@@ -233,7 +233,7 @@ function OperatorOtpModal({
             value={phone}
             onChange={(e) => setPhone(e.target.value)}
             placeholder="+1 242 555 0123"
-            className="w-full bg-white/[0.06] border border-white/10 rounded-md px-3 py-2 text-[14px] focus:outline-none focus:border-white/30"
+            className="w-full bg-cream/60 border border-near-black/12 rounded-lg px-3 py-2 text-[14px] text-near-black placeholder-near-black/35 focus:outline-none focus:border-near-black/30 focus:bg-white transition-colors"
           />
         ) : (
           <input
@@ -243,23 +243,23 @@ function OperatorOtpModal({
             value={code}
             onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
             placeholder="123456"
-            className="w-full bg-white/[0.06] border border-white/10 rounded-md px-3 py-2 text-[14px] tracking-[0.5em] text-center focus:outline-none focus:border-white/30"
+            className="w-full bg-cream/60 border border-near-black/12 rounded-lg px-3 py-2 text-[16px] font-mono tracking-[0.5em] text-center text-near-black placeholder-near-black/30 focus:outline-none focus:border-near-black/30 focus:bg-white transition-colors"
           />
         )}
 
-        {error && <p className="text-[12px] text-[#FF8A8A]">{error}</p>}
+        {error && <p className="text-[12px] text-[#c94824] font-medium">{error}</p>}
 
         <div className="flex items-center justify-between gap-3 pt-1">
           <button
             onClick={onClose}
-            className="text-[12px] text-white/50 hover:text-white/80 cursor-pointer"
+            className="text-[12px] text-near-black/55 hover:text-near-black/85 cursor-pointer transition-colors"
           >
             Cancel
           </button>
           <button
             onClick={stage === 'enter-phone' ? sendCode : verifyCode}
             disabled={busy || (stage === 'enter-phone' ? phone.length < 7 : code.length !== 6)}
-            className="bg-[#0FB5A1] hover:bg-[#0FB5A1]/90 disabled:opacity-40 disabled:cursor-not-allowed text-[#0A1818] px-4 py-2 rounded-md text-[12px] font-semibold cursor-pointer"
+            className="bg-[#0FB5A1] hover:bg-[#0FB5A1]/90 disabled:opacity-40 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg text-[12px] font-semibold cursor-pointer shadow-sm transition-all"
           >
             {busy ? '…' : stage === 'enter-phone' ? 'Send code' : 'Verify'}
           </button>

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { CayeMark } from '@/components/brand/CayeMark'
 import { getSupabase } from '@/lib/supabase'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -153,6 +153,18 @@ function fmtTime(timeStr: string): string {
   return `${h % 12 || 12}:${String(m).padStart(2, '0')}${ampm}`
 }
 
+function nowDecimalHours(): number {
+  const n = new Date()
+  return n.getHours() + n.getMinutes() / 60
+}
+
+function timeOfDayGreeting(): string {
+  const h = new Date().getHours()
+  if (h < 12) return 'Morning'
+  if (h < 17) return 'Afternoon'
+  return 'Evening'
+}
+
 function fmtEndTime(startTimeStr: string, durationMins: number): string {
   const [h, m] = startTimeStr.split(':').map(Number)
   const totalMins = h * 60 + m + durationMins
@@ -187,6 +199,16 @@ export default function CalendarScreen({ inPanel = false }: { inPanel?: boolean 
   const [bookings, setBookings] = useState<SupaBooking[]>([])
   const [loading, setLoading] = useState(true)
   const [modal, setModal] = useState<{ mode: 'new' | 'edit'; data: BookingModalData } | null>(null)
+
+  // Ticks every minute to redraw the "now" marker on the day/week grid.
+  const [nowHours, setNowHours] = useState<number>(() => nowDecimalHours())
+  useEffect(() => {
+    const id = setInterval(() => setNowHours(nowDecimalHours()), 60_000)
+    return () => clearInterval(id)
+  }, [])
+
+  // Ref the scrollable grid so we can scroll to "now" on mount.
+  const gridRef = useRef<HTMLDivElement | null>(null)
 
   const weekDays = view === 'DAY' ? [todayDate] : Array.from({ length: 7 }, (_, i) => addDays(weekOf, i))
   const weekEnd = weekDays[weekDays.length - 1]
@@ -275,6 +297,29 @@ export default function CalendarScreen({ inPanel = false }: { inPanel?: boolean 
 
   const monthGrid = view === 'MONTH' ? buildMonthGrid(monthOf) : []
 
+  // Day-context summary for the panel header: next-up booking + scheduled count.
+  const todaysBookings = useMemo(
+    () => bookingsForDate(toISO(todayDate)).sort((a, b) => a.booking_time.localeCompare(b.booking_time)),
+    [bookings] // eslint-disable-line react-hooks/exhaustive-deps
+  )
+  const nextUpToday = useMemo(() => {
+    const nowMin = nowHours * 60
+    return todaysBookings.find(b => {
+      const [h, m] = b.booking_time.split(':').map(Number)
+      return h * 60 + m >= nowMin
+    }) ?? null
+  }, [todaysBookings, nowHours])
+
+  // On first render of panel day view, scroll the grid to the current time.
+  useEffect(() => {
+    if (!inPanel || view !== 'DAY' || loading) return
+    if (!gridRef.current) return
+    const targetTop = Math.max(0, (nowHours - START - 1) * ROW_H)
+    gridRef.current.scrollTo({ top: targetTop, behavior: 'auto' })
+    // Only on initial mount of the loaded grid; nowHours intentionally excluded.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inPanel, view, loading])
+
   if (inPanel && modal && workspaceId) {
     return (
       <BookingModal
@@ -317,8 +362,8 @@ export default function CalendarScreen({ inPanel = false }: { inPanel?: boolean 
           </div>
           <div className="cal-controls-row">
             <div className="seg-2">
-              <span className={view === 'WEEK' ? 'on' : ''} onClick={() => setView('WEEK')} style={{ cursor: 'pointer' }}>Week</span>
               <span className={view === 'DAY' ? 'on' : ''} onClick={() => setView('DAY')} style={{ cursor: 'pointer' }}>Day</span>
+              <span className={view === 'WEEK' ? 'on' : ''} onClick={() => setView('WEEK')} style={{ cursor: 'pointer' }}>Week</span>
               <span className={view === 'MONTH' ? 'on' : ''} onClick={() => setView('MONTH')} style={{ cursor: 'pointer' }}>Month</span>
             </div>
           </div>
@@ -403,7 +448,7 @@ export default function CalendarScreen({ inPanel = false }: { inPanel?: boolean 
 
       {/* ── WEEK / DAY VIEW ── */}
       {view !== 'MONTH' && (
-        <div className="cal-grid-wrap font-sans">
+        <div className="cal-grid-wrap font-sans" ref={gridRef}>
           {!(inPanel && view === 'DAY') ? (
             <div className="cal-week-head">
               <div className="time-gutter" />
@@ -420,24 +465,100 @@ export default function CalendarScreen({ inPanel = false }: { inPanel?: boolean 
               })}
             </div>
           ) : (
-            <div className="cal-day-view-header">
-              <span style={{ fontWeight: 600 }}>Day Schedule</span>
-              <span style={{
-                fontFamily: 'var(--font-mono)',
-                fontSize: '9.5px',
-                textTransform: 'uppercase',
-                letterSpacing: '0.08em',
-                background: 'rgba(18, 18, 18, 0.05)',
-                color: 'var(--tc-ink-mute)',
-                padding: '2px 8px',
-                borderRadius: '99px',
-                fontWeight: 600
-              }}>
-                {bookingsForDate(toISO(todayDate)).length} scheduled
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                justifyContent: 'space-between',
+                gap: '12px',
+                padding: '10px 4px 12px',
+                borderBottom: '1px solid rgba(18, 18, 18, 0.06)',
+                marginBottom: '6px',
+              }}
+            >
+              <div style={{ minWidth: 0 }}>
+                <div
+                  style={{
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: '9.5px',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.16em',
+                    color: 'rgba(18, 18, 18, 0.4)',
+                    fontWeight: 600,
+                  }}
+                >
+                  {timeOfDayGreeting()} · {todayDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+                </div>
+                <div style={{ fontSize: '13px', fontWeight: 600, marginTop: '4px', color: 'var(--tc-ink, #121212)' }}>
+                  {todaysBookings.length === 0
+                    ? 'Nothing scheduled today.'
+                    : nextUpToday
+                      ? <>Next up · <span style={{ fontFamily: 'var(--font-mono)', color: 'rgba(18,18,18,0.65)' }}>{fmtTime(nextUpToday.booking_time)}</span> · {nextUpToday.customer_name}</>
+                      : <>All {todaysBookings.length} tour{todaysBookings.length !== 1 ? 's' : ''} done.</>
+                  }
+                </div>
+              </div>
+              <span
+                style={{
+                  flexShrink: 0,
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: '9.5px',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.12em',
+                  background: todaysBookings.length === 0 ? 'rgba(18, 18, 18, 0.04)' : 'rgba(15, 181, 161, 0.12)',
+                  color: todaysBookings.length === 0 ? 'rgba(18, 18, 18, 0.4)' : '#1E6157',
+                  padding: '3px 9px',
+                  borderRadius: '99px',
+                  fontWeight: 700,
+                  alignSelf: 'flex-start',
+                  marginTop: '2px',
+                }}
+              >
+                {todaysBookings.length} {todaysBookings.length === 1 ? 'tour' : 'tours'}
               </span>
             </div>
           )}
 
+          {inPanel && view === 'DAY' && !loading && todaysBookings.length === 0 ? (
+            <div
+              style={{
+                flex: 1,
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '10px',
+                padding: '48px 20px',
+                color: 'rgba(18, 18, 18, 0.45)',
+                textAlign: 'center',
+              }}
+            >
+              <div
+                style={{
+                  width: '40px',
+                  height: '40px',
+                  borderRadius: '99px',
+                  background: 'rgba(18, 18, 18, 0.04)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                  <line x1="16" y1="2" x2="16" y2="6" />
+                  <line x1="8" y1="2" x2="8" y2="6" />
+                  <line x1="3" y1="10" x2="21" y2="10" />
+                </svg>
+              </div>
+              <div style={{ fontSize: '13px', fontWeight: 600, color: 'rgba(18, 18, 18, 0.7)' }}>
+                Open schedule today
+              </div>
+              <div style={{ fontSize: '11px', maxWidth: '220px', lineHeight: 1.5 }}>
+                No tours booked. Tap the <strong style={{ color: 'rgba(18,18,18,0.7)' }}>+</strong> below to add one, or wait for Caye to book one for you.
+              </div>
+            </div>
+          ) : (
           <div className="cal-grid">
             <div className="cal-times">
               {HOURS.map(h => (
@@ -450,9 +571,39 @@ export default function CalendarScreen({ inPanel = false }: { inPanel?: boolean 
             {weekDays.map(date => {
               const iso = toISO(date)
               const slots = mergeSharedBookings(bookingsForDate(iso))
+              const showNowLine = isToday(date) && nowHours >= START && nowHours <= START + HOURS.length
+              const nowTop = (nowHours - START) * ROW_H
               return (
-                <div key={iso} className={`cal-col${isToday(date) ? ' today' : ''}`}>
+                <div key={iso} className={`cal-col${isToday(date) ? ' today' : ''}`} style={{ position: 'relative' }}>
                   {HOURS.map(h => <div key={h} className="cal-cell" />)}
+                  {showNowLine && (
+                    <div
+                      aria-hidden
+                      style={{
+                        position: 'absolute',
+                        left: 0,
+                        right: 0,
+                        top: nowTop,
+                        height: 0,
+                        borderTop: '1.5px solid #0FB5A1',
+                        zIndex: 5,
+                        pointerEvents: 'none',
+                      }}
+                    >
+                      <span
+                        style={{
+                          position: 'absolute',
+                          left: '-5px',
+                          top: '-5px',
+                          width: '10px',
+                          height: '10px',
+                          borderRadius: '50%',
+                          background: '#0FB5A1',
+                          boxShadow: '0 0 0 3px rgba(15, 181, 161, 0.18)',
+                        }}
+                      />
+                    </div>
+                  )}
                   {slots.map(slot => {
                     if (slot.kind === 'single') {
                       const b = slot.booking
@@ -557,6 +708,7 @@ export default function CalendarScreen({ inPanel = false }: { inPanel?: boolean 
               )
             })}
           </div>
+          )}
         </div>
       )}
 
