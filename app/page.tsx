@@ -9,6 +9,18 @@ import { CayeMark } from '@/components/brand/CayeMark'
 
 export default function LandingPage() {
   const [activeFaq, setActiveFaq] = useState<number | null>(null)
+  const [billing, setBilling] = useState<'monthly' | 'annual'>('monthly')
+
+  const pricing = {
+    caye: {
+      monthly: { display: '$79', cadence: '/ month', footnote: null as string | null },
+      annual: { display: '$790', cadence: '/ year', footnote: 'Just $66/mo, billed yearly · two months free' },
+    },
+    bundle: {
+      monthly: { display: '$129', cadence: '/ month', footnote: null as string | null },
+      annual: { display: '$1,290', cadence: '/ year', footnote: 'Just $108/mo, billed yearly · two months free' },
+    },
+  } as const
 
   useEffect(() => {
     document.body.classList.add('lp-body')
@@ -269,7 +281,7 @@ export default function LandingPage() {
       {/* Pricing */}
       <section id="pricing" className="py-20 md:py-28 relative">
         <div className="max-w-7xl mx-auto px-6 md:px-12">
-          <div className="text-center max-w-xl mx-auto mb-16 space-y-4">
+          <div className="text-center max-w-xl mx-auto mb-12 space-y-4">
             <span className="font-mono text-xs font-semibold tracking-widest text-near-black/50 uppercase">Pricing</span>
             <h2 className="text-3xl md:text-4xl font-semibold tracking-tight text-near-black">
               Flat rate pricing. No tiers.
@@ -279,36 +291,121 @@ export default function LandingPage() {
             </p>
           </div>
 
+          {/* Ledger — editorial price comparison */}
+          <div className="max-w-2xl mx-auto mb-10">
+            <div className="flex items-center gap-3 mb-3">
+              <span className="font-mono text-[10px] font-semibold tracking-[0.18em] uppercase text-near-black/40">The arithmetic</span>
+              <span className="flex-1 h-px bg-near-black/10" />
+            </div>
+            <dl className="space-y-2.5 font-sans">
+              <div className="flex items-baseline gap-4">
+                <dt className="flex-1 text-near-black/55 text-sm">
+                  A part-time receptionist in Nassau
+                </dt>
+                <dd className="text-near-black/55 text-sm font-mono tabular-nums line-through decoration-near-black/40">
+                  $1,800 / mo
+                </dd>
+              </div>
+              <div className="flex items-baseline gap-4">
+                <dt className="flex-1 text-near-black text-sm font-medium">
+                  Caye · always on, every channel
+                </dt>
+                <dd className="text-caribbean-teal-deep text-sm font-mono tabular-nums font-semibold">
+                  $79 / mo
+                </dd>
+              </div>
+            </dl>
+            <div className="flex items-center gap-3 mt-3">
+              <span className="flex-1 h-px bg-near-black/10" />
+              <span className="text-near-black/55 text-[12.5px] italic font-serif tracking-tight">
+                One missed booking pays for a year.
+              </span>
+              <span className="flex-1 h-px bg-near-black/10" />
+            </div>
+          </div>
+
+          {/* Billing cadence toggle */}
+          <div className="flex justify-center mb-10">
+            <div
+              role="tablist"
+              aria-label="Billing cadence"
+              className="inline-flex items-center bg-near-black/[0.04] border border-near-black/10 rounded-full p-1"
+            >
+              <button
+                role="tab"
+                aria-selected={billing === 'monthly'}
+                onClick={() => setBilling('monthly')}
+                className={`relative px-4 py-1.5 rounded-full text-xs font-semibold tracking-wide transition-all ${
+                  billing === 'monthly'
+                    ? 'bg-white text-near-black shadow-sm'
+                    : 'text-near-black/55 hover:text-near-black/80'
+                }`}
+              >
+                Monthly
+              </button>
+              <button
+                role="tab"
+                aria-selected={billing === 'annual'}
+                onClick={() => setBilling('annual')}
+                className={`relative px-4 py-1.5 rounded-full text-xs font-semibold tracking-wide transition-all flex items-center gap-2 ${
+                  billing === 'annual'
+                    ? 'bg-white text-near-black shadow-sm'
+                    : 'text-near-black/55 hover:text-near-black/80'
+                }`}
+              >
+                Annual
+                <span className={`font-mono text-[9px] tracking-wider uppercase px-1.5 py-0.5 rounded ${
+                  billing === 'annual' ? 'bg-caribbean-teal/15 text-caribbean-teal-deep' : 'bg-near-black/[0.08] text-near-black/45'
+                }`}>
+                  2 mo free
+                </span>
+              </button>
+            </div>
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-4xl mx-auto">
-            {/* Card 1 */}
+            {/* Card 1 — Caye */}
             <div className="bg-white rounded-3xl p-8 md:p-10 border border-near-black/10 shadow-md flex flex-col justify-between hover:scale-[1.005] transition-transform">
               <div className="space-y-6">
                 <div className="space-y-2">
                   <h3 className="text-2xl font-semibold">Caye</h3>
                   <p className="text-near-black/60 text-sm">Full AI receptionist for solo operators.</p>
                 </div>
-                
-                <div className="flex items-baseline gap-1">
-                  <span className="text-5xl font-bold tracking-tight">$79</span>
-                  <span className="text-near-black/50 font-mono text-xs uppercase font-semibold">/ month</span>
+
+                <div>
+                  <div className="flex items-baseline gap-1">
+                    <span className="text-5xl font-bold tracking-tight tabular-nums">{pricing.caye[billing].display}</span>
+                    <span className="text-near-black/50 font-mono text-xs uppercase font-semibold">{pricing.caye[billing].cadence}</span>
+                  </div>
+                  <p className={`mt-2 text-[11.5px] text-near-black/55 transition-opacity ${pricing.caye[billing].footnote ? 'opacity-100' : 'opacity-0 h-0'}`}>
+                    {pricing.caye[billing].footnote ?? ' '}
+                  </p>
                 </div>
 
-                <ul className="space-y-3.5 border-t border-near-black/5 pt-6 text-sm text-near-black/75">
+                <ul className="space-y-3.5 border-t border-near-black/5 pt-6 text-sm text-near-black/80">
                   <li className="flex items-center gap-2.5">
                     <span className="text-caribbean-teal text-lg">✓</span>
-                    WhatsApp, Instagram, Messenger, and Zoho Mail
+                    Replies on WhatsApp, Instagram, Messenger, and email — 24/7
                   </li>
                   <li className="flex items-center gap-2.5">
                     <span className="text-caribbean-teal text-lg">✓</span>
-                    Auto-confirmed bookings & Zoho Calendar sync
+                    Quotes prices automatically from your services
                   </li>
                   <li className="flex items-center gap-2.5">
                     <span className="text-caribbean-teal text-lg">✓</span>
-                    Customer history & profiles
+                    Sends your WeTravel (or other) payment links
                   </li>
                   <li className="flex items-center gap-2.5">
                     <span className="text-caribbean-teal text-lg">✓</span>
-                    Unlimited messages
+                    Books into your calendar — Zoho-synced
+                  </li>
+                  <li className="flex items-center gap-2.5">
+                    <span className="text-caribbean-teal text-lg">✓</span>
+                    Pings you for the ones she shouldn't decide
+                  </li>
+                  <li className="flex items-center gap-2.5">
+                    <span className="text-caribbean-teal text-lg">✓</span>
+                    No setup fees, no contracts
                   </li>
                 </ul>
               </div>
@@ -318,39 +415,48 @@ export default function LandingPage() {
               </Link>
             </div>
 
-            {/* Card 2 */}
+            {/* Card 2 — Caye + Website */}
             <div className="bg-white rounded-3xl p-8 md:p-10 border border-caribbean-teal/30 shadow-lg flex flex-col justify-between relative ring-1 ring-caribbean-teal/15 hover:scale-[1.005] transition-transform">
               <div className="absolute top-5 right-5 bg-caribbean-teal text-white font-mono text-[9px] font-bold tracking-wider uppercase px-2.5 py-1 rounded-full shadow-sm">
                 Most operators pick this
               </div>
-              
+
               <div className="space-y-6">
                 <div className="space-y-2">
                   <h3 className="text-2xl font-semibold">Caye + Website</h3>
                   <p className="text-near-black/60 text-sm">Full reception plus a website for your business.</p>
                 </div>
-                
-                <div className="flex items-baseline gap-1">
-                  <span className="text-5xl font-bold tracking-tight">$129</span>
-                  <span className="text-near-black/50 font-mono text-xs uppercase font-semibold">/ month</span>
+
+                <div>
+                  <div className="flex items-baseline gap-1">
+                    <span className="text-5xl font-bold tracking-tight tabular-nums">{pricing.bundle[billing].display}</span>
+                    <span className="text-near-black/50 font-mono text-xs uppercase font-semibold">{pricing.bundle[billing].cadence}</span>
+                  </div>
+                  <p className={`mt-2 text-[11.5px] text-near-black/55 transition-opacity ${pricing.bundle[billing].footnote ? 'opacity-100' : 'opacity-0 h-0'}`}>
+                    {pricing.bundle[billing].footnote ?? ' '}
+                  </p>
                 </div>
 
-                <ul className="space-y-3.5 border-t border-near-black/5 pt-6 text-sm text-near-black/75">
+                <ul className="space-y-3.5 border-t border-near-black/5 pt-6 text-sm text-near-black/80">
                   <li className="flex items-center gap-2.5 font-semibold text-caribbean-teal-deep">
                     <span className="text-caribbean-teal text-lg">✓</span>
-                    Everything included in Caye
+                    Everything in Caye
                   </li>
                   <li className="flex items-center gap-2.5">
                     <span className="text-caribbean-teal text-lg">✓</span>
-                    TropiTech-built custom business website
+                    A custom website built for your business
                   </li>
                   <li className="flex items-center gap-2.5">
                     <span className="text-caribbean-teal text-lg">✓</span>
-                    Domain name, hosting, and SSL included
+                    Domain, hosting, and SSL — handled
                   </li>
                   <li className="flex items-center gap-2.5">
                     <span className="text-caribbean-teal text-lg">✓</span>
-                    Ongoing updates & full maintenance
+                    Ongoing updates and maintenance
+                  </li>
+                  <li className="flex items-center gap-2.5">
+                    <span className="text-caribbean-teal text-lg">✓</span>
+                    Site changes by message — no tickets
                   </li>
                 </ul>
               </div>
