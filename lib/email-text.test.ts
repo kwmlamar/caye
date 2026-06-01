@@ -27,6 +27,25 @@ div.zm_1526803674744298471_parse_4423952575885412991 li.MsoNormal { margin: 0; }
     expect(out).not.toContain('What time works for you?')
   })
 
+  it('cuts the Zoho Mail "---- On <date> <name> wrote ----" format', () => {
+    // Zoho threads replies with dashes around the "On ... wrote" header
+    // instead of the Gmail-style colon. Real example pulled from Omayra
+    // Calzada's web3forms booking reply on 2026-05-31.
+    const text =
+      `Hi Omayra,\n\nThank you for reaching out — Sunday is open.\n\n` +
+      `Karenda\nBimini Island Tours  ---- On Sun, 31 May 2026 18:12:59 ` +
+      `-0400 Bimini Island Tours Booking Form ` +
+      `<notify+szx9mp@web3forms.com> wrote ----\n\n` +
+      `Form Submission Data from your website.\nName\nOmayra Calzada\n` +
+      `Email\nomarytorres@yahoo.com`
+    const out = htmlToPlainText(text)
+    expect(out).toContain('Thank you for reaching out')
+    expect(out).toContain('Karenda')
+    expect(out).not.toMatch(/wrote\s*-+/i)
+    expect(out).not.toContain('Form Submission Data')
+    expect(out).not.toContain('omarytorres@yahoo.com')
+  })
+
   it('cuts the Outlook "-----Original Message-----" marker and everything below', () => {
     const text =
       `Hi Karenda,\n\nPlease see attached.\n\nThanks,\nMartha\n\n` +

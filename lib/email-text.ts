@@ -44,6 +44,13 @@ function stripQuotedReply(text: string): string {
   )
   if (onWrote !== -1) candidates.push(onWrote)
 
+  // Zoho Mail's "---- On <date> <name> wrote ----" format — dashes on
+  // both sides, no colon. Often appears inline after a signature, not
+  // at the start of a line, so we don't anchor on newline. Strict
+  // dash requirements on both sides prevent false positives.
+  const zohoWrote = text.search(/-{2,}\s*on\b[\s\S]{0,300}?\bwrote\b\s*-{2,}/i)
+  if (zohoWrote !== -1) candidates.push(zohoWrote)
+
   // Outlook "-----Original Message-----" (any number of dashes, optional spaces)
   const originalMessage = text.search(/(^|\n)\s*-{2,}\s*original message\s*-{2,}/i)
   if (originalMessage !== -1) candidates.push(originalMessage)

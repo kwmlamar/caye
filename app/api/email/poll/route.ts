@@ -462,6 +462,30 @@ async function processSentMessage(
     return 'skipped'
   }
 
+  // Same dedup but for human-sent replies from the dashboard:
+  // messages/send writes channel_message_id='manual_<ts>' with
+  // metadata.sent_by='human'. When Zoho echoes it back through the sent
+  // folder a few seconds later, we'd otherwise create a duplicate row that
+  // renders as a second chat bubble. Match within the same 5-min window
+  // and backfill the real Zoho message ID so future polls skip cleanly.
+  const { data: manualMsg } = await supabase
+    .from('unified_messages')
+    .select('id')
+    .eq('conversation_id', conversation.id)
+    .eq('sender_type', 'business')
+    .like('channel_message_id', 'manual_%')
+    .gte('sent_at', windowStart)
+    .lte('sent_at', windowEnd)
+    .maybeSingle()
+
+  if (manualMsg) {
+    await supabase
+      .from('unified_messages')
+      .update({ channel_message_id: messageId })
+      .eq('id', manualMsg.id)
+    return 'skipped'
+  }
+
   const raw = await fetchMessageContent(
     base, String(accountId), messageId, accessToken,
     String(msg.folderId || msg.folder_id || '')
