@@ -428,7 +428,7 @@ export default function HomeScreen() {
 
   const renderInputBox = () => {
     return (
-      <div className="relative flex items-center bg-white rounded-2xl border border-[rgba(14,26,26,0.08)] focus-within:border-[rgba(14,26,26,0.18)] shadow-[0_8px_24px_-12px_rgba(14,26,26,0.12),0_2px_4px_-2px_rgba(14,26,26,0.06)] p-3 transition-colors">
+      <div className="relative flex items-center bg-white rounded-2xl border border-[rgba(14,26,26,0.1)] focus-within:border-[rgba(14,26,26,0.18)] p-3 transition-colors">
         {/* Left Icons: Mic and Attach */}
         <div className="flex items-center gap-1.5 pl-2 text-near-black/30">
           {/* Paperclip Attach */}
@@ -589,9 +589,9 @@ export default function HomeScreen() {
 
           {/* Chat Input anchored at bottom with gradient background fade */}
           <div 
-            className="absolute bottom-0 left-0 right-0 pt-16 pb-8 px-6 z-10 flex justify-center pointer-events-none"
+            className="absolute bottom-0 left-0 right-0 pt-8 pb-8 px-6 z-10 flex justify-center pointer-events-none"
             style={{
-              background: 'linear-gradient(to top, #ffffff 0%, rgba(255, 255, 255, 0.95) 60%, rgba(255, 255, 255, 0) 100%)'
+              background: 'linear-gradient(to top, #ffffff 50%, rgba(255, 255, 255, 0) 100%)'
             }}
           >
             <div className="w-full max-w-[720px] pointer-events-auto">

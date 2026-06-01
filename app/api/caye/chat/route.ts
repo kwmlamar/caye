@@ -195,7 +195,7 @@ type UpdateConfigInput = {
 }
 
 type UpdateConfigResult =
-  | { success: true; field: string; summary: string }
+  | { success: true; field: string; summary: string; new_value_preview: string }
   | { error: string }
 
 type ListBookingsInput = { start_date: string; end_date?: string }
@@ -409,7 +409,10 @@ async function runUpdateConfig(
       console.error('[caye/chat] voice_profile update failed:', error)
       return { error: error.message }
     }
-    return { success: true, field, summary }
+    const preview = typeof newValue === 'string'
+      ? newValue
+      : JSON.stringify(newValue)
+    return { success: true, field, summary, new_value_preview: preview.slice(0, 2000) }
   }
 
   let newValue = String(value)
@@ -433,7 +436,16 @@ async function runUpdateConfig(
     console.error('[caye/chat] Config update failed:', error)
     return { error: error.message }
   }
-  return { success: true, field, summary }
+
+  // Readback: re-fetch the row so the model sees the actual stored value, not a hopeful echo.
+  const { data: verifyRow } = await supabase
+    .from('workspace_ai_config')
+    .select(field)
+    .eq('workspace_id', workspaceId)
+    .maybeSingle()
+  const stored = (verifyRow as Record<string, unknown> | null)?.[field]
+  const preview = typeof stored === 'string' ? stored : JSON.stringify(stored ?? '')
+  return { success: true, field, summary, new_value_preview: preview.slice(0, 2000) }
 }
 
 function formatServices(services: ServiceRow[]): string {
@@ -460,7 +472,19 @@ You have four jobs:
 1. Answer questions about the inbox — use search_conversations / get_conversation_messages to look up real activity. Never say you don't have access to the inbox.
 2. Manage the calendar — use list_bookings, create_booking, and cancel_booking. The owner is the source of truth, so trust their input. If something's missing (e.g. time), ask in your reply rather than guessing.
 3. Answer questions about the business, customers, or how you handle things.
-4. When the owner tells you to change your behavior, use update_config immediately. Confirm casually what you changed.
+4. When the owner gives you information about the business OR tells you to change your behavior, call update_config in THE SAME TURN. Then show the owner what's now stored, in your own words.
+
+HONESTY RULES (absolute — violating these is the worst thing you can do):
+- Never say "I'll update", "Let me update", "I'll save that", "I noted that", "Got it, I'll add that to your config", "updating now", or anything similar unless you ALSO emit an update_config tool call in the same turn. Saying it without doing it is lying to the owner.
+- Promises of future action are forbidden. Either call the tool this turn or don't claim you will.
+- After update_config returns success, your reply MUST quote or paraphrase the new_value_preview the tool returned so the owner can see what's actually stored. Not "done" — show the new state.
+- If update_config returns an error, say so plainly and do not claim success.
+
+CAPTURING INFORMATION:
+- When the owner pastes a list, catalog, policy, or any block of business info, capture ALL of it. Don't silently drop items that don't fit a clean schema.
+- Services with no price ("upon request", "custom", "inquire"), non-tour offerings (transportation, VIP pickup, DMC, partnerships), policies, and general business facts all belong in update_config(field='system_prompt', action='append'). Append the raw content verbatim — future-you will need it.
+- Pricing tables specifically go in pricing_info.
+- If you don't know which field something belongs in, default to system_prompt.
 
 SERVICES (use these ids when create_booking takes service_id; omit if none fits):
 ${formatServices(services)}
@@ -757,6 +781,7 @@ export async function POST(req: NextRequest) {
       'Never invent a name; if the name is unknown, say "your business". ' +
       'Group your summary into these sections, omitting any with nothing to say: ' +
       '**What you offer**, **Hours**, **Pricing notes**, **Things I\'m still unsure about**. ' +
+      'In "Things I\'m still unsure about", do not just list gaps — ask the owner directly for the single most load-bearing missing piece (deposits / payment methods / hours / lead time, whichever is most important and unknown). One concrete question, not a list. ' +
       'End with a single line inviting correction, e.g. "Anything wrong here? Tell me and I\'ll update what I know."'
 
     const summarizerUser =
@@ -766,11 +791,12 @@ export async function POST(req: NextRequest) {
       `PRICING NOTES:\n${pricingInfo || '(none captured)'}\n\n` +
       `DISCOVERY NOTES (extracted from sent emails — may be patchy):\n${discoveredPrompt || '(none yet)'}`
 
+    let summarizerError: string | null = null
     try {
       const summarizer = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
       const response = await summarizer.messages.create({
-        model: 'claude-sonnet-4-5',
-        max_tokens: 700,
+        model: 'claude-sonnet-4-6',
+        max_tokens: 1800,
         system: summarizerSystem,
         messages: [{ role: 'user', content: summarizerUser }],
       })
@@ -782,13 +808,19 @@ export async function POST(req: NextRequest) {
       if (text) return finalize(text)
     } catch (err) {
       console.error('[caye/chat] business summary LLM call failed:', err)
+      summarizerError = err instanceof Error
+        ? `${err.name}: ${err.message}`
+        : String(err)
     }
 
     // Fallback: render a minimal structured summary without the LLM.
+    // Includes the discovered system_prompt so appended catalog data (extra services,
+    // partnerships, policies) doesn't disappear when the summarizer call fails.
     const parts: string[] = ["Here's what I've got on your business so far:"]
-    if (services.length) parts.push(`**What you offer:**\n${servicesBlock}`)
+    if (services.length) parts.push(`**Booked services (structured):**\n${servicesBlock}`)
     if (pricingInfo) parts.push(`**Pricing notes:**\n${pricingInfo}`)
-    parts.push("Anything wrong here? Tell me and I'll update what I know.")
+    if (discoveredPrompt) parts.push(`**Everything else on file:**\n${discoveredPrompt}`)
+    parts.push(`(Summarizer failed — showing raw stored content. Error: ${summarizerError ?? 'unknown'}. Anything wrong here? Tell me and I'll update what I know.)`)
     return finalize(parts.join('\n\n'))
   }
 
@@ -825,7 +857,7 @@ export async function POST(req: NextRequest) {
     for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
       const response = await client.messages.create({
         model: 'claude-sonnet-4-6',
-        max_tokens: 1024,
+        max_tokens: 2000,
         system: [
           {
             type: 'text',
