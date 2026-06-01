@@ -214,32 +214,139 @@
 .login-root {
   min-height: 100vh;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   background: var(--tc-bg);
-  padding: 24px;
+  padding: 32px 24px;
+  position: relative;
+}
+.login-root::before {
+  /* Subtle paper-texture wash so the cream background has depth. */
+  content: "";
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(900px 600px at 20% 0%, rgba(30,97,87,0.04), transparent 60%),
+    radial-gradient(700px 500px at 100% 100%, rgba(232,90,60,0.04), transparent 55%);
+  pointer-events: none;
 }
 .login-card {
   width: 100%;
-  max-width: 400px;
+  max-width: 420px;
   background: var(--tc-bg-soft);
   border: 1px solid var(--tc-line);
-  border-radius: 16px;
-  padding: 36px 32px;
-  box-shadow: var(--tc-shadow-lg);
+  border-radius: 18px;
+  padding: 40px 36px 32px;
+  box-shadow: 0 1px 0 var(--tc-line), 0 24px 60px -28px rgba(11, 20, 25, 0.18);
+  position: relative;
+  z-index: 1;
 }
 .login-brand {
-  display: flex; align-items: center; gap: 10px;
-  margin-bottom: 28px;
+  display: flex; align-items: center; justify-content: center;
+  margin-bottom: 22px;
+}
+/* CayeLogo's wordmark uses .sb-label which is opacity:0 outside the
+   sidebar. Force it visible inside auth cards so the mark + wordmark
+   render as one unit and center properly. */
+.login-brand .sb-label { opacity: 1 !important; display: inline-flex !important; }
+.login-eyebrow {
+  display: block;
+  text-align: center;
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--tc-ink-faint);
+  margin-bottom: 8px;
 }
 .login-heading {
-  font-size: 22px; font-weight: 600; letter-spacing: -0.025em;
-  color: var(--tc-ink); margin-bottom: 4px;
+  font-family: var(--font-serif, 'Cormorant Garamond', Georgia, serif);
+  font-size: 30px;
+  font-weight: 500;
+  letter-spacing: -0.015em;
+  color: var(--tc-ink);
+  margin-bottom: 6px;
+  text-align: center;
+  line-height: 1.15;
 }
 .login-sub {
   font-size: 13px; color: var(--tc-ink-mute);
-  margin-bottom: 24px;
+  text-align: center;
+  margin-bottom: 26px;
+  line-height: 1.5;
 }
+.login-legal {
+  margin-top: 22px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--tc-ink-faint);
+  line-height: 1.55;
+}
+.login-legal a { color: var(--tc-ink-mute); text-decoration: underline; text-underline-offset: 2px; }
+.login-legal a:hover { color: var(--tc-ink); }
+.login-switch {
+  text-align: center;
+  font-size: 13px;
+  color: var(--tc-ink-mute);
+  margin-top: 18px;
+}
+.login-switch a {
+  color: var(--tc-ink);
+  font-weight: 600;
+  text-decoration: none;
+  border-bottom: 1px solid var(--tc-line-strong);
+}
+.login-switch a:hover { border-bottom-color: var(--tc-ink); }
+
+/* ─── DARK theme for login/signup ───────────────────────────────────────────
+   Scoped to .login-root.login-dark so it doesn't leak into the rest of the
+   app until full dark-mode work ships. */
+.login-root.login-dark {
+  background: #0a1418;
+  color: #e9e2d4;
+}
+.login-root.login-dark::before {
+  background:
+    radial-gradient(900px 600px at 20% 0%, rgba(30, 97, 87, 0.18), transparent 60%),
+    radial-gradient(700px 500px at 100% 100%, rgba(232, 90, 60, 0.10), transparent 55%);
+}
+.login-dark .login-card {
+  background: #0f1d22;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.04) inset,
+    0 32px 80px -32px rgba(0, 0, 0, 0.6);
+}
+.login-dark .login-eyebrow { color: rgba(233, 226, 212, 0.45); }
+.login-dark .login-heading { color: #f5efe2; }
+.login-dark .login-sub { color: rgba(233, 226, 212, 0.55); }
+.login-dark .login-error {
+  background: rgba(232, 90, 60, 0.14);
+  border-color: rgba(232, 90, 60, 0.28);
+  color: #ffc9b8;
+}
+.login-dark .login-oauth {
+  background: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #0a1418;
+  font-weight: 600;
+  padding: 11px 16px;
+  font-size: 14px;
+}
+.login-dark .login-oauth:hover {
+  background: #f5efe2;
+  border-color: rgba(255, 255, 255, 0.16);
+}
+.login-dark .login-switch { color: rgba(233, 226, 212, 0.55); }
+.login-dark .login-switch a {
+  color: #f5efe2;
+  border-bottom-color: rgba(255, 255, 255, 0.18);
+}
+.login-dark .login-switch a:hover { border-bottom-color: #f5efe2; }
+.login-dark .login-legal { color: rgba(233, 226, 212, 0.35); }
+.login-dark .login-legal a { color: rgba(233, 226, 212, 0.55); }
+.login-dark .login-legal a:hover { color: #f5efe2; }
 .login-error {
   background: var(--tc-coral-soft);
   color: var(--tc-coral-deep);
@@ -296,6 +403,11 @@
   transition: background .15s ease, border-color .15s ease;
 }
 .login-oauth:hover { background: var(--tc-bg-deep); border-color: var(--tc-line-strong); }
+.login-oauth-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
 
 /* ====================================================== LANDING PAGE FULL */
 .lp-body { overflow: auto !important; }
