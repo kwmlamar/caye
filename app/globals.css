@@ -11,13 +11,14 @@
 
 :root {
   /* Surfaces */
-  --tc-bg:          #edebe6; /* Crisp warm gray background */
+  --tc-bg:          #ffffff; /* Clean white base */
   --tc-bg-soft:     #ffffff; /* Pure white panel surfaces */
-  --tc-bg-deep:     #e2dfd7; /* Distinct card borders & accents */
-  --tc-bg-deeper:   #d8d4cb;
+  --tc-bg-deep:     rgba(14, 26, 26, 0.05); /* Subtle neutral tint for accents */
+  --tc-bg-deeper:   rgba(14, 26, 26, 0.09);
   --tc-bg-dark:     #0b1419;
-  --tc-bg-app:      #F5F2EB; /* Warm linen canvas — creates contrast for glass sidebar */
-  --tc-bg-rail:     #f4f1ea;
+  --tc-bg-app:      #ffffff; /* Clean white — no more linen */
+  --tc-bg-rail:     rgba(14, 26, 26, 0.02);
+  --tc-bg-settings: #fafaf9; /* Extremely subtle off-white/gray shade for settings */
 
   /* Ink */
   --tc-ink:         #121212; /* Sharp slate-black obsidian typography */
@@ -53,7 +54,7 @@
   html, body { height: 100%; }
 
   body {
-    background: var(--tc-bg); /* Linked to variables to prevent hardcoded mud colors */
+    background: #ffffff;
     color: var(--tc-ink);
     font-family: var(--font-sans), ui-sans-serif, system-ui, -apple-system, sans-serif;
     font-feature-settings: "ss01", "cv11";
@@ -261,7 +262,7 @@
 .login-field input {
   width: 100%;
   padding: 9px 12px;
-  background: var(--tc-bg-app);
+  background: #ffffff;
   border: 1px solid var(--tc-line);
   border-radius: 8px;
   font-size: 13.5px;
@@ -288,7 +289,7 @@
 .login-oauth {
   display: flex; align-items: center; justify-content: center; gap: 10px;
   width: 100%; padding: 9px 16px;
-  background: var(--tc-bg-app);
+  background: #ffffff;
   border: 1px solid var(--tc-line);
   border-radius: 8px;
   font-size: 13.5px; font-weight: 500; color: var(--tc-ink);
@@ -1331,7 +1332,7 @@
     radial-gradient(circle 800px at 90% 10%, rgba(15, 181, 161, 0.06), transparent 70%),
     radial-gradient(circle 800px at 10% 90%, rgba(246, 177, 42, 0.08), transparent 70%),
     radial-gradient(circle 1000px at 50% 50%, rgba(255, 255, 255, 0.40), transparent 80%),
-    #F5F2EB !important;
+    #ffffff !important;
 }
 
 /* Scrollbar styles - thin and invisible until hovered */

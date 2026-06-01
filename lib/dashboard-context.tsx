@@ -1,7 +1,7 @@
 "use client"
 
 import { createContext, useContext, useState } from "react"
-import { useSearchParams, useRouter, useParams } from "next/navigation"
+import { useSearchParams, useRouter, useParams, usePathname } from "next/navigation"
 import type { Screen } from "@/lib/types"
 
 interface DashboardContextValue {
@@ -27,14 +27,19 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
   const params = useParams()
   const workspaceId = params?.workspaceId as string
 
-  const tab = searchParams.get('tab') as Screen | null
+  const pathname = usePathname()
+  const isSettings = pathname?.includes('/settings')
+  const rawTab = searchParams.get('tab') as Screen | null
+  const tab = (!isSettings && rawTab && ['chats', 'bookings', 'calendar', 'contacts'].includes(rawTab))
+    ? rawTab
+    : null
   
   const [panelOpen, setPanelOpenState] = useState(!!tab && tab !== 'home')
   const [panelScreen, setPanelScreenState] = useState<Screen>(
     (tab && tab !== 'home') ? tab : 'chats'
   )
 
-  const [sidebarExpanded, setSidebarExpanded] = useState(false)
+  const [sidebarExpanded, setSidebarExpanded] = useState(true)
   const [activeChatId, setActiveChatId] = useState('c1')
   const [pendingContactChannelId, setPendingContactChannelId] = useState<string | null>(null)
   const [isPanelDetail, setIsPanelDetail] = useState(false)

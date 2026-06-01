@@ -19,7 +19,7 @@ interface ShellProps {
 
 // Separate inner component so it can access DashboardContext
 function DashboardShell({ children, workspace, workspaceId, workspaces, isOwner }: ShellProps) {
-  const { panelOpen, setPanelOpen } = useDashboard()
+  const { panelOpen, setPanelOpen, sidebarExpanded, setSidebarExpanded } = useDashboard()
 
   useEffect(() => {
     const fn = (e: KeyboardEvent) => {
@@ -38,7 +38,39 @@ function DashboardShell({ children, workspace, workspaceId, workspaces, isOwner 
       <div className="tc-root">
         <div className="tc-frame">
           <Sidebar workspaceId={workspaceId} />
-          <div className={`tc-main${panelOpen ? ' caye-open' : ''}`}>
+          <div className={`tc-main${panelOpen ? ' caye-open' : ''}${!sidebarExpanded ? ' sb-collapsed' : ''}`} style={{ position: 'relative' }}>
+            {!sidebarExpanded && (
+              <button
+                onClick={() => setSidebarExpanded(true)}
+                className="sb-expand-trigger-btn"
+                title="Expand sidebar"
+                style={{
+                  position: 'absolute',
+                  top: 12,
+                  left: 16,
+                  zIndex: 40,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: 32,
+                  height: 32,
+                  borderRadius: 8,
+                  background: 'transparent',
+                  border: 'none',
+                  color: 'rgba(14, 26, 26, 0.7)',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease',
+                }}
+                onMouseEnter={e => e.currentTarget.style.background = 'rgba(14, 26, 26, 0.05)'}
+                onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="3" y1="12" x2="21" y2="12"></line>
+                  <line x1="3" y1="6" x2="21" y2="6"></line>
+                  <line x1="3" y1="18" x2="21" y2="18"></line>
+                </svg>
+              </button>
+            )}
             {children}
           </div>
         </div>

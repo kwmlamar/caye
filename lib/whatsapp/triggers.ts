@@ -101,7 +101,7 @@ export async function enqueueSameDayBooking(input: SameDayBookingInput): Promise
 
 export interface AuthFailureInput {
   workspaceId: string
-  service: 'Zoho Mail' | 'Zoho Calendar' | 'WhatsApp' | 'Instagram' | 'Messenger'
+  service: 'Zoho Mail' | 'Zoho Calendar' | 'Gmail' | 'WhatsApp' | 'Instagram' | 'Messenger'
   reconnectUrl?: string
 }
 

@@ -62,6 +62,12 @@ const CHANNEL_META: Record<string, { name: string; label: string; bg: string; no
     bg: 'var(--tc-ink)',
     note: 'Connect your Zoho Mail account so Caye can read and reply to guest emails.',
   },
+  gmail: {
+    name: 'Gmail',
+    label: 'G',
+    bg: '#ea4335',
+    note: 'Connect Gmail or Google Workspace so Caye can read and reply to customer emails.',
+  },
   sms: {
     name: 'SMS',
     label: '#',
@@ -70,7 +76,7 @@ const CHANNEL_META: Record<string, { name: string; label: string; bg: string; no
   },
 }
 
-const CHANNEL_ORDER = ['whatsapp', 'instagram', 'messenger', 'email', 'sms']
+const CHANNEL_ORDER = ['whatsapp', 'instagram', 'messenger', 'email', 'gmail', 'sms']
 
 // When a channel type has multiple rows, prefer the active one; break ties by newest created_at
 function pickBest(rows: ConnectedAccount[]): ConnectedAccount {
@@ -111,6 +117,12 @@ export default function ChannelsPanel() {
     if (zohoConnected === '1') toast.success('Zoho Mail connected')
     else if (zohoError === 'access_denied') toast.error('Zoho authorization was denied')
     else if (zohoError) toast.error(`Zoho connection failed (${zohoError})`)
+
+    const gmailConnected = searchParams.get('gmail_connected')
+    const gmailError = searchParams.get('gmail_error')
+    if (gmailConnected === '1') { toast.success('Gmail connected'); fetchAccounts() }
+    else if (gmailError === 'access_denied') toast.error('Google authorization was denied')
+    else if (gmailError) toast.error(`Gmail connection failed (${gmailError})`)
 
     if (msgrConnected === '1') { toast.success('Messenger connected'); fetchAccounts() }
     else if (msgrError === 'access_denied') toast.error('Facebook authorization was denied')
@@ -155,6 +167,7 @@ export default function ChannelsPanel() {
     // Strip the one-time params so they don't re-fire on refresh
     const clean = new URLSearchParams(searchParams.toString())
     clean.delete('zoho_connected'); clean.delete('zoho_error')
+    clean.delete('gmail_connected'); clean.delete('gmail_error')
     clean.delete('messenger_connected'); clean.delete('messenger_error'); clean.delete('messenger_pages')
     clean.delete('instagram_connected'); clean.delete('instagram_error'); clean.delete('instagram_pages')
     clean.delete('whatsapp_connected'); clean.delete('whatsapp_error'); clean.delete('whatsapp_pages')
@@ -416,6 +429,8 @@ export default function ChannelsPanel() {
                     onClick={() => {
                       if (type === 'email') {
                         window.location.href = `/api/auth/zoho?workspaceId=${workspaceId}`
+                      } else if (type === 'gmail') {
+                        window.location.href = `/api/auth/gmail?workspaceId=${workspaceId}`
                       } else if (type === 'whatsapp') {
                         launchWhatsAppSignup()
                       } else if (type === 'messenger') {
@@ -424,8 +439,8 @@ export default function ChannelsPanel() {
                         window.location.href = `/api/auth/meta?workspaceId=${workspaceId}&channel=instagram`
                       }
                     }}
-                    disabled={(type !== 'email' && type !== 'whatsapp' && type !== 'messenger' && type !== 'instagram') || (type === 'whatsapp' && whatsappConnecting)}
-                    title={type !== 'email' && type !== 'whatsapp' && type !== 'messenger' && type !== 'instagram' ? 'Coming soon' : undefined}
+                    disabled={(type !== 'email' && type !== 'gmail' && type !== 'whatsapp' && type !== 'messenger' && type !== 'instagram') || (type === 'whatsapp' && whatsappConnecting)}
+                    title={type !== 'email' && type !== 'gmail' && type !== 'whatsapp' && type !== 'messenger' && type !== 'instagram' ? 'Coming soon' : undefined}
                   >
                     <SIcon name="plus" size={12} />
                     {type === 'whatsapp' && whatsappConnecting ? 'Connecting…' : needsReauth ? 'Reconnect' : 'Connect'}

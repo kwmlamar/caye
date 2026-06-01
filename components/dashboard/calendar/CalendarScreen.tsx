@@ -4,6 +4,7 @@ import { getSupabase } from '@/lib/supabase'
 import { useWorkspace } from '@/lib/workspace-context'
 import BookingModal, { type BookingModalData } from './BookingModal'
 import { useDashboard } from '@/lib/dashboard-context'
+import { CaretLeft, CaretRight, Plus } from '@phosphor-icons/react'
 
 const ROW_H = 56
 const START = 8
@@ -295,44 +296,67 @@ export default function CalendarScreen({ inPanel = false }: { inPanel?: boolean 
   }
 
   return (
-    <div className="cal-screen" style={inPanel ? { padding: 12 } : {}}>
-      <header className="cal-head" style={inPanel ? { flexWrap: 'wrap', gap: 12 } : {}}>
-        <div className="cal-left">
-          {!inPanel && <h2>Calendar</h2>}
-          <div className="cal-nav">
-            <button className="ico-btn" onClick={navPrev}>←</button>
-            <span className="cal-range">{loading ? '…' : rangeLabel}</span>
-            <button className="ico-btn" onClick={navNext}>→</button>
-            <button className="ghost-btn sm" onClick={goToday}>Today</button>
+    <div className="cal-screen">
+      {inPanel ? (
+        <header className="cal-head">
+          <div className="cal-nav-row">
+            <span className="cal-nav-range">{loading ? '…' : rangeLabel}</span>
+            <div className="cal-nav-group">
+              <button onClick={navPrev} title="Previous">
+                <CaretLeft size={12} weight="bold" />
+              </button>
+              <span className="divider" />
+              <button onClick={goToday} style={{ fontSize: '11px', fontWeight: 500 }}>
+                Today
+              </button>
+              <span className="divider" />
+              <button onClick={navNext} title="Next">
+                <CaretRight size={12} weight="bold" />
+              </button>
+            </div>
           </div>
-        </div>
-        <div className="cal-right" style={inPanel ? { width: '100%', justifyContent: 'space-between', marginTop: 4, flexWrap: 'wrap', gap: 8 } : {}}>
-          {!inPanel && (
+          <div className="cal-controls-row">
+            <div className="seg-2">
+              <span className={view === 'WEEK' ? 'on' : ''} onClick={() => setView('WEEK')} style={{ cursor: 'pointer' }}>Week</span>
+              <span className={view === 'DAY' ? 'on' : ''} onClick={() => setView('DAY')} style={{ cursor: 'pointer' }}>Day</span>
+              <span className={view === 'MONTH' ? 'on' : ''} onClick={() => setView('MONTH')} style={{ cursor: 'pointer' }}>Month</span>
+            </div>
+          </div>
+        </header>
+      ) : (
+        <header className="cal-head">
+          <div className="cal-left">
+            <h2>Calendar</h2>
+            <div className="cal-nav">
+              <button className="ico-btn" onClick={navPrev}>←</button>
+              <span className="cal-range">{loading ? '…' : rangeLabel}</span>
+              <button className="ico-btn" onClick={navNext}>→</button>
+              <button className="ghost-btn sm" onClick={goToday}>Today</button>
+            </div>
+          </div>
+          <div className="cal-right">
             <div className="cal-stats">
               <span><b>{confirmed}</b> confirmed</span>
               <span><b>{pending}</b> pending</span>
               <span className="caye"><CayeMark size={12} /> <b>{byCaye}</b> by Caye</span>
               <span><b>{guests}</b> guests</span>
             </div>
-          )}
-          <div className="seg-2">
-            <span className={view === 'WEEK' ? 'on' : ''} onClick={() => setView('WEEK')} style={{ cursor: 'pointer' }}>Week</span>
-            <span className={view === 'DAY' ? 'on' : ''} onClick={() => setView('DAY')} style={{ cursor: 'pointer' }}>Day</span>
-            <span className={view === 'MONTH' ? 'on' : ''} onClick={() => setView('MONTH')} style={{ cursor: 'pointer' }}>Month</span>
+            <div className="seg-2">
+              <span className={view === 'WEEK' ? 'on' : ''} onClick={() => setView('WEEK')} style={{ cursor: 'pointer' }}>Week</span>
+              <span className={view === 'DAY' ? 'on' : ''} onClick={() => setView('DAY')} style={{ cursor: 'pointer' }}>Day</span>
+              <span className={view === 'MONTH' ? 'on' : ''} onClick={() => setView('MONTH')} style={{ cursor: 'pointer' }}>Month</span>
+            </div>
+            <button
+              className="btn-primary sm cursor-pointer"
+              onClick={() => {
+                setModal({ mode: 'new', data: emptyBookingForm(toISO(todayDate)) })
+              }}
+            >
+              + New booking
+            </button>
           </div>
-          <button
-            className="btn-primary sm cursor-pointer"
-            onClick={() => {
-              setModal({ mode: 'new', data: emptyBookingForm(toISO(todayDate)) })
-              if (inPanel) {
-                setIsPanelDetail(true)
-              }
-            }}
-          >
-            + New booking
-          </button>
-        </div>
-      </header>
+        </header>
+      )}
 
       {/* ── MONTH VIEW ── */}
       {view === 'MONTH' && (
@@ -380,20 +404,39 @@ export default function CalendarScreen({ inPanel = false }: { inPanel?: boolean 
       {/* ── WEEK / DAY VIEW ── */}
       {view !== 'MONTH' && (
         <div className="cal-grid-wrap font-sans">
-          <div className="cal-week-head">
-            <div className="time-gutter" />
-            {weekDays.map(date => {
-              const iso = toISO(date)
-              const count = bookingsForDate(iso).length
-              return (
-                <div key={iso} className={`cal-day-head${isToday(date) ? ' today' : ''}`}>
-                  <span className="dow">{DOW[date.getDay()]}</span>
-                  <span className="dnum">{date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
-                  <span className="dcount">{count} tour{count !== 1 ? 's' : ''}</span>
-                </div>
-              )
-            })}
-          </div>
+          {!(inPanel && view === 'DAY') ? (
+            <div className="cal-week-head">
+              <div className="time-gutter" />
+              {weekDays.map(date => {
+                const iso = toISO(date)
+                const count = bookingsForDate(iso).length
+                return (
+                  <div key={iso} className={`cal-day-head${isToday(date) ? ' today' : ''}`}>
+                    <span className="dow">{DOW[date.getDay()]}</span>
+                    <span className="dnum">{date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
+                    <span className="dcount">{count} tour{count !== 1 ? 's' : ''}</span>
+                  </div>
+                )
+              })}
+            </div>
+          ) : (
+            <div className="cal-day-view-header">
+              <span style={{ fontWeight: 600 }}>Day Schedule</span>
+              <span style={{
+                fontFamily: 'var(--font-mono)',
+                fontSize: '9.5px',
+                textTransform: 'uppercase',
+                letterSpacing: '0.08em',
+                background: 'rgba(18, 18, 18, 0.05)',
+                color: 'var(--tc-ink-mute)',
+                padding: '2px 8px',
+                borderRadius: '99px',
+                fontWeight: 600
+              }}>
+                {bookingsForDate(toISO(todayDate)).length} scheduled
+              </span>
+            </div>
+          )}
 
           <div className="cal-grid">
             <div className="cal-times">
@@ -526,6 +569,19 @@ export default function CalendarScreen({ inPanel = false }: { inPanel?: boolean 
           onClose={() => setModal(null)}
           onSaved={() => { setModal(null); fetchBookings() }}
         />
+      )}
+
+      {inPanel && (
+        <button
+          className="cal-fab"
+          title="New booking"
+          onClick={() => {
+            setModal({ mode: 'new', data: emptyBookingForm(toISO(todayDate)) })
+            setIsPanelDetail(true)
+          }}
+        >
+          <Plus size={18} weight="bold" />
+        </button>
       )}
     </div>
   )

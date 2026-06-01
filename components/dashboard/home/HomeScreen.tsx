@@ -117,8 +117,27 @@ export default function HomeScreen() {
   const [input, setInput] = useState('')
   const [typing, setTyping] = useState(false)
   const [contextText, setContextText] = useState('Caye is running. Ask her anything.')
+  const [userName, setUserName] = useState<string | undefined>(undefined)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const discoveryPolledRef = useRef(false)
+
+  // Load user's name from auth session
+  useEffect(() => {
+    async function loadUserName() {
+      try {
+        const { data: { session } } = await getSupabase().auth.getSession()
+        const user = session?.user
+        if (user?.user_metadata?.full_name) {
+          setUserName(user.user_metadata.full_name)
+        } else if (user?.email) {
+          setUserName(user.email.split('@')[0])
+        }
+      } catch (err) {
+        console.error('Failed to load user name:', err)
+      }
+    }
+    loadUserName()
+  }, [])
 
   // Fetch real workspace context for the tagline (held, today's bookings, overnight handled)
   useEffect(() => {
@@ -354,10 +373,56 @@ export default function HomeScreen() {
   }
 
   const suggestions = [
+    "Catch me up on the last 5 days.",
     "What does my business look like to you?",
     "Show me anything that needs my call.",
     "Draft a reply to the next pending message.",
   ]
+
+  // Handler for the "Catch me up" suggestion. Bypasses /api/caye/chat
+  // and hits the catch-up endpoint directly so we can show a structured
+  // briefing with the narrative + top-of-list items in one Caye message.
+  const onCatchUp = async () => {
+    if (typing) return
+    const userMsg: Message = {
+      from: 'user',
+      text: 'Catch me up on the last 5 days.',
+      timestamp: new Date().toISOString(),
+    }
+    const updatedMessages = [...messages, userMsg]
+    setMessages(updatedMessages)
+    setTyping(true)
+
+    try {
+      const { data: { session } } = await getSupabase().auth.getSession()
+      const token = session?.access_token || ''
+      const res = await fetch('/api/caye/catch-up', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ workspaceId, days: 5 }),
+      })
+      if (!res.ok) throw new Error(`catch-up failed: ${res.status}`)
+      const data = (await res.json()) as { text: string }
+      const cayeMsg: Message = {
+        from: 'caye',
+        text: data.text,
+        timestamp: new Date().toISOString(),
+      }
+      setMessages([...updatedMessages, cayeMsg])
+    } catch (err) {
+      console.error('[HomeScreen] catch-up failed:', err)
+      setMessages([
+        ...updatedMessages,
+        {
+          from: 'caye',
+          text: "I couldn't pull your last few days right now. Let's try again in a bit.",
+          timestamp: new Date().toISOString(),
+        },
+      ])
+    } finally {
+      setTyping(false)
+    }
+  }
 
   const isEmpty = messages.length === 0
 
@@ -433,7 +498,7 @@ export default function HomeScreen() {
           <div className="w-full max-w-[720px] flex flex-col justify-center space-y-6 my-auto pb-8">
             <div className="space-y-3 text-center md:text-left">
               <h1 className="text-[44px] md:text-[52px] font-normal tracking-tight text-near-black font-serif italic text-center md:text-left">
-                {getGreeting(getFirstName(workspace?.full_name))}
+                {getGreeting(getFirstName(userName))}
               </h1>
               <p className="text-[14px] text-near-black/55 font-sans not-italic text-center md:text-left truncate">
                 {contextText}
@@ -446,11 +511,18 @@ export default function HomeScreen() {
             {/* Chat input inside the empty stack */}
             {renderInputBox()}
 
-            {/* Three suggestion chips in vertical stack below input */}
+            {/* Suggestion chips in vertical stack below input */}
             <div className="flex flex-col gap-2 w-full">
-              {suggestions.map((s, idx) => (
-                <SuggestionChip key={idx} prompt={s} onClick={() => onSend(s)} />
-              ))}
+              {suggestions.map((s, idx) => {
+                const isCatchUp = s.toLowerCase().startsWith('catch me up')
+                return (
+                  <SuggestionChip
+                    key={idx}
+                    prompt={s}
+                    onClick={() => (isCatchUp ? onCatchUp() : onSend(s))}
+                  />
+                )
+              })}
             </div>
           </div>
         </div>
@@ -519,7 +591,7 @@ export default function HomeScreen() {
           <div 
             className="absolute bottom-0 left-0 right-0 pt-16 pb-8 px-6 z-10 flex justify-center pointer-events-none"
             style={{
-              background: 'linear-gradient(to top, #F5F2EB 0%, rgba(245, 242, 235, 0.95) 60%, rgba(245, 242, 235, 0) 100%)'
+              background: 'linear-gradient(to top, #ffffff 0%, rgba(255, 255, 255, 0.95) 60%, rgba(255, 255, 255, 0) 100%)'
             }}
           >
             <div className="w-full max-w-[720px] pointer-events-auto">

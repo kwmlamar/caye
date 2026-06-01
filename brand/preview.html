@@ -1,0 +1,58 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Caye mark — preview</title>
+<link rel="icon" type="image/svg+xml" href="caye-mark.svg">
+<style>
+  body { margin: 0; padding: 48px; font-family: -apple-system, system-ui, sans-serif; background: #FAF7F2; color: #0E1A1A; }
+  h1 { font-weight: 500; font-size: 18px; margin: 0 0 32px; }
+  h2 { font-weight: 500; font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; color: #6b7280; margin: 40px 0 16px; }
+  .row { display: flex; gap: 24px; align-items: flex-end; flex-wrap: wrap; }
+  .swatch { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+  .swatch span { font-size: 11px; color: #6b7280; }
+  .swatch img { display: block; image-rendering: -webkit-optimize-contrast; }
+  .variant { display: inline-flex; flex-direction: column; align-items: center; gap: 8px; margin-right: 24px; }
+  .variant > div { width: 160px; height: 160px; display: grid; place-items: center; }
+</style>
+</head>
+<body>
+  <h1>Caye mark — preview</h1>
+
+  <h2>Size test (primary)</h2>
+  <div class="row">
+    <div class="swatch"><img src="caye-mark.svg" width="16" height="16"><span>16px</span></div>
+    <div class="swatch"><img src="caye-mark.svg" width="24" height="24"><span>24px</span></div>
+    <div class="swatch"><img src="caye-mark.svg" width="32" height="32"><span>32px</span></div>
+    <div class="swatch"><img src="caye-mark.svg" width="64" height="64"><span>64px</span></div>
+    <div class="swatch"><img src="caye-mark.svg" width="128" height="128"><span>128px</span></div>
+  </div>
+
+  <h2>Variants</h2>
+  <div class="row">
+    <div class="variant">
+      <div style="background:#FAF7F2; border: 1px solid #e5e7eb;"><img src="caye-mark.svg" width="96" height="96"></div>
+      <span>primary on transparent</span>
+    </div>
+    <div class="variant">
+      <div style="background:#0FB5A1;"><img src="caye-mark-primary-teal.svg" width="96" height="96"></div>
+      <span>primary teal bg</span>
+    </div>
+    <div class="variant">
+      <div style="background:#FAF7F2; border: 1px solid #e5e7eb;"><img src="caye-mark-on-cream.svg" width="96" height="96"></div>
+      <span>on cream</span>
+    </div>
+    <div class="variant">
+      <div style="background:#0B6E63;"><img src="caye-mark-reverse.svg" width="96" height="96"></div>
+      <span>reverse</span>
+    </div>
+    <div class="variant">
+      <div style="background:#fff; border: 1px solid #e5e7eb;"><img src="caye-mark-mono.svg" width="96" height="96"></div>
+      <span>monochrome</span>
+    </div>
+  </div>
+
+  <h2>Favicon — check the browser tab</h2>
+  <p style="color:#6b7280; font-size:14px;">If you can see the mark in this page's browser tab, it survives 16px.</p>
+</body>
+</html>

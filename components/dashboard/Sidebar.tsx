@@ -61,36 +61,80 @@ const NavIcon = ({ name, size = 18 }: { name: string; size?: number }) => {
 
 interface WorkspaceSwitcherProps {
   workspaces: ReturnType<typeof useWorkspace>['workspaces']
+  workspace: ReturnType<typeof useWorkspace>['workspace']
   currentId: string
   anchorRef: React.RefObject<HTMLButtonElement | null>
   onSelect: (id: string) => void
   onClose: () => void
+  sidebarExpanded: boolean
 }
 
-function WorkspaceSwitcher({ workspaces, currentId, anchorRef, onSelect, onClose }: WorkspaceSwitcherProps) {
+function WorkspaceSwitcher({
+  workspaces,
+  workspace,
+  currentId,
+  anchorRef,
+  onSelect,
+  onClose,
+  sidebarExpanded,
+}: WorkspaceSwitcherProps) {
   const panelRef = useRef<HTMLDivElement>(null)
-  const [pos, setPos] = useState({ top: 0, left: 0 })
+  const router = useRouter()
+  const [pos, setPos] = useState({ top: 0, left: 0, width: 220 })
 
   useEffect(() => {
     if (anchorRef.current) {
       const r = anchorRef.current.getBoundingClientRect()
-      setPos({
-        top: r.top,
-        left: r.right + 8,
-      })
+      if (sidebarExpanded) {
+        setPos({
+          top: r.bottom + 6,
+          left: r.left,
+          width: Math.max(r.width, 220),
+        })
+      } else {
+        setPos({
+          top: r.top,
+          left: r.right + 8,
+          width: 220,
+        })
+      }
     }
-  }, [anchorRef])
+  }, [anchorRef, sidebarExpanded])
 
   useEffect(() => {
     function handleDown(e: MouseEvent) {
-      if (panelRef.current && !panelRef.current.contains(e.target as Node) &&
-          anchorRef.current && !anchorRef.current.contains(e.target as Node)) {
+      if (
+        panelRef.current &&
+        !panelRef.current.contains(e.target as Node) &&
+        anchorRef.current &&
+        !anchorRef.current.contains(e.target as Node)
+      ) {
         onClose()
       }
     }
     document.addEventListener('mousedown', handleDown)
     return () => document.removeEventListener('mousedown', handleDown)
   }, [anchorRef, onClose])
+
+  const handleLogout = async () => {
+    onClose()
+    await getSupabase().auth.signOut()
+    router.push('/login')
+  }
+
+  const handleLinkClick = (url: string) => {
+    onClose()
+    router.push(url)
+  }
+
+  const initials = (workspace?.business_name || 'M').charAt(0).toUpperCase()
+  const fullName = workspace?.full_name || workspace?.business_name || 'My Workspace'
+  const email = workspace?.contact_email || ''
+  const status = workspace?.status || 'trial'
+  const statusText = status.charAt(0).toUpperCase() + status.slice(1)
+
+  // Filter other workspaces
+  const otherWorkspaces = workspaces.filter((w) => w.workspace_id !== currentId)
 
   return createPortal(
     <div
@@ -100,84 +144,293 @@ function WorkspaceSwitcher({ workspaces, currentId, anchorRef, onSelect, onClose
         top: pos.top,
         left: pos.left,
         zIndex: 9999,
-        width: 240,
+        width: pos.width,
         background: '#ffffff',
         border: '1px solid rgba(14, 26, 26, 0.08)',
         borderRadius: 14,
         boxShadow: '0 8px 32px rgba(14, 26, 26, 0.08), 0 2px 8px rgba(14, 26, 26, 0.04)',
         overflow: 'hidden',
       }}
+      className="user-dropdown-popover"
     >
-      {/* Header */}
+      {/* Header Profile Info */}
       <div style={{
-        padding: '10px 14px 8px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 12,
+        padding: '12px 14px',
         borderBottom: '1px solid rgba(14, 26, 26, 0.05)',
       }}>
-        <p style={{
-          fontSize: 10,
-          fontFamily: 'var(--font-mono)',
-          fontWeight: 600,
-          letterSpacing: '0.12em',
-          textTransform: 'uppercase',
-          color: 'rgba(14, 26, 26, 0.4)',
-          margin: 0,
-        }}>
-          Switch workspace
-        </p>
+        {workspace?.avatar_url ? (
+          <img
+            src={workspace.avatar_url}
+            alt={fullName}
+            style={{ width: 34, height: 34, borderRadius: 10, objectFit: 'cover', flexShrink: 0 }}
+          />
+        ) : (
+          <div style={{
+            width: 34,
+            height: 34,
+            borderRadius: 10,
+            background: 'rgba(14, 26, 26, 0.05)',
+            color: '#0E1A1A',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: 14,
+            fontWeight: 600,
+            flexShrink: 0
+          }}>
+            {initials}
+          </div>
+        )}
+        <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+          <span style={{ fontSize: 13.5, fontWeight: 600, color: '#0E1A1A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {fullName}
+          </span>
+          <span style={{ fontSize: 11, color: 'rgba(14, 26, 26, 0.45)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 1 }}>
+            {statusText} • {email}
+          </span>
+        </div>
       </div>
 
-      {/* Workspace list */}
+      {/* Main Actions */}
       <div style={{ padding: '6px 6px' }}>
-        {workspaces.map((m) => {
-          const isActive = m.workspace_id === currentId
-          const name = m.customer.business_name || 'Unnamed workspace'
-          return (
-            <button
-              key={m.workspace_id}
-              onClick={() => onSelect(m.workspace_id)}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 10,
-                width: '100%',
-                padding: '7px 9px',
-                borderRadius: 9,
-                background: isActive ? 'rgba(14, 26, 26, 0.05)' : 'transparent',
-                color: isActive ? '#0E1A1A' : 'rgba(14, 26, 26, 0.7)',
-                fontSize: 13,
-                fontWeight: isActive ? 600 : 500,
-                textAlign: 'left',
-                transition: 'background 0.12s ease',
-                cursor: 'pointer',
-              }}
-              onMouseEnter={e => { if (!isActive) (e.currentTarget as HTMLButtonElement).style.background = 'rgba(14, 26, 26, 0.03)' }}
-              onMouseLeave={e => { if (!isActive) (e.currentTarget as HTMLButtonElement).style.background = 'transparent' }}
-            >
-              {m.customer.avatar_url ? (
-                <img
-                  src={m.customer.avatar_url}
-                  alt={name}
-                  style={{ width: 26, height: 26, borderRadius: 8, objectFit: 'cover', flexShrink: 0 }}
-                />
-              ) : (
-                <Avatar name={name} size={26} />
-              )}
-              <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {name}
-              </span>
-              {isActive && (
-                <span style={{ flexShrink: 0, opacity: 0.7 }}>
-                  <NavIcon name="check" size={14} />
-                </span>
-              )}
-              {!isActive && (
-                <span style={{ fontSize: 9.5, fontFamily: 'var(--font-mono)', color: 'rgba(14, 26, 26, 0.35)', flexShrink: 0, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
-                  {m.role}
-                </span>
-              )}
-            </button>
-          )
-        })}
+        <button
+          onClick={() => handleLinkClick(`/dashboard/${currentId}/settings?tab=workspace`)}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            width: '100%',
+            padding: '7px 10px',
+            borderRadius: 8,
+            background: 'transparent',
+            color: 'rgba(14, 26, 26, 0.75)',
+            fontSize: 13,
+            fontWeight: 500,
+            textAlign: 'left',
+            cursor: 'pointer',
+            transition: 'background 0.12s ease, color 0.12s ease',
+          }}
+          onMouseEnter={e => {
+            ;(e.currentTarget as HTMLButtonElement).style.background = 'rgba(14, 26, 26, 0.03)'
+            ;(e.currentTarget as HTMLButtonElement).style.color = '#0E1A1A'
+          }}
+          onMouseLeave={e => {
+            ;(e.currentTarget as HTMLButtonElement).style.background = 'transparent'
+            ;(e.currentTarget as HTMLButtonElement).style.color = 'rgba(14, 26, 26, 0.75)'
+          }}
+        >
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: 10, opacity: 0.6 }}>
+            <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+            <circle cx="8.5" cy="7" r="4" />
+            <line x1="20" y1="8" x2="20" y2="14" />
+            <line x1="23" y1="11" x2="17" y2="11" />
+          </svg>
+          Invite members
+        </button>
+
+        <button
+          onClick={() => handleLinkClick(`/dashboard/${currentId}/settings`)}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            width: '100%',
+            padding: '7px 10px',
+            borderRadius: 8,
+            background: 'transparent',
+            color: 'rgba(14, 26, 26, 0.75)',
+            fontSize: 13,
+            fontWeight: 500,
+            textAlign: 'left',
+            cursor: 'pointer',
+            transition: 'background 0.12s ease, color 0.12s ease',
+          }}
+          onMouseEnter={e => {
+            ;(e.currentTarget as HTMLButtonElement).style.background = 'rgba(14, 26, 26, 0.03)'
+            ;(e.currentTarget as HTMLButtonElement).style.color = '#0E1A1A'
+          }}
+          onMouseLeave={e => {
+            ;(e.currentTarget as HTMLButtonElement).style.background = 'transparent'
+            ;(e.currentTarget as HTMLButtonElement).style.color = 'rgba(14, 26, 26, 0.75)'
+          }}
+        >
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: 10, opacity: 0.6 }}>
+            <circle cx="12" cy="12" r="3" />
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+          </svg>
+          Settings
+        </button>
+
+        <button
+          onClick={() => handleLinkClick(`/dashboard/${currentId}`)}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            width: '100%',
+            padding: '7px 10px',
+            borderRadius: 8,
+            background: 'transparent',
+            color: 'rgba(14, 26, 26, 0.75)',
+            fontSize: 13,
+            fontWeight: 500,
+            textAlign: 'left',
+            cursor: 'pointer',
+            transition: 'background 0.12s ease, color 0.12s ease',
+          }}
+          onMouseEnter={e => {
+            ;(e.currentTarget as HTMLButtonElement).style.background = 'rgba(14, 26, 26, 0.03)'
+            ;(e.currentTarget as HTMLButtonElement).style.color = '#0E1A1A'
+          }}
+          onMouseLeave={e => {
+            ;(e.currentTarget as HTMLButtonElement).style.background = 'transparent'
+            ;(e.currentTarget as HTMLButtonElement).style.color = 'rgba(14, 26, 26, 0.75)'
+          }}
+        >
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: 10, opacity: 0.6 }}>
+            <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
+            <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
+          </svg>
+          Caye Guide
+        </button>
+
+        <button
+          onClick={() => handleLinkClick(`/dashboard/${currentId}`)}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            width: '100%',
+            padding: '7px 10px',
+            borderRadius: 8,
+            background: 'transparent',
+            color: 'rgba(14, 26, 26, 0.75)',
+            fontSize: 13,
+            fontWeight: 500,
+            textAlign: 'left',
+            cursor: 'pointer',
+            transition: 'background 0.12s ease, color 0.12s ease',
+          }}
+          onMouseEnter={e => {
+            ;(e.currentTarget as HTMLButtonElement).style.background = 'rgba(14, 26, 26, 0.03)'
+            ;(e.currentTarget as HTMLButtonElement).style.color = '#0E1A1A'
+          }}
+          onMouseLeave={e => {
+            ;(e.currentTarget as HTMLButtonElement).style.background = 'transparent'
+            ;(e.currentTarget as HTMLButtonElement).style.color = 'rgba(14, 26, 26, 0.75)'
+          }}
+        >
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: 10, opacity: 0.6 }}>
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+            <polyline points="14 2 14 8 20 8" />
+            <line x1="16" y1="13" x2="8" y2="13" />
+            <line x1="16" y1="17" x2="8" y2="17" />
+          </svg>
+          Documentation
+        </button>
+      </div>
+
+      {/* Switch Workspace Section (if multiple exist) */}
+      {otherWorkspaces.length > 0 && (
+        <>
+          <div style={{ height: 1, background: 'rgba(14, 26, 26, 0.05)', margin: '4px 0' }} />
+          <div style={{
+            padding: '10px 14px 6px',
+          }}>
+            <p style={{
+              fontSize: 10,
+              fontFamily: 'var(--font-mono)',
+              fontWeight: 600,
+              letterSpacing: '0.12em',
+              textTransform: 'uppercase',
+              color: 'rgba(14, 26, 26, 0.4)',
+              margin: 0,
+            }}>
+              Switch workspace
+            </p>
+          </div>
+          <div style={{ padding: '0 6px 6px' }}>
+            {otherWorkspaces.map((m) => {
+              const name = m.customer.business_name || 'Unnamed workspace'
+              return (
+                <button
+                  key={m.workspace_id}
+                  onClick={() => {
+                    onClose()
+                    onSelect(m.workspace_id)
+                  }}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 10,
+                    width: '100%',
+                    padding: '7px 9px',
+                    borderRadius: 9,
+                    background: 'transparent',
+                    color: 'rgba(14, 26, 26, 0.7)',
+                    fontSize: 13,
+                    fontWeight: 500,
+                    textAlign: 'left',
+                    transition: 'background 0.12s ease',
+                    cursor: 'pointer',
+                  }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(14, 26, 26, 0.03)' }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent' }}
+                >
+                  {m.customer.avatar_url ? (
+                    <img
+                      src={m.customer.avatar_url}
+                      alt={name}
+                      style={{ width: 26, height: 26, borderRadius: 8, objectFit: 'cover', flexShrink: 0 }}
+                    />
+                  ) : (
+                    <Avatar name={name} size={26} />
+                  )}
+                  <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {name}
+                  </span>
+                  <span style={{ fontSize: 9.5, fontFamily: 'var(--font-mono)', color: 'rgba(14, 26, 26, 0.35)', flexShrink: 0, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+                    {m.role}
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+        </>
+      )}
+
+      {/* Logout Action */}
+      <div style={{ height: 1, background: 'rgba(14, 26, 26, 0.05)', margin: '4px 0' }} />
+      <div style={{ padding: '4px 6px 6px' }}>
+        <button
+          onClick={handleLogout}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            width: '100%',
+            padding: '7px 10px',
+            borderRadius: 8,
+            background: 'transparent',
+            color: '#E85A3C',
+            fontSize: 13,
+            fontWeight: 500,
+            textAlign: 'left',
+            cursor: 'pointer',
+            transition: 'background 0.12s ease',
+          }}
+          onMouseEnter={e => {
+            ;(e.currentTarget as HTMLButtonElement).style.background = 'rgba(232, 90, 60, 0.06)'
+          }}
+          onMouseLeave={e => {
+            ;(e.currentTarget as HTMLButtonElement).style.background = 'transparent'
+          }}
+        >
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: 10 }}>
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+            <polyline points="16 17 21 12 16 7" />
+            <line x1="21" y1="12" x2="9" y2="12" />
+          </svg>
+          Logout
+        </button>
       </div>
     </div>,
     document.body
@@ -290,8 +543,10 @@ export default function Sidebar({ workspaceId }: SidebarProps) {
 
   const handleSelectThread = (threadId: string) => {
     localStorage.setItem(`caye_active_thread_id_${workspaceId}`, threadId)
-    setPanelOpen(false)
     window.dispatchEvent(new CustomEvent('caye-thread-selected', { detail: threadId }))
+    if (pathname?.includes('/settings')) {
+      router.push(`/dashboard/${workspaceId}`)
+    }
   }
 
   const newChatInFlightRef = useRef(false)
@@ -316,8 +571,10 @@ export default function Sidebar({ workspaceId }: SidebarProps) {
       const thread = (await res.json()) as CayeThread
       setThreads(prev => [{ id: thread.id, title: thread.title, updated_at: thread.updated_at }, ...prev])
       localStorage.setItem(`caye_active_thread_id_${workspaceId}`, thread.id)
-      setPanelOpen(false)
       window.dispatchEvent(new CustomEvent('caye-thread-selected', { detail: thread.id }))
+      if (pathname?.includes('/settings')) {
+        router.push(`/dashboard/${workspaceId}`)
+      }
     } finally {
       setTimeout(() => { newChatInFlightRef.current = false }, 400)
     }
@@ -353,45 +610,71 @@ export default function Sidebar({ workspaceId }: SidebarProps) {
     <>
       <nav
         className={'sidebar' + (sidebarExpanded ? ' expanded' : '')}
-        onMouseEnter={() => setSidebarExpanded(true)}
-        onMouseLeave={() => setSidebarExpanded(false)}
         style={{ display: 'flex', flexDirection: 'column', height: '100%' }}
       >
         <div className="sb-top" style={{ flexShrink: 0 }}>
-          {/* Brand Logo Header */}
-          <Link href={`/dashboard/${workspaceId}`} className="sb-brand-link">
-            <CayeLogo size={30} />
-          </Link>
-
-          {/* Workspace Switcher at the top */}
-          <button
-            ref={userButtonRef}
-            className={'sb-item sb-user' + (switcherOpen ? ' active' : '')}
-            title={hasMultiple ? `${bizName} — click to switch` : bizName}
-            onClick={() => hasMultiple && setSwitcherOpen(v => !v)}
-            style={{ cursor: hasMultiple ? 'pointer' : 'default' }}
-          >
-            {workspace?.avatar_url ? (
-              <img
-                src={workspace.avatar_url}
-                alt={bizName}
-                style={{ width: 26, height: 26, borderRadius: 8, objectFit: 'cover', flexShrink: 0 }}
-              />
-            ) : (
-              <Avatar name={bizName} size={26} />
-            )}
-            <span className="sb-label font-semibold text-near-black/90">
-              <span className="sb-user-name text-left" style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                {shortName}
-                {hasMultiple && (
-                  <span style={{ opacity: 0.4, marginLeft: 'auto', display: 'flex', alignItems: 'center' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%' }}>
+            {/* Workspace Switcher at the top */}
+            <button
+              ref={userButtonRef}
+              className={'sb-item sb-user' + (switcherOpen ? ' active' : '')}
+              title={bizName}
+              onClick={() => setSwitcherOpen(v => !v)}
+              style={{ cursor: 'pointer', flex: 1, minWidth: 0 }}
+            >
+              {workspace?.avatar_url ? (
+                <img
+                  src={workspace.avatar_url}
+                  alt={bizName}
+                  style={{ width: 26, height: 26, borderRadius: 8, objectFit: 'cover', flexShrink: 0 }}
+                />
+              ) : (
+                <Avatar name={bizName} size={26} />
+              )}
+              <span className="sb-label font-semibold text-near-black/90" style={{ width: '100%' }}>
+                <span className="sb-user-name text-left" style={{ display: 'flex', alignItems: 'center', gap: 4, width: '100%' }}>
+                  <span className="truncate flex-1">{bizName}</span>
+                  <span style={{ opacity: 0.4, marginLeft: 'auto', display: 'flex', alignItems: 'center', flexShrink: 0 }}>
                     <NavIcon name="chevron" size={12} />
                   </span>
-                )}
+                </span>
               </span>
-              {timezone && <span className="sb-user-org text-left">{timezone}</span>}
-            </span>
-          </button>
+            </button>
+
+            {/* Collapse Sidebar Button (visible only when expanded) */}
+            <button
+              onClick={() => setSidebarExpanded(false)}
+              className="sb-collapse-btn"
+              title="Collapse sidebar"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: 32,
+                height: 32,
+                borderRadius: 8,
+                border: 'none',
+                background: 'transparent',
+                color: 'rgba(14, 26, 26, 0.4)',
+                cursor: 'pointer',
+                transition: 'all 0.15s ease',
+                flexShrink: 0,
+              }}
+              onMouseEnter={e => {
+                e.currentTarget.style.background = 'rgba(14, 26, 26, 0.05)'
+                e.currentTarget.style.color = 'rgba(14, 26, 26, 0.8)'
+              }}
+              onMouseLeave={e => {
+                e.currentTarget.style.background = 'transparent'
+                e.currentTarget.style.color = 'rgba(14, 26, 26, 0.4)'
+              }}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="19" y1="12" x2="5" y2="12"></line>
+                <polyline points="12 19 5 12 12 5"></polyline>
+              </svg>
+            </button>
+          </div>
 
           {/* Primary "+ New chat" button */}
           <button
@@ -502,10 +785,12 @@ export default function Sidebar({ workspaceId }: SidebarProps) {
       {switcherOpen && (
         <WorkspaceSwitcher
           workspaces={workspaces}
+          workspace={workspace}
           currentId={workspaceId}
           anchorRef={userButtonRef}
           onSelect={handleSelectWorkspace}
           onClose={() => setSwitcherOpen(false)}
+          sidebarExpanded={sidebarExpanded}
         />
       )}
     </>

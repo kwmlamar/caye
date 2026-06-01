@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
-import SettingsNav from '@/components/settings/SettingsNav'
+import SettingsNav, { type TabId } from '@/components/settings/SettingsNav'
 import ProfilePanel from '@/components/settings/ProfilePanel'
 import ChannelsPanel from '@/components/settings/ChannelsPanel'
 import CayeAIPanel from '@/components/settings/CayeAIPanel'
@@ -13,9 +13,8 @@ import TeamPanel from '@/components/settings/TeamPanel'
 import BillingPanel from '@/components/settings/BillingPanel'
 import ServicesPanel from '@/components/settings/ServicesPanel'
 import { useDashboard } from '@/lib/dashboard-context'
-import type { SettingsSection } from '@/lib/types'
 
-const VALID_SECTIONS = new Set<SettingsSection>(['profile', 'channels', 'caye', 'health', 'notifications', 'team', 'billing', 'services', 'whatsapp'])
+const VALID_TABS = new Set<TabId>(['general', 'caye', 'workspace', 'billing'])
 
 const SearchIcon = () => (
   <svg width={14} height={14} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
@@ -23,15 +22,10 @@ const SearchIcon = () => (
   </svg>
 )
 
-const SECTION_LABELS: Record<SettingsSection, string> = {
-  profile: 'Profile',
-  channels: 'Channels',
+const TAB_LABELS: Record<TabId, string> = {
+  general: 'General',
   caye: 'Caye AI',
-  health: 'Caye health',
-  services: 'Services',
-  notifications: 'Notifications',
-  whatsapp: 'WhatsApp',
-  team: 'Team',
+  workspace: 'Workspace',
   billing: 'Billing',
 }
 
@@ -39,18 +33,18 @@ export default function SettingsPage() {
   const searchParams = useSearchParams()
   const router = useRouter()
 
-  const tabParam = searchParams.get('tab') as SettingsSection | null
-  const [active, setActiveState] = useState<SettingsSection>(
-    tabParam && VALID_SECTIONS.has(tabParam) ? tabParam : 'caye'
+  const tabParam = searchParams.get('tab') as TabId | null
+  const [active, setActiveState] = useState<TabId>(
+    tabParam && VALID_TABS.has(tabParam) ? tabParam : 'general'
   )
 
   const { panelOpen, setPanelOpen } = useDashboard()
   const mainRef = useRef<HTMLDivElement>(null)
 
-  const setActive = useCallback((section: SettingsSection) => {
-    setActiveState(section)
+  const setActive = useCallback((tab: TabId) => {
+    setActiveState(tab)
     const params = new URLSearchParams(searchParams.toString())
-    params.set('tab', section)
+    params.set('tab', tab)
     router.replace(`?${params.toString()}`)
   }, [router, searchParams])
 
@@ -59,7 +53,7 @@ export default function SettingsPage() {
   }, [active])
 
   return (
-    <>
+    <div className="settings-layout">
       <header className="top-bar">
         <div className="tb-left">
           <nav className="breadcrumb">
@@ -67,7 +61,7 @@ export default function SettingsPage() {
             <span className="sep">/</span>
             <span>Settings</span>
             <span className="sep">/</span>
-            <span className="here">{SECTION_LABELS[active]}</span>
+            <span className="here">{TAB_LABELS[active]}</span>
           </nav>
         </div>
         <div className="tb-right">
@@ -75,14 +69,6 @@ export default function SettingsPage() {
             <SearchIcon />
             <input placeholder="Search settings…" />
           </div>
-          <button
-            className={`tb-caye${panelOpen ? ' on' : ''}`}
-            onClick={() => setPanelOpen(!panelOpen)}
-          >
-            <span className="caye-dot" style={{ width: 8, height: 8 }}></span>
-            {panelOpen ? 'Caye is on' : 'Ask Caye'}
-            <span className="kbd">⌘J</span>
-          </button>
         </div>
       </header>
 
@@ -90,18 +76,32 @@ export default function SettingsPage() {
         <div className="settings-screen">
           <SettingsNav active={active} setActive={setActive} />
           <div className="set-main" ref={mainRef}>
-            {active === 'profile'       && <ProfilePanel />}
-            {active === 'channels'      && <ChannelsPanel />}
-            {active === 'caye'          && <CayeAIPanel />}
-            {active === 'health'        && <CayeHealthPanel />}
-            {active === 'notifications' && <NotificationsPanel />}
-            {active === 'whatsapp'      && <WhatsAppPanel />}
-            {active === 'team'          && <TeamPanel />}
-            {active === 'billing'       && <BillingPanel />}
-            {active === 'services'     && <ServicesPanel />}
+            {active === 'general' && (
+              <>
+                <ProfilePanel />
+                <ChannelsPanel />
+              </>
+            )}
+            {active === 'caye' && (
+              <>
+                <CayeAIPanel />
+                <WhatsAppPanel />
+                <CayeHealthPanel />
+              </>
+            )}
+            {active === 'workspace' && (
+              <>
+                <ServicesPanel />
+                <TeamPanel />
+                <NotificationsPanel />
+              </>
+            )}
+            {active === 'billing' && (
+              <BillingPanel />
+            )}
           </div>
         </div>
       </main>
-    </>
+    </div>
   )
 }

@@ -3,7 +3,7 @@
   height: 100vh;
   display: flex;
   flex-direction: column;
-  background: var(--tc-bg-app);
+  background: #ffffff;
 }
 .tc-frame {
   flex: 1;
@@ -17,7 +17,7 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
-  background: var(--tc-bg-app);
+  background: #ffffff;
 }
 .tc-content {
   flex: 1;
@@ -28,22 +28,25 @@
 
 /* ====================================================== SIDEBAR */
 .sidebar {
-  width: 64px;
+  width: 0;
   background: rgba(255, 255, 255, 0.72);
   backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(18px);
   border-right: none;
-  box-shadow: 2px 0 12px -4px rgba(14, 26, 26, 0.10);
+  box-shadow: none;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
   flex-shrink: 0;
-  transition: width .25s cubic-bezier(.22,.61,.36,1);
+  transition: width .25s cubic-bezier(.22,.61,.36,1), box-shadow .25s cubic-bezier(.22,.61,.36,1);
   overflow: hidden;
   position: relative;
   z-index: 20;
 }
-.sidebar.expanded { width: 236px; box-shadow: 4px 0 20px -6px rgba(14, 26, 26, 0.12); }
+.sidebar.expanded {
+  width: 236px;
+  box-shadow: 4px 0 20px -6px rgba(14, 26, 26, 0.12), 1px 0 0 rgba(14, 26, 26, 0.05);
+}
 .sb-top, .sb-bottom { display: flex; flex-direction: column; padding: 14px 10px; gap: 4px; }
 .sb-bottom { border-top: 1px solid rgba(14, 26, 26, 0.06); padding-top: 12px; }
 
@@ -265,6 +268,7 @@
   padding: 0 18px;
   flex-shrink: 0;
   box-shadow: 0 1px 0 var(--tc-line), 0 4px 16px -4px rgba(28,22,16,0.05);
+  transition: padding-left .25s cubic-bezier(.22,.61,.36,1);
 }
 .tb-left { display: flex; align-items: center; gap: 10px; }
 .tb-title {
@@ -1195,10 +1199,10 @@
   height: 100%;
   width: 0;
   max-width: 90vw;
-  background: rgba(255, 255, 255, 0.98);
+  background: rgba(255, 255, 255, 0.92);
   backdrop-filter: blur(28px);
   -webkit-backdrop-filter: blur(28px);
-  border-left: 0px solid rgba(28, 22, 16, 0.06);
+  border-left: 0px solid rgba(14, 26, 26, 0.07);
   box-shadow: none;
   display: flex; flex-direction: column;
   z-index: 10;
@@ -1209,7 +1213,7 @@
 .caye-panel.open {
   width: 480px;
   border-left-width: 1px;
-  box-shadow: -4px 0 24px -8px rgba(14, 26, 26, 0.08);
+  box-shadow: -1px 0 0 rgba(14, 26, 26, 0.06);
 }
 
 /* Remove background from inner sections to let the glassmorphism bleed through */
@@ -1307,13 +1311,7 @@
   50% { opacity: 0.6; transform: scale(1.08); }
 }
 .cp-head-bg {
-  position: absolute;
-  inset: 0;
-  background:
-    radial-gradient(ellipse 120% 100% at 0% 0%, rgba(232,90,60,0.05) 0%, transparent 70%),
-    radial-gradient(ellipse 100% 80% at 100% 100%, rgba(244,185,66,0.04) 0%, transparent 70%);
-  pointer-events: none;
-  animation: cp-aura-breath 8s ease-in-out infinite;
+  display: none;
 }
 .cp-mark-wrap {
   position: relative;
@@ -1744,7 +1742,7 @@
 .s-input, .s-select, .s-textarea {
   width: 100%;
   padding: 9px 12px;
-  background: var(--tc-bg-app);
+  background: #ffffff;
   border: 1px solid var(--tc-line);
   border-radius: 8px;
   font-size: 13.5px; color: var(--tc-ink);
@@ -1763,7 +1761,7 @@
 
 .s-input-affix {
   display: flex; align-items: center;
-  background: var(--tc-bg-app);
+  background: #ffffff;
   border: 1px solid var(--tc-line);
   border-radius: 8px;
   overflow: hidden;
@@ -1774,7 +1772,7 @@
   padding: 9px 10px;
   font-family: var(--font-mono), ui-monospace, monospace;
   font-size: 12px; color: var(--tc-ink-faint);
-  background: var(--tc-bg-deep);
+  background: rgba(14, 26, 26, 0.04);
   border-right: 1px solid var(--tc-line);
   white-space: nowrap;
 }
@@ -1831,7 +1829,7 @@
 .radio-card {
   position: relative;
   padding: 14px 14px 14px 16px;
-  background: var(--tc-bg-app);
+  background: rgba(14, 26, 26, 0.02);
   border: 1px solid var(--tc-line);
   border-radius: 10px;
   text-align: left;
@@ -1867,7 +1865,7 @@
 
 .s-seg {
   display: inline-flex; gap: 2px;
-  background: var(--tc-bg-deep);
+  background: rgba(14, 26, 26, 0.05);
   padding: 3px;
   border-radius: 9px;
   border: 1px solid var(--tc-line);
@@ -2031,7 +2029,7 @@
 }
 .role-select {
   padding: 6px 10px;
-  background: var(--tc-bg-app);
+  background: #ffffff;
   border: 1px solid var(--tc-line);
   border-radius: 7px;
   font-size: 12.5px;
@@ -2210,7 +2208,7 @@
   bottom: 0;
   margin: 16px -40px -60px;
   padding: 14px 40px;
-  background: linear-gradient(180deg, rgba(250,248,243,0) 0%, var(--tc-bg-app) 30%);
+  background: linear-gradient(180deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.96) 30%);
   display: flex; align-items: center; justify-content: flex-end;
   gap: 10px;
 }
@@ -2557,21 +2555,21 @@
 .svc-form-input {
   width: 100%;
   padding: 8px 11px;
-  border: 1px solid var(--tc-line-strong);
+  border: 1px solid var(--tc-line);
   border-radius: 8px;
-  background: var(--tc-bg-app);
+  background: #ffffff;
   color: var(--tc-ink);
   font-size: 13.5px;
   font-family: inherit;
-  transition: border-color .12s;
+  transition: border-color .12s, box-shadow .12s;
 }
-.svc-form-input:focus { outline: none; border-color: var(--tc-ink); }
+.svc-form-input:focus { outline: none; border-color: var(--tc-teal); box-shadow: 0 0 0 3px rgba(15, 90, 78, 0.08); }
 .svc-form-textarea { resize: vertical; min-height: 72px; }
 .svc-form-select {
   padding: 8px 10px;
-  border: 1px solid var(--tc-line-strong);
+  border: 1px solid var(--tc-line);
   border-radius: 8px;
-  background: var(--tc-bg-app);
+  background: #ffffff;
   color: var(--tc-ink);
   font-size: 13px;
   font-family: inherit;
@@ -2647,3 +2645,628 @@
 .svc-confirm-title { font-size: 15px; font-weight: 600; color: var(--tc-ink); margin-bottom: 8px; }
 .svc-confirm-body { font-size: 13.5px; color: var(--tc-ink-mute); line-height: 1.55; margin-bottom: 20px; }
 .svc-confirm-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* ====================================================== LINDY-STYLE SETTINGS REDESIGN OVERRIDES */
+.settings-layout {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  background: #ffffff;
+}
+
+/* Settings top bar matches nav background */
+.settings-layout .top-bar {
+  background: rgba(255, 255, 255, 0.72) !important;
+  backdrop-filter: blur(18px) !important;
+  -webkit-backdrop-filter: blur(18px) !important;
+  box-shadow: none !important;
+  border-bottom: 1px solid var(--tc-line) !important;
+}
+
+/* Settings navigation adjustments */
+.settings-layout .set-nav {
+  background: rgba(255, 255, 255, 0.72) !important;
+  backdrop-filter: blur(18px) !important;
+  -webkit-backdrop-filter: blur(18px) !important;
+  border-right: 1px solid var(--tc-line) !important;
+}
+
+.settings-layout .set-nav-head {
+  border-bottom: none !important;
+  padding: 24px 24px 12px !important;
+}
+
+.settings-layout .set-nav-org {
+  font-family: inherit !important;
+  font-size: 12px !important;
+  color: var(--tc-ink-mute) !important;
+  text-transform: capitalize !important;
+  letter-spacing: normal !important;
+  margin-top: 4px !important;
+}
+
+.settings-layout .set-nav-eyebrow {
+  display: none !important;
+}
+
+.settings-layout .set-nav-title {
+  font-size: 20px !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.02em !important;
+}
+
+.settings-layout .set-nav-section-label {
+  display: none !important; /* Hide category labels since tabs are consolidated */
+}
+
+.settings-layout .set-nav-item {
+  height: 36px !important;
+  padding: 0 12px !important;
+  border-radius: 8px !important;
+  border: 1px solid transparent !important;
+  color: var(--tc-ink-soft) !important;
+  transition: all 0.12s ease !important;
+  margin-bottom: 2px !important;
+}
+
+.settings-layout .set-nav-item:hover {
+  background: rgba(14, 26, 26, 0.03) !important;
+  color: var(--tc-ink) !important;
+}
+
+.settings-layout .set-nav-item.active {
+  background: rgba(14, 26, 26, 0.05) !important;
+  color: var(--tc-ink) !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+
+.settings-layout .set-nav-item.active::before {
+  display: none !important;
+}
+
+.settings-layout .sn-sub {
+  display: none !important;
+}
+
+/* Settings main area background */
+.settings-layout .set-main {
+  background: rgba(255, 255, 255, 0.72) !important;
+  backdrop-filter: blur(18px) !important;
+  -webkit-backdrop-filter: blur(18px) !important;
+}
+
+/* Hide large panel page headers to go straight to card content */
+.settings-layout .set-page-head {
+  display: none !important;
+}
+
+/* Reduce outer page margins/paddings since cards stack */
+.settings-layout .set-page {
+  padding: 24px 32px 40px !important;
+  gap: 16px !important;
+}
+
+/* Card modifications */
+.settings-layout .s-card {
+  background: #ffffff !important;
+  border: 1px solid rgba(14, 26, 26, 0.06) !important;
+  box-shadow: 0 4px 20px rgba(14, 26, 26, 0.02), 0 1px 2px rgba(14, 26, 26, 0.02) !important;
+  border-radius: 12px !important;
+  margin-bottom: 16px !important;
+  overflow: visible !important;
+}
+
+.settings-layout .s-card-head {
+  border-bottom: none !important;
+  padding: 20px 24px 6px !important;
+}
+
+.settings-layout .s-card-head h3 {
+  font-size: 15px !important;
+  font-weight: 600 !important;
+  color: var(--tc-ink) !important;
+}
+
+.settings-layout .s-card-head .desc {
+  font-size: 12px !important;
+  color: var(--tc-ink-mute) !important;
+  margin-top: 3px !important;
+}
+
+.settings-layout .s-card-body {
+  padding: 6px 24px 20px !important;
+  gap: 18px !important;
+}
+
+.settings-layout .s-card-foot {
+  background: rgba(14, 26, 26, 0.01) !important;
+  border-top: 1px solid rgba(14, 26, 26, 0.04) !important;
+  padding: 12px 24px !important;
+}
+
+/* Vertical Stacking fields */
+.settings-layout .s-row {
+  position: relative !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: stretch !important;
+  gap: 6px !important;
+  padding: 12px 0 !important;
+  padding-right: 60px !important; /* Make room for the Edit link */
+  border-bottom: 1px solid var(--tc-line-soft) !important;
+}
+
+.settings-layout .s-row:last-child {
+  border-bottom: none !important;
+}
+
+/* Plain-text borderless inputs */
+.settings-layout .s-row .s-input,
+.settings-layout .s-row .s-textarea {
+  background: transparent !important;
+  border: none !important;
+  border-bottom: 1px solid transparent !important;
+  box-shadow: none !important;
+  padding: 4px 0 !important;
+  font-size: 13.5px !important;
+  color: var(--tc-ink) !important;
+  cursor: text;
+  transition: all 0.12s ease !important;
+  width: 100% !important;
+  border-radius: 0 !important;
+}
+
+/* Hover state shows a subtle bottom underline */
+.settings-layout .s-row .s-input:hover,
+.settings-layout .s-row .s-textarea:hover {
+  border-bottom: 1px solid var(--tc-line-strong) !important;
+}
+
+/* Focus state shows clean bottom teal border */
+.settings-layout .s-row .s-input:focus,
+.settings-layout .s-row .s-textarea:focus {
+  background: transparent !important;
+  border: none !important;
+  border-bottom: 1.5px solid var(--tc-teal) !important;
+  box-shadow: none !important;
+  outline: none !important;
+  padding: 4px 0 !important;
+}
+
+/* Dropdowns & input groups */
+.settings-layout .s-select,
+.settings-layout .s-input-affix {
+  background: #ffffff !important;
+  border: 1px solid var(--tc-line) !important;
+  box-shadow: var(--tc-shadow-sm) !important;
+}
+
+.settings-layout .s-select:focus,
+.settings-layout .s-input-affix:focus-within {
+  border-color: var(--tc-teal) !important;
+  box-shadow: 0 0 0 3px rgba(15, 90, 78, 0.08) !important;
+}
+
+/* Action Edit button on the right */
+.settings-layout .s-row::after {
+  content: "Edit";
+  position: absolute;
+  right: 0;
+  top: 14px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--tc-teal);
+  cursor: pointer;
+  opacity: 0.75;
+  transition: opacity 0.15s ease;
+  pointer-events: none;
+}
+
+.settings-layout .s-row:not(:has(input.s-input)):not(:has(textarea.s-textarea))::after {
+  display: none !important;
+}
+
+.settings-layout .s-row:hover::after {
+  opacity: 1;
+  text-decoration: underline;
+}
+
+.settings-layout .s-row .s-label {
+  font-size: 13.5px !important;
+  font-weight: 600 !important;
+  color: var(--tc-ink-soft) !important;
+  padding-top: 0 !important;
+}
+
+.settings-layout .s-row .s-label .help {
+  font-size: 12px !important;
+  color: var(--tc-ink-mute) !important;
+  font-weight: 400 !important;
+  margin-top: 2px !important;
+}
+
+.settings-layout .s-row .s-field {
+  width: 100% !important;
+}
+
+/* Circular avatar profile section */
+.settings-layout .logo-upload {
+  gap: 18px !important;
+}
+
+.settings-layout .logo-preview {
+  border-radius: 50% !important;
+  width: 72px !important;
+  height: 72px !important;
+}
+
+.settings-layout .logo-preview::after {
+  display: none !important;
+}
+
+.settings-layout .logo-actions {
+  gap: 4px !important;
+}
+
+.settings-layout .logo-buttons {
+  flex-direction: column !important;
+  gap: 8px !important;
+}
+
+.settings-layout .logo-hint {
+  display: none !important;
+}
+
+/* Primary Teal for settings solid buttons */
+.settings-layout .btn-solid {
+  background: var(--tc-teal) !important;
+  color: #ffffff !important;
+  border-radius: 8px !important;
+  padding: 8px 16px !important;
+  font-weight: 500 !important;
+  box-shadow: var(--tc-shadow-sm) !important;
+  border: 1px solid transparent !important;
+}
+
+.settings-layout .btn-solid:hover {
+  background: var(--tc-teal-deep) !important;
+}
+
+.settings-layout .btn-ghost {
+  border: 1px solid var(--tc-line) !important;
+  background: #ffffff !important;
+  color: var(--tc-ink-soft) !important;
+  border-radius: 8px !important;
+  padding: 8px 16px !important;
+  font-weight: 500 !important;
+}
+
+.settings-layout .btn-ghost:hover {
+  background: rgba(14, 26, 26, 0.03) !important;
+  color: var(--tc-ink) !important;
+}
+
+/* Hide save bar unless dirty */
+.settings-layout .save-bar {
+  display: none !important;
+}
+
+.settings-layout .save-bar:has(.pip) {
+  display: flex !important;
+  position: sticky !important;
+  bottom: 0 !important;
+  z-index: 10 !important;
+  margin: 16px -32px -40px !important;
+  padding: 12px 32px !important;
+  background: rgba(255, 255, 255, 0.72) !important;
+  backdrop-filter: blur(18px) !important;
+  -webkit-backdrop-filter: blur(18px) !important;
+  border-top: 1px solid var(--tc-line) !important;
+}
+
+/* User Profile Dropdown Menu Animations */
+@keyframes dropdownFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.user-dropdown-popover {
+  animation: dropdownFadeIn 0.12s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Shifting Top Bar padding when sidebar is collapsed */
+.tc-main.sb-collapsed .top-bar {
+  padding-left: 56px !important;
+}
+
+/* Collapsed expand trigger styles */
+.sb-expand-trigger-btn:hover {
+  color: #0E1A1A !important;
+}
+
+/* Modern Toggle Switch for settings page */
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 40px;
+  height: 22px;
+  flex-shrink: 0;
+}
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.toggle-switch .slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background-color: rgba(14, 26, 26, 0.12);
+  transition: .25s ease;
+  border-radius: 34px;
+}
+.toggle-switch .slider:before {
+  position: absolute;
+  content: "";
+  height: 16px;
+  width: 16px;
+  left: 3px;
+  bottom: 3px;
+  background-color: white;
+  transition: .25s ease;
+  border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(14, 26, 26, 0.12);
+}
+.toggle-switch input:checked + .slider {
+  background-color: var(--tc-teal, #0FB5A1);
+}
+.toggle-switch input:checked + .slider:before {
+  transform: translateX(18px);
+}
+
+/* Override billing/pricing card adjustments */
+.settings-layout .plan-card {
+  display: none !important; /* Hide old plan card layouts */
+}
+
+/* ====================================================== RIGHT SIDE PANEL UI REFINEMENTS */
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.shimmer-bg {
+  background: linear-gradient(90deg, rgba(18, 18, 18, 0.03) 25%, rgba(18, 18, 18, 0.08) 37%, rgba(18, 18, 18, 0.03) 63%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s infinite linear;
+}
+
+.cal-fab {
+  position: absolute;
+  bottom: 20px;
+  right: 20px;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  background: var(--tc-ink);
+  color: var(--tc-bg-soft);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 14px rgba(18, 18, 18, 0.2), 0 2px 6px rgba(18, 18, 18, 0.12);
+  z-index: 10;
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), background-color 0.2s ease, box-shadow 0.2s ease;
+  border: none;
+  cursor: pointer;
+}
+.cal-fab:hover {
+  transform: scale(1.06);
+  background: var(--tc-teal);
+  box-shadow: 0 6px 18px rgba(15, 90, 78, 0.25), 0 3px 8px rgba(15, 90, 78, 0.15);
+}
+.cal-fab:active {
+  transform: scale(0.96);
+}
+
+/* Right panel list items / contact rows */
+.caye-panel .ct-row {
+  display: grid;
+  align-items: center;
+  padding: 10px 12px;
+  margin: 2px 8px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  transition: background-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+}
+.caye-panel .ct-row:hover {
+  background: rgba(18, 18, 18, 0.03) !important;
+  transform: translateX(3px);
+}
+.caye-panel .ct-row.active {
+  background: rgba(18, 18, 18, 0.05) !important;
+}
+
+/* Custom premium search bar inside right panel */
+.caye-panel .contacts-list .search {
+  margin: 12px 14px 8px;
+  padding: 8px 12px;
+  background: rgba(18, 18, 18, 0.03);
+  border: 1px solid var(--tc-line);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.caye-panel .contacts-list .search:focus-within {
+  background: var(--tc-bg-soft);
+  border-color: rgba(18, 18, 18, 0.15);
+  box-shadow: 0 2px 8px rgba(18, 18, 18, 0.04);
+}
+
+/* Compact pills for tag filter inside right panel */
+.caye-panel .contacts-list .seg {
+  margin: 4px 14px 12px;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.caye-panel .contacts-list .seg button {
+  padding: 5px 10px;
+  font-size: 11.5px;
+  border-radius: 99px;
+  border: 1px solid var(--tc-line);
+  background: transparent;
+  color: var(--tc-ink-mute);
+  transition: all 0.15s ease;
+}
+.caye-panel .contacts-list .seg button:hover {
+  border-color: var(--tc-line-strong);
+  background: rgba(18, 18, 18, 0.02);
+}
+.caye-panel .contacts-list .seg button.on {
+  background: var(--tc-ink) !important;
+  color: var(--tc-bg-soft) !important;
+  border-color: var(--tc-ink) !important;
+}
+.caye-panel .contacts-list .seg .seg-count {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  opacity: 0.7;
+  margin-left: 2px;
+}
+
+/* Custom channel badges for right panel */
+.ch-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  transition: all 0.2s ease;
+}
+.ch-badge.wa { background: rgba(37, 211, 102, 0.1); color: #25D366; }
+.ch-badge.fb { background: rgba(0, 132, 255, 0.1); color: #0084FF; }
+.ch-badge.ig { background: rgba(225, 48, 108, 0.1); color: #E1306C; }
+.ch-badge.em { background: rgba(18, 18, 18, 0.08); color: var(--tc-ink-soft); }
+
+/* Shimmer placeholder elements */
+.shimmer-circle {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+}
+.shimmer-line {
+  height: 10px;
+  border-radius: 4px;
+}
+
+/* Compact layout for calendar panel */
+.caye-panel .cal-screen {
+  padding: 0 !important;
+  position: relative;
+  height: 100%;
+}
+.caye-panel .cal-head {
+  padding: 10px 14px !important;
+  border-bottom: 1px solid var(--tc-line);
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: stretch !important;
+  gap: 10px !important;
+}
+.caye-panel .cal-nav-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+.caye-panel .cal-nav-group {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--tc-line);
+  background: var(--tc-bg-soft);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.caye-panel .cal-nav-group button {
+  height: 28px;
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  color: var(--tc-ink-soft);
+  transition: background-color 0.15s ease;
+}
+.caye-panel .cal-nav-group button:hover {
+  background: rgba(18, 18, 18, 0.03);
+}
+.caye-panel .cal-nav-group button:active {
+  background: rgba(18, 18, 18, 0.07);
+}
+.caye-panel .cal-nav-group .divider {
+  width: 1px;
+  height: 14px;
+  background: var(--tc-line);
+}
+.caye-panel .cal-nav-range {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--tc-ink);
+}
+
+.caye-panel .cal-controls-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+}
+.caye-panel .cal-controls-row .seg-2 {
+  padding: 2px;
+  background: rgba(18, 18, 18, 0.04);
+  border-radius: 6px;
+}
+.caye-panel .cal-controls-row .seg-2 span {
+  padding: 3px 8px;
+  font-size: 10.5px;
+}
+
+/* Redesigned grid header for right panel Day View */
+.caye-panel .cal-day-view-header {
+  padding: 6px 14px;
+  background: rgba(18, 18, 18, 0.01);
+  border-bottom: 1px solid var(--tc-line);
+  font-size: 11px;
+  color: var(--tc-ink-mute);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+/* Subtly transparent booking cards on calendar screen in panel */
+.caye-panel .bk-card {
+  box-shadow: 0 4px 12px rgba(18, 18, 18, 0.03);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+.caye-panel .bk-card.confirmed {
+  background: rgba(232, 90, 60, 0.05) !important;
+}
+.caye-panel .bk-card.pending {
+  background: rgba(244, 185, 66, 0.06) !important;
+}
+.caye-panel .bk-card.by-caye {
+  background: rgba(15, 181, 161, 0.06) !important;
+}
+

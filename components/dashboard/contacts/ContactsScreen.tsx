@@ -12,6 +12,7 @@ import type { ChannelType } from '@/lib/types'
 import { useSearchParams } from 'next/navigation'
 import { useWorkspace } from '@/lib/workspace-context'
 import ContactDetailPanel from './ContactDetailPanel'
+import { MagnifyingGlass } from '@phosphor-icons/react'
 
 function toChannelType(ct: string | null): ChannelType {
   if (ct === 'whatsapp') return 'wa'
@@ -114,7 +115,7 @@ export default function ContactsScreen({ inPanel = false }: { inPanel?: boolean 
           <aside className="contacts-list" style={{ borderRight: 'none', flex: 1, display: 'flex', flexDirection: 'column' }}>
             <div className="ct-head">
               <div className="search">
-                <span className="ico">⌕</span>
+                <MagnifyingGlass size={14} className="text-[var(--tc-ink-mute)]" style={{ opacity: 0.7 }} />
                 <input
                   placeholder="Find by name, phone, email…"
                   value={q}
@@ -140,18 +141,22 @@ export default function ContactsScreen({ inPanel = false }: { inPanel?: boolean 
             <div className="ct-table" style={{ padding: '0 4px 16px' }}>
               <div className="ct-table-head" style={{ gridTemplateColumns: '1fr 60px 1fr' }}>
                 <span>Name</span>
-                <span>Ch</span>
-                <span>Last seen</span>
+                <span className="text-center">Channel</span>
+                <span className="text-right">Last seen</span>
               </div>
 
               {loading ? (
-                [...Array(7)].map((_, i) => (
-                  <div key={i} className="ct-row" style={{ opacity: 0.35, pointerEvents: 'none' }}>
-                    <span className="ct-name">
-                      <span style={{ width: 28, height: 28, borderRadius: '50%', background: 'var(--tc-ink-faint)', display: 'inline-block', flexShrink: 0 }} />
-                      <div>
-                        <div style={{ width: 80, height: 9, background: 'var(--tc-ink-faint)', borderRadius: 4 }} />
-                      </div>
+                [...Array(8)].map((_, i) => (
+                  <div key={i} className="ct-row" style={{ gridTemplateColumns: '1fr 60px 1fr', pointerEvents: 'none' }}>
+                    <span className="ct-name" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <span className="shimmer-bg shimmer-circle" style={{ display: 'inline-block', flexShrink: 0 }} />
+                      <span className="shimmer-bg shimmer-line" style={{ width: '80px', display: 'inline-block' }} />
+                    </span>
+                    <span className="ct-ch" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                      <span className="shimmer-bg shimmer-circle" style={{ width: '18px', height: '18px', display: 'inline-block' }} />
+                    </span>
+                    <span className="ct-ls" style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center' }}>
+                      <span className="shimmer-bg shimmer-line" style={{ width: '50px', display: 'inline-block' }} />
                     </span>
                   </div>
                 ))
@@ -160,30 +165,35 @@ export default function ContactsScreen({ inPanel = false }: { inPanel?: boolean 
                   {q ? 'No contacts match' : 'No contacts yet'}
                 </div>
               ) : (
-                filtered.map(c => (
-                  <button
-                    key={c.id}
-                    className="ct-row"
-                    onClick={() => {
-                      setActive(c)
-                      setIsPanelDetail(true)
-                    }}
-                    style={{ gridTemplateColumns: '1fr 60px 1fr' }}
-                  >
-                    <span className="ct-name">
-                      <Avatar name={c.name || c.phone_number || '?'} size={28} />
-                      <div className="truncate text-left">
-                        <div className="n truncate">{c.name || 'Unknown'}</div>
-                      </div>
-                    </span>
-                    <span className="ct-ch">
-                      <ChannelIcon ch={toChannelType(c.channel_type)} size={18} />
-                    </span>
-                    <span className="ct-ls text-right">
-                      {c.last_message_at ? formatDistanceToNow(c.last_message_at) : '—'}
-                    </span>
-                  </button>
-                ))
+                filtered.map(c => {
+                  const chType = toChannelType(c.channel_type)
+                  return (
+                    <button
+                      key={c.id}
+                      className="ct-row"
+                      onClick={() => {
+                        setActive(c)
+                        setIsPanelDetail(true)
+                      }}
+                      style={{ gridTemplateColumns: '1fr 60px 1fr' }}
+                    >
+                      <span className="ct-name">
+                        <Avatar name={c.name || c.phone_number || '?'} size={28} />
+                        <div className="truncate text-left">
+                          <div className="n truncate font-medium text-[13.5px] text-[var(--tc-ink-soft)]">{c.name || 'Unknown'}</div>
+                        </div>
+                      </span>
+                      <span className="ct-ch" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                        <span className={`ch-badge ${chType}`}>
+                          <ChannelIcon ch={chType} size={12} />
+                        </span>
+                      </span>
+                      <span className="ct-ls text-right text-[12px] text-[var(--tc-ink-mute)]">
+                        {c.last_message_at ? formatDistanceToNow(c.last_message_at) : '—'}
+                      </span>
+                    </button>
+                  )
+                })
               )}
             </div>
           </aside>
