@@ -426,100 +426,108 @@ export default function HomeScreen() {
           </svg>
         </button>
       )}
-      {/* Scrollable Main Column */}
-      <div className="flex-1 overflow-y-auto px-6 py-12 md:py-20 flex justify-center">
-        <div className="w-full max-w-[720px] flex flex-col" style={{ minHeight: '100%' }}>
-          
-          {isEmpty ? (
-            /* Empty State */
-            <div className="flex-1 flex flex-col justify-center space-y-6 my-auto pb-8">
-              <div className="space-y-3 text-center md:text-left">
-                <h1 className="text-[44px] md:text-[52px] font-normal tracking-tight text-near-black font-serif italic text-center md:text-left">
-                  {getGreeting(getFirstName(workspace?.full_name))}
-                </h1>
-                <p className="text-[14px] text-near-black/55 font-sans not-italic text-center md:text-left truncate">
-                  {contextText}
-                </p>
-              </div>
-
-              <WhatsAppStatusBanner />
-              <SetupChecklist />
-
-              {/* Chat input inside the empty stack */}
-              {renderInputBox()}
-
-              {/* Three suggestion chips in vertical stack below input */}
-              <div className="flex flex-col gap-2 w-full">
-                {suggestions.map((s, idx) => (
-                  <SuggestionChip key={idx} prompt={s} onClick={() => onSend(s)} />
-                ))}
-              </div>
+      {/* Scrollable Main Column / Fixed Column Layout */}
+      {isEmpty ? (
+        /* Empty State */
+        <div className="flex-1 overflow-y-auto px-6 py-12 md:py-20 flex justify-center min-h-0">
+          <div className="w-full max-w-[720px] flex flex-col justify-center space-y-6 my-auto pb-8">
+            <div className="space-y-3 text-center md:text-left">
+              <h1 className="text-[44px] md:text-[52px] font-normal tracking-tight text-near-black font-serif italic text-center md:text-left">
+                {getGreeting(getFirstName(workspace?.full_name))}
+              </h1>
+              <p className="text-[14px] text-near-black/55 font-sans not-italic text-center md:text-left truncate">
+                {contextText}
+              </p>
             </div>
-          ) : (
-            /* Active Conversation History */
-            <div className="flex-1 flex flex-col justify-between" style={{ minHeight: '100%' }}>
-              <div className="flex-1 space-y-6 pb-6">
-                {messages.map((m, idx) => {
-                  if (m.from === 'caye') {
-                    return (
-                      <div key={idx} className="flex items-start gap-4 w-full">
-                        <div className="w-12 h-12 rounded-xl bg-near-black flex items-center justify-center text-white flex-shrink-0 mt-1">
-                          <CayeMark size={26} />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="text-[15px] leading-[1.7] text-near-black/85 font-sans">
-                            {parseCayeMessageText(m.text)}
-                          </div>
-                          {m.cards && m.cards.length > 0 && (
-                            <RichReply cards={m.cards} />
-                          )}
-                        </div>
-                      </div>
-                    )
-                  } else {
-                    return (
-                      <div key={idx} className="flex items-start justify-end w-full group">
-                        <div className="flex flex-col items-end max-w-[80%]">
-                          <div className="px-4 py-2.5 rounded-2xl bg-near-black/[0.04] text-near-black border-none text-[14.5px] leading-relaxed shadow-sm rounded-tr-none">
-                            {m.text}
-                          </div>
-                          <span className="text-[10px] text-near-black/45 mt-1 font-mono opacity-0 group-hover:opacity-100 transition-opacity duration-150">
-                            {new Date(m.timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
-                          </span>
-                        </div>
-                      </div>
-                    )
-                  }
-                })}
 
-                {/* Typing Indicator */}
-                {typing && (
-                  <div className="flex items-start gap-4">
-                    <div className="w-12 h-12 rounded-xl bg-near-black flex items-center justify-center text-white flex-shrink-0 mt-1">
-                      <CayeMark size={26} />
-                    </div>
-                    <div className="flex-1 min-w-0 flex items-center">
-                      <div className="px-1 py-3 flex items-center gap-1">
-                        <span className="w-1.5 h-1.5 rounded-full bg-near-black/35 animate-bounce" style={{ animationDelay: '0ms' }} />
-                        <span className="w-1.5 h-1.5 rounded-full bg-near-black/35 animate-bounce" style={{ animationDelay: '150ms' }} />
-                        <span className="w-1.5 h-1.5 rounded-full bg-near-black/35 animate-bounce" style={{ animationDelay: '300ms' }} />
+            <WhatsAppStatusBanner />
+            <SetupChecklist />
+
+            {/* Chat input inside the empty stack */}
+            {renderInputBox()}
+
+            {/* Three suggestion chips in vertical stack below input */}
+            <div className="flex flex-col gap-2 w-full">
+              {suggestions.map((s, idx) => (
+                <SuggestionChip key={idx} prompt={s} onClick={() => onSend(s)} />
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : (
+        /* Active Conversation History */
+        <div className="flex-1 flex flex-col min-h-0 relative items-center justify-center">
+          {/* Scrollable Message List */}
+          <div className="w-full flex-1 overflow-y-auto px-6 pt-12 md:pt-20 flex justify-center min-h-0">
+            <div className="w-full max-w-[720px] flex flex-col space-y-6">
+              {messages.map((m, idx) => {
+                if (m.from === 'caye') {
+                  return (
+                    <div key={idx} className="flex items-start gap-4 w-full">
+                      <div className="w-12 h-12 rounded-xl bg-near-black flex items-center justify-center text-white flex-shrink-0 mt-1">
+                        <CayeMark size={26} />
                       </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[15px] leading-[1.7] text-near-black/85 font-sans">
+                          {parseCayeMessageText(m.text)}
+                        </div>
+                        {m.cards && m.cards.length > 0 && (
+                          <RichReply cards={m.cards} />
+                        )}
+                      </div>
+                    </div>
+                  )
+                } else {
+                  return (
+                    <div key={idx} className="flex items-start justify-end w-full group">
+                      <div className="flex flex-col items-end max-w-[80%]">
+                        <div className="px-4 py-2.5 rounded-2xl bg-near-black/[0.04] text-near-black border-none text-[14.5px] leading-relaxed shadow-sm rounded-tr-none">
+                          {m.text}
+                        </div>
+                        <span className="text-[10px] text-near-black/45 mt-1 font-mono opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+                          {new Date(m.timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+                        </span>
+                      </div>
+                    </div>
+                  )
+                }
+              })}
+
+              {/* Typing Indicator */}
+              {typing && (
+                <div className="flex items-start gap-4">
+                  <div className="w-12 h-12 rounded-xl bg-near-black flex items-center justify-center text-white flex-shrink-0 mt-1">
+                    <CayeMark size={26} />
+                  </div>
+                  <div className="flex-1 min-w-0 flex items-center">
+                    <div className="px-1 py-3 flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-near-black/35 animate-bounce" style={{ animationDelay: '0ms' }} />
+                      <span className="w-1.5 h-1.5 rounded-full bg-near-black/35 animate-bounce" style={{ animationDelay: '150ms' }} />
+                      <span className="w-1.5 h-1.5 rounded-full bg-near-black/35 animate-bounce" style={{ animationDelay: '300ms' }} />
                     </div>
                   </div>
-                )}
-                
-                <div ref={messagesEndRef} />
-              </div>
-
-              {/* Chat Input anchored at bottom in active view */}
-              <div className="space-y-4 pt-6 pb-6 border-t border-near-black/5 mt-auto flex-shrink-0">
-                {renderInputBox()}
-              </div>
+                </div>
+              )}
+              
+              <div ref={messagesEndRef} />
+              {/* Bottom spacer to prevent text from being blocked by the absolute-positioned input bar and gradient blur */}
+              <div style={{ height: '80px', flexShrink: 0 }} />
             </div>
-          )}
+          </div>
 
+          {/* Chat Input anchored at bottom with gradient background fade */}
+          <div 
+            className="absolute bottom-0 left-0 right-0 pt-16 pb-8 px-6 z-10 flex justify-center pointer-events-none"
+            style={{
+              background: 'linear-gradient(to top, #F5F2EB 0%, rgba(245, 242, 235, 0.95) 60%, rgba(245, 242, 235, 0) 100%)'
+            }}
+          >
+            <div className="w-full max-w-[720px] pointer-events-auto">
+              {renderInputBox()}
+            </div>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   )
 }
