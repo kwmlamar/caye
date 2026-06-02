@@ -14,14 +14,14 @@ export default function WhatsAppMockup() {
             <polyline points="12 19 5 12 12 5"></polyline>
           </svg>
           
-          {/* Avatar (Bahamian cruise guest) */}
+          {/* Avatar (guest) */}
           <div className="w-10 h-10 rounded-full bg-[#128C7E] flex items-center justify-center font-semibold text-white shadow-sm border border-white/10">
             A
           </div>
-          
+
           <div>
-            <div className="font-semibold text-[15px] leading-tight">Anna (Carnival Pride)</div>
-            <div className="text-[11px] text-white/80">online</div>
+            <div className="font-semibold text-[15px] leading-tight">Anna · cruise guest</div>
+            <div className="text-[11px] text-white/80">Caye is replying…</div>
           </div>
         </div>
         
@@ -51,31 +51,44 @@ export default function WhatsAppMockup() {
         {/* Inbound Message */}
         <div className="flex justify-start">
           <div className="bg-white text-[#111b21] px-3.5 py-2 rounded-2xl rounded-tl-none shadow-sm max-w-[85%] text-[14.5px] leading-relaxed relative">
-            <p>Hey, do you have space for 4 on Thursday morning for the snorkel tour?</p>
+            <p>Hi! Saw you on IG — y&apos;all have anything Saturday for a family of 5? First time in Bimini 🙌</p>
             <div className="text-right text-[10px] text-[#667781] mt-1">9:41 AM</div>
           </div>
         </div>
 
-        {/* Caye Auto-reply Caption */}
-        <div className="flex justify-center my-2">
-          <div className="bg-white/80 backdrop-blur-sm border border-[#e1dcd0] text-[#1e6157] font-mono text-[11px] font-semibold py-1 px-3 rounded-full flex items-center gap-1.5 shadow-sm">
-            <span className="w-2 h-2 rounded-full bg-[#0FB5A1] animate-pulse"></span>
-            Caye · auto-replied in 14 seconds
-          </div>
-        </div>
-
-        {/* Outbound Message */}
+        {/* Caye Reply 1 */}
         <div className="flex justify-end">
           <div className="bg-[#d9fdd3] text-[#111b21] px-3.5 py-2 rounded-2xl rounded-tr-none shadow-sm max-w-[85%] text-[14.5px] leading-relaxed relative">
-            <p>Yes — Thursday 10am snorkel tour, 4 guests, $280 total. I&apos;ll send the confirmation once you reply yes.</p>
+            <p>Hi Anna! Welcome ahead of time 🌺 Saturday 10am we have the North Bimini Heritage Tour open — 2 hours, private for your family of 5, $750.</p>
             <div className="flex items-center justify-end gap-1 text-[10px] text-[#667781] mt-1">
               <span>9:41 AM</span>
-              {/* Double Checkmark */}
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#53bdeb" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="20 6 9 17 4 12"></polyline>
                 <polyline points="20 12 9 23 4 18"></polyline>
               </svg>
             </div>
+          </div>
+        </div>
+
+        {/* Caye Reply 2 */}
+        <div className="flex justify-end">
+          <div className="bg-[#d9fdd3] text-[#111b21] px-3.5 py-2 rounded-2xl rounded-tr-none shadow-sm max-w-[85%] text-[14.5px] leading-relaxed relative">
+            <p>Want me to hold the slot? Just send the deposit through here and you&apos;re booked: <span className="text-[#0a66c2] underline">wetravel.com/bimini/north-heritage</span></p>
+            <div className="flex items-center justify-end gap-1 text-[10px] text-[#667781] mt-1">
+              <span>9:41 AM</span>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#53bdeb" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="20 6 9 17 4 12"></polyline>
+                <polyline points="20 12 9 23 4 18"></polyline>
+              </svg>
+            </div>
+          </div>
+        </div>
+
+        {/* Caye System Toast — proof of work */}
+        <div className="flex justify-center mt-2">
+          <div className="bg-white/85 backdrop-blur-sm border border-[#e1dcd0] text-[#1e6157] font-mono text-[10.5px] font-semibold py-1 px-3 rounded-full flex items-center gap-1.5 shadow-sm">
+            <span className="w-1.5 h-1.5 rounded-full bg-[#0FB5A1] animate-pulse"></span>
+            Caye replied for you · slot held until paid
           </div>
         </div>
 

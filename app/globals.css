@@ -7,6 +7,9 @@
   --color-caribbean-teal-hover: #0D9C8B;
   --font-serif: var(--font-serif);
   --font-logo: var(--font-logo);
+  --font-instrument: var(--font-instrument);
+  --font-dm: var(--font-dm);
+  --font-newsreader: var(--font-newsreader);
 }
 
 :root {
