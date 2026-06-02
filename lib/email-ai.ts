@@ -128,3 +128,53 @@ export async function sendZohoReply(
     `zohoMsgId=${data.data?.messageId ?? 'unknown'}`
   )
 }
+
+/**
+ * sendZohoEmail
+ * -------------
+ * Compose-and-send a brand-new email to any address from the workspace's
+ * Zoho account. No reply-target lookup — always creates a new thread in
+ * the recipient's inbox.
+ *
+ * Used by the dashboard chat's `send_email` tool so the operator can ask
+ * Caye to fire off cold outreach / partner emails / one-off messages
+ * without having to switch to their email client.
+ */
+export async function sendZohoEmail(
+  to: string,
+  subject: string,
+  body: string,
+  workspaceId: string
+): Promise<{ messageId: string | null }> {
+  const { accountRow, accessToken, apiDomain, zohoAccountId } = await getZohoContext(workspaceId)
+  const base = mailBase(apiDomain)
+
+  const res = await fetch(`${base}/api/accounts/${zohoAccountId}/messages`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Zoho-oauthtoken ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      fromAddress: accountRow.channel_account_name || '',
+      toAddress: to,
+      subject,
+      content: body,
+      mailFormat: 'plaintext',
+    }),
+  })
+
+  const data = await res.json()
+  const code = data.status?.code
+  if (!res.ok || (code !== 200 && code !== 201)) {
+    throw new Error(
+      `Zoho Mail API error (HTTP ${res.status}, code ${code}): ${JSON.stringify(data).slice(0, 300)}`
+    )
+  }
+
+  console.log(
+    `[sendZohoEmail] Sent to ${to}, subject="${subject}", zohoMsgId=${data.data?.messageId ?? 'unknown'}`
+  )
+
+  return { messageId: data.data?.messageId ?? null }
+}

@@ -3,6 +3,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { createServiceClient, createServerClient } from '@/lib/supabase-server'
 import { syncBookingToCalendar } from '@/lib/calendar-sync'
 import { dispatchOperatorReply } from '@/lib/whatsapp/channel-dispatch'
+import { sendZohoEmail } from '@/lib/email-ai'
 
 interface HistoryMessage {
   from: 'user' | 'caye'
@@ -188,6 +189,29 @@ const TOOLS: Anthropic.Tool[] = [
       },
       required: ['conversation_id', 'body'],
     },
+  },
+  {
+    name: 'send_email',
+    description:
+      'Compose and send a brand new email from the workspace\'s connected Zoho account to any address. Use this when the owner asks you to send to someone who is NOT already in an existing conversation thread — cold outreach, a message to a partner or supplier, an introduction, a one-off follow-up. If the recipient is an existing customer with an open thread, use send_reply instead so it threads correctly. NEVER tell the owner to compose the email themselves; if they ask you to send, you send.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        to: {
+          type: 'string',
+          description: 'Recipient email address.',
+        },
+        subject: {
+          type: 'string',
+          description: 'Subject line for the new email. No "Re:" prefix — this is a new thread.',
+        },
+        body: {
+          type: 'string',
+          description: 'Plain-text body of the email.',
+        },
+      },
+      required: ['to', 'subject', 'body'],
+    },
     cache_control: { type: 'ephemeral' },
   },
 ]
@@ -238,6 +262,11 @@ type CancelBookingInput = { booking_id: string }
 type SendReplyInput = { conversation_id: string; body: string }
 type SendReplyResult =
   | { success: true; channel: string; sent_to: string; preview: string }
+  | { error: string }
+
+type SendEmailInput = { to: string; subject: string; body: string }
+type SendEmailResult =
+  | { success: true; sent_to: string; subject: string; preview: string; message_id: string | null }
   | { error: string }
 
 interface ServiceRow {
@@ -351,6 +380,33 @@ async function runSendReply(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     console.error('[caye/chat] send_reply failed:', msg)
+    return { error: msg }
+  }
+}
+
+async function runSendEmail(
+  workspaceId: string,
+  input: SendEmailInput
+): Promise<SendEmailResult> {
+  const to = input.to?.trim()
+  const subject = input.subject?.trim()
+  const body = input.body?.trim()
+  if (!to || !subject || !body) return { error: 'to, subject, and body are required' }
+  // Light sanity check — full email validation lives at the channel boundary.
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) return { error: `Invalid email address: ${to}` }
+
+  try {
+    const { messageId } = await sendZohoEmail(to, subject, body, workspaceId)
+    return {
+      success: true,
+      sent_to: to,
+      subject,
+      preview: body.slice(0, 160),
+      message_id: messageId,
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error('[caye/chat] send_email failed:', msg)
     return { error: msg }
   }
 }
@@ -541,16 +597,21 @@ WHO YOU'RE TALKING TO (absolute):
 You have five jobs:
 1. Answer questions about the inbox — use search_conversations / get_conversation_messages to look up real activity. Never say you don't have access to the inbox.
 2. Manage the calendar — use list_bookings, create_booking, and cancel_booking. The owner is the source of truth, so trust their input. If something's missing (e.g. time), ask in your reply rather than guessing.
-3. Send replies on the owner's behalf — use send_reply to actually send a drafted message back to the customer on their original channel (email, WhatsApp, Instagram, or Messenger). NEVER tell the owner to "copy and paste" a draft or "send it from your email client." If you have the conversation_id (from search_conversations) and the owner has approved a draft, you SEND IT via send_reply. The owner picked you so they don't have to do that work.
+3. Send replies and new emails on the owner's behalf:
+   - **send_reply**: respond to an EXISTING conversation thread (any channel — email, WhatsApp, Instagram, Messenger). Needs a conversation_id from search_conversations.
+   - **send_email**: compose a BRAND NEW email from the workspace's Zoho account to any address. Use for cold outreach, messages to partners/suppliers, intros, one-offs — anything where there isn't already an open thread.
+   NEVER tell the owner to "copy and paste," "send it from your email client," or "compose this yourself." If you have the address and the message, you SEND IT.
 4. Answer questions about the business, customers, or how you handle things.
 5. When the owner gives you information about the business OR tells you to change your behavior, call update_config in THE SAME TURN. Then show the owner what's now stored, in your own words.
 
 SENDING RULES:
-- Workflow: draft → owner approves → you call send_reply → confirm what was sent and to whom.
-- If the owner says "send it" / "go ahead" / "yes do it" / "fire it off" after you drafted, that's approval. Call send_reply now.
-- Always call search_conversations first if you don't already have the conversation_id in this turn.
-- After send_reply succeeds, confirm in plain text: who you sent it to, which channel, and a one-line preview of what was sent.
-- If send_reply errors, say what failed. Do not pretend it sent.
+- Workflow: draft → owner approves → you call send_reply or send_email → confirm what was sent and to whom.
+- If the owner says "send it" / "go ahead" / "yes do it" / "fire it off" after you drafted, that's approval. Send now.
+- Choose the right tool:
+  - Replying to someone who already messaged you → send_reply (call search_conversations first to get the conversation_id).
+  - Composing fresh to an email address → send_email.
+- After the send succeeds, confirm in plain text: who you sent it to, which channel, and a one-line preview of what was sent.
+- If the send errors, say what failed. Do not pretend it sent.
 
 HONESTY RULES (absolute — violating these is the worst thing you can do):
 - Never say "I'll update", "Let me update", "I'll save that", "I noted that", "Got it, I'll add that to your config", "updating now", or anything similar unless you ALSO emit an update_config tool call in the same turn. Saying it without doing it is lying to the owner.
@@ -1002,6 +1063,8 @@ export async function POST(req: NextRequest) {
               result = cancelResult
             } else if (block.name === 'send_reply') {
               result = await runSendReply(supabase, workspaceId, block.input as SendReplyInput)
+            } else if (block.name === 'send_email') {
+              result = await runSendEmail(workspaceId, block.input as SendEmailInput)
             } else {
               result = { error: `Unknown tool: ${block.name}` }
             }
