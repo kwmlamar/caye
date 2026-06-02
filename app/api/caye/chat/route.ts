@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { createServiceClient, createServerClient } from '@/lib/supabase-server'
 import { syncBookingToCalendar } from '@/lib/calendar-sync'
+import { dispatchOperatorReply } from '@/lib/whatsapp/channel-dispatch'
 
 interface HistoryMessage {
   from: 'user' | 'caye'
@@ -168,6 +169,25 @@ const TOOLS: Anthropic.Tool[] = [
       },
       required: ['booking_id'],
     },
+  },
+  {
+    name: 'send_reply',
+    description:
+      'Send a reply to a customer on the channel their conversation came in on (email, WhatsApp, Instagram, or Messenger). Use this AFTER the owner has approved a draft or asked you to reply. Do NOT use this to draft — only to actually send. The conversation_id must come from search_conversations or get_conversation_messages in this same turn. After this succeeds, confirm to the owner what you sent and who you sent it to.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        conversation_id: {
+          type: 'string',
+          description: 'The unified_conversations.id of the thread you are replying to. Get this from search_conversations.',
+        },
+        body: {
+          type: 'string',
+          description: 'The plain text of the reply to send. For email, do not include a subject line — the channel handles that automatically.',
+        },
+      },
+      required: ['conversation_id', 'body'],
+    },
     cache_control: { type: 'ephemeral' },
   },
 ]
@@ -214,6 +234,11 @@ type CreateBookingInput = {
 }
 
 type CancelBookingInput = { booking_id: string }
+
+type SendReplyInput = { conversation_id: string; body: string }
+type SendReplyResult =
+  | { success: true; channel: string; sent_to: string; preview: string }
+  | { error: string }
 
 interface ServiceRow {
   id: string
@@ -290,6 +315,44 @@ async function runCreateBooking(
   const { data, error } = await supabase.from('bookings').insert(payload).select('id').single()
   if (error || !data) return { success: false, error: error?.message ?? 'Insert failed' }
   return { success: true, booking_id: data.id }
+}
+
+async function runSendReply(
+  supabase: ReturnType<typeof createServiceClient>,
+  workspaceId: string,
+  input: SendReplyInput
+): Promise<SendReplyResult> {
+  const { conversation_id, body } = input
+  if (!body?.trim()) return { error: 'Empty body' }
+
+  // Verify the conversation belongs to this workspace before sending.
+  const { data: conv, error: convErr } = await supabase
+    .from('unified_conversations')
+    .select('id, channel_type, customer_id, connected_account:connected_accounts(user_id)')
+    .eq('id', conversation_id)
+    .maybeSingle()
+
+  if (convErr || !conv) return { error: 'Conversation not found' }
+  const account = Array.isArray(conv.connected_account)
+    ? conv.connected_account[0]
+    : conv.connected_account
+  if (!account || account.user_id !== workspaceId) {
+    return { error: 'Conversation does not belong to your workspace' }
+  }
+
+  try {
+    const result = await dispatchOperatorReply(conversation_id, body, 'caye-dashboard')
+    return {
+      success: true,
+      channel: result.channelType,
+      sent_to: conv.customer_id,
+      preview: body.trim().slice(0, 160),
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error('[caye/chat] send_reply failed:', msg)
+    return { error: msg }
+  }
 }
 
 async function runCancelBooking(
@@ -475,11 +538,19 @@ WHO YOU'RE TALKING TO (absolute):
 - If the owner asks "how much is X" they want the price structure, not a pitch. Quote the numbers, mention deposit terms if relevant, stop.
 - The only time you generate customer-facing language is when the owner explicitly asks you to draft a reply, an email, or a message to a specific customer. Then it's clearly addressed to that customer.
 
-You have four jobs:
+You have five jobs:
 1. Answer questions about the inbox — use search_conversations / get_conversation_messages to look up real activity. Never say you don't have access to the inbox.
 2. Manage the calendar — use list_bookings, create_booking, and cancel_booking. The owner is the source of truth, so trust their input. If something's missing (e.g. time), ask in your reply rather than guessing.
-3. Answer questions about the business, customers, or how you handle things.
-4. When the owner gives you information about the business OR tells you to change your behavior, call update_config in THE SAME TURN. Then show the owner what's now stored, in your own words.
+3. Send replies on the owner's behalf — use send_reply to actually send a drafted message back to the customer on their original channel (email, WhatsApp, Instagram, or Messenger). NEVER tell the owner to "copy and paste" a draft or "send it from your email client." If you have the conversation_id (from search_conversations) and the owner has approved a draft, you SEND IT via send_reply. The owner picked you so they don't have to do that work.
+4. Answer questions about the business, customers, or how you handle things.
+5. When the owner gives you information about the business OR tells you to change your behavior, call update_config in THE SAME TURN. Then show the owner what's now stored, in your own words.
+
+SENDING RULES:
+- Workflow: draft → owner approves → you call send_reply → confirm what was sent and to whom.
+- If the owner says "send it" / "go ahead" / "yes do it" / "fire it off" after you drafted, that's approval. Call send_reply now.
+- Always call search_conversations first if you don't already have the conversation_id in this turn.
+- After send_reply succeeds, confirm in plain text: who you sent it to, which channel, and a one-line preview of what was sent.
+- If send_reply errors, say what failed. Do not pretend it sent.
 
 HONESTY RULES (absolute — violating these is the worst thing you can do):
 - Never say "I'll update", "Let me update", "I'll save that", "I noted that", "Got it, I'll add that to your config", "updating now", or anything similar unless you ALSO emit an update_config tool call in the same turn. Saying it without doing it is lying to the owner.
@@ -929,6 +1000,8 @@ export async function POST(req: NextRequest) {
                 cancelledBookingId = cancelResult.booking_id
               }
               result = cancelResult
+            } else if (block.name === 'send_reply') {
+              result = await runSendReply(supabase, workspaceId, block.input as SendReplyInput)
             } else {
               result = { error: `Unknown tool: ${block.name}` }
             }

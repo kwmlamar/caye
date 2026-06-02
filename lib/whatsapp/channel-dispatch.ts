@@ -19,10 +19,12 @@ export interface DispatchResult {
   messageId?: string
 }
 
+export type OperatorReplySender = 'caye-operator-wa' | 'caye-dashboard'
+
 export async function dispatchOperatorReply(
   conversationId: string,
   text: string,
-  senderLabel: 'caye-operator-wa' = 'caye-operator-wa'
+  senderLabel: OperatorReplySender = 'caye-operator-wa'
 ): Promise<DispatchResult> {
   const supabase = createServiceClient()
 
