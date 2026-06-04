@@ -647,7 +647,9 @@ async function processMessage(
   // detect it, never reply to the processor, and send the customer a
   // thank-you confirmation only when the payment is APPROVED. Failed/declined
   // receipts become internal notes for Karenda to review.
-  if (!web3FormsFields && /RECEIPT PAGE/i.test(subject)) {
+  const isReceiptCandidate =
+    /receipt/i.test(subject) || /chargeanywhere\.com/i.test(fromRaw)
+  if (!web3FormsFields && isReceiptCandidate) {
     const rBody = await fetchMessageContent(
       base,
       String(accountId),
