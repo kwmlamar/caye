@@ -309,6 +309,34 @@ function buildReceiptThankYou(parsed: ReceiptParsed): string {
 }
 
 /**
+ * Builds the synthetic "inbound" body fed to generateCayeAutoReply when a
+ * payment receipt is intercepted. This is NOT a customer message — it's a
+ * system notification that tells Caye to send a payment-confirmation reply
+ * in the owner's voice on the existing thread. Caye reads the thread
+ * history (booking details, prior owner messages, logistics) and the voice
+ * profile to compose the reply, instead of using a hardcoded template.
+ */
+function buildReceiptSyntheticInbound(parsed: ReceiptParsed): string {
+  return [
+    '[INTERNAL SYSTEM NOTIFICATION — NOT A CUSTOMER MESSAGE]',
+    '',
+    `The payment processor just notified us that ${parsed.customerName} paid ${parsed.amount} for: ${parsed.description}.`,
+    '',
+    `Transaction ID: ${parsed.transactionId}`,
+    `Response: ${parsed.response}`,
+    `Approval code: ${parsed.approvalCode}`,
+    '',
+    'TASK: send the customer a warm payment-confirmation reply on this same email thread, in the owner\'s voice. The reply should:',
+    '- thank them for the payment and confirm the amount received',
+    '- restate what they paid for (use the description and any specifics from the booking thread above — date, time, party size, tour name)',
+    '- include the relevant meet-up logistics the owner has used before on this thread or in their voice profile (pickup location, arrival window, what to bring)',
+    '- sign off the way the owner normally signs off',
+    '',
+    'IMPORTANT: do NOT call create_booking, check_availability, find_bookings, or any booking tool — the booking already exists and the payment is complete. Only call send_reply with the confirmation. Do not ask the customer any questions.',
+  ].join('\n')
+}
+
+/**
  * Renders the receipt as an internal note that surfaces all the
  * payment details for the business owner to review in the inbox.
  */
@@ -667,8 +695,12 @@ async function processMessage(
         const customerEmail = receipt.customerEmail
 
         // Find the customer's existing conversation. Prefer email match;
-        // fall back to a name match scoped to this account.
+        // fall back to a name match scoped to this account. Track whether
+        // we matched an existing thread vs. had to fabricate a receipt-only
+        // conversation — only matched threads have the booking history that
+        // lets Caye generate a properly contextual confirmation.
         let conversationId: string | null = null
+        let conversationMatched = false
         if (customerEmail) {
           const { data: byEmail } = await supabase
             .from('unified_conversations')
@@ -678,7 +710,10 @@ async function processMessage(
             .order('last_message_at', { ascending: false })
             .limit(1)
             .maybeSingle()
-          if (byEmail) conversationId = String(byEmail.id)
+          if (byEmail) {
+            conversationId = String(byEmail.id)
+            conversationMatched = true
+          }
         }
         if (!conversationId) {
           const { data: byName } = await supabase
@@ -689,7 +724,10 @@ async function processMessage(
             .order('last_message_at', { ascending: false })
             .limit(1)
             .maybeSingle()
-          if (byName) conversationId = String(byName.id)
+          if (byName) {
+            conversationId = String(byName.id)
+            conversationMatched = true
+          }
         }
 
         // No existing conversation — create one keyed by the transaction ID
@@ -726,56 +764,136 @@ async function processMessage(
 
         let customerEmailed = false
 
-        // Send thank-you only when approved AND we have a customer email
+        // Send thank-you only when approved AND we have a customer email.
+        // Generate the body via generateCayeAutoReply when we have a matched
+        // thread — Caye reads the booking history + voice profile and writes
+        // the confirmation in the owner's voice. Falls back to the template
+        // when the LLM call fails or no thread context exists (receipt-only
+        // synthetic conversation).
         if (approved && customerEmail) {
-          const thankYou = buildReceiptThankYou(receipt)
+          let thankYou: string = buildReceiptThankYou(receipt)
+          let proposedReplyForHold: string | undefined
+          let shouldSend = true
+
+          if (conversationMatched) {
+            // Load workspace AI prompt for the Caye-voiced confirmation.
+            let receiptSystemPrompt =
+              'You are Caye, an AI receptionist for a Caribbean small business. Reply to customer emails warmly and professionally. When in doubt, hold for the business owner.'
+            const { data: receiptAiConfig } = await supabase
+              .from('workspace_ai_config')
+              .select('system_prompt, ai_enabled')
+              .eq('workspace_id', workspaceId)
+              .maybeSingle()
+            if (receiptAiConfig?.system_prompt) receiptSystemPrompt = receiptAiConfig.system_prompt
+
+            if (receiptAiConfig?.ai_enabled === false) {
+              // AI disabled — fall back to template send so receipts still confirm.
+              console.log(`[email/poll] AI disabled — receipt using template fallback`)
+            } else {
+              try {
+                const decision = await generateCayeAutoReply(
+                  receiptSystemPrompt,
+                  {
+                    senderName: receipt.customerName,
+                    body: buildReceiptSyntheticInbound(receipt),
+                    channel: 'email',
+                    subject: `Payment received — ${receipt.description}`,
+                    workspaceId,
+                    conversationId,
+                    senderEmail: customerEmail,
+                  }
+                )
+                if (decision.action === 'reply') {
+                  thankYou = decision.content
+                } else {
+                  // Caye chose to hold (owner just replied, identity-guard
+                  // flagged something, etc.). Don't send — surface the
+                  // proposed draft as an internal note so Karenda can review.
+                  shouldSend = false
+                  proposedReplyForHold = decision.proposedReply
+                  console.log(
+                    `[email/poll] Receipt held by Caye: ${decision.reason}`
+                  )
+                }
+              } catch (err) {
+                console.error(
+                  '[email/poll] Receipt AI reply failed, falling back to template:',
+                  err
+                )
+                // thankYou already set to template above
+              }
+            }
+          }
+
           const replySubject = `Payment received — ${receipt.description}`
-          const sendRes = await fetch(`${base}/api/accounts/${accountId}/messages`, {
-            method: 'POST',
-            headers: {
-              Authorization: `Zoho-oauthtoken ${accessToken}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              fromAddress: ownEmail,
-              toAddress: customerEmail,
-              subject: replySubject,
-              content: thankYou,
-              mailFormat: 'plaintext',
-            }),
-          })
-          const sendData = await sendRes.json()
-          const code = sendData.status?.code
-          if (!sendRes.ok || (code !== 200 && code !== 201)) {
-            console.error('[email/poll] Receipt thank-you send failed:', sendData)
+
+          if (shouldSend) {
+            const sendRes = await fetch(`${base}/api/accounts/${accountId}/messages`, {
+              method: 'POST',
+              headers: {
+                Authorization: `Zoho-oauthtoken ${accessToken}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                fromAddress: ownEmail,
+                toAddress: customerEmail,
+                subject: replySubject,
+                content: thankYou,
+                mailFormat: 'plaintext',
+              }),
+            })
+            const sendData = await sendRes.json()
+            const code = sendData.status?.code
+            if (!sendRes.ok || (code !== 200 && code !== 201)) {
+              console.error('[email/poll] Receipt thank-you send failed:', sendData)
+            } else {
+              customerEmailed = true
+              const sentAt = new Date().toISOString()
+              await supabase.from('unified_messages').insert({
+                conversation_id: conversationId,
+                channel_message_id: `caye_receipt_${receipt.transactionId}`,
+                sender_type: 'business',
+                content: thankYou,
+                message_type: 'text',
+                sent_at: sentAt,
+                status: 'sent',
+                metadata: {
+                  subject: replySubject,
+                  is_automated: true,
+                  generated_by: 'caye',
+                  source: 'payment_receipt',
+                  transaction_id: receipt.transactionId,
+                },
+              })
+              await supabase
+                .from('unified_conversations')
+                .update({
+                  last_sender_type: 'business',
+                  last_business_sender_kind: 'caye',
+                  last_message_at: sentAt,
+                  last_message_preview: thankYou.slice(0, 100),
+                })
+                .eq('id', conversationId)
+            }
           } else {
-            customerEmailed = true
-            const sentAt = new Date().toISOString()
+            // Held — post the proposed draft as an internal message for
+            // Karenda to review/send.
             await supabase.from('unified_messages').insert({
               conversation_id: conversationId,
-              channel_message_id: `caye_receipt_${receipt.transactionId}`,
+              channel_message_id: `caye_receipt_hold_${receipt.transactionId}`,
               sender_type: 'business',
-              content: thankYou,
+              content: `Payment confirmation held for owner review.`,
               message_type: 'text',
-              sent_at: sentAt,
+              sent_at: new Date().toISOString(),
               status: 'sent',
+              is_internal: true,
               metadata: {
-                subject: replySubject,
-                is_automated: true,
                 generated_by: 'caye',
                 source: 'payment_receipt',
                 transaction_id: receipt.transactionId,
+                proposed_reply: proposedReplyForHold ?? buildReceiptThankYou(receipt),
               },
             })
-            await supabase
-              .from('unified_conversations')
-              .update({
-                last_sender_type: 'business',
-                last_business_sender_kind: 'caye',
-                last_message_at: sentAt,
-                last_message_preview: thankYou.slice(0, 100),
-              })
-              .eq('id', conversationId)
           }
         }
 
