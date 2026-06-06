@@ -17,6 +17,7 @@ export type InboundCategory =
   | 'gratitude'
   | 'cancellation_request'
   | 'rescheduling'
+  | 'b2b_partnership'
   | 'booking_inquiry'
   | 'general_question'
 
@@ -82,6 +83,33 @@ const PATTERNS: Pattern[] = [
       // Question marks suggest they want something — don't classify as pure gratitude
       if (/\?/.test(trimmed)) return null
       return m[0]
+    },
+  },
+
+  // ── B2B_PARTNERSHIP (agencies, DMCs, cruise lines, wholesale partners) ─
+  // Must outrank booking_inquiry — partnership emails frequently include
+  // booking-flavored language ("we'd like to book groups", "availability").
+  // Without higher priority, those words win and Caye replies as if to a
+  // walk-in guest. The Anastasiya / Virgin Voyages thread is the test case.
+  {
+    category: 'b2b_partnership',
+    priority: 80,
+    test: text => {
+      // Explicit partnership/agency keywords — any one is enough.
+      const strong =
+        /\b(partnership|partnering|collaborat(?:e|ion)|wholesale|rate sheet|commission|shore excursion|cruise (?:line|partnership|programme?)|tour operator(?:s)?|DMC|destination management|travel agen(?:t|cy|cies))\b/i.exec(text)?.[0]
+      if (strong) return strong
+
+      // Two or more "agency voice" phrases — softer pattern.
+      const phrases = [
+        /\bour (?:group|guests?|clients?|passengers?|company|agency|programme?)\b/i,
+        /\b(?:group|corporate|wholesale|FIT)\s+(?:rates?|pricing|bookings?)\b/i,
+        /\bgroup of \d{1,2}\b/i,
+        /\b(?:pax|passengers?|guests?)\s+(?:arriving|on the|from the)\s+\w+/i,
+      ]
+      const hits = phrases.filter(re => re.test(text))
+      if (hits.length >= 2) return hits.map(re => re.source).join(' + ')
+      return null
     },
   },
 
@@ -155,6 +183,19 @@ export function toneHintFor(category: InboundCategory | null): string {
         'INBOUND CONTEXT: this is a NEW BOOKING INQUIRY. Welcoming and helpful — confirm ' +
         'what they\'re asking about, check availability if a date is given, move toward booking ' +
         'naturally. Don\'t make them wait for info you already have.'
+      )
+    case 'b2b_partnership':
+      return (
+        'INBOUND CONTEXT: this is a B2B / partnership / cruise-line / travel-agency message — ' +
+        'not a walk-in guest. Register: professional rather than casual is acceptable here, even ' +
+        'if the operator\'s default voice profile is warm-local. Use full names, complete sentences, ' +
+        'the operator\'s business name and credentials (licensed, insured, certified) when relevant. ' +
+        'Match the formality the other side is using. Do NOT slip into Bahamian dialect with ' +
+        'partnership leads — it can read as unprofessional to off-island agencies. Critically: do ' +
+        'NOT auto-commit to commercial terms (commission rates, exclusivity, group pricing tiers, ' +
+        'wholesale agreements). When the conversation moves past intros into commercial terms, ' +
+        'hold_for_human and let the owner negotiate. Partnership relationships are too valuable to ' +
+        'risk on AI judgment.'
       )
     case 'general_question':
       return (

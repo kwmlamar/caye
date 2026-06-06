@@ -92,4 +92,39 @@ describe('toneHintFor', () => {
     expect(hint.toLowerCase()).toContain('briefly')
     expect(hint.toLowerCase()).toContain("don't over-extend")
   })
+
+  it('allows professional register and warns about commercial terms on B2B', () => {
+    const hint = toneHintFor('b2b_partnership')
+    expect(hint.toLowerCase()).toContain('professional')
+    expect(hint.toLowerCase()).toContain('hold_for_human')
+    expect(hint.toLowerCase()).toContain('commission')
+  })
+})
+
+describe('classifyInbound b2b_partnership detection', () => {
+  it('classifies the Anastasiya / Virgin Voyages partnership thread as b2b', () => {
+    const body =
+      'Hello Karenda, Thank you for your email. We are excited about the Bimini cruise programme and are continuing to work with Virgin Voyages on the partnership. The current 3-hour itinerary may be tight for guests with accessibility needs. Warm regards, Anastasiya Lisouskaya, Cruise Partnership Lead, Accessible Travel Solutions.'
+    expect(classifyInbound(body).category).toBe('b2b_partnership')
+  })
+
+  it('classifies the Compass Tours / Melanie agency thread as b2b', () => {
+    const body =
+      'Hi! I just received a request for 8 people arriving on Sept 7th on the Jewel of the Seas. They are looking to do both the North & South combo tour. We would also need to confirm the commission rate and rate sheet.'
+    expect(classifyInbound(body).category).toBe('b2b_partnership')
+  })
+
+  it('does NOT misclassify a normal guest booking inquiry as b2b', () => {
+    const body =
+      "Hi! We'd like to book the Heritage Tour for two adults on June 11. Is there availability?"
+    expect(classifyInbound(body).category).toBe('booking_inquiry')
+  })
+
+  it('does NOT misclassify a guest "our group of 4" as b2b without other signals', () => {
+    // "our group" alone is one weak signal — not enough to fire b2b. Falls
+    // through to booking_inquiry.
+    const body = "We have a group of 4 and would love to book a tour next Friday."
+    const r = classifyInbound(body)
+    expect(r.category).toBe('booking_inquiry')
+  })
 })
