@@ -4,10 +4,17 @@ import type { VoiceProfile } from '@/lib/voice-profile'
 import type { ContactStyleProfile } from '@/types/database'
 import { createServiceClient } from './supabase-server'
 import { detectIdentityLeak } from './caye-identity-guard'
+import { sanitizeDashes } from './sanitize-dashes'
 import { formatHistoryBlock } from './conversation-history'
 import { checkBookingAutonomy, AUTONOMY_WINDOW_HOURS } from './booking-policy'
 import { syncBookingToCalendar } from './calendar-sync'
 import { resolveTier, type PricingTier } from './services/resolve-tier'
+import {
+  matchServiceByName,
+  extractCustomerTourName,
+  buildMatchHintBlock,
+  type ServiceMatchResult,
+} from './services/match-service'
 import {
   summarizeBookingHistory,
   formatCustomerHistoryBlock,
@@ -384,7 +391,8 @@ function buildSystem(
   isEmail: boolean,
   isFirstMessage: boolean,
   services: ServiceRow[],
-  todayISO: string
+  todayISO: string,
+  serviceMatch: ServiceMatchResult | null
 ): string {
   let s = systemPrompt
 
@@ -466,6 +474,18 @@ function buildSystem(
     'When the customer says "tomorrow" / "this Saturday" / etc., resolve it against today.'
 
   s += `\n\nAVAILABLE SERVICES:\n${formatServicesList(services)}`
+
+  // Append the deterministic service-name match hint when one was computed.
+  // This closes the Jeff Montenaro / James Stallings stall gap: when the
+  // customer's stated tour name differs from the canonical catalog name
+  // (e.g. "Historical" vs "Heritage"), the matcher pre-computes the best
+  // canonical service and tells the LLM to either use it directly (high
+  // confidence) or clarify between top candidates (medium/low). Either way,
+  // the LLM is explicitly told NOT to defer on a pure name mismatch.
+  if (serviceMatch) {
+    const hint = buildMatchHintBlock(serviceMatch)
+    if (hint) s += hint
+  }
 
   s +=
     '\n\nBOOKING POLICY:\n' +
@@ -549,6 +569,23 @@ function buildSystem(
     : isFirstMessage
     ? `\n\nWrite only the reply body. Plain conversational prose — no markdown. Keep it brief — this is ${channel}, not email. Open with a warm, natural greeting. Never mention that you are an AI, assistant, or automated.`
     : `\n\nWrite only the reply body. Plain conversational prose — no markdown. Keep it brief — this is ${channel}, not email. Do NOT open with a greeting or the customer's name — jump straight to the answer. Never mention that you are an AI, assistant, or automated.`
+
+  // First-message brevity rule (email). Counter the verbose-acknowledgement
+  // failure mode: a hot lead from an intake form should not get three
+  // paragraphs of preamble before the question. See Omayra Calzada
+  // 2026-05-31 — three full paragraphs of "thank you so much / we'd love /
+  // this is one of our specialty offerings / let me confirm a few details"
+  // before the actual qualifying question. Reads like a chatbot. Karenda
+  // would write three sentences total.
+  if (isEmail && isFirstMessage) {
+    s +=
+      '\n\nBREVITY (FIRST-CONTACT EMAILS):\n' +
+      '- Maximum 2 short paragraphs in the body. One brief acknowledgement, one clear next step (the price, the question, the booking confirmation). Then sign off.\n' +
+      '- No more than 2 sentences per paragraph. No restating what the customer already told you.\n' +
+      '- Banned filler openers: "Thank you so much for reaching out", "We would absolutely love to", "I am thrilled / delighted / so excited". Use a single short warm line ("Thanks for reaching out, Jeff.") and move to the substance.\n' +
+      '- If you have a price to quote, quote it in the first paragraph. If you have a question, ask one (not three).\n' +
+      '- This is about respecting the customer\'s time. Karenda is direct and warm. Caye should be the same.'
+  }
 
   s += '\n\nSCOPE: Only engage with messages that are actually for the business — booking inquiries, ' +
     'customer questions, payment/logistics follow-ups. If the message is a newsletter, marketing blast, ' +
@@ -1284,6 +1321,22 @@ export async function generateCayeAutoReply(
     inbound.subject ?? ''
   )
 
+  // Pre-compute a deterministic service-name match. If the inbound body
+  // contains an intake-form "Tour: <name>" line or a recognizable free-text
+  // tour reference, run it against the canonical AVAILABLE SERVICES so the
+  // LLM gets a strong hint about which service_id to use. Without this, name
+  // mismatches like "North Bimini Historical Tour" (customer) vs "North
+  // Bimini Heritage Tour" (catalog) cause Caye to DEFER instead of quote —
+  // see Jeff Montenaro 2026-06-05 and James Stallings 2026-05-29.
+  let serviceMatch: ServiceMatchResult | null = null
+  const customerTourName = extractCustomerTourName(inbound.body)
+  if (customerTourName && services.length > 0) {
+    serviceMatch = matchServiceByName(
+      services.map(s => ({ id: s.id, name: s.name })),
+      customerTourName
+    )
+  }
+
   const system = buildSystem(
     systemPrompt,
     voiceProfile,
@@ -1296,7 +1349,8 @@ export async function generateCayeAutoReply(
     isEmail,
     inbound.isFirstMessage ?? false,
     services,
-    todayISO
+    todayISO,
+    serviceMatch
   )
 
   // Pull prior conversation history (if we have a conversation to query) so
@@ -1350,7 +1404,7 @@ export async function generateCayeAutoReply(
               `Review the draft below and send manually if appropriate.\n\n---\n\n${textBlock.text}`,
           }
         }
-        return { action: 'reply', content: textBlock.text, bookingId: createdBookingId }
+        return { action: 'reply', content: sanitizeDashes(textBlock.text), bookingId: createdBookingId }
       }
       throw new Error('[caye-reply] No tool call or text in Claude response')
     }
@@ -1381,7 +1435,7 @@ export async function generateCayeAutoReply(
           const needsFollowup = !!input.flag_for_owner_followup
           terminal = {
             action: 'reply',
-            content: input.content,
+            content: sanitizeDashes(input.content),
             bookingId: createdBookingId,
             ...(needsFollowup
               ? {
