@@ -124,8 +124,13 @@ const TOOLS: Anthropic.Tool[] = [
           type: 'string',
           enum: ['confirmed', 'pending'],
           description:
-            'Use "confirmed" when the customer has clearly agreed. Use "pending" ' +
-            'when they\'ve asked to hold a slot but still need to confirm something.',
+            'ALMOST ALWAYS "pending". Use "pending" any time the customer has agreed ' +
+            'to date/time/price but has NOT yet paid — including when they say "yes ' +
+            'book it" or "sounds great." Payment is the only thing that promotes to ' +
+            '"confirmed", and that happens automatically when the payment receipt is ' +
+            'scanned — NOT from a chat reply. Only use "confirmed" if you are ' +
+            'creating a record for a booking the owner explicitly tells you was ' +
+            'already paid. If unsure, use "pending".',
         },
       },
       required: ['customer_name', 'booking_date', 'booking_time'],
@@ -493,6 +498,16 @@ function buildSystem(
     '- Always check availability for a date before creating a booking on it.\n' +
     '- Only create a booking when the customer has clearly agreed to a specific date and time.\n' +
     '- If they\'re vague ("sometime next week"), reply asking for a specific day and time first.\n' +
+    '- STATUS RULE — new bookings are ALWAYS created with status="pending". Agreement is not payment. ' +
+    'A booking only becomes "confirmed" when the payment receipt is scanned and matched downstream, ' +
+    'never from this conversation. Telling the customer "we have you confirmed" before they pay sets ' +
+    'a false expectation and pollutes Karenda\'s booking list with paid-vs-not-paid ambiguity.\n' +
+    '- PAYMENT COPY (until the payment-link system is wired) — when you create a pending booking, ' +
+    'your reply should: (a) acknowledge the slot is held, (b) confirm date/time/party/price clearly, ' +
+    '(c) tell the customer the owner will follow up with payment instructions shortly, (d) NOT promise ' +
+    'a specific timeline for the payment link, (e) NOT invent a payment URL. One short paragraph for ' +
+    'the held confirmation, one short paragraph for the "payment to follow" note. Example tone: ' +
+    '"Your spot is held for [date]. We\'ll send payment details over shortly to lock it in."\n' +
     `- If they want to CANCEL: call find_bookings → cancel_booking. The tool enforces a ${AUTONOMY_WINDOW_HOURS}h policy ` +
     'window — bookings inside that window return an error and you must hold_for_human (Karenda\'s decision). ' +
     'After a successful cancel, send_reply with: confirmation of the cancel, mention that they\'re eligible ' +

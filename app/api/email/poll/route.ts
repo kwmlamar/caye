@@ -773,6 +773,56 @@ async function processMessage(
           customerEmail = null
         }
 
+        // Promote any matching pending booking to confirmed. This closes the
+        // payment-side of the booking state machine: Caye creates bookings as
+        // pending when the customer agrees, and only the payment receipt
+        // moves them to confirmed. Without this, paid bookings would sit at
+        // pending forever (until the auto-complete sweep flips them to
+        // completed, which mis-encodes "happened" as "happened-and-paid").
+        // Match logic: same workspace, same customer email, status=pending.
+        // When multiple candidates exist (rare — same customer with multiple
+        // pending bookings), pick the one whose booking_date is closest to
+        // today and in the future. Idempotent: only updates pending rows, so
+        // re-running on the same receipt is a no-op once promoted.
+        if (approved && customerEmail) {
+          const { data: candidateBookings } = await supabase
+            .from('bookings')
+            .select('id, booking_date, customer_name, notes')
+            .eq('user_id', workspaceId)
+            .eq('status', 'pending')
+            .ilike('customer_email', customerEmail)
+          if (candidateBookings && candidateBookings.length > 0) {
+            const todayISO = new Date().toISOString().slice(0, 10)
+            const future = candidateBookings
+              .filter(b => b.booking_date >= todayISO)
+              .sort((a, b) => a.booking_date.localeCompare(b.booking_date))
+            const promote = future[0] ?? candidateBookings[0]
+            const stamp =
+              `\n\n[Caye payment promotion ${new Date().toISOString().slice(0, 10)}] ` +
+              `Receipt ${receipt.transactionId} (${receipt.amount} ${receipt.response}). ` +
+              `Status: pending → confirmed.`
+            const { error: promoteErr } = await supabase
+              .from('bookings')
+              .update({
+                status: 'confirmed',
+                notes: (promote.notes ?? '') + stamp,
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', promote.id)
+              .eq('status', 'pending')
+            if (promoteErr) {
+              console.error('[email/poll] Booking promotion failed:', promoteErr, { bookingId: promote.id })
+            } else {
+              console.log(
+                `[email/poll] Booking promoted to confirmed: ${promote.id} ` +
+                `(${promote.customer_name}, ${promote.booking_date}, tx ${receipt.transactionId})`
+              )
+            }
+          } else {
+            console.log(`[email/poll] Receipt for ${customerEmail} — no pending booking matched, skipping promotion`)
+          }
+        }
+
         // Find the customer's existing conversation. Prefer email match;
         // fall back to a name match scoped to this account. Track whether
         // we matched an existing thread vs. had to fabricate a receipt-only
