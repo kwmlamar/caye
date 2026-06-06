@@ -155,7 +155,18 @@ const TOOLS: Anthropic.Tool[] = [
           description: 'Service id from the SERVICES list in your system prompt. Omit if none fits.',
         },
         notes: { type: 'string' },
-        status: { type: 'string', enum: ['confirmed', 'pending'] },
+        status: {
+          type: 'string',
+          enum: ['confirmed', 'pending'],
+          description:
+            'ALMOST ALWAYS "pending". Use "pending" whenever the customer has agreed ' +
+            'to date/time/price but has NOT yet paid — including when they say "yes ' +
+            'book it" or the owner says "book them." Payment is the only thing that ' +
+            'promotes to "confirmed", and that happens automatically when the payment ' +
+            'receipt is scanned. Only use "confirmed" if the owner EXPLICITLY tells ' +
+            'you "they\'ve already paid" or "this was paid in person" — that is the ' +
+            'only signal that bypasses the receipt path. If unsure, use "pending".',
+        },
       },
       required: ['customer_name', 'booking_date', 'booking_time'],
     },
@@ -634,7 +645,18 @@ STYLE RULES (strict):
 - Never use emoji of any kind. No 🌴, 🌊, 🏝️, ☀️, 🐚, 🥥, ⛵, 🌺, ✨ — none, ever. Plain text only.
 - Never use tropical / island / beach imagery, metaphors, or vibes language. Don't say things like "island time", "paradise", "tropical breeze", "smooth sailing", "let's set sail", "your slice of paradise", "the islands are calling", "ride the wave". Don't lean on weather, palm trees, sand, sun, or sea references for flavor.
 - Don't perform a Caribbean persona or accent. You are a competent receptionist; the business happens to be in the Caribbean, but that's the customer's context, not yours.
-- Use neutral, professional, slightly warm phrasing — the way a sharp assistant in any city would talk.${existingPrompt ? `\n\nContext about the business:\n${existingPrompt}` : ''}`
+- Use neutral, professional, slightly warm phrasing — the way a sharp assistant in any city would talk.
+- NEVER use em-dashes (—) or en-dashes (–) in any reply, draft, or summary. Use periods, commas, or parentheses instead. Hyphens only inside compound words ("2-hour", "month-to-month"). This applies to BOTH operator-facing replies AND customer-facing drafts you compose with send_reply / send_email.
+
+BOOKING STATUS DISCIPLINE (absolute):
+- New bookings created via create_booking are ALWAYS status="pending" by default. Customer agreement is not payment. The booking only becomes "confirmed" when the payment receipt is scanned and matched downstream — not from a chat reply or your own judgment.
+- Only override to status="confirmed" if the owner EXPLICITLY says "they've already paid" / "paid in person" / "this was paid." Otherwise pending.
+- When you draft a customer reply that creates a pending booking, your customer-facing copy should: (a) acknowledge the slot is held, (b) confirm date/time/party/price clearly, (c) tell the customer the owner will follow up with payment instructions shortly. Do NOT invent a payment URL or promise a specific timeline.
+- Same rule for send_email and send_reply drafts: never tell a customer they're "confirmed" before payment lands.
+
+WHEN A TOOL FAILS:
+- If a tool call returns an error (is_error=true), DO NOT claim the action succeeded. Read the error message. Either retry with corrected inputs or honestly tell the owner what failed and why.
+- Never summarize "Done. Email sent. Booking created (ID xyz)." when those tool calls errored — that's lying to the owner. The error is visible to you; surface it.${existingPrompt ? `\n\nContext about the business:\n${existingPrompt}` : ''}`
 }
 
 const MAX_TOOL_ITERATIONS = 5
@@ -1072,10 +1094,26 @@ export async function POST(req: NextRequest) {
             result = { error: String(err) }
           }
 
+          // Surface tool errors back to the model so it can retry or honestly
+          // report failure. Without this, send_reply / send_email / create_booking
+          // failures got swallowed into JSON.stringify and Caye confidently
+          // summarized success — the 2026-06-06 Jeff Montenaro case where she
+          // claimed "Email sent. Booking created (ID 1b34146f...)" when neither
+          // had happened. Both shapes count as errors:
+          //   - { error: "..." }              (returned by send_reply/send_email)
+          //   - { success: false, error: ... } (returned by create/cancel_booking)
+          const resultObj = (typeof result === 'object' && result !== null
+            ? (result as Record<string, unknown>)
+            : null)
+          const isToolError = !!(
+            resultObj &&
+            ('error' in resultObj || resultObj.success === false)
+          )
           toolResults.push({
             type: 'tool_result',
             tool_use_id: block.id,
             content: JSON.stringify(result),
+            is_error: isToolError,
           })
         }
 
