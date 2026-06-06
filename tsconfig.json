@@ -37,6 +37,7 @@
   ],
   "exclude": [
     "node_modules",
-    "ui-ux-pro-max-skill"
+    "ui-ux-pro-max-skill",
+    "scripts"
   ]
 }
