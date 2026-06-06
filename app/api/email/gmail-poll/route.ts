@@ -23,6 +23,7 @@ import { generateCayeAutoReply } from '@/lib/caye-reply'
 import { enqueueHoldPing } from '@/lib/whatsapp/triggers'
 import { htmlToPlainText } from '@/lib/email-text'
 import { sendGmailReply } from '@/lib/gmail-send'
+import { isNoReplySender } from '@/lib/sender-classifier'
 
 const GMAIL_API_BASE = 'https://gmail.googleapis.com/gmail/v1/users/me'
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
@@ -200,8 +201,13 @@ async function processGmailMessage(
   if (!fromEmail || fromEmail === ownEmail) return 'skipped'
 
   const body = extractBody(message.payload)
-  if (!body) {
-    console.warn(`[gmail-poll] empty body for ${messageId} (subject="${subject}")`)
+  if (!body || body.trim().length === 0) {
+    // Phantom artifact — skip persistence. Same rationale as zoho poll:
+    // body-less messages are usually thread metadata / system notifications
+    // with nothing actionable. Persisting them as subject-only rows clutters
+    // the inbox (the Valeriia 2026-05-24 Zoho case produced 6 phantom rows).
+    console.warn(`[gmail-poll] empty body for ${messageId} (subject="${subject}") — skipping persistence`)
+    return 'skipped'
   }
 
   // Historical-message guard: only auto-reply to mail received after connect
@@ -238,6 +244,12 @@ async function processGmailMessage(
       .eq('id', existingConv.id)
     conversationId = String(existingConv.id)
   } else {
+    // Pre-archive noreply/vendor conversations so they're saved for audit
+    // but don't clutter the default inbox view. Same isNoReplySender helper
+    // shared with the Zoho poll path. See app/api/email/poll/route.ts for
+    // the rationale (Karenda inbox cleanup, 2026-06-06).
+    const isFromNoReply = isNoReplySender(fromEmail)
+
     const { data: created, error: convErr } = await supabase
       .from('unified_conversations')
       .insert({
@@ -247,6 +259,7 @@ async function processGmailMessage(
         customer_name: fromName,
         customer_id: fromEmail,
         status: 'open',
+        is_archived: isFromNoReply,
         metadata: {
           subject,
           from: fromRaw,

@@ -16,6 +16,7 @@ import { enqueueHoldPing } from '@/lib/whatsapp/triggers'
 import { htmlToPlainText } from '@/lib/email-text'
 import { maybeRefreshOwnerVoiceProfile } from '@/lib/owner-voice-learning'
 import { detectOwnerCorrection } from '@/lib/owner-correction'
+import { isNoReplySender } from '@/lib/sender-classifier'
 
 const ZOHO_TOKEN_URL = 'https://accounts.zoho.com/oauth/v2/token'
 
@@ -293,18 +294,22 @@ function parseReceiptFields(body: string): ReceiptParsed | null {
  * payment is approved. Plain text, signed off as Karenda.
  */
 function buildReceiptThankYou(parsed: ReceiptParsed): string {
+  // Hardcoded fallback used when AI generation is disabled or no thread match.
+  // Bypasses sanitizeDashes, so the copy here must already comply with the
+  // no-em-dash rule. Phone numbers ordered per the workspace sign-off
+  // convention (personal line first, business line second).
   return [
     `Hi ${parsed.customerName.split(/\s+/)[0]},`,
     '',
-    `Thank you — your payment of ${parsed.amount} has been received for ${parsed.description}.`,
+    `Thank you. Your payment of ${parsed.amount} has been received for ${parsed.description}.`,
     '',
-    'Please meet us at the Resorts World Bimini tram stop — allow 15-30 minutes before tour time.',
+    'Please meet us at the Resorts World Bimini tram stop. Allow 15-30 minutes before tour time.',
     '',
     'Looking forward to having you with us!',
     '',
     'Karenda',
     'Bimini Island Tours',
-    '242-814-8687 · info@tourbimini.com',
+    '242 473 0233 · 242 814 8687 · info@tourbimini.com',
   ].join('\n')
 }
 
@@ -418,6 +423,70 @@ function detectNewsletter(body: string, subject: string, fromEmail: string): str
   }
 
   return null
+}
+
+// ── Cold-sales pitch detection ──────────────────────────────────────────────
+// Catches 1:1 cold outreach (not mass blasts — those are detectNewsletter).
+// The Anastasiya Lisouskaya / Virgin Voyages partnership thread is the
+// load-bearing false-positive case to avoid: cold contact + partnership
+// framing + formal signature, but ZERO of the "calendly / 30-min chat /
+// I help X companies" signals. Thresholds must keep her clear.
+//
+// Strong signals (any one is enough on its own):
+//   - sender domain on a known SaaS sales-tool list
+// Weak signals (need 2+ together):
+//   - body phrases typical of cold pitches
+//   - generic "intro" subject lines
+//
+// Returns a reason string when matched, null otherwise.
+
+const COLD_SALES_TOOL_DOMAINS = /\b(apollo\.io|outreach\.io|salesloft\.com|salesloft\.io|mixmax\.com|hunter\.io|reply\.io|woodpecker\.co|lemlist\.com|mailshake\.com|saleshandy\.com|smartlead\.ai|instantly\.ai)\b/
+
+const COLD_SALES_BODY_PHRASES: RegExp[] = [
+  /\b(calendly\.com|cal\.com)\//i,
+  /\b(15|20|25|30)[-\s]?(min|minute)s?\b.{0,40}\b(chat|call|demo|conversation|sync)\b/i,
+  /book\s+(?:a\s+)?(?:quick\s+)?(?:time|call|chat|demo|meeting|slot)\b/i,
+  /\b(i|we)\s+help\s+(tour|small|local|caribbean)?\s*(operators?|businesses?|companies?|owners?|founders?)\b/i,
+  /\b(grow|scale|increase|boost|double|10x|optimi[sz]e)\s+your\s+(bookings?|revenue|business|sales|leads?)\b/i,
+  /\b(saw|came across|noticed|stumbled (?:on|upon))\s+(?:your\s+)?(website|business|company|tours?|page)\b/i,
+  /\bquick\s+(intro|question|favor|ask)\b/i,
+  /worth\s+(?:a\s+)?(?:quick\s+)?(?:15|20|30)?\s*(?:min(?:ute)?s?\s+)?chat\b/i,
+  /\b(ai|chatbot|automation|saas|crm)\s+for\s+(tour|small|local)\s+(operators?|businesses?|companies?)\b/i,
+]
+
+function detectColdSales(body: string, subject: string, fromEmail: string): string | null {
+  if (!body) return null
+
+  const signals: string[] = []
+
+  // Strong: sender domain is a known SaaS cold-outreach platform
+  const fromDomain = fromEmail.split('@')[1]?.toLowerCase() || ''
+  if (COLD_SALES_TOOL_DOMAINS.test(fromDomain)) {
+    signals.push(`cold-outreach tool domain (${fromDomain})`)
+  }
+
+  // Weak: body phrases. Need 2+ to fire on phrases alone.
+  let phraseHits = 0
+  const matchedPhrases: string[] = []
+  for (const re of COLD_SALES_BODY_PHRASES) {
+    const m = body.match(re)
+    if (m) {
+      phraseHits++
+      matchedPhrases.push(m[0].slice(0, 40))
+    }
+  }
+  if (phraseHits >= 2) {
+    signals.push(`${phraseHits} cold-pitch phrases: ${matchedPhrases.slice(0, 3).join(' | ')}`)
+  }
+
+  // Subject pattern: bare "Quick intro", "Quick question", "Hi - quick chat"
+  const isGenericIntroSubject = /^(re:\s*)?(hi|hello|hey)?\s*[-,:]?\s*quick\s+(intro|question|chat)/i.test(subject)
+  if (isGenericIntroSubject && phraseHits >= 1) {
+    return `generic intro subject + ${phraseHits} cold-pitch phrase`
+  }
+
+  if (signals.length === 0) return null
+  return signals.join('; ')
 }
 
 type Supabase = ReturnType<typeof createServiceClient>
@@ -692,7 +761,17 @@ async function processMessage(
         console.warn(`[email/poll] Receipt parse failed, saving as raw email: ${messageId}`)
       } else {
         const approved = receipt.response.toUpperCase() === 'APPROVED'
-        const customerEmail = receipt.customerEmail
+
+        // Receipts from chargeanywhere sometimes carry the merchant's own
+        // email in the "Customer Email" field (in-person sales, or when the
+        // merchant's address is the default on the terminal). Treat that as
+        // "no customer email" so we don't create / match a phantom Karenda-as-
+        // customer conversation. 70+ such rows accumulated before this guard.
+        let customerEmail = receipt.customerEmail
+        if (customerEmail && customerEmail.toLowerCase().trim() === ownEmail) {
+          console.log(`[email/poll] Receipt customer email matches own (${ownEmail}) — treating as no customer email`)
+          customerEmail = null
+        }
 
         // Find the customer's existing conversation. Prefer email match;
         // fall back to a name match scoped to this account. Track whether
@@ -928,6 +1007,16 @@ async function processMessage(
   const effectiveEmail = web3FormsFields?.customerEmail ?? fromEmail
   const effectiveName  = web3FormsFields?.customerName  ?? fromName
 
+  // If the effective sender is a noreply/vendor address (Zoho calendar
+  // invites, chargeanywhere automation, mailer-daemon bounces, etc.), still
+  // save the message for audit but create the conversation pre-archived so
+  // it doesn't appear in Karenda's default inbox view. The auto-reply gate
+  // downstream uses a wider regex (also catches role addresses like info@,
+  // support@) — see lib/sender-classifier.ts for the distinction. Web3Forms
+  // is excluded by the use of effectiveEmail (which is the parsed customer,
+  // not noreply@web3forms.com).
+  const isFromNoReply = isNoReplySender(effectiveEmail)
+
   // Only auto-reply to emails that arrived after the account was connected.
   // Historical emails are imported into the chat but never replied to.
   const accountConnectedAt = String(account.updated_at || account.created_at || '')
@@ -944,6 +1033,19 @@ async function processMessage(
     // fetchMessageContent already returns CSS-stripped, quote-stripped text
     // via lib/email-text — no further post-processing needed.
     body = await fetchMessageContent(base, String(accountId), messageId, accessToken, String(msg.folderId || msg.folder_id || ''))
+  }
+
+  // Guard against empty-body phantom messages. Zoho occasionally exposes
+  // thread artifacts (system metadata, multipart fragments, calendar
+  // notifications stripped of body content) as separate messageIds with no
+  // extractable body. The previous `content: body || subject` fallback
+  // persisted each as a subject-only row — the Valeriia 2026-05-24 case
+  // landed 6 such rows within 4ms (see Clients/bimini-island-tours.md).
+  // Skip persistence: the operator can read the raw artifact in Zoho if
+  // needed; nothing actionable lives in a body-less message.
+  if (!web3FormsFields && (!body || body.trim().length === 0)) {
+    console.log(`[email/poll] Empty body for message ${messageId} (subject="${subject}") — skipping persistence`)
+    return 'skipped'
   }
 
   // Fetch workspace AI prompt
@@ -1005,6 +1107,7 @@ async function processMessage(
         channel_conversation_id: threadId,
         customer_name: effectiveName,
         customer_id: effectiveEmail,
+        is_archived: isFromNoReply,
         status: 'open',
         metadata: {
           subject,
@@ -1074,6 +1177,47 @@ async function processMessage(
     }
   }
 
+  // ── Cold sales pitch filter ───────────────────────────────────────────────
+  // 1:1 cold outreach (not mass blasts). Same skip semantics as newsletter:
+  // saved, visible, held for Karenda to triage, no auto-reply. Flagged with
+  // metadata.cold_sales_suspected=true so we can audit false-positive rate
+  // over the next 30 days and decide whether to escalate to auto-archive.
+  if (!web3FormsFields) {
+    const coldSalesReason = detectColdSales(body, subject, fromEmail)
+    if (coldSalesReason) {
+      await supabase
+        .from('unified_conversations')
+        .update({
+          human_agent_enabled: true,
+          human_agent_reason: 'Cold sales pitch suspected — held for triage',
+        })
+        .eq('id', conversation.id)
+      await supabase.from('unified_messages').insert({
+        conversation_id: conversation.id,
+        channel_message_id: null,
+        sender_type: 'business',
+        content:
+          `Cold sales pitch suspected — auto-reply skipped.\n\nSignals: ${coldSalesReason}\n\n` +
+          `Caye held this for you to decide. If it turns out to be a real partnership lead, ` +
+          `just reply manually and Caye will re-engage on the next inbound. If you want her to ` +
+          `stop seeing future emails from this sender, drag the thread out of Inbox in Zoho.`,
+        message_type: 'text',
+        sent_at: new Date().toISOString(),
+        status: 'sent',
+        is_internal: true,
+        metadata: {
+          generated_by: 'caye',
+          hold_reason: 'cold_sales',
+          cold_sales_suspected: true,
+          signals: coldSalesReason,
+          from: fromRaw,
+        },
+      })
+      console.log(`[email/poll] Cold sales held: ${fromEmail} — ${coldSalesReason}`)
+      return 'held'
+    }
+  }
+
   // Don't auto-reply to emails that existed before the account was connected
   if (isHistorical) {
     console.log(`[email/poll] Historical email skipped (no auto-reply): ${messageId}`)
@@ -1131,7 +1275,11 @@ async function processMessage(
     }
   }
 
-  // Never auto-reply to vendor/system addresses (noreply@, mailer-daemon@, etc.).
+  // Never auto-reply to vendor/system/role addresses (noreply@, mailer-daemon@,
+  // info@, support@, etc.). Intentionally wider than the isNoReplySender
+  // helper used for auto-archive — auto-archiving role addresses (info@,
+  // support@) would hide legitimate prospects emailing from their generic
+  // inbox, but auto-replying to them is still a bad idea.
   // For Web3Forms specifically we use effectiveEmail (the real customer) instead.
   const replyTarget = (web3FormsFields ? effectiveEmail : fromEmail).toLowerCase()
   const localPart = replyTarget.split('@')[0] || ''
