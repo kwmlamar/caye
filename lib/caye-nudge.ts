@@ -3,6 +3,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import type { VoiceProfile } from '@/lib/voice-profile'
 import type { ContactStyleProfile } from '@/types/database'
 import { detectIdentityLeak } from './caye-identity-guard'
+import { sanitizeDashes } from './sanitize-dashes'
 
 /**
  * Generates the body of a proactive nudge email. Reuses the same persona
@@ -123,7 +124,7 @@ export async function generateCayeNudge(ctx: NudgeContext): Promise<NudgeResult>
     return { ok: false, reason: 'identity_guard', detail: leak }
   }
 
-  return { ok: true, content: text }
+  return { ok: true, content: sanitizeDashes(text) }
 }
 
 /**

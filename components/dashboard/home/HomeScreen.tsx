@@ -32,85 +32,102 @@ function getGreeting(firstName?: string) {
 function parseCayeMessageText(text: string) {
   const parseBold = (str: string): React.ReactNode[] => {
     const parts = str.split('**')
-    return parts.map((part, i) => {
-      if (i % 2 === 1) {
-        return <strong key={i} className="font-semibold text-near-black">{part}</strong>
-      }
-      return part
-    })
+    return parts.map((part, i) =>
+      i % 2 === 1 ? (
+        <strong key={i} className="font-semibold text-near-black">{part}</strong>
+      ) : (
+        <React.Fragment key={i}>{part}</React.Fragment>
+      )
+    )
   }
 
-  const blocks = text.split('\n\n')
+  // A line of only dashes / asterisks / underscores / equals is a rule —
+  // never a list item (this is what produced the stray "• --" bullets).
+  const isRule = (s: string) => /^([-*_=])\1{2,}$/.test(s.trim())
+  const isBullet = (s: string) => {
+    const t = s.trim()
+    return /^[-•*]\s+/.test(t) && !isRule(t)
+  }
+  // A line that is entirely bold (e.g. "**Option 3 — Heritage Tour**") reads
+  // as a section heading rather than emphasised body copy.
+  const asHeading = (s: string) => {
+    const m = s.trim().match(/^\*\*(.+?)\*\*$/)
+    return m && !m[1].includes('**') ? m[1] : null
+  }
 
-  return blocks.map((block, blockIdx) => {
+  const blocks = text.split(/\n{2,}/)
+
+  return blocks.map((block, bi) => {
     const lines = block.split('\n')
-    const isList = lines.length > 0 && lines.every(line => {
-      const t = line.trim()
-      return t.startsWith('-') || t.startsWith('•')
-    })
-    
-    if (isList) {
-      return (
-        <ul key={blockIdx} className="space-y-2 mb-4 list-disc list-outside ml-5 marker:text-near-black/40">
-          {lines.map((line, lineIdx) => {
-            const cleanLine = line.replace(/^\s*[-•]\s*/, '')
-            return (
-              <li key={lineIdx} className="text-[15px] leading-[1.7] text-near-black/85 font-sans">
-                {parseBold(cleanLine)}
-              </li>
-            )
-          })}
-        </ul>
-      )
+
+    if (lines.length === 1 && isRule(lines[0])) {
+      return <hr key={bi} className="my-5 border-0 h-px bg-near-black/[0.08]" />
     }
 
-    let currentList: React.ReactNode[] = []
-    const elements: React.ReactNode[] = []
+    const out: React.ReactNode[] = []
+    let bullets: React.ReactNode[] = []
+    const flushBullets = () => {
+      if (!bullets.length) return
+      out.push(
+        <ul key={`ul-${bi}-${out.length}`} className="my-3 space-y-2">
+          {bullets}
+        </ul>
+      )
+      bullets = []
+    }
 
-    lines.forEach((line, lineIdx) => {
-      const trimmed = line.trim()
-      const isListItem = trimmed.startsWith('-') || trimmed.startsWith('•')
+    lines.forEach((line, li) => {
+      const t = line.trim()
+      if (!t) return
 
-      if (isListItem) {
-        const cleanLine = line.replace(/^\s*[-•]\s*/, '')
-        currentList.push(
-          <li key={lineIdx} className="text-[15px] leading-[1.7] text-near-black/85 font-sans">
-            {parseBold(cleanLine)}
+      if (isRule(t)) {
+        flushBullets()
+        out.push(<hr key={`hr-${bi}-${li}`} className="my-4 border-0 h-px bg-near-black/[0.08]" />)
+        return
+      }
+
+      if (isBullet(t)) {
+        const clean = t.replace(/^[-•*]\s+/, '')
+        bullets.push(
+          <li
+            key={li}
+            className="relative pl-5 leading-[1.6] text-near-black/80 before:absolute before:left-0 before:top-[0.7em] before:h-[5px] before:w-[5px] before:rounded-full before:bg-[#0FB5A1]/80"
+          >
+            {parseBold(clean)}
           </li>
         )
-      } else {
-        if (currentList.length > 0) {
-          elements.push(
-            <ul key={`list-${lineIdx}`} className="space-y-2 mb-4 list-disc list-outside ml-5 marker:text-near-black/40">
-              {currentList}
-            </ul>
-          )
-          currentList = []
-        }
-        if (trimmed) {
-          elements.push(
-            <p key={lineIdx} className="mb-4 text-[15px] leading-[1.7] text-near-black/85 font-sans">
-              {parseBold(line)}
-            </p>
-          )
-        }
+        return
       }
+
+      const heading = asHeading(t)
+      if (heading) {
+        flushBullets()
+        out.push(
+          <p
+            key={li}
+            className="font-newsreader font-semibold text-[17px] leading-snug text-near-black mt-5 first:mt-0 mb-1.5"
+          >
+            {heading}
+          </p>
+        )
+        return
+      }
+
+      flushBullets()
+      out.push(
+        <p key={li} className="mb-3.5 last:mb-0 leading-[1.72] text-near-black/80">
+          {parseBold(line)}
+        </p>
+      )
     })
 
-    if (currentList.length > 0) {
-      elements.push(
-        <ul key={`list-end`} className="space-y-2 mb-4 list-disc list-outside ml-5 marker:text-near-black/40">
-          {currentList}
-        </ul>
-      )
-    }
-
-    return <React.Fragment key={blockIdx}>{elements}</React.Fragment>
+    flushBullets()
+    return <React.Fragment key={bi}>{out}</React.Fragment>
   })
 }
 
 export default function HomeScreen() {
-  const { workspaceId, workspace } = useWorkspace()
+  const { workspaceId } = useWorkspace()
   const { setPanelScreen, setPanelOpen, panelOpen } = useDashboard()
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
@@ -428,7 +445,7 @@ export default function HomeScreen() {
 
   const renderInputBox = () => {
     return (
-      <div className="relative flex items-center bg-white rounded-2xl border border-[rgba(14,26,26,0.1)] focus-within:border-[rgba(14,26,26,0.18)] p-3 transition-colors">
+      <div className="relative flex items-center bg-white rounded-2xl border border-[rgba(14,26,26,0.1)] focus-within:border-[rgba(14,26,26,0.15)] p-3 transition-colors shadow-[0_2px_8px_-2px_rgba(14,26,26,0.08)]">
         {/* Left Icons: Mic and Attach */}
         <div className="flex items-center gap-1.5 pl-2 text-near-black/30">
           {/* Paperclip Attach */}
@@ -479,6 +496,10 @@ export default function HomeScreen() {
 
   return (
     <div className="flex-1 flex flex-col tc-canvas min-h-0 font-sans selection:bg-[#0FB5A1] selection:text-white relative">
+      {/* Living "Caye is on" aura — only on the empty state. Once a
+          conversation begins it's gone, leaving a clean white reading column. */}
+      {isEmpty && <div className="caye-stage" aria-hidden="true" />}
+
       {!panelOpen && (
         <button
           onClick={() => setPanelOpen(true)}
@@ -494,7 +515,7 @@ export default function HomeScreen() {
       {/* Scrollable Main Column / Fixed Column Layout */}
       {isEmpty ? (
         /* Empty State */
-        <div className="flex-1 overflow-y-auto px-6 py-12 md:py-20 flex justify-center min-h-0">
+        <div className="flex-1 overflow-y-auto px-6 py-12 md:py-20 flex justify-center min-h-0 relative z-10">
           <div className="w-full max-w-[720px] flex flex-col justify-center space-y-6 my-auto pb-8">
             <div className="space-y-3 text-center md:text-left">
               <h1 className="text-[44px] md:text-[52px] font-normal tracking-tight text-near-black font-serif italic text-center md:text-left">
@@ -508,7 +529,6 @@ export default function HomeScreen() {
             <WhatsAppStatusBanner />
             <SetupChecklist />
 
-            {/* Chat input inside the empty stack */}
             {renderInputBox()}
 
             {/* Suggestion chips in vertical stack below input */}
@@ -528,10 +548,10 @@ export default function HomeScreen() {
         </div>
       ) : (
         /* Active Conversation History */
-        <div className="flex-1 flex flex-col min-h-0 relative items-center justify-center">
+        <div className="flex-1 flex flex-col min-h-0 relative items-center justify-center z-10">
           {/* Scrollable Message List */}
           <div className="w-full flex-1 overflow-y-auto px-6 pt-12 md:pt-20 flex justify-center min-h-0">
-            <div className="w-full max-w-[720px] flex flex-col space-y-6">
+            <div className="w-full max-w-[700px] flex flex-col space-y-7">
               {messages.map((m, idx) => {
                 if (m.from === 'caye') {
                   return (
@@ -539,8 +559,8 @@ export default function HomeScreen() {
                       <div className="w-12 h-12 rounded-xl bg-near-black flex items-center justify-center text-white flex-shrink-0 mt-1">
                         <CayeMark size={26} />
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-[15px] leading-[1.7] text-near-black/85 font-sans">
+                      <div className="flex-1 min-w-0 pt-0.5">
+                        <div className="caye-prose font-newsreader text-[16.5px] text-near-black/80">
                           {parseCayeMessageText(m.text)}
                         </div>
                         {m.cards && m.cards.length > 0 && (
@@ -553,7 +573,7 @@ export default function HomeScreen() {
                   return (
                     <div key={idx} className="flex items-start justify-end w-full group">
                       <div className="flex flex-col items-end max-w-[80%]">
-                        <div className="px-4 py-2.5 rounded-2xl bg-near-black/[0.04] text-near-black border-none text-[14.5px] leading-relaxed shadow-sm rounded-tr-none">
+                        <div className="px-4 py-2.5 rounded-2xl bg-near-black/[0.04] text-near-black border-none font-newsreader text-[16px] leading-[1.65] shadow-sm rounded-tr-none">
                           {m.text}
                         </div>
                         <span className="text-[10px] text-near-black/45 mt-1 font-mono opacity-0 group-hover:opacity-100 transition-opacity duration-150">

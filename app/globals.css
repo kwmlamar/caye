@@ -1441,13 +1441,54 @@
   flex-wrap: wrap; gap: 12px; font-weight: 500;
 }
 
-/* Warm gradient canvas for the chat dashboard page */
+/* Clean premium base canvas for the chat dashboard page */
 .tc-canvas {
-  background:
-    radial-gradient(circle 800px at 90% 10%, rgba(15, 181, 161, 0.06), transparent 70%),
-    radial-gradient(circle 800px at 10% 90%, rgba(246, 177, 42, 0.08), transparent 70%),
-    radial-gradient(circle 1000px at 50% 50%, rgba(255, 255, 255, 0.40), transparent 80%),
-    #ffffff !important;
+  background: #ffffff !important; /* Pure white base for a clean, minimalist layout */
+  position: relative;
+  overflow: hidden;
+}
+
+/* Ambient centered breathing glow */
+.tc-ambient-glow {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 900px;
+  height: 900px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(15, 181, 161, 0.08) 0%, rgba(99, 102, 241, 0.03) 50%, transparent 70%);
+  filter: blur(120px);
+  pointer-events: none;
+  z-index: 0;
+  animation: tc-pulse-center 18s ease-in-out infinite alternate;
+}
+
+@keyframes tc-pulse-center {
+  0% {
+    transform: translate(-50%, -50%) scale(0.92);
+    opacity: 0.8;
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(1.08);
+    opacity: 1.0;
+  }
+}
+
+/* ======================================================
+   CAYE CANVAS — clean empty-state bg. Simple warm wash,
+   barely perceptible. Gone once chatting starts.
+   ====================================================== */
+.caye-stage {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background: radial-gradient(
+    ellipse 90% 55% at 50% 70%,
+    rgba(15, 181, 161, 0.055) 0%,
+    transparent 70%
+  );
 }
 
 /* Scrollbar styles - thin and invisible until hovered */
