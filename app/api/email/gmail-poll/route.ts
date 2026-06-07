@@ -23,7 +23,7 @@ import { generateCayeAutoReply } from '@/lib/caye-reply'
 import { enqueueHoldPing } from '@/lib/whatsapp/triggers'
 import { htmlToPlainText } from '@/lib/email-text'
 import { sendGmailReply } from '@/lib/gmail-send'
-import { isNoReplySender } from '@/lib/sender-classifier'
+import { isNoReplySender, isCalendarInvite } from '@/lib/sender-classifier'
 
 const GMAIL_API_BASE = 'https://gmail.googleapis.com/gmail/v1/users/me'
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
@@ -244,11 +244,12 @@ async function processGmailMessage(
       .eq('id', existingConv.id)
     conversationId = String(existingConv.id)
   } else {
-    // Pre-archive noreply/vendor conversations so they're saved for audit
-    // but don't clutter the default inbox view. Same isNoReplySender helper
-    // shared with the Zoho poll path. See app/api/email/poll/route.ts for
-    // the rationale (Karenda inbox cleanup, 2026-06-06).
-    const isFromNoReply = isNoReplySender(fromEmail)
+    // Pre-archive noreply/vendor conversations + calendar invites so they're
+    // saved for audit but don't clutter the default inbox view. Shared
+    // helpers with the Zoho poll path. See app/api/email/poll/route.ts and
+    // lib/sender-classifier.ts for the rationale.
+    const archiveOnCreate =
+      isNoReplySender(fromEmail) || isCalendarInvite(subject, body)
 
     const { data: created, error: convErr } = await supabase
       .from('unified_conversations')
@@ -259,7 +260,7 @@ async function processGmailMessage(
         customer_name: fromName,
         customer_id: fromEmail,
         status: 'open',
-        is_archived: isFromNoReply,
+        is_archived: archiveOnCreate,
         metadata: {
           subject,
           from: fromRaw,

@@ -16,7 +16,7 @@ import { enqueueHoldPing } from '@/lib/whatsapp/triggers'
 import { htmlToPlainText } from '@/lib/email-text'
 import { maybeRefreshOwnerVoiceProfile } from '@/lib/owner-voice-learning'
 import { detectOwnerCorrection } from '@/lib/owner-correction'
-import { isNoReplySender } from '@/lib/sender-classifier'
+import { isNoReplySender, isCalendarInvite } from '@/lib/sender-classifier'
 
 const ZOHO_TOKEN_URL = 'https://accounts.zoho.com/oauth/v2/token'
 
@@ -1065,7 +1065,12 @@ async function processMessage(
   // support@) — see lib/sender-classifier.ts for the distinction. Web3Forms
   // is excluded by the use of effectiveEmail (which is the parsed customer,
   // not noreply@web3forms.com).
-  const isFromNoReply = isNoReplySender(effectiveEmail)
+  //
+  // We extend this to also pre-archive calendar invites — those come from
+  // real human senders so isNoReplySender misses them, but they're not
+  // customer conversations. The check needs the body, so we recompute below
+  // after the body fetch.
+  let archiveOnCreate = isNoReplySender(effectiveEmail)
 
   // Only auto-reply to emails that arrived after the account was connected.
   // Historical emails are imported into the chat but never replied to.
@@ -1083,6 +1088,15 @@ async function processMessage(
     // fetchMessageContent already returns CSS-stripped, quote-stripped text
     // via lib/email-text — no further post-processing needed.
     body = await fetchMessageContent(base, String(accountId), messageId, accessToken, String(msg.folderId || msg.folder_id || ''))
+  }
+
+  // Calendar-invite check — body-dependent so it runs after the body fetch.
+  // Catches Google Calendar / Outlook / iCal invitations and cancellations
+  // from real human senders that isNoReplySender misses (the Valeriia
+  // Berezhna 2026-05-21 case dropped 4 ATS meeting-invite conversations
+  // into the inbox before this guard existed).
+  if (!web3FormsFields && !archiveOnCreate && isCalendarInvite(subject, body)) {
+    archiveOnCreate = true
   }
 
   // Guard against empty-body phantom messages. Zoho occasionally exposes
@@ -1157,7 +1171,7 @@ async function processMessage(
         channel_conversation_id: threadId,
         customer_name: effectiveName,
         customer_id: effectiveEmail,
-        is_archived: isFromNoReply,
+        is_archived: archiveOnCreate,
         status: 'open',
         metadata: {
           subject,

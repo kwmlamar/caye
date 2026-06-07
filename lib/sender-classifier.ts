@@ -29,3 +29,33 @@ export function isNoReplySender(email: string | null | undefined): boolean {
   if (NO_REPLY_DOMAIN_KEYWORDS.some(k => lower.includes(k))) return true
   return false
 }
+
+/**
+ * Detect Google Calendar / Outlook / iCal meeting invitations and
+ * cancellations. These come from real human senders (so isNoReplySender
+ * misses them) but they're not customer conversations — they're calendar
+ * notifications that should auto-archive same as noreply.
+ *
+ * Background: Valeriia Berezhna 2026-05-21 case landed 4 calendar-invite
+ * conversations from her personal address (valeriia@accessibletravelsolutions.com).
+ * Her real partnership thread is captured separately under a different
+ * Caye conversation. The invites clutter the inbox without adding signal.
+ *
+ * Detection: any of
+ *   - Subject begins with "Invitation:" / "Updated invitation:" /
+ *     "Cancelled event:" / "Accepted:" / "Declined:" / "Tentative:"
+ *   - Body contains a VCALENDAR block (the iCal MIME payload that
+ *     calendar clients embed in the visible body when the email is
+ *     downgraded to plaintext)
+ */
+
+const CALENDAR_INVITE_SUBJECT_RE =
+  /^(?:re:\s*|fwd?:\s*)?(?:invitation|updated invitation|cancell?ed(?:\s+event)?|accepted|declined|tentatively\s+accepted|tentative):/i
+
+const VCALENDAR_BODY_RE = /BEGIN:VCALENDAR\b/i
+
+export function isCalendarInvite(subject: string | null | undefined, body: string | null | undefined): boolean {
+  if (subject && CALENDAR_INVITE_SUBJECT_RE.test(subject.trim())) return true
+  if (body && VCALENDAR_BODY_RE.test(body)) return true
+  return false
+}
