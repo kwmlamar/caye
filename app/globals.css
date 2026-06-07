@@ -1443,7 +1443,7 @@
 
 /* Clean premium base canvas for the chat dashboard page */
 .tc-canvas {
-  background: #ffffff !important; /* Pure white base for a clean, minimalist layout */
+  background: #ffffff;
   position: relative;
   overflow: hidden;
 }
@@ -1476,19 +1476,33 @@
 }
 
 /* ======================================================
-   CAYE CANVAS — clean empty-state bg. Simple warm wash,
-   barely perceptible. Gone once chatting starts.
+   CAYE CANVAS — empty-state background.
+   Spec: teal-only, perfectly still, composition A+D.
+   D: whisper teal field across the whole canvas (~4%).
+   A: slightly stronger at left edge and bottom edge.
+   Center stays near-white — content dominates.
+   No animation. Stillness is the confidence.
    ====================================================== */
 .caye-stage {
   position: absolute;
   inset: 0;
   pointer-events: none;
   z-index: 0;
-  background: radial-gradient(
-    ellipse 90% 55% at 50% 70%,
-    rgba(15, 181, 161, 0.055) 0%,
-    transparent 70%
-  );
+  background:
+    /* Left edge — a touch more teal bleeds in from the left */
+    radial-gradient(
+      ellipse 62% 88% at 0% 54%,
+      rgba(15, 181, 161, 0.07) 0%,
+      transparent 72%
+    ),
+    /* Bottom edge — grounding teal below the chat bar */
+    radial-gradient(
+      ellipse 88% 44% at 46% 100%,
+      rgba(15, 181, 161, 0.05) 0%,
+      transparent 68%
+    ),
+    /* Base field — uniform whisper teal across the whole canvas */
+    #f5fbfa;
 }
 
 /* Scrollbar styles - thin and invisible until hovered */
