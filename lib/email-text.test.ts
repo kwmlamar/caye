@@ -104,4 +104,54 @@ div.zm_1526803674744298471_parse_4423952575885412991 li.MsoNormal { margin: 0; }
     const text = `Just a plain text message.\n\nThanks!`
     expect(htmlToPlainText(text)).toBe('Just a plain text message.\n\nThanks!')
   })
+
+  it('strips orphan CSS rules at the top of the body (Marissa McGourthy case)', () => {
+    // Real shape of the leak observed in production: Outlook CSS rules
+    // arrived without surrounding <style> tags, so stripHtmlBlockContents
+    // couldn't catch them. ~10 lines of CSS preceded the actual message.
+    const leaked = [
+      'div.zm_6506737843841804039_parse_965487511404414116 p.MsoNormal, div.zm_6506737843841804039_parse_965487511404414116 li.MsoNormal, div.zm_6506737843841804039_parse_965487511404414116 div.MsoNormal { margin: 0in; font-size: 12pt; font-family: "Aptos", sans-serif }',
+      'div.zm_6506737843841804039_parse_965487511404414116 a:link, div.zm_6506737843841804039_parse_965487511404414116 span.x_1023950312MsoHyperlink { color: blue; text-decoration: underline }',
+      'div.zm_6506737843841804039_parse_965487511404414116 span.x_1023950312size { }',
+      'div.zm_6506737843841804039_parse_965487511404414116 .x_1023950312MsoChpDefault { font-size: 10pt }',
+      '',
+      'Hi there,',
+      '',
+      'One more question on your pricing for the Golf Cart tour. You state "starting at $350" but I\'m curious how that number fluctuates? Is it a per person additional charge?',
+      '',
+      'Thanks again,',
+      'Marissa',
+    ].join('\n')
+    const out = htmlToPlainText(leaked)
+    expect(out.startsWith('Hi there,')).toBe(true)
+    expect(out).not.toContain('MsoNormal')
+    expect(out).not.toContain('font-family')
+    expect(out).toContain('how that number fluctuates')
+    expect(out).toContain('Marissa')
+  })
+
+  it('does NOT strip legitimate text that happens to contain braces', () => {
+    // Customer might write "we paid {amount}" or "the {tour} is great".
+    // Curly braces in regular text should not trigger the CSS stripper.
+    const text = 'Hi! I am interested in {Heritage Tour} for 4 people. Thanks!'
+    const out = htmlToPlainText(text)
+    expect(out).toContain('Heritage Tour')
+    expect(out).toContain('4 people')
+  })
+
+  it('preserves the message when CSS-like text appears mid-body, not at top', () => {
+    // The stripper should only operate on a CSS block at the very top.
+    // Once real prose begins, it stops scanning.
+    const text = [
+      'Hi there,',
+      '',
+      'Just letting you know our team uses div.foo { margin: 0 } for our website.',
+      '',
+      'Thanks!',
+    ].join('\n')
+    const out = htmlToPlainText(text)
+    expect(out).toContain('Hi there,')
+    expect(out).toContain('div.foo { margin: 0 }')
+    expect(out).toContain('Thanks!')
+  })
 })

@@ -24,6 +24,46 @@ function stripHtmlBlockContents(html: string): string {
 }
 
 /**
+ * Strip orphan CSS rules at the top of a message body.
+ *
+ * Background: some senders (Outlook / Word HTML emails routed through
+ * Zoho or other relays) arrive with the <style> tags already stripped
+ * but the CSS rule contents preserved as plain text. Result: the
+ * customer's actual message is preceded by 10+ lines of literal CSS
+ * like "div.zm_xxx p.MsoNormal { margin: 0in; font-size: 12pt }".
+ *
+ * The Marissa McGourthy 2026-05-18 case stored ~1KB of CSS as the
+ * conversation preview, hiding her actual pricing question from
+ * Karenda's inbox view (see Clients/bimini-island-tours.md). The
+ * stripHtmlBlockContents pass couldn't catch it because there were no
+ * surrounding <style> tags to anchor on.
+ *
+ * Strategy: scan from the top. Skip blank lines. If a line matches a
+ * one-liner CSS rule pattern (selector { properties }), drop it.
+ * Stop at the first line that does NOT match a CSS rule — that's
+ * where the real body begins.
+ */
+function stripOrphanCssRules(text: string): string {
+  const lines = text.split('\n')
+  let firstRealLine = 0
+  // CSS rule pattern: selector chars + { + property block + }
+  // Selector chars: alphanumerics, dots, hashes, colons, commas, spaces,
+  // brackets, parens, asterisks, +, ~, >, -. Property block: anything
+  // inside braces. Anchored at both ends.
+  const cssRuleRe = /^[a-zA-Z0-9._#:,>+~\s\-*()[\]"=]+\{[^{}]*\}\s*$/
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim()
+    if (!line) continue
+    if (cssRuleRe.test(line)) {
+      firstRealLine = i + 1
+      continue
+    }
+    break
+  }
+  return firstRealLine > 0 ? lines.slice(firstRealLine).join('\n') : text
+}
+
+/**
  * Detect the start of a quoted reply / forwarded chain and cut everything
  * from that point on. Patterns covered (case-insensitive):
  *   - "On <date>, <name> wrote:" (Gmail / Apple Mail / most clients)
@@ -102,6 +142,11 @@ export function htmlToPlainText(input: string): string {
     .split('\n')
     .map(l => l.replace(/^[ \t]+/, '').replace(/[ \t]+$/, ''))
     .join('\n')
+
+  // Strip orphan CSS rules at the top of the body — second defense for
+  // emails where the <style> tags were already stripped upstream but the
+  // rule content survived as plaintext. See stripOrphanCssRules.
+  s = stripOrphanCssRules(s)
 
   // Strip the quoted reply chain AFTER tag removal so HTML markers like
   // <blockquote> become plain text first (the ">" patterns then catch them).
