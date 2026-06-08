@@ -1,10 +1,11 @@
 'use client'
 
 import React, { useState, useEffect, useRef, useCallback } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
+import { ClockCounterClockwiseIcon, ChartBarIcon, BellIcon, PencilLineIcon, PaperclipIcon, MicrophoneIcon } from '@phosphor-icons/react'
 import { CayeMark } from '@/components/brand/CayeMark'
 import { useWorkspace } from '@/lib/workspace-context'
 import { getSupabase } from '@/lib/supabase'
-import SuggestionChip from '../SuggestionChip'
 import SetupChecklist from '../SetupChecklist'
 import WhatsAppStatusBanner from '../WhatsAppStatusBanner'
 import { RichReply, type CardPayload } from './RichReply'
@@ -323,7 +324,7 @@ export default function HomeScreen() {
   const onSend = async (textToSend?: string) => {
     const text = (textToSend || input).trim()
     if (!text || typing) return
-    if (!textToSend) setInput('')
+    if (!textToSend) { setInput(''); adjustHeight(true) }
 
     const userMsg: Message = {
       from: 'user',
@@ -390,10 +391,10 @@ export default function HomeScreen() {
   }
 
   const suggestions = [
-    "Catch me up on the last 5 days.",
-    "What does my business look like to you?",
-    "Show me anything that needs my call.",
-    "Draft a reply to the next pending message.",
+    { text: "Catch me up on the last 5 days.", icon: ClockCounterClockwiseIcon, catchUp: true },
+    { text: "What does my business look like to you?", icon: ChartBarIcon, catchUp: false },
+    { text: "Show me anything that needs my call.", icon: BellIcon, catchUp: false },
+    { text: "Draft a reply to the next pending message.", icon: PencilLineIcon, catchUp: false },
   ]
 
   // Handler for the "Catch me up" suggestion. Bypasses /api/caye/chat
@@ -443,52 +444,86 @@ export default function HomeScreen() {
 
   const isEmpty = messages.length === 0
 
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  const adjustHeight = useCallback((reset?: boolean) => {
+    const el = textareaRef.current
+    if (!el) return
+    if (reset) { el.style.height = '40px'; return }
+    el.style.height = '40px'
+    el.style.height = `${Math.min(el.scrollHeight, 180)}px`
+  }, [])
+
   const renderInputBox = () => {
+    const hasText = input.trim().length > 0
     return (
-      <div className="relative flex items-center bg-white rounded-2xl border border-[rgba(14,26,26,0.1)] focus-within:border-[rgba(14,26,26,0.15)] p-3 transition-colors shadow-[0_2px_8px_-2px_rgba(14,26,26,0.08)]">
-        {/* Left Icons: Mic and Attach */}
-        <div className="flex items-center gap-1.5 pl-2 text-near-black/30">
-          {/* Paperclip Attach */}
-          <button title="Attach file" className="p-1.5 hover:bg-near-black/5 rounded-lg transition-colors cursor-pointer">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
-            </svg>
-          </button>
-          {/* Mic */}
-          <button title="Dictate prompt" className="p-1.5 hover:bg-near-black/5 rounded-lg transition-colors cursor-pointer">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
-              <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
-              <line x1="12" y1="19" x2="12" y2="23"></line>
-              <line x1="8" y1="23" x2="16" y2="23"></line>
-            </svg>
-          </button>
+      <div className="bg-white rounded-2xl border border-[rgba(14,26,26,0.1)] focus-within:border-[rgba(14,26,26,0.18)] transition-colors shadow-[0_2px_12px_-4px_rgba(14,26,26,0.1)]">
+        {/* Textarea */}
+        <div className="px-5 pt-4 pb-2">
+          <textarea
+            ref={textareaRef}
+            placeholder="Ask Caye anything…"
+            value={input}
+            onChange={(e) => { setInput(e.target.value); adjustHeight() }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSend() }
+            }}
+            disabled={typing}
+            rows={1}
+            style={{ height: '36px', overflow: 'hidden' }}
+            className="w-full text-[14.5px] text-near-black bg-transparent outline-none border-none placeholder-near-black/25 resize-none leading-[1.6] min-w-0"
+          />
         </div>
 
-        {/* Text Input */}
-        <input
-          type="text"
-          placeholder="Ask Caye anything…"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') onSend() }}
-          disabled={typing}
-          className="flex-1 px-3 py-2 text-[14.5px] text-near-black bg-transparent outline-none border-none placeholder-near-black/30 min-w-0"
-        />
+        {/* Toolbar */}
+        <div className="flex items-center justify-between px-4 pb-3 pt-2 border-t border-[rgba(14,26,26,0.05)]">
+          <div className="flex items-center gap-0.5 text-near-black/35">
+            <button title="Attach file" className="p-2 hover:bg-near-black/5 hover:text-near-black/60 rounded-lg transition-colors cursor-pointer">
+              <PaperclipIcon size={16} weight="regular" />
+            </button>
+            <button title="Dictate" className="p-2 hover:bg-near-black/5 hover:text-near-black/60 rounded-lg transition-colors cursor-pointer">
+              <MicrophoneIcon size={16} weight="regular" />
+            </button>
+          </div>
 
-        {/* Send Button */}
-        <div className="flex items-center gap-2 pr-1">
-          <button
+          <motion.button
             onClick={() => onSend()}
-            disabled={!input.trim() || typing}
-            className="w-8 h-8 rounded-xl bg-[#0FB5A1] hover:bg-[#0D9C8B] disabled:opacity-45 disabled:hover:bg-[#0FB5A1] text-white flex items-center justify-center transition-all shadow-sm flex-shrink-0 cursor-pointer"
-            aria-label="Send prompt"
+            disabled={!hasText || typing}
+            whileTap={hasText && !typing ? { scale: 0.93 } : {}}
+            className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-[13px] font-medium transition-all cursor-pointer ${
+              hasText
+                ? 'bg-[#0FB5A1] hover:bg-[#0D9C8B] text-white shadow-sm'
+                : 'bg-near-black/[0.06] text-near-black/30 cursor-default'
+            }`}
+            aria-label="Send"
           >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="12" y1="19" x2="12" y2="5"></line>
-              <polyline points="5 12 12 5 19 12"></polyline>
-            </svg>
-          </button>
+            <AnimatePresence mode="wait" initial={false}>
+              {typing ? (
+                <motion.span
+                  key="loader"
+                  initial={{ opacity: 0, scale: 0.5 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.5 }}
+                  transition={{ duration: 0.12 }}
+                  className="w-3 h-3 rounded-sm bg-current animate-spin"
+                  style={{ animationDuration: '2.5s' }}
+                />
+              ) : (
+                <motion.svg
+                  key="arrow"
+                  initial={{ opacity: 0, scale: 0.5 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.5 }}
+                  transition={{ duration: 0.12 }}
+                  width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+                >
+                  <line x1="12" y1="19" x2="12" y2="5" />
+                  <polyline points="5 12 12 5 19 12" />
+                </motion.svg>
+              )}
+            </AnimatePresence>
+            <span>Send</span>
+          </motion.button>
         </div>
       </div>
     )
@@ -496,10 +531,6 @@ export default function HomeScreen() {
 
   return (
     <div className="flex-1 flex flex-col tc-canvas min-h-0 font-sans selection:bg-[#0FB5A1] selection:text-white relative">
-      {/* Living "Caye is on" aura — only on the empty state. Once a
-          conversation begins it's gone, leaving a clean white reading column. */}
-      {isEmpty && <div className="caye-stage" aria-hidden="true" />}
-
       {!panelOpen && (
         <button
           onClick={() => setPanelOpen(true)}
@@ -514,8 +545,12 @@ export default function HomeScreen() {
       )}
       {/* Scrollable Main Column / Fixed Column Layout */}
       {isEmpty ? (
-        /* Empty State */
-        <div className="flex-1 overflow-y-auto px-6 py-12 md:py-20 flex justify-center min-h-0 relative z-10">
+        /* Empty State — aurora bg fades out once chatting starts */
+        <div
+          className="flex-1 min-h-0 relative flex flex-col"
+          style={{ background: 'radial-gradient(125% 125% at 50% 10%, #fff 40%, rgba(15,181,161,0.45) 100%)' }}
+        >
+        <div className="flex-1 overflow-y-auto px-6 py-12 md:py-20 flex justify-center min-h-0 relative z-10 w-full">
           <div className="w-full max-w-[720px] flex flex-col justify-center space-y-6 my-auto pb-8">
             <div className="space-y-3 text-center md:text-left">
               <h1 className="text-[44px] md:text-[52px] font-normal tracking-tight text-near-black font-serif italic text-center md:text-left">
@@ -531,26 +566,32 @@ export default function HomeScreen() {
 
             {renderInputBox()}
 
-            {/* Suggestion chips in vertical stack below input */}
-            <div className="flex flex-col gap-2 w-full">
-              {suggestions.map((s, idx) => {
-                const isCatchUp = s.toLowerCase().startsWith('catch me up')
-                return (
-                  <SuggestionChip
-                    key={idx}
-                    prompt={s}
-                    onClick={() => (isCatchUp ? onCatchUp() : onSend(s))}
-                  />
-                )
-              })}
+            {/* Suggestion chips — 2×2 grid */}
+            <div className="grid grid-cols-2 gap-2.5 w-full">
+              {suggestions.map((s, idx) => (
+                <motion.button
+                  key={idx}
+                  onClick={() => (s.catchUp ? onCatchUp() : onSend(s.text))}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: idx * 0.07, duration: 0.35, ease: [0.25, 0.1, 0.25, 1] }}
+                  whileHover={{ y: -2, transition: { duration: 0.15 } }}
+                  whileTap={{ scale: 0.97 }}
+                  className="flex items-start gap-3 px-4 py-3.5 rounded-xl border border-[rgba(14,26,26,0.08)] hover:border-[rgba(14,26,26,0.15)] bg-white/60 hover:bg-white text-left transition-colors group cursor-pointer shadow-[0_1px_4px_-2px_rgba(14,26,26,0.06)] hover:shadow-[0_3px_10px_-4px_rgba(14,26,26,0.1)]"
+                >
+                  <s.icon size={17} weight="regular" className="text-[#0FB5A1] flex-shrink-0 mt-[1px]" />
+                  <span className="text-[13px] text-near-black/65 group-hover:text-near-black leading-snug transition-colors">{s.text}</span>
+                </motion.button>
+              ))}
             </div>
           </div>
         </div>
+        </div>
       ) : (
         /* Active Conversation History */
-        <div className="flex-1 flex flex-col min-h-0 relative items-center justify-center z-10">
+        <div className="flex-1 flex flex-col min-h-0 z-10">
           {/* Scrollable Message List */}
-          <div className="w-full flex-1 overflow-y-auto px-6 pt-12 md:pt-20 flex justify-center min-h-0">
+          <div className="flex-1 overflow-y-auto px-6 pt-12 md:pt-20 flex justify-center min-h-0">
             <div className="w-full max-w-[700px] flex flex-col space-y-7">
               {messages.map((m, idx) => {
                 if (m.from === 'caye') {
@@ -602,19 +643,13 @@ export default function HomeScreen() {
               )}
               
               <div ref={messagesEndRef} />
-              {/* Bottom spacer to prevent text from being blocked by the absolute-positioned input bar and gradient blur */}
-              <div style={{ height: '80px', flexShrink: 0 }} />
+              <div className="h-4 flex-shrink-0" />
             </div>
           </div>
 
-          {/* Chat Input anchored at bottom with gradient background fade */}
-          <div 
-            className="absolute bottom-0 left-0 right-0 pt-8 pb-8 px-6 z-10 flex justify-center pointer-events-none"
-            style={{
-              background: 'linear-gradient(to top, #ffffff 50%, rgba(255, 255, 255, 0) 100%)'
-            }}
-          >
-            <div className="w-full max-w-[720px] pointer-events-auto">
+          {/* Chat Input — in normal flow so spacing is zoom-invariant */}
+          <div className="px-6 pb-6 pt-3 flex justify-center flex-shrink-0">
+            <div className="w-full max-w-[720px]">
               {renderInputBox()}
             </div>
           </div>
