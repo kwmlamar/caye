@@ -25,6 +25,25 @@ import { classifyOperatorIntent } from '@/lib/whatsapp/intent'
 import { getPendingHeldItems } from '@/lib/whatsapp/pending'
 import { dispatchOperatorIntent } from '@/lib/whatsapp/actions'
 import { enqueueOutbound } from '@/lib/whatsapp/outbound'
+import { cayeAgent } from '@/lib/caye-agent'
+
+// Held-item action intents stay on the legacy classifier+dispatch path
+// for now — those reply flows (send / skip / edit / handled / mute /
+// unmute / multi) are well-tested and will be migrated to back-office
+// agent TOOLS in slices 4-6 of epic #35.
+//
+// Anything else (`query` and `unclear`) routes through the new tool-use
+// agent. This is the slice 1 cutover: every general conversational
+// operator message now goes through back-office Caye.
+const LEGACY_DISPATCH_KINDS = new Set([
+  'send',
+  'skip',
+  'edit',
+  'handled',
+  'mute',
+  'unmute',
+  'multi',
+])
 
 // ─── GET — webhook verification ──────────────────────────────────────────────
 
@@ -184,13 +203,17 @@ async function handleOneInbound(
     quotedMessage: null,
   })
 
-  // Persist inbound + classified intent (best-effort dedup on wa_message_id).
+  // Persist inbound + classified intent + claude_format for the user turn.
+  // claude_format is what the back-office agent's sliding-window loader
+  // consumes; we populate it for every inbound regardless of routing path
+  // so the agent has full history when it does run.
   await supabase.from('caye_operator_messages').insert({
     workspace_id: workspaceId,
     direction: 'inbound',
     wa_message_id: message.id,
     body,
     intent,
+    claude_format: { role: 'user', content: body },
   })
 
   // If the workspace flag is off we don't act on intents — but we still logged
@@ -201,23 +224,66 @@ async function handleOneInbound(
     return
   }
 
-  const result = await dispatchOperatorIntent({ workspaceId }, intent, pending)
+  // ── Routing decision ───────────────────────────────────────────────
+  // Held-item action kinds keep the legacy classifier+dispatch path.
+  // Everything else (query / unclear) routes through the new
+  // back-office agent — slice 1 of epic #35.
+  if (LEGACY_DISPATCH_KINDS.has(intent.kind)) {
+    const result = await dispatchOperatorIntent({ workspaceId }, intent, pending)
+    if (result.ackBody && result.ackBody.trim()) {
+      await enqueueOutbound({
+        workspaceId,
+        kind: 'ack',
+        payload: { body: result.ackBody },
+        idempotencyKey: `ack-${message.id}`,
+      })
+      await supabase.from('caye_operator_messages').insert({
+        workspace_id: workspaceId,
+        direction: 'outbound',
+        wa_message_id: null,
+        body: result.ackBody,
+        intent: null,
+        claude_format: { role: 'assistant', content: result.ackBody },
+      })
+    }
+    return
+  }
 
-  if (result.ackBody && result.ackBody.trim()) {
+  // ── Back-office agent path ─────────────────────────────────────────
+  try {
+    const agentResult = await cayeAgent({
+      mode: 'back-office',
+      workspaceId,
+      userMessage: body,
+    })
+
+    if (!agentResult.replyText) {
+      console.warn(
+        `[whatsapp-operator] empty reply from back-office agent for ${workspaceId}`
+      )
+      return
+    }
+
     await enqueueOutbound({
       workspaceId,
       kind: 'ack',
-      payload: { body: result.ackBody },
-      idempotencyKey: `ack-${message.id}`,
+      payload: { body: agentResult.replyText },
+      idempotencyKey: `back-office-${message.id}`,
     })
-    // Also log the outbound ack we just queued (the worker logs send status separately).
+
     await supabase.from('caye_operator_messages').insert({
       workspace_id: workspaceId,
       direction: 'outbound',
       wa_message_id: null,
-      body: result.ackBody,
+      body: agentResult.replyText,
       intent: null,
+      claude_format: agentResult.assistantTurn,
     })
+  } catch (err) {
+    console.error(
+      `[whatsapp-operator] back-office agent failed for ${workspaceId}:`,
+      err
+    )
   }
 }
 
