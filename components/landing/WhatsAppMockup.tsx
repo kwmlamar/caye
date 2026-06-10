@@ -169,9 +169,6 @@ export default function WhatsAppMockup() {
 
         {/* ── Phone stage ──────────────────────────────────────── */}
         <div className="relative mx-auto" style={{ width: 'fit-content' }}>
-          {/* Decorative ornaments flanking the phone */}
-          <DecorativeOrnaments />
-
           {/* Ground shadow */}
           <div
             aria-hidden
@@ -438,96 +435,6 @@ function PhoneFrame({ children }: { children: React.ReactNode }) {
         </div>
       </div>
     </div>
-  )
-}
-
-// ─── Decorative ornaments (small editorial flourishes) ──────────────
-
-function DecorativeOrnaments() {
-  return (
-    <>
-      {/* Wave glyph upper-left */}
-      <svg
-        aria-hidden
-        className="absolute hidden lg:block -left-24 top-12 w-16 h-16 text-caribbean-teal-deep/25"
-        viewBox="0 0 64 64"
-        fill="none"
-      >
-        <path
-          d="M4 32 Q 14 22, 24 32 T 44 32 T 60 32"
-          stroke="currentColor"
-          strokeWidth="1.6"
-          strokeLinecap="round"
-          fill="none"
-        />
-        <path
-          d="M4 40 Q 14 30, 24 40 T 44 40 T 60 40"
-          stroke="currentColor"
-          strokeWidth="1.4"
-          strokeLinecap="round"
-          fill="none"
-          opacity="0.6"
-        />
-      </svg>
-      {/* Sun ray upper-right */}
-      <svg
-        aria-hidden
-        className="absolute hidden lg:block -right-24 top-8 w-16 h-16 text-caribbean-teal-deep/20"
-        viewBox="0 0 64 64"
-        fill="none"
-      >
-        <circle cx="32" cy="32" r="10" stroke="currentColor" strokeWidth="1.4" fill="none" />
-        {[0, 45, 90, 135, 180, 225, 270, 315].map((deg) => {
-          const rad = (deg * Math.PI) / 180
-          const x1 = 32 + Math.cos(rad) * 16
-          const y1 = 32 + Math.sin(rad) * 16
-          const x2 = 32 + Math.cos(rad) * 24
-          const y2 = 32 + Math.sin(rad) * 24
-          return (
-            <line
-              key={deg}
-              x1={x1}
-              y1={y1}
-              x2={x2}
-              y2={y2}
-              stroke="currentColor"
-              strokeWidth="1.4"
-              strokeLinecap="round"
-            />
-          )
-        })}
-      </svg>
-      {/* Lower-left palm sketch */}
-      <svg
-        aria-hidden
-        className="absolute hidden lg:block -left-32 bottom-20 w-20 h-20 text-caribbean-teal-deep/18"
-        viewBox="0 0 80 80"
-        fill="none"
-      >
-        <path
-          d="M40 78 L 40 36"
-          stroke="currentColor"
-          strokeWidth="1.6"
-          strokeLinecap="round"
-        />
-        {[
-          'M40 36 Q 18 22, 8 28',
-          'M40 36 Q 62 22, 72 28',
-          'M40 36 Q 20 14, 16 8',
-          'M40 36 Q 60 14, 64 8',
-          'M40 36 Q 40 18, 40 6',
-        ].map((d, i) => (
-          <path
-            key={i}
-            d={d}
-            stroke="currentColor"
-            strokeWidth="1.4"
-            strokeLinecap="round"
-            fill="none"
-          />
-        ))}
-      </svg>
-    </>
   )
 }
 
