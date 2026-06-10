@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { MeshGradient } from '@paper-design/shaders-react'
 import { CayeLogo } from '@/components/brand/CayeLogo'
+import { DashboardMockup } from '@/components/landing/DashboardMockup'
 
 // Simplified landing — credibility surface, not a conversion engine.
 // Primary CTA goes straight to a demo request (lamar@tropitech.org).
@@ -31,9 +32,9 @@ export default function LandingPage() {
   }, [])
 
   return (
-    <div className="min-h-screen flex flex-col bg-cream text-near-black font-sans selection:bg-caribbean-teal selection:text-white">
+    <div className="min-h-screen bg-cream text-near-black font-sans selection:bg-caribbean-teal selection:text-white">
       {/* ── Hero ─────────────────────────────────────────────────── */}
-      <section className="relative flex-1 min-h-screen overflow-hidden flex flex-col">
+      <section className="relative min-h-screen overflow-hidden flex flex-col">
         {/* Mesh gradient background */}
         <div className="absolute inset-0 w-full h-full">
           {mounted && (
@@ -143,6 +144,9 @@ export default function LandingPage() {
           </div>
         </div>
       </section>
+
+      {/* ── Dashboard mockup ─────────────────────────────────────── */}
+      <DashboardMockup />
 
       {/* ── Footer ────────────────────────────────────────────────── */}
       <footer className="relative z-10 border-t border-near-black/[0.08] bg-cream/80 backdrop-blur-sm">
