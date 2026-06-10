@@ -18,6 +18,11 @@
   to   { background-position: 350% 50%, 350% 50%; }
 }
 
+@keyframes bob {
+  0%, 100% { transform: translateY(0); opacity: 0.55; }
+  50%      { transform: translateY(6px); opacity: 0.85; }
+}
+
 :root {
   /* Surfaces */
   --tc-bg:          #ffffff; /* Clean white base */

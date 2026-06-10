@@ -61,13 +61,15 @@ export default function LandingPage() {
               />
               <div className="absolute inset-0 pointer-events-none bg-cream/10" />
               {/* Bottom fade — dissolves the mesh into the next section's
-                  cream so there's no hard horizontal seam. */}
+                  cream so there's no hard horizontal seam. Subtle: ~10vh
+                  tall, ramps in late, never reaches full cream opacity so
+                  it doesn't read as a separate strip. */}
               <div
                 aria-hidden
-                className="absolute inset-x-0 bottom-0 h-64 pointer-events-none"
+                className="absolute inset-x-0 bottom-0 h-[14vh] pointer-events-none"
                 style={{
                   background:
-                    'linear-gradient(to bottom, rgba(250,247,242,0) 0%, rgba(250,247,242,0.6) 55%, #FAF7F2 100%)',
+                    'linear-gradient(to bottom, rgba(250,247,242,0) 0%, rgba(250,247,242,0.35) 70%, rgba(250,247,242,0.75) 100%)',
                 }}
               />
             </>
@@ -81,7 +83,7 @@ export default function LandingPage() {
           </Link>
           <Link
             href="/login"
-            className="text-[13px] font-medium text-near-black/80 hover:text-near-black transition-colors px-4 py-2 rounded-full hover:bg-white/40"
+            className="inline-flex items-center text-[13px] font-medium text-near-black border border-near-black/20 bg-white/40 backdrop-blur-sm px-5 py-2 rounded-full hover:bg-white/70 hover:border-near-black/35 transition-all"
           >
             Log in
           </Link>
@@ -166,6 +168,31 @@ export default function LandingPage() {
                 Prefer a walkthrough? Email Lamar →
               </a>
             </div>
+          </div>
+        </div>
+
+        {/* Scroll affordance — quiet pulse at the bottom of the hero so
+            visitors know there's content below the fold. */}
+        <div className="absolute inset-x-0 bottom-8 flex justify-center z-10 pointer-events-none">
+          <div className="flex flex-col items-center gap-2 text-near-black/55 animate-[bob_2.4s_ease-in-out_infinite]">
+            <span className="font-mono text-[9.5px] uppercase tracking-[0.22em]">
+              Scroll
+            </span>
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 14 14"
+              fill="none"
+              aria-hidden
+            >
+              <path
+                d="M7 2.5v9M3.5 8 7 11.5 10.5 8"
+                stroke="currentColor"
+                strokeWidth="1.4"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
           </div>
         </div>
       </section>
