@@ -121,7 +121,7 @@ export default function LandingPage() {
 
             {/* Headline */}
             <h1
-              className="font-instrument text-[3rem] sm:text-6xl md:text-[5rem] lg:text-[5.75rem] font-normal tracking-[-0.026em] text-near-black leading-[0.98]"
+              className="font-instrument text-[2.75rem] sm:text-5xl md:text-[4.25rem] lg:text-[5rem] font-normal tracking-[-0.026em] text-near-black leading-[1.02]"
               style={{ WebkitTextStroke: '0.4px currentColor' }}
             >
               She handles your DMs.
@@ -203,8 +203,42 @@ export default function LandingPage() {
         </div>
       </section>
 
+      {/* ── Channel strip — install-and-go proof ─────────────────── */}
+      <section className="relative py-14 px-6 bg-cream border-y border-near-black/[0.06]">
+        <div className="max-w-4xl mx-auto text-center">
+          <div className="font-mono text-[10.5px] uppercase tracking-[0.22em] text-near-black/55 font-medium mb-5">
+            Plays with the lines you already use
+          </div>
+          <div className="flex items-center justify-center gap-x-5 gap-y-2 flex-wrap text-near-black/70">
+            {[
+              'WhatsApp',
+              'Instagram',
+              'Messenger',
+              'Zoho Mail',
+              'Gmail',
+              'Google Calendar',
+            ].map((label, i, arr) => (
+              <span key={label} className="flex items-center gap-x-5">
+                <span className="font-newsreader text-[16px]">{label}</span>
+                {i < arr.length - 1 && (
+                  <span className="text-near-black/30">·</span>
+                )}
+              </span>
+            ))}
+          </div>
+        </div>
+      </section>
+
       {/* ── WhatsApp mockup — daily operator surface ─────────────── */}
       <WhatsAppMockup />
+
+      {/* ── From-the-islands credibility ─────────────────────────── */}
+      <section className="relative py-20 px-6 bg-cream">
+        <p className="font-newsreader italic text-[18px] md:text-[19px] text-near-black/65 max-w-lg mx-auto text-center leading-relaxed">
+          By a founder from Eleuthera. Built for the operators he grew up next
+          to.
+        </p>
+      </section>
 
       {/* ── Footer ────────────────────────────────────────────────── */}
       <footer className="relative z-10 border-t border-near-black/[0.08] bg-cream/80 backdrop-blur-sm">

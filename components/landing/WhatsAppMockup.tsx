@@ -26,33 +26,50 @@ interface ConvOption {
 
 const CONVERSATIONS: ConvOption[] = [
   {
-    prompt: 'What did you do this morning?',
-    reply:
-      "Replied to two booking inquiries — Maya and James, both confirmed for Saturday. Held one from Daniel; he's asking about a custom charter on your day off.",
-  },
-  {
-    prompt: 'Send Daniel a quote',
-    reply:
-      "Done. Sent him our standard charter rate and asked for his preferred date. I'll let you know when he replies.",
-  },
-  {
     prompt: "What's on the calendar today?",
     reply:
-      '3 confirmed tours — Maya at 9 AM, James’s group at 1 PM, and a held slot at 4 PM waiting on deposit.',
+      '3 confirmed tours — Maya at 9 AM, James’s group at 1 PM, and the held 4 PM slot if Daniel takes it.',
+  },
+  {
+    prompt: 'Anything need my call?',
+    reply:
+      "Just Daniel — he replied asking if Sunday afternoon works for the charter. Needs your call since Sunday's your day off.",
+  },
+  {
+    prompt: "What's today looking like?",
+    reply:
+      "Steady. $1,470 confirmed from the 3 tours. Daniel's custom charter would add $850 if Sunday works for you.",
   },
 ]
 
+// Pre-seeded conversation so the phone screen feels lived-in instead of
+// empty. Shows a real morning briefing → operator question → Caye reply
+// loop before the user is invited to tap a suggestion.
 const INITIAL_MESSAGES: Message[] = [
   {
     id: 'i1',
     from: 'caye',
-    text: "Hey — I'm Caye. I'll handle your DMs and bookings in your voice.",
-    time: '7:42 AM',
+    text:
+      "Morning. 2 bookings confirmed overnight — Maya at 9 AM Saturday and James's group at 1 PM. Held one from Daniel asking about a custom Sunday charter.",
+    time: '6:45 AM',
   },
   {
     id: 'i2',
+    from: 'user',
+    text: 'Send Daniel a quote',
+    time: '6:48 AM',
+  },
+  {
+    id: 'i3',
     from: 'caye',
-    text: "Tap one below and I'll show you what I do.",
+    text:
+      "Done. Sent our standard rate and asked his preferred date. I'll keep you posted when he replies.",
+    time: '6:48 AM',
+  },
+  {
+    id: 'i4',
+    from: 'caye',
+    text: 'Anything else? Tap one below to keep going.',
     time: '7:42 AM',
   },
 ]
@@ -272,14 +289,11 @@ export default function WhatsAppMockup() {
                 <div className="relative z-10">
                   {!allDone ? (
                     <div
-                      className="border-t border-near-black/10 px-3 py-3 space-y-2"
-                      style={{
-                        background:
-                          'linear-gradient(180deg, #F6F2EC 0%, #EEE7DD 100%)',
-                      }}
+                      className="border-t border-near-black/10 px-3 py-2.5 space-y-1.5"
+                      style={{ background: 'rgba(241,236,225,0.92)' }}
                     >
-                      <div className="text-center font-mono text-[9px] uppercase tracking-[0.18em] text-near-black/40 mb-2">
-                        Tap a message
+                      <div className="text-center font-mono text-[8.5px] uppercase tracking-[0.18em] text-near-black/40 mb-1.5">
+                        Tap to reply
                       </div>
                       {availableOptions.map((opt, idx) => (
                         <motion.button
@@ -293,18 +307,17 @@ export default function WhatsAppMockup() {
                             ease: [0.25, 0.1, 0.25, 1],
                             delay: idx * 0.06,
                           }}
-                          whileHover={{ y: -1, scale: 1.005 }}
-                          whileTap={{ scale: 0.98 }}
-                          className={`block w-full text-left text-near-black text-[13px] px-3.5 py-2.5 rounded-2xl rounded-br-md disabled:opacity-50 disabled:cursor-not-allowed transition-shadow ${
+                          whileHover={{ y: -1 }}
+                          whileTap={{ scale: 0.985 }}
+                          className={`block w-full text-left text-near-black/85 text-[12px] px-3 py-1.5 rounded-full disabled:opacity-50 disabled:cursor-not-allowed transition-shadow ${
                             firstTapNotYet && idx === 0
                               ? 'animate-[bubble-invite_2.4s_ease-in-out_infinite]'
                               : ''
                           }`}
                           style={{
-                            background:
-                              'linear-gradient(180deg, #E2FAC9 0%, #D2EFB1 100%)',
+                            background: 'rgba(220,248,198,0.78)',
                             boxShadow:
-                              '0 1px 0 rgba(255,255,255,0.6) inset, 0 1px 2px rgba(14,26,26,0.10), 0 4px 12px -4px rgba(14,26,26,0.08)',
+                              '0 1px 0 rgba(255,255,255,0.55) inset, 0 1px 1.5px rgba(14,26,26,0.06)',
                           }}
                         >
                           <div className="flex items-center justify-between gap-2">
@@ -722,15 +735,15 @@ function BatteryIcon() {
 function SendIcon() {
   return (
     <svg
-      width="14"
-      height="14"
+      width="11"
+      height="11"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
-      strokeWidth="2"
+      strokeWidth="1.8"
       strokeLinecap="round"
       strokeLinejoin="round"
-      className="text-[#075E54]/55 flex-shrink-0"
+      className="text-[#075E54]/45 flex-shrink-0"
     >
       <line x1="22" y1="2" x2="11" y2="13" />
       <polygon points="22 2 15 22 11 13 2 9 22 2" />
