@@ -31,6 +31,15 @@ export default function LandingPage() {
     return () => window.removeEventListener('resize', update)
   }, [])
 
+  // Dashboard CSS sets body { overflow: hidden }. The .lp-body class in
+  // globals.css overrides it to overflow: auto so the landing can scroll.
+  useEffect(() => {
+    document.body.classList.add('lp-body')
+    return () => {
+      document.body.classList.remove('lp-body')
+    }
+  }, [])
+
   return (
     <div className="min-h-screen bg-cream text-near-black font-sans selection:bg-caribbean-teal selection:text-white">
       {/* ── Hero ─────────────────────────────────────────────────── */}
