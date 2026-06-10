@@ -23,7 +23,7 @@ import WhatsAppMockup from '@/components/landing/WhatsAppMockup'
 const PALETTE_SOFT = ['#72b9bb', '#b5d9d9', '#ffd1bd', '#ffebe0', '#8cc5b8', '#dbf4a4']
 // Caribbean Deep — Bahamian flag DNA (aqua direct, gold echoed),
 // deeper sea-pool, sand + cream + mint harmonize. RECOMMENDED.
-const PALETTE_DEEP = ['#00778B', '#7DC9CB', '#FFD68F', '#FFEBE0', '#A8DCC0', '#F4E3A0']
+const PALETTE_DEEP = ['#00778B', '#7DC9CB', '#FFD68F', '#F5E8D0', '#A8DCC0', '#F4E3A0']
 // Sunset / golden hour — warmer, more sand/coral, less green:
 const PALETTE_SUNSET = ['#3A8B98', '#A8D5D5', '#FFC4A0', '#FFE5D0', '#FFD68F', '#FFB5A8']
 // Reef + water — vivid snorkel palette, deepest contrast:
