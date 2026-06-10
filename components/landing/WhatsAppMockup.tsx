@@ -137,15 +137,10 @@ export default function WhatsAppMockup() {
           filter: 'blur(50px)',
         }}
       />
-      {/* Subtle grain texture */}
-      <div
-        aria-hidden
-        className="absolute inset-0 opacity-[0.04] pointer-events-none mix-blend-overlay"
-        style={{
-          backgroundImage:
-            "url(\"data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.2' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E\")",
-        }}
-      />
+      {/* Note: removed the mix-blend-overlay grain texture — even at 4%
+          opacity it softened text rendering noticeably across the phone
+          screen. The radial glows do enough atmospheric work on their
+          own. */}
 
       <div className="relative max-w-6xl mx-auto">
         {/* ── Editorial caption ─────────────────────────────────── */}
@@ -542,7 +537,7 @@ function DoodleWallpaper() {
   return (
     <div
       aria-hidden
-      className="absolute inset-0 pointer-events-none opacity-[0.42]"
+      className="absolute inset-0 pointer-events-none opacity-[0.28]"
       style={{
         backgroundImage:
           "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='84' height='84' viewBox='0 0 84 84'><g fill='none' stroke='%23a89882' stroke-width='1' stroke-linecap='round' opacity='0.5'><circle cx='12' cy='14' r='2'/><path d='M30 22 q4 -3 8 0 t8 0' /><path d='M58 12 l3 3 l3 -3 l-3 -3 z' /><circle cx='72' cy='28' r='1.5'/><path d='M14 44 q3 -4 6 0' /><path d='M40 50 c2 -2 4 -2 6 0' /><circle cx='66' cy='52' r='2'/><path d='M22 72 l4 -2 l-2 4 z' /><path d='M48 76 q3 -3 6 0' /><circle cx='78' cy='70' r='1.5'/></g></svg>\")",

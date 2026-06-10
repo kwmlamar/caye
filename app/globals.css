@@ -29,8 +29,8 @@
 }
 
 @keyframes phone-float {
-  0%, 100% { transform: translateY(0) rotate(0deg); }
-  50%      { transform: translateY(-6px) rotate(-0.25deg); }
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-6px); }
 }
 
 @keyframes bubble-invite {
