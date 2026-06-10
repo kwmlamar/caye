@@ -271,20 +271,48 @@ async function handleOneInbound(
       idempotencyKey: `back-office-${message.id}`,
     })
 
-    await supabase.from('caye_operator_messages').insert({
-      workspace_id: workspaceId,
-      direction: 'outbound',
-      wa_message_id: null,
-      body: agentResult.replyText,
-      intent: null,
-      claude_format: agentResult.assistantTurn,
-    })
+    // Persist every turn produced during the tool loop (intermediate
+    // assistant turns with tool_use blocks, intermediate user turns
+    // with tool_result blocks, and the final assistant text turn) so
+    // the sliding-window loader sees them on the next round.
+    //
+    // direction maps from the MessageParam role: assistant→outbound,
+    // user→inbound. The body field gets a short human-readable summary
+    // for tool turns so the audit log isn't a wall of JSON.
+    for (const turn of agentResult.newTurns) {
+      const direction = turn.role === 'assistant' ? 'outbound' : 'inbound'
+      const bodySummary = summarizeTurnBody(turn)
+      await supabase.from('caye_operator_messages').insert({
+        workspace_id: workspaceId,
+        direction,
+        wa_message_id: null,
+        body: bodySummary,
+        intent: null,
+        claude_format: turn,
+      })
+    }
   } catch (err) {
     console.error(
       `[whatsapp-operator] back-office agent failed for ${workspaceId}:`,
       err
     )
   }
+}
+
+/**
+ * Render a one-line body summary for a Claude MessageParam — used for
+ * the audit-friendly `body` column on caye_operator_messages. Real
+ * Claude shape lives in `claude_format`.
+ */
+function summarizeTurnBody(turn: import('@anthropic-ai/sdk').default.MessageParam): string {
+  if (typeof turn.content === 'string') return turn.content
+  const parts: string[] = []
+  for (const block of turn.content) {
+    if (block.type === 'text') parts.push(block.text)
+    else if (block.type === 'tool_use') parts.push(`[tool_use: ${block.name}]`)
+    else if (block.type === 'tool_result') parts.push(`[tool_result]`)
+  }
+  return parts.join(' ').trim() || '[empty]'
 }
 
 function normalizeE164(phone: string): string {
