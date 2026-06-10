@@ -79,15 +79,15 @@ export default function LandingPage() {
               />
               <div className="absolute inset-0 pointer-events-none bg-cream/10" />
               {/* Bottom fade — dissolves the mesh into the next section's
-                  cream so there's no hard horizontal seam. Subtle: ~10vh
-                  tall, ramps in late, never reaches full cream opacity so
-                  it doesn't read as a separate strip. */}
+                  cream. Long ramp (22vh) so it doesn't feel like a strip,
+                  ending at full opacity so the seam against the solid
+                  cream below disappears entirely. */}
               <div
                 aria-hidden
-                className="absolute inset-x-0 bottom-0 h-[14vh] pointer-events-none"
+                className="absolute inset-x-0 bottom-0 h-[22vh] pointer-events-none"
                 style={{
                   background:
-                    'linear-gradient(to bottom, rgba(250,247,242,0) 0%, rgba(250,247,242,0.35) 70%, rgba(250,247,242,0.75) 100%)',
+                    'linear-gradient(to bottom, rgba(250,247,242,0) 0%, rgba(250,247,242,0.15) 40%, rgba(250,247,242,0.55) 75%, rgba(250,247,242,1) 100%)',
                 }}
               />
             </>
