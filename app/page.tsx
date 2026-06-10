@@ -126,24 +126,9 @@ export default function LandingPage() {
             >
               She handles your DMs.
               <br />
-              <span className="italic text-caribbean-teal-deep relative inline-block">
-                You handle your business
-                <svg
-                  aria-hidden="true"
-                  viewBox="0 0 200 12"
-                  preserveAspectRatio="none"
-                  className="absolute -bottom-1 left-0 w-full h-[10px] text-caribbean-teal-deep/40"
-                >
-                  <path
-                    d="M2 8 C 40 2, 80 10, 120 5 S 180 8, 198 4"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                  />
-                </svg>
+              <span className="italic text-caribbean-teal-deep">
+                You handle your business.
               </span>
-              .
             </h1>
 
             {/* Subhead — Newsreader editorial deck */}
