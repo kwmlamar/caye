@@ -34,6 +34,7 @@ export interface Customer {
   notification_level: NotificationLevel
   business_brief?: unknown
   voice_profile_updated_at: string | null
+  voice_alignment_confirmed_at: string | null
   owner_messages_since_profile_update: number
   booking_url: string | null
   website_url: string | null

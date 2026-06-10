@@ -105,7 +105,7 @@ export async function maybeRefreshOwnerVoiceProfile(
  * - metadata.sent_by = 'human' (excludes Caye auto-replies)
  * - non-internal (excludes hold-for-human notes)
  */
-async function fetchOwnerMessageSamples(workspaceId: string): Promise<string[]> {
+export async function fetchOwnerMessageSamples(workspaceId: string): Promise<string[]> {
   const supabase = createServiceClient()
 
   const { data, error } = await supabase

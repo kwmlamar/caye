@@ -420,9 +420,35 @@ function buildSystem(
       `- Formality: ${voiceProfile.formality_level}\n` +
       `- Style: ${voiceProfile.writing_style}\n` +
       `- Common phrases to use naturally: ${(voiceProfile.common_phrases ?? []).join(', ')}\n` +
-      `- Typical greeting: ${voiceProfile.greeting_style}\n` +
-      `- Typical sign-off: ${voiceProfile.signoff_style}\n` +
       `- Tone notes: ${voiceProfile.tone_notes}`
+
+    const verbatimLines: string[] = []
+    if (voiceProfile.standard_opener) {
+      verbatimLines.push(
+        `- Opener (use verbatim when starting a new thread): "${voiceProfile.standard_opener}"`
+      )
+    }
+    if (voiceProfile.standard_signoff) {
+      verbatimLines.push(
+        `- Sign-off line (use verbatim before the signature): "${voiceProfile.standard_signoff}"`
+      )
+    }
+    if (voiceProfile.signature_block) {
+      verbatimLines.push(
+        `- Signature block (append verbatim, exactly as written, line breaks preserved):\n${voiceProfile.signature_block}`
+      )
+    }
+    if (voiceProfile.tagline) {
+      verbatimLines.push(
+        `- Tagline (always include after the signature block): "${voiceProfile.tagline}"`
+      )
+    }
+
+    if (verbatimLines.length > 0) {
+      s +=
+        '\n\nVERBATIM ELEMENTS — these strings must appear EXACTLY as written, never paraphrased, never reworded, never translated:\n' +
+        verbatimLines.join('\n')
+    }
   }
 
   if (contactProfile) {

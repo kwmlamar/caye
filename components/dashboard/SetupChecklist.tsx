@@ -9,9 +9,10 @@ interface SetupStatus {
   operatorWhatsappVerified: boolean
   whatsappConnected: boolean
   zohoConnected: boolean
+  voiceAlignmentConfirmed: boolean
 }
 
-type ChannelKey = 'wa-personal' | 'zoho' | 'wa-business'
+type ChannelKey = 'wa-personal' | 'channel' | 'align'
 
 interface ChannelItem {
   key: ChannelKey
@@ -31,16 +32,29 @@ function ChannelTile({ channel, done }: { channel: ChannelKey; done: boolean }) 
       bg: 'bg-gradient-to-br from-[#2bd573] to-[#1fae57]',
       icon: <WhatsAppGlyph />,
     },
-    'wa-business': {
-      bg: 'bg-gradient-to-br from-[#13c2ac] to-[#0a8475]',
-      icon: <WhatsAppGlyph />,
-    },
-    zoho: {
+    channel: {
       bg: 'bg-near-black',
       icon: (
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="w-[17px] h-[17px]">
-          <rect x="3" y="5" width="18" height="14" rx="2.5" />
-          <path d="m4 7.5 8 5 8-5" />
+          <path d="M4 7h11" />
+          <path d="M4 12h16" />
+          <path d="M4 17h7" />
+          <circle cx="19" cy="7" r="1.6" fill="currentColor" stroke="none" />
+        </svg>
+      ),
+    },
+    align: {
+      bg: 'bg-gradient-to-br from-[#0FB5A1] to-[#0a8475]',
+      icon: (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="w-[17px] h-[17px]">
+          <path d="M12 3v3" />
+          <path d="M12 18v3" />
+          <path d="M5 12H2" />
+          <path d="M22 12h-3" />
+          <path d="m5.6 5.6 2.1 2.1" />
+          <path d="m16.3 16.3 2.1 2.1" />
+          <path d="m5.6 18.4 2.1-2.1" />
+          <path d="m16.3 7.7 2.1-2.1" />
         </svg>
       ),
     },
@@ -78,15 +92,18 @@ export default function SetupChecklist() {
     operatorWhatsappVerified: false,
     whatsappConnected: false,
     zohoConnected: false,
+    voiceAlignmentConfirmed: false,
   })
   const [otpOpen, setOtpOpen] = useState(false)
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const [alignOpen, setAlignOpen] = useState(false)
 
   async function refresh() {
     if (!workspaceId) return
     try {
       const supabase = getSupabase()
 
-      const [{ data: accounts }, { data: cfg }] = await Promise.all([
+      const [{ data: accounts }, { data: cfg }, { data: customer }] = await Promise.all([
         supabase
           .from('connected_accounts')
           .select('channel_type, is_active')
@@ -97,13 +114,24 @@ export default function SetupChecklist() {
           .select('operator_whatsapp_verified_at')
           .eq('workspace_id', workspaceId)
           .maybeSingle(),
+        supabase
+          .from('customers')
+          .select('voice_alignment_confirmed_at')
+          .eq('id', workspaceId)
+          .maybeSingle(),
       ])
 
       const whatsappConnected = (accounts || []).some((a) => a.channel_type === 'whatsapp')
       const zohoConnected = (accounts || []).some((a) => a.channel_type === 'email')
       const operatorWhatsappVerified = Boolean(cfg?.operator_whatsapp_verified_at)
+      const voiceAlignmentConfirmed = Boolean(customer?.voice_alignment_confirmed_at)
 
-      setStatus({ operatorWhatsappVerified, whatsappConnected, zohoConnected })
+      setStatus({
+        operatorWhatsappVerified,
+        whatsappConnected,
+        zohoConnected,
+        voiceAlignmentConfirmed,
+      })
     } catch (err) {
       console.error('[SetupChecklist] Failed to query setup status:', err)
     } finally {
@@ -127,8 +155,9 @@ export default function SetupChecklist() {
     )
   }
 
+  const channelConnected = status.whatsappConnected || status.zohoConnected
   const allDone =
-    status.operatorWhatsappVerified && status.whatsappConnected && status.zohoConnected
+    status.operatorWhatsappVerified && channelConnected && status.voiceAlignmentConfirmed
   if (allDone) return null
 
   const items: ChannelItem[] = [
@@ -140,20 +169,29 @@ export default function SetupChecklist() {
       onClick: () => setOtpOpen(true),
     },
     {
-      key: 'zoho',
-      label: 'Connect Zoho Mail + Calendar',
-      sublabel: 'Email and bookings, read and handled in one place',
-      done: status.zohoConnected,
-      onClick: () => router.push(`/dashboard/${workspaceId}/settings?tab=channels`),
-    },
-    {
-      key: 'wa-business',
-      label: 'Connect WhatsApp Business',
-      sublabel: 'Caye answers your customers the moment they message',
-      done: status.whatsappConnected,
-      onClick: () => router.push(`/dashboard/${workspaceId}/settings?tab=channels`),
+      key: 'channel',
+      label: 'Connect a channel',
+      sublabel: channelConnected
+        ? 'Caye is reading your inbox'
+        : 'Email or WhatsApp — pick the line your customers use',
+      done: channelConnected,
+      onClick: () => setPickerOpen(true),
     },
   ]
+
+  // Card 3 only surfaces once a channel is connected — otherwise there are no
+  // samples to extract from and the modal would just error out.
+  if (channelConnected) {
+    items.push({
+      key: 'align',
+      label: 'Get aligned with Caye',
+      sublabel: status.voiceAlignmentConfirmed
+        ? 'Caye writes in your voice'
+        : 'She read your last messages — confirm how you sound',
+      done: status.voiceAlignmentConfirmed,
+      onClick: () => setAlignOpen(true),
+    })
+  }
 
   const doneCount = items.filter((i) => i.done).length
   const pct = Math.round((doneCount / items.length) * 100)
@@ -246,6 +284,28 @@ export default function SetupChecklist() {
           onClose={() => setOtpOpen(false)}
           onVerified={() => {
             setOtpOpen(false)
+            refresh()
+          }}
+        />
+      )}
+
+      {pickerOpen && (
+        <ChannelPickerModal
+          workspaceId={workspaceId ?? ''}
+          onClose={() => setPickerOpen(false)}
+          onPick={(target) => {
+            setPickerOpen(false)
+            router.push(`/dashboard/${workspaceId}/settings?tab=channels&connect=${target}`)
+          }}
+        />
+      )}
+
+      {alignOpen && workspaceId && (
+        <AlignmentModal
+          workspaceId={workspaceId}
+          onClose={() => setAlignOpen(false)}
+          onConfirmed={() => {
+            setAlignOpen(false)
             refresh()
           }}
         />
@@ -371,5 +431,293 @@ function OperatorOtpModal({
         </div>
       </div>
     </div>
+  )
+}
+
+// ─── Channel picker modal ──────────────────────────────────────────────────
+// Card 2 ("Connect a channel") used to be two separate cards (Zoho + WhatsApp
+// Business). The picker collapses them: pick the line your customers use,
+// jump to the settings flow that wires it up.
+
+type ChannelTarget = 'zoho' | 'gmail' | 'whatsapp'
+
+function ChannelPickerModal({
+  onClose,
+  onPick,
+}: {
+  workspaceId: string
+  onClose: () => void
+  onPick: (target: ChannelTarget) => void
+}) {
+  const options: Array<{
+    target: ChannelTarget
+    label: string
+    sublabel: string
+    disabled?: boolean
+  }> = [
+    { target: 'zoho', label: 'Zoho Mail', sublabel: 'Email + calendar' },
+    { target: 'whatsapp', label: 'WhatsApp Business', sublabel: 'Customer chat line' },
+    { target: 'gmail', label: 'Gmail', sublabel: 'Coming soon', disabled: true },
+  ]
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-near-black/35 backdrop-blur-[2px]">
+      <div className="bg-white text-near-black rounded-2xl p-6 w-[420px] max-w-[90vw] space-y-4 font-sans border border-near-black/10 shadow-[0_24px_60px_-20px_rgba(14,26,26,0.25)]">
+        <div>
+          <h4 className="text-[15px] font-semibold tracking-tight">Connect a channel</h4>
+          <p className="text-[12px] text-near-black/55 mt-1 leading-snug">
+            Pick the line your customers use to reach you. You can add more later.
+          </p>
+        </div>
+
+        <ul className="space-y-1.5">
+          {options.map((opt) => (
+            <li key={opt.target}>
+              <button
+                onClick={() => !opt.disabled && onPick(opt.target)}
+                disabled={opt.disabled}
+                className="w-full flex items-center justify-between gap-3 rounded-xl border border-near-black/[0.12] px-3.5 py-3 hover:border-near-black/30 hover:bg-near-black/[0.02] disabled:opacity-45 disabled:cursor-not-allowed disabled:hover:border-near-black/[0.12] disabled:hover:bg-transparent transition-colors cursor-pointer text-left"
+              >
+                <div>
+                  <div className="text-[13.5px] font-medium text-near-black">{opt.label}</div>
+                  <div className="text-[11.5px] text-near-black/50 mt-0.5">{opt.sublabel}</div>
+                </div>
+                <span className="text-near-black/30 text-[14px]">›</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+
+        <div className="flex items-center justify-end pt-1">
+          <button
+            onClick={onClose}
+            className="text-[12px] text-near-black/55 hover:text-near-black/85 cursor-pointer transition-colors"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Alignment modal ───────────────────────────────────────────────────────
+// Card 3. Pulls the owner's last 30 sent emails, runs voice extraction
+// server-side, shows what Caye picked up. Owner edits and confirms — the
+// confirmed profile becomes Caye's reply voice.
+
+interface VoiceProfileShape {
+  writing_style: string
+  common_phrases: string[]
+  greeting_style: string
+  signoff_style: string
+  formality_level: 'casual' | 'warm-professional' | 'formal'
+  tone_notes: string
+  signature_block: string | null
+  tagline: string | null
+  standard_signoff: string | null
+  standard_opener: string | null
+}
+
+function AlignmentModal({
+  workspaceId,
+  onClose,
+  onConfirmed,
+}: {
+  workspaceId: string
+  onClose: () => void
+  onConfirmed: () => void
+}) {
+  const [stage, setStage] = useState<'loading' | 'review' | 'saving'>('loading')
+  const [error, setError] = useState<string | null>(null)
+  const [profile, setProfile] = useState<VoiceProfileShape | null>(null)
+  const [sampleCount, setSampleCount] = useState<number>(0)
+
+  useEffect(() => {
+    let cancelled = false
+    async function load() {
+      try {
+        const res = await fetch('/api/onboarding/voice-alignment/extract', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ workspaceId }),
+        })
+        const data = await res.json()
+        if (cancelled) return
+        if (!res.ok) {
+          setError(data.message ?? data.error ?? 'Caye couldn\'t read your samples.')
+          setStage('review')
+          return
+        }
+        setProfile(data.voiceProfile)
+        setSampleCount(data.sample_count ?? 0)
+        setStage('review')
+      } catch (err) {
+        if (cancelled) return
+        setError(err instanceof Error ? err.message : 'Unexpected error.')
+        setStage('review')
+      }
+    }
+    load()
+    return () => {
+      cancelled = true
+    }
+  }, [workspaceId])
+
+  async function confirm() {
+    if (!profile) return
+    setStage('saving')
+    setError(null)
+    try {
+      const res = await fetch('/api/onboarding/voice-alignment/confirm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspaceId, voiceProfile: profile }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'Save failed')
+      onConfirmed()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+      setStage('review')
+    }
+  }
+
+  function patch<K extends keyof VoiceProfileShape>(key: K, value: VoiceProfileShape[K]) {
+    setProfile((p) => (p ? { ...p, [key]: value } : p))
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-near-black/35 backdrop-blur-[2px] p-4">
+      <div className="bg-white text-near-black rounded-2xl w-[560px] max-w-[95vw] max-h-[90vh] flex flex-col font-sans border border-near-black/10 shadow-[0_24px_60px_-20px_rgba(14,26,26,0.25)]">
+        <div className="p-6 border-b border-near-black/[0.08]">
+          <h4 className="text-[15px] font-semibold tracking-tight">Get aligned with Caye</h4>
+          <p className="text-[12px] text-near-black/55 mt-1 leading-snug">
+            {stage === 'loading'
+              ? 'Reading your last messages…'
+              : profile
+                ? `Caye read ${sampleCount} of your sent messages. Edit anything that doesn't sound like you.`
+                : 'Caye couldn\'t finish reading.'}
+          </p>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-6 space-y-4">
+          {stage === 'loading' && (
+            <div className="flex items-center gap-2.5 text-near-black/45 py-8 justify-center">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#0FB5A1] animate-pulse" />
+              <span className="text-[12px] font-mono tracking-[0.04em] animate-pulse">
+                Listening to your voice…
+              </span>
+            </div>
+          )}
+
+          {error && stage !== 'loading' && (
+            <div className="text-[12.5px] text-[#c94824] bg-[#c94824]/[0.06] border border-[#c94824]/20 rounded-lg px-3 py-2.5">
+              {error}
+            </div>
+          )}
+
+          {profile && stage !== 'loading' && (
+            <>
+              <div className="rounded-xl bg-cream/40 border border-near-black/[0.06] p-3.5">
+                <div className="text-[10.5px] font-mono tracking-[0.12em] uppercase text-near-black/45 font-semibold mb-1">
+                  How I think you write
+                </div>
+                <div className="text-[12.5px] text-near-black/80 leading-snug">
+                  {profile.writing_style}
+                </div>
+                <div className="text-[11.5px] text-near-black/55 leading-snug mt-1.5 italic">
+                  {profile.tone_notes}
+                </div>
+              </div>
+
+              <Field
+                label="Your opener"
+                hint="The first line Caye should use on new threads"
+                value={profile.standard_opener ?? ''}
+                onChange={(v) => patch('standard_opener', v || null)}
+              />
+
+              <Field
+                label="Your sign-off line"
+                hint="The closing line right before your signature"
+                value={profile.standard_signoff ?? ''}
+                onChange={(v) => patch('standard_signoff', v || null)}
+              />
+
+              <Field
+                label="Your signature"
+                hint="Caye appends this verbatim — line breaks and all"
+                value={profile.signature_block ?? ''}
+                onChange={(v) => patch('signature_block', v || null)}
+                multiline
+              />
+
+              <Field
+                label="Your tagline"
+                hint="Always goes after the signature"
+                value={profile.tagline ?? ''}
+                onChange={(v) => patch('tagline', v || null)}
+              />
+            </>
+          )}
+        </div>
+
+        <div className="p-6 pt-4 border-t border-near-black/[0.08] flex items-center justify-between gap-3">
+          <button
+            onClick={onClose}
+            disabled={stage === 'saving'}
+            className="text-[12px] text-near-black/55 hover:text-near-black/85 disabled:opacity-40 cursor-pointer transition-colors"
+          >
+            Skip for now
+          </button>
+          <button
+            onClick={confirm}
+            disabled={!profile || stage === 'loading' || stage === 'saving'}
+            className="bg-[#0FB5A1] hover:bg-[#0FB5A1]/90 disabled:opacity-40 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg text-[12px] font-semibold cursor-pointer shadow-sm transition-all"
+          >
+            {stage === 'saving' ? 'Saving…' : 'This is me'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function Field({
+  label,
+  hint,
+  value,
+  onChange,
+  multiline,
+}: {
+  label: string
+  hint: string
+  value: string
+  onChange: (v: string) => void
+  multiline?: boolean
+}) {
+  return (
+    <label className="block">
+      <div className="text-[10.5px] font-mono tracking-[0.12em] uppercase text-near-black/45 font-semibold mb-1">
+        {label}
+      </div>
+      {multiline ? (
+        <textarea
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          rows={4}
+          className="w-full bg-cream/40 border border-near-black/12 rounded-lg px-3 py-2 text-[13px] text-near-black focus:outline-none focus:border-near-black/30 focus:bg-white transition-colors font-mono leading-snug"
+        />
+      ) : (
+        <input
+          type="text"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className="w-full bg-cream/40 border border-near-black/12 rounded-lg px-3 py-2 text-[13px] text-near-black focus:outline-none focus:border-near-black/30 focus:bg-white transition-colors"
+        />
+      )}
+      <div className="text-[10.5px] text-near-black/45 mt-1 leading-snug">{hint}</div>
+    </label>
   )
 }
