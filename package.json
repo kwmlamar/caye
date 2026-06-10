@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.96.0",
+    "@paper-design/shaders-react": "^0.0.76",
     "@phosphor-icons/react": "^2.1.7",
     "@supabase/ssr": "^0.9.0",
     "@supabase/supabase-js": "^2.100.1",
