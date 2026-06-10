@@ -242,6 +242,70 @@ type GetMessagesInput = {
   limit?: number
 }
 
+// ── Held-queue helpers ─────────────────────────────────────────────────────
+// Used by the suggestion-chip intercepts below to surface real held
+// conversations and Caye-drafted replies instead of demo seed data.
+
+interface HeldConvRow {
+  id: string
+  customer_name: string | null
+  customer_id: string | null
+  channel_type: string
+  human_agent_reason: string | null
+  human_agent_marked_at: string | null
+  last_message_preview: string | null
+  last_message_at: string | null
+}
+
+async function fetchHeldConversations(
+  supabase: ReturnType<typeof createServiceClient>,
+  workspaceId: string
+): Promise<HeldConvRow[]> {
+  const { data: accounts } = await supabase
+    .from('connected_accounts')
+    .select('id')
+    .eq('user_id', workspaceId)
+  const accountIds = (accounts ?? []).map((a: { id: string }) => a.id)
+  if (accountIds.length === 0) return []
+
+  const { data } = await supabase
+    .from('unified_conversations')
+    .select(
+      'id, customer_name, customer_id, channel_type, human_agent_reason, human_agent_marked_at, last_message_preview, last_message_at'
+    )
+    .in('connected_account_id', accountIds)
+    .eq('is_archived', false)
+    .eq('human_agent_enabled', true)
+    .order('human_agent_marked_at', { ascending: true, nullsFirst: false })
+
+  return (data as HeldConvRow[] | null) ?? []
+}
+
+/**
+ * Look up Caye's drafted reply for a held conversation. Stored on the
+ * latest internal Caye-authored message's metadata.proposed_reply.
+ */
+async function fetchProposedReply(
+  supabase: ReturnType<typeof createServiceClient>,
+  conversationId: string
+): Promise<string | null> {
+  const { data } = await supabase
+    .from('unified_messages')
+    .select('content, metadata')
+    .eq('conversation_id', conversationId)
+    .eq('is_internal', true)
+    .order('sent_at', { ascending: false })
+    .limit(5)
+
+  for (const m of (data ?? []) as Array<{ metadata: Record<string, unknown> | null }>) {
+    const meta = m.metadata ?? {}
+    if (meta.generated_by !== 'caye') continue
+    const reply = typeof meta.proposed_reply === 'string' ? meta.proposed_reply : null
+    if (reply && reply.trim().length > 0) return reply
+  }
+  return null
+}
+
 type UpdateConfigInput = {
   field: string
   action: 'replace' | 'append'
@@ -823,51 +887,84 @@ export async function POST(req: NextRequest) {
       }
     )
   } else if (lowercaseMsg.includes('needs my call')) {
-    return finalize(
-      "I've held 1 message that needs your call. Sandra Sweeting is asking if we can do a custom full-day charter this Sunday, which is our scheduled day off.",
-      {
-        cards: [
-          {
-            type: 'inbox',
-            data: [
-              {
-                id: 'caye-held-mock-1',
-                customer_id: 'ssweeting@yahoo.com',
-                customer_name: 'Sandra Sweeting',
-                channel_type: 'whatsapp',
-                preview: "Can you do a custom full-day charter for 6 people this Sunday? Let me know the price.",
-                status: 'held',
-                last_message_at: new Date().toISOString(),
-                unread_count: 1
-              }
-            ]
-          }
-        ]
-      }
-    )
+    const held = await fetchHeldConversations(supabase, workspaceId)
+    if (held.length === 0) {
+      return finalize("Your inbox is clear — nothing held for your call right now.")
+    }
+
+    const previewName = (c: HeldConvRow) =>
+      c.customer_name?.trim() || c.customer_id?.trim() || 'a customer'
+    const leadName = previewName(held[0])
+    const leadReason = held[0].human_agent_reason?.trim()
+    const narrative =
+      held.length === 1
+        ? leadReason
+          ? `I've held 1 message that needs your call — ${leadName}. ${leadReason}`
+          : `I've held 1 message that needs your call from ${leadName}.`
+        : `I've held ${held.length} messages that need your call. Latest is from ${leadName}.`
+
+    return finalize(narrative, {
+      cards: [
+        {
+          type: 'inbox',
+          data: held.map((c) => ({
+            id: c.id,
+            customer_id: c.customer_id,
+            customer_name: previewName(c),
+            channel_type: c.channel_type,
+            preview: c.last_message_preview ?? c.human_agent_reason ?? '',
+            status: 'held',
+            last_message_at: c.last_message_at ?? c.human_agent_marked_at ?? new Date().toISOString(),
+            unread_count: 1,
+          })),
+        },
+      ],
+    })
   } else if (lowercaseMsg.includes('draft a reply to the next pending message') || lowercaseMsg.includes('draft a reply')) {
-    return finalize(
-      "Here is the next pending message from Marvin Cartwright. He is asking about bookings and deposits for a large group. I've drafted a reply for your review.",
-      {
-        cards: [
-          {
-            type: 'inbox',
-            data: [
-              {
-                id: 'caye-draft-mock-1',
-                customer_id: 'marvin.c@hey.com',
-                customer_name: 'Marvin Cartwright',
-                channel_type: 'email',
-                preview: "Draft response: Hey Marvin! For groups larger than 8, we require a 50% deposit to lock in the charter. Let me know if you would like me to draft a confirmation invoice.",
-                status: 'drafted',
-                last_message_at: new Date().toISOString(),
-                unread_count: 0
-              }
-            ]
-          }
-        ]
+    const held = await fetchHeldConversations(supabase, workspaceId)
+    if (held.length === 0) {
+      return finalize("Nothing pending — your inbox is clear.")
+    }
+
+    // Pick the oldest held conversation that has a Caye-drafted reply ready.
+    // Falls back to the oldest held overall if none have a draft yet.
+    let chosen = held[0]
+    let proposed: string | null = null
+    for (const c of held) {
+      const reply = await fetchProposedReply(supabase, c.id)
+      if (reply) {
+        chosen = c
+        proposed = reply
+        break
       }
-    )
+    }
+
+    const name = chosen.customer_name?.trim() || chosen.customer_id?.trim() || 'a customer'
+    const narrative = proposed
+      ? `Here's the next pending message from ${name}. I've drafted a reply for your review.`
+      : `Here's the next pending message from ${name}. I haven't drafted a reply yet — want me to take a shot at one?`
+
+    return finalize(narrative, {
+      cards: [
+        {
+          type: 'inbox',
+          data: [
+            {
+              id: chosen.id,
+              customer_id: chosen.customer_id,
+              customer_name: name,
+              channel_type: chosen.channel_type,
+              preview: proposed
+                ? `Draft response: ${proposed}`
+                : chosen.last_message_preview ?? chosen.human_agent_reason ?? '',
+              status: proposed ? 'drafted' : 'held',
+              last_message_at: chosen.last_message_at ?? chosen.human_agent_marked_at ?? new Date().toISOString(),
+              unread_count: proposed ? 0 : 1,
+            },
+          ],
+        },
+      ],
+    })
   } else if (lowercaseMsg.includes('open my inbox') || lowercaseMsg.includes('open inbox') || lowercaseMsg.includes('show my inbox')) {
     return finalize("Opening your inbox →")
   } else if (lowercaseMsg.includes('open my calendar') || lowercaseMsg.includes('open calendar') || lowercaseMsg.includes('show my calendar')) {
