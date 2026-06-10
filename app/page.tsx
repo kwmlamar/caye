@@ -121,12 +121,13 @@ export default function LandingPage() {
 
             {/* Headline */}
             <h1
-              className="font-instrument text-[3.5rem] sm:text-7xl md:text-[5.5rem] lg:text-[6.5rem] font-normal tracking-[-0.028em] text-near-black leading-[0.98]"
+              className="font-instrument text-[3rem] sm:text-6xl md:text-[5rem] lg:text-[5.75rem] font-normal tracking-[-0.026em] text-near-black leading-[0.98]"
               style={{ WebkitTextStroke: '0.4px currentColor' }}
             >
-              Your AI{' '}
+              She handles your DMs.
+              <br />
               <span className="italic text-caribbean-teal-deep relative inline-block">
-                front desk
+                You handle your business
                 <svg
                   aria-hidden="true"
                   viewBox="0 0 200 12"
@@ -147,10 +148,12 @@ export default function LandingPage() {
 
             {/* Subhead — Newsreader editorial deck */}
             <p
-              className="mt-9 font-newsreader text-[1.25rem] md:text-[1.4rem] leading-[1.45] text-near-black/75 max-w-xl mx-auto font-light"
+              className="mt-9 font-newsreader text-[1.2rem] md:text-[1.35rem] leading-[1.45] text-near-black/75 max-w-2xl mx-auto font-light"
               style={{ fontStyle: 'normal' }}
             >
-              She answers, quotes, and books — across every channel you use.
+              Caye answers customers, quotes prices, and books in your voice. No
+              app to learn. No workflows to build. Just text her like an
+              employee.
             </p>
 
             {/* Primary CTA */}
