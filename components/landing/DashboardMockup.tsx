@@ -4,19 +4,19 @@
 
 const INBOX = [
   {
-    who: 'Ryan Fahey',
-    preview: 'Caye replied · Eat Like a Local tour confirmed for Nov 6',
+    who: 'Maya Castro',
+    preview: 'Caye replied · sunset sail confirmed for Saturday',
     status: 'replied' as const,
     time: '6 min',
   },
   {
-    who: 'Grace Dairo',
-    preview: 'Caye replied · Bimini Beach Experience details sent',
+    who: 'James Whitfield',
+    preview: 'Caye replied · group of 4 booked, deposit link sent',
     status: 'replied' as const,
     time: '14 min',
   },
   {
-    who: 'Sandra Sweeting',
+    who: 'Daniel Russo',
     preview: 'Held for your call · custom full-day charter request',
     status: 'held' as const,
     time: '32 min',
@@ -72,7 +72,7 @@ export function DashboardMockup() {
               {/* Greeting */}
               <h3 className="font-instrument text-4xl md:text-5xl text-near-black leading-[1.05] tracking-[-0.022em]">
                 Morning,{' '}
-                <span className="italic text-caribbean-teal-deep">Karenda</span>.
+                <span className="italic text-caribbean-teal-deep">Marie</span>.
               </h3>
               <p className="mt-3 text-[13.5px] text-near-black/55 leading-snug">
                 Everything&rsquo;s handled. 3 bookings confirmed overnight, 2 replies sent, 1 message held for your call.
@@ -86,7 +86,7 @@ export function DashboardMockup() {
                 <div className="flex-1">
                   <div className="bg-near-black/[0.04] border border-near-black/[0.04] rounded-2xl rounded-tl-md px-4 py-3">
                     <p className="text-[13px] text-near-black/85 leading-relaxed">
-                      Replied to Ryan about the Star Princess booking &mdash; he&rsquo;s in for Nov 6. Held one note from Sandra; she&rsquo;s asking about a custom Sunday charter on your day off. Want to look?
+                      Replied to two booking inquiries this morning &mdash; both confirmed for Saturday. Held one note from Daniel; he&rsquo;s asking about a custom full-day charter on your scheduled day off. Want to look?
                     </p>
                   </div>
                   <span className="font-mono text-[9.5px] uppercase tracking-[0.16em] text-near-black/40 mt-1.5 block ml-1">
@@ -171,7 +171,7 @@ export function DashboardMockup() {
 
         {/* Caption beneath frame */}
         <p className="mt-8 text-center font-newsreader italic text-[14px] text-near-black/55 max-w-lg mx-auto">
-          Karenda runs Bimini Island Tours. Caye handles her inbox while she runs her business.
+          One screen, every channel. Caye handles the inbox so you can run the business.
         </p>
       </div>
     </section>
