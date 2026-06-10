@@ -60,6 +60,16 @@ export default function LandingPage() {
                 offsetX={0.08}
               />
               <div className="absolute inset-0 pointer-events-none bg-cream/10" />
+              {/* Bottom fade — dissolves the mesh into the next section's
+                  cream so there's no hard horizontal seam. */}
+              <div
+                aria-hidden
+                className="absolute inset-x-0 bottom-0 h-64 pointer-events-none"
+                style={{
+                  background:
+                    'linear-gradient(to bottom, rgba(250,247,242,0) 0%, rgba(250,247,242,0.6) 55%, #FAF7F2 100%)',
+                }}
+              />
             </>
           )}
         </div>
@@ -124,12 +134,12 @@ export default function LandingPage() {
             </p>
 
             {/* Primary CTA */}
-            <div className="mt-12 flex flex-col items-center gap-4">
-              <a
-                href="mailto:lamar@tropitech.org?subject=Caye%20demo"
+            <div className="mt-12 flex flex-col items-center gap-3">
+              <Link
+                href="/signup"
                 className="group relative inline-flex items-center gap-2.5 bg-near-black text-cream font-medium px-9 py-4 rounded-full text-[15px] hover:bg-near-black/90 transition-all shadow-[0_4px_20px_-6px_rgba(14,26,26,0.25)] hover:shadow-[0_8px_28px_-8px_rgba(14,26,26,0.35)] hover:-translate-y-[1px] active:translate-y-0"
               >
-                <span>Get a demo</span>
+                <span>Try Caye free</span>
                 <svg
                   width="14"
                   height="14"
@@ -145,10 +155,16 @@ export default function LandingPage() {
                     strokeLinejoin="round"
                   />
                 </svg>
-              </a>
-              <p className="font-newsreader italic text-[14px] text-near-black/55">
-                A 20-minute walkthrough with Lamar — no slides, just the product.
+              </Link>
+              <p className="font-mono text-[10.5px] uppercase tracking-[0.16em] text-near-black/55">
+                Free for 7 days · No credit card
               </p>
+              <a
+                href="mailto:lamar@tropitech.org?subject=Caye%20walkthrough"
+                className="font-newsreader italic text-[14px] text-near-black/55 hover:text-near-black/80 transition-colors mt-1"
+              >
+                Prefer a walkthrough? Email Lamar →
+              </a>
             </div>
           </div>
         </div>

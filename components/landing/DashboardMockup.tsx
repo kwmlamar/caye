@@ -25,7 +25,17 @@ const INBOX = [
 
 export function DashboardMockup() {
   return (
-    <section className="relative bg-gradient-to-b from-cream to-[#f3eee5] py-24 md:py-32 px-6 overflow-hidden">
+    <section className="relative bg-cream py-24 md:py-32 px-6 overflow-hidden">
+      {/* Subtle gradient deeper down — keeps the top of the section solid
+          cream so the hero's bottom fade resolves into nothing. */}
+      <div
+        aria-hidden
+        className="absolute inset-x-0 bottom-0 h-1/2 pointer-events-none"
+        style={{
+          background:
+            'linear-gradient(to bottom, rgba(243,238,229,0) 0%, #f3eee5 100%)',
+        }}
+      />
       {/* Soft caribbean glow behind the frame */}
       <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-[400px] bg-caribbean-teal/[0.06] blur-[120px] pointer-events-none" />
 
