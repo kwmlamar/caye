@@ -1,131 +1,396 @@
 'use client'
 
-import React from 'react'
+// Interactive WhatsApp demo. Replaces the dashboard mockup as the
+// landing's product proof, because per the locked positioning, WhatsApp
+// is Caye's daily operator surface — not the dashboard.
+//
+// Pattern is borrowed from lindy.ai's iMessage demo: pre-filled
+// suggestion bubbles at the bottom. Tap one → it becomes a sent
+// message, Caye "types," then replies. Once all suggestions are used,
+// the input bar swaps to a Try-Caye CTA.
+
+import { useEffect, useRef, useState } from 'react'
+
+interface Message {
+  from: 'caye' | 'user'
+  text: string
+  time: string
+}
+
+interface ConvOption {
+  prompt: string
+  reply: string
+}
+
+const CONVERSATIONS: ConvOption[] = [
+  {
+    prompt: 'What did you do this morning?',
+    reply:
+      "Replied to two booking inquiries — Maya and James, both confirmed for Saturday. Held one from Daniel; he's asking about a custom charter on your day off.",
+  },
+  {
+    prompt: 'Send Daniel a quote',
+    reply:
+      "Done. Sent him our standard charter rate and asked for his preferred date. I'll let you know when he replies.",
+  },
+  {
+    prompt: "What's on the calendar today?",
+    reply:
+      '3 confirmed tours — Maya at 9 AM, James’s group at 1 PM, and a held slot at 4 PM waiting on deposit.',
+  },
+]
+
+const INITIAL_MESSAGES: Message[] = [
+  {
+    from: 'caye',
+    text: "Hey — I'm Caye. I'll handle your DMs and bookings in your voice.",
+    time: '7:42 AM',
+  },
+  {
+    from: 'caye',
+    text: "Tap one below and I'll show you what I do.",
+    time: '7:42 AM',
+  },
+]
+
+function nowTime(): string {
+  const d = new Date()
+  return d.toLocaleTimeString([], {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  })
+}
 
 export default function WhatsAppMockup() {
+  const [messages, setMessages] = useState<Message[]>(INITIAL_MESSAGES)
+  const [usedPrompts, setUsedPrompts] = useState<Set<string>>(new Set())
+  const [typing, setTyping] = useState(false)
+  const messagesEndRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages, typing])
+
+  async function handleTap(option: ConvOption) {
+    if (typing) return
+    setUsedPrompts((prev) => new Set([...prev, option.prompt]))
+    setMessages((prev) => [
+      ...prev,
+      { from: 'user', text: option.prompt, time: nowTime() },
+    ])
+    setTyping(true)
+    await new Promise((r) => setTimeout(r, 1100))
+    setTyping(false)
+    setMessages((prev) => [
+      ...prev,
+      { from: 'caye', text: option.reply, time: nowTime() },
+    ])
+  }
+
+  const availableOptions = CONVERSATIONS.filter(
+    (c) => !usedPrompts.has(c.prompt)
+  )
+  const allDone = availableOptions.length === 0
+
   return (
-    <div className="w-full max-w-md mx-auto bg-[#efeae2] rounded-2xl shadow-xl overflow-hidden border border-[#e0dcd5] font-sans">
-      {/* WhatsApp Header */}
-      <div className="bg-[#008069] text-white px-4 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          {/* Back Arrow Icon */}
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="opacity-90">
-            <line x1="19" y1="12" x2="5" y2="12"></line>
-            <polyline points="12 19 5 12 12 5"></polyline>
-          </svg>
-          
-          {/* Avatar (guest) */}
-          <div className="w-10 h-10 rounded-full bg-[#128C7E] flex items-center justify-center font-semibold text-white shadow-sm border border-white/10">
-            A
-          </div>
+    <section className="relative bg-cream py-24 md:py-32 px-6 overflow-hidden">
+      <div className="absolute inset-x-0 top-1/3 h-[400px] bg-caribbean-teal/[0.05] blur-[120px] pointer-events-none" />
 
-          <div>
-            <div className="font-semibold text-[15px] leading-tight">Anna · cruise guest</div>
-            <div className="text-[11px] text-white/80">Caye is replying…</div>
+      <div className="relative max-w-6xl mx-auto">
+        {/* Editorial caption */}
+        <div className="text-center mb-14 md:mb-16">
+          <div className="flex items-center justify-center gap-3 mb-6">
+            <span className="h-px w-8 bg-near-black/25" />
+            <span className="font-mono text-[10.5px] uppercase tracking-[0.22em] text-near-black/60 font-medium">
+              Tap to try
+            </span>
+            <span className="h-px w-8 bg-near-black/25" />
           </div>
-        </div>
-        
-        {/* Header Icons */}
-        <div className="flex items-center gap-4 opacity-90">
-          {/* Video Call Icon */}
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <polygon points="23 7 16 12 23 17 23 7"></polygon>
-            <rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect>
-          </svg>
-          {/* Phone Call Icon */}
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path>
-          </svg>
-          {/* More Menu Icon */}
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="12" cy="12" r="1"></circle>
-            <circle cx="12" cy="5" r="1"></circle>
-            <circle cx="12" cy="19" r="1"></circle>
-          </svg>
-        </div>
-      </div>
-
-      {/* Chat Area */}
-      <div className="p-4 space-y-4 min-height-[320px] max-height-[400px] overflow-y-auto bg-[url('https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png')] bg-repeat bg-opacity-40">
-        
-        {/* Inbound Message */}
-        <div className="flex justify-start">
-          <div className="bg-white text-[#111b21] px-3.5 py-2 rounded-2xl rounded-tl-none shadow-sm max-w-[85%] text-[14.5px] leading-relaxed relative">
-            <p>Hi! Saw you on IG — y&apos;all have anything Saturday for a family of 5? First time in Bimini 🙌</p>
-            <div className="text-right text-[10px] text-[#667781] mt-1">9:41 AM</div>
-          </div>
+          <h2 className="font-instrument text-4xl md:text-5xl lg:text-6xl tracking-[-0.024em] text-near-black leading-[1.02]">
+            Just text her.{' '}
+            <span className="italic text-caribbean-teal-deep">She handles it</span>.
+          </h2>
+          <p className="mt-5 font-newsreader font-light text-[1.1rem] md:text-[1.2rem] text-near-black/70 max-w-md mx-auto leading-snug">
+            Set up the dashboard once. After that, Caye lives in WhatsApp &mdash; talk to her like an employee.
+          </p>
         </div>
 
-        {/* Caye Reply 1 */}
-        <div className="flex justify-end">
-          <div className="bg-[#d9fdd3] text-[#111b21] px-3.5 py-2 rounded-2xl rounded-tr-none shadow-sm max-w-[85%] text-[14.5px] leading-relaxed relative">
-            <p>Hi Anna! Welcome ahead of time 🌺 Saturday 10am we have the North Bimini Heritage Tour open — 2 hours, private for your family of 5, $750.</p>
-            <div className="flex items-center justify-end gap-1 text-[10px] text-[#667781] mt-1">
-              <span>9:41 AM</span>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#53bdeb" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="20 6 9 17 4 12"></polyline>
-                <polyline points="20 12 9 23 4 18"></polyline>
-              </svg>
+        {/* Phone frame */}
+        <div className="mx-auto w-full max-w-[380px]">
+          <div className="rounded-[44px] bg-near-black p-[10px] shadow-[0_30px_80px_-24px_rgba(14,26,26,0.45)]">
+            <div className="relative rounded-[36px] overflow-hidden bg-[#ECE5DD] h-[680px] flex flex-col">
+              {/* Status bar */}
+              <div className="bg-[#075E54] px-6 pt-3 pb-1 flex items-center justify-between text-white">
+                <span className="font-semibold text-[13px]">9:41</span>
+                <div className="flex items-center gap-1.5">
+                  <SignalIcon />
+                  <WifiIcon />
+                  <BatteryIcon />
+                </div>
+              </div>
+
+              {/* WhatsApp header */}
+              <div className="bg-[#075E54] px-3 pb-3 pt-2 flex items-center gap-3">
+                <ChevronLeftIcon />
+                <CayeAvatar size={38} />
+                <div className="flex-1 min-w-0">
+                  <div className="text-white text-[14.5px] font-medium leading-tight">
+                    Caye
+                  </div>
+                  <div className="text-white/70 text-[11px] leading-tight mt-0.5">
+                    {typing ? 'typing…' : 'online'}
+                  </div>
+                </div>
+                <VideoIcon />
+                <PhoneIcon />
+              </div>
+
+              {/* Messages */}
+              <div className="flex-1 overflow-y-auto px-3 py-3 space-y-1.5 bg-[#ECE5DD]">
+                {messages.map((m, i) => (
+                  <MessageBubble key={i} message={m} />
+                ))}
+                {typing && <TypingBubble />}
+                <div ref={messagesEndRef} />
+              </div>
+
+              {/* Suggestion bar or CTA */}
+              {!allDone ? (
+                <div className="bg-[#F0F0F0] border-t border-near-black/10 px-3 py-3 space-y-2">
+                  <div className="text-center font-mono text-[9px] uppercase tracking-[0.18em] text-near-black/40 mb-2">
+                    Tap a message
+                  </div>
+                  {availableOptions.map((opt) => (
+                    <button
+                      key={opt.prompt}
+                      onClick={() => handleTap(opt)}
+                      disabled={typing}
+                      className="block w-full text-left bg-[#DCF8C6] text-near-black text-[13px] px-3.5 py-2.5 rounded-2xl rounded-br-md hover:bg-[#cdefb5] active:bg-[#bce5a0] disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-[0_1px_2px_rgba(14,26,26,0.08)]"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span>{opt.prompt}</span>
+                        <SendIcon />
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <a
+                  href="/signup"
+                  className="bg-[#075E54] text-white text-center py-4 px-4 font-medium text-[14px] hover:bg-[#0a7565] transition-colors flex items-center justify-center gap-2"
+                >
+                  Try Caye yourself
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                    <path
+                      d="M3 7h8m0 0L7.5 3.5M11 7l-3.5 3.5"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </a>
+              )}
             </div>
           </div>
         </div>
 
-        {/* Caye Reply 2 */}
-        <div className="flex justify-end">
-          <div className="bg-[#d9fdd3] text-[#111b21] px-3.5 py-2 rounded-2xl rounded-tr-none shadow-sm max-w-[85%] text-[14.5px] leading-relaxed relative">
-            <p>Want me to hold the slot? Just send the deposit through here and you&apos;re booked: <span className="text-[#0a66c2] underline">wetravel.com/bimini/north-heritage</span></p>
-            <div className="flex items-center justify-end gap-1 text-[10px] text-[#667781] mt-1">
-              <span>9:41 AM</span>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#53bdeb" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="20 6 9 17 4 12"></polyline>
-                <polyline points="20 12 9 23 4 18"></polyline>
-              </svg>
-            </div>
-          </div>
-        </div>
-
-        {/* Caye System Toast — proof of work */}
-        <div className="flex justify-center mt-2">
-          <div className="bg-white/85 backdrop-blur-sm border border-[#e1dcd0] text-[#1e6157] font-mono text-[10.5px] font-semibold py-1 px-3 rounded-full flex items-center gap-1.5 shadow-sm">
-            <span className="w-1.5 h-1.5 rounded-full bg-[#0FB5A1] animate-pulse"></span>
-            Caye replied for you · slot held until paid
-          </div>
-        </div>
-
+        <p className="mt-8 text-center font-newsreader italic text-[14px] text-near-black/55 max-w-lg mx-auto">
+          No workflows to build. No automations to wire. You message Caye like
+          a coworker, and she figures the rest out.
+        </p>
       </div>
+    </section>
+  )
+}
 
-      {/* WhatsApp Input Footer */}
-      <div className="bg-[#f0f2f5] px-3 py-2.5 flex items-center gap-3">
-        <div className="flex items-center gap-2 opacity-60">
-          {/* Smiley Icon */}
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="12" cy="12" r="10"></circle>
-            <path d="M8 14s1.5 2 4 2 4-2 4-2"></path>
-            <line x1="9" y1="9" x2="9.01" y2="9"></line>
-            <line x1="15" y1="9" x2="15.01" y2="9"></line>
-          </svg>
-          {/* Plus Icon */}
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <line x1="12" y1="5" x2="12" y2="19"></line>
-            <line x1="5" y1="12" x2="19" y2="12"></line>
-          </svg>
-        </div>
-        
-        {/* Text Input Mock */}
-        <div className="flex-1 bg-white rounded-lg px-3 py-1.5 text-sm text-gray-400 border border-[#e6e6e6]">
-          Reply yes to confirm...
-        </div>
-        
-        {/* Mic Icon */}
-        <div className="opacity-60">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
-            <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
-            <line x1="12" y1="19" x2="12" y2="23"></line>
-            <line x1="8" y1="23" x2="16" y2="23"></line>
-          </svg>
+// ─── Sub-components ───────────────────────────────────────────────────
+
+function MessageBubble({ message }: { message: Message }) {
+  const isUser = message.from === 'user'
+  return (
+    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
+      <div
+        className={`max-w-[78%] px-3 py-2 shadow-[0_1px_1.5px_rgba(14,26,26,0.13)] ${
+          isUser
+            ? 'bg-[#DCF8C6] rounded-2xl rounded-br-md'
+            : 'bg-white rounded-2xl rounded-bl-md'
+        }`}
+      >
+        <p className="text-[13.5px] text-near-black leading-snug whitespace-pre-wrap">
+          {message.text}
+        </p>
+        <div className="flex items-center justify-end gap-1 mt-0.5">
+          <span className="text-[9.5px] text-near-black/45">{message.time}</span>
+          {isUser && (
+            <svg
+              width="14"
+              height="10"
+              viewBox="0 0 14 10"
+              fill="none"
+              className="text-[#34B7F1]"
+            >
+              <path
+                d="M1 5l2.5 2.5L7 4M6 5l2.5 2.5L13 1.5"
+                stroke="currentColor"
+                strokeWidth="1.2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          )}
         </div>
       </div>
     </div>
+  )
+}
+
+function TypingBubble() {
+  return (
+    <div className="flex justify-start">
+      <div className="bg-white rounded-2xl rounded-bl-md px-4 py-2.5 shadow-[0_1px_1.5px_rgba(14,26,26,0.13)]">
+        <div className="flex items-center gap-1">
+          <span className="w-1.5 h-1.5 rounded-full bg-near-black/40 animate-[typing-dot_1.2s_ease-in-out_infinite]" />
+          <span
+            className="w-1.5 h-1.5 rounded-full bg-near-black/40 animate-[typing-dot_1.2s_ease-in-out_infinite]"
+            style={{ animationDelay: '0.2s' }}
+          />
+          <span
+            className="w-1.5 h-1.5 rounded-full bg-near-black/40 animate-[typing-dot_1.2s_ease-in-out_infinite]"
+            style={{ animationDelay: '0.4s' }}
+          />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function CayeAvatar({ size }: { size: number }) {
+  return (
+    <div
+      className="rounded-full bg-cream flex items-center justify-center flex-shrink-0 shadow-[inset_0_0_0_1px_rgba(14,26,26,0.08)]"
+      style={{ width: size, height: size }}
+    >
+      <span
+        className="italic text-caribbean-teal-deep font-normal leading-none"
+        style={{
+          fontFamily: 'var(--font-instrument)',
+          fontSize: size * 0.62,
+          paddingBottom: size * 0.02,
+        }}
+      >
+        c
+      </span>
+    </div>
+  )
+}
+
+function ChevronLeftIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="white"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <polyline points="15 18 9 12 15 6" />
+    </svg>
+  )
+}
+
+function VideoIcon() {
+  return (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="white"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <polygon points="23 7 16 12 23 17 23 7" />
+      <rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
+    </svg>
+  )
+}
+
+function PhoneIcon() {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="white"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" />
+    </svg>
+  )
+}
+
+function SignalIcon() {
+  return (
+    <svg width="14" height="10" viewBox="0 0 16 12" fill="white">
+      <rect x="0" y="8" width="2.5" height="4" rx="0.5" />
+      <rect x="4" y="6" width="2.5" height="6" rx="0.5" />
+      <rect x="8" y="3" width="2.5" height="9" rx="0.5" />
+      <rect x="12" y="0" width="2.5" height="12" rx="0.5" opacity="0.4" />
+    </svg>
+  )
+}
+
+function WifiIcon() {
+  return (
+    <svg width="14" height="10" viewBox="0 0 16 12" fill="white">
+      <path d="M8 11c0.55 0 1-0.45 1-1s-0.45-1-1-1-1 0.45-1 1 0.45 1 1 1zM4.5 7.5l1.4 1.4c1.16-1.16 3.04-1.16 4.2 0L11.5 7.5c-1.94-1.94-5.06-1.94-7 0zm-3-3l1.4 1.4c2.81-2.81 7.39-2.81 10.2 0L14.5 4.5c-3.59-3.59-9.41-3.59-13 0z" />
+    </svg>
+  )
+}
+
+function BatteryIcon() {
+  return (
+    <svg width="22" height="10" viewBox="0 0 26 12" fill="none">
+      <rect
+        x="0.5"
+        y="0.5"
+        width="22"
+        height="11"
+        rx="2.5"
+        stroke="white"
+        strokeOpacity="0.6"
+        fill="none"
+      />
+      <rect x="2" y="2" width="16" height="8" rx="1.5" fill="white" />
+      <rect x="23" y="4" width="2" height="4" rx="0.5" fill="white" opacity="0.6" />
+    </svg>
+  )
+}
+
+function SendIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="text-near-black/45 flex-shrink-0"
+    >
+      <line x1="22" y1="2" x2="11" y2="13" />
+      <polygon points="22 2 15 22 11 13 2 9 22 2" />
+    </svg>
   )
 }

@@ -23,6 +23,11 @@
   50%      { transform: translateY(6px); opacity: 0.85; }
 }
 
+@keyframes typing-dot {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+  30%           { transform: translateY(-4px); opacity: 0.9; }
+}
+
 :root {
   /* Surfaces */
   --tc-bg:          #ffffff; /* Clean white base */

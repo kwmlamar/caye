@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { MeshGradient } from '@paper-design/shaders-react'
 import { CayeLogo } from '@/components/brand/CayeLogo'
-import { DashboardMockup } from '@/components/landing/DashboardMockup'
+import WhatsAppMockup from '@/components/landing/WhatsAppMockup'
 
 // Simplified landing — credibility surface, not a conversion engine.
 // Primary CTA goes straight to a demo request (lamar@tropitech.org).
@@ -197,8 +197,8 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* ── Dashboard mockup ─────────────────────────────────────── */}
-      <DashboardMockup />
+      {/* ── WhatsApp mockup — daily operator surface ─────────────── */}
+      <WhatsAppMockup />
 
       {/* ── Footer ────────────────────────────────────────────────── */}
       <footer className="relative z-10 border-t border-near-black/[0.08] bg-cream/80 backdrop-blur-sm">
