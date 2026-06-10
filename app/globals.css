@@ -28,6 +28,16 @@
   30%           { transform: translateY(-4px); opacity: 0.9; }
 }
 
+@keyframes phone-float {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  50%      { transform: translateY(-6px) rotate(-0.25deg); }
+}
+
+@keyframes bubble-invite {
+  0%, 100% { box-shadow: 0 1px 0 rgba(255,255,255,0.6) inset, 0 1px 2px rgba(14,26,26,0.10), 0 4px 12px -4px rgba(14,26,26,0.08), 0 0 0 0 rgba(0,119,139,0); }
+  50%      { box-shadow: 0 1px 0 rgba(255,255,255,0.6) inset, 0 1px 2px rgba(14,26,26,0.10), 0 6px 16px -4px rgba(14,26,26,0.12), 0 0 0 4px rgba(0,119,139,0.10); }
+}
+
 :root {
   /* Surfaces */
   --tc-bg:          #ffffff; /* Clean white base */
