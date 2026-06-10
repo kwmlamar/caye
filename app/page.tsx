@@ -16,7 +16,25 @@ import WhatsAppMockup from '@/components/landing/WhatsAppMockup'
 //   Eyebrow    — JetBrains Mono uppercase (editorial dateline)
 //   Body / nav — Geist (sans, product-UI default)
 
-const HERO_COLORS = ['#72b9bb', '#b5d9d9', '#ffd1bd', '#ffebe0', '#8cc5b8', '#dbf4a4']
+// Hero mesh-gradient palettes. To A/B test: swap which palette is
+// assigned to HERO_COLORS below and reload.
+//
+// Soft Caribbean (original) — all muted, spa-coded:
+const PALETTE_SOFT = ['#72b9bb', '#b5d9d9', '#ffd1bd', '#ffebe0', '#8cc5b8', '#dbf4a4']
+// Caribbean Deep — Bahamian flag DNA (aqua direct, gold echoed),
+// deeper sea-pool, sand + cream + mint harmonize. RECOMMENDED.
+const PALETTE_DEEP = ['#00778B', '#7DC9CB', '#FFD68F', '#FFEBE0', '#A8DCC0', '#F4E3A0']
+// Sunset / golden hour — warmer, more sand/coral, less green:
+const PALETTE_SUNSET = ['#3A8B98', '#A8D5D5', '#FFC4A0', '#FFE5D0', '#FFD68F', '#FFB5A8']
+// Reef + water — vivid snorkel palette, deepest contrast:
+const PALETTE_REEF = ['#2E7A8C', '#6DC4C9', '#FFD580', '#F5E8D0', '#A8DCC0', '#FF9B85']
+
+const HERO_COLORS = PALETTE_DEEP
+
+// Suppress unused-vars warnings — these are intentional toggles.
+void PALETTE_SOFT
+void PALETTE_SUNSET
+void PALETTE_REEF
 
 export default function LandingPage() {
   const [dimensions, setDimensions] = useState({ width: 1920, height: 1080 })
