@@ -1,10 +1,16 @@
 import 'server-only'
 import { createServiceClient } from '@/lib/supabase-server'
 import type { Tool } from '../types'
+import {
+  bookingRevenue,
+  BOOKING_WITH_SERVICE_PRICE_SELECT,
+  type ServiceJoin,
+} from '../_revenue'
 
 interface BookingRow {
   status: string
-  total_price: number | null
+  number_of_people: number | null
+  service: ServiceJoin[] | null
 }
 
 export const getTodaySummary: Tool<Record<string, never>> = {
@@ -23,19 +29,28 @@ export const getTodaySummary: Tool<Record<string, never>> = {
 
     const { data: bookings, error: bookingsErr } = await supabase
       .from('bookings')
-      .select('status, total_price')
+      .select(`status, number_of_people, ${BOOKING_WITH_SERVICE_PRICE_SELECT}`)
       .eq('user_id', ctx.workspaceId)
       .eq('booking_date', today)
       .neq('status', 'cancelled')
 
     if (bookingsErr) return { ok: false, error: bookingsErr.message }
 
-    const bookingRows = (bookings ?? []) as BookingRow[]
+    const bookingRows = (bookings ?? []) as unknown as BookingRow[]
     const confirmedCount = bookingRows.filter((b) => b.status === 'confirmed').length
     const pendingCount = bookingRows.filter((b) => b.status !== 'confirmed').length
     const revenueConfirmed = bookingRows
       .filter((b) => b.status === 'confirmed')
-      .reduce((sum, b) => sum + (b.total_price ?? 0), 0)
+      .reduce(
+        (sum, b) =>
+          sum +
+          bookingRevenue({
+            servicePrice: b.service?.[0]?.price,
+            priceType: b.service?.[0]?.price_type,
+            guests: b.number_of_people,
+          }),
+        0
+      )
 
     // Held items count — re-query rather than join to keep the query simple.
     let heldCount = 0

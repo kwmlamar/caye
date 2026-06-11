@@ -1,6 +1,11 @@
 import 'server-only'
 import { createServiceClient } from '@/lib/supabase-server'
 import type { Tool } from '../types'
+import {
+  bookingRevenue,
+  BOOKING_WITH_SERVICE_PRICE_SELECT,
+  type ServiceJoin,
+} from '../_revenue'
 
 interface GetRecentBookingsInput {
   days?: number
@@ -11,10 +16,9 @@ interface BookingRow {
   booking_date: string
   booking_time: string | null
   number_of_people: number | null
-  total_price: number | null
   status: string
   created_at: string
-  service: { name: string }[] | null
+  service: ServiceJoin[] | null
 }
 
 export const getRecentBookings: Tool<GetRecentBookingsInput> = {
@@ -40,7 +44,7 @@ export const getRecentBookings: Tool<GetRecentBookingsInput> = {
     const { data, error } = await supabase
       .from('bookings')
       .select(
-        'customer_name, booking_date, booking_time, number_of_people, total_price, status, created_at, service:booking_services(name)'
+        `customer_name, booking_date, booking_time, number_of_people, status, created_at, ${BOOKING_WITH_SERVICE_PRICE_SELECT}`
       )
       .eq('user_id', ctx.workspaceId)
       .gte('created_at', cutoff)
@@ -59,7 +63,11 @@ export const getRecentBookings: Tool<GetRecentBookingsInput> = {
           date: r.booking_date,
           time: r.booking_time?.slice(0, 5) ?? null,
           guests: r.number_of_people,
-          price: r.total_price,
+          price: bookingRevenue({
+            servicePrice: r.service?.[0]?.price,
+            priceType: r.service?.[0]?.price_type,
+            guests: r.number_of_people,
+          }),
           status: r.status,
           service: r.service?.[0]?.name ?? null,
           created_at: r.created_at,

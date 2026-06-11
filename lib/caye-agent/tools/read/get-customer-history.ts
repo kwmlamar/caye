@@ -1,6 +1,11 @@
 import 'server-only'
 import { createServiceClient } from '@/lib/supabase-server'
 import type { Tool } from '../types'
+import {
+  bookingRevenue,
+  BOOKING_WITH_SERVICE_PRICE_SELECT,
+  type ServiceJoin,
+} from '../_revenue'
 
 interface GetCustomerHistoryInput {
   contact_id: string
@@ -11,8 +16,7 @@ interface BookingRow {
   booking_time: string | null
   status: string
   number_of_people: number | null
-  total_price: number | null
-  service: { name: string }[] | null
+  service: ServiceJoin[] | null
 }
 
 interface MessageRow {
@@ -52,7 +56,7 @@ export const getCustomerHistory: Tool<GetCustomerHistoryInput> = {
     const { data: bookings } = await supabase
       .from('bookings')
       .select(
-        'booking_date, booking_time, status, number_of_people, total_price, service:booking_services(name)'
+        `booking_date, booking_time, status, number_of_people, ${BOOKING_WITH_SERVICE_PRICE_SELECT}`
       )
       .eq('user_id', ctx.workspaceId)
       .eq('contact_id', args.contact_id)
@@ -99,7 +103,11 @@ export const getCustomerHistory: Tool<GetCustomerHistoryInput> = {
           time: b.booking_time?.slice(0, 5) ?? null,
           status: b.status,
           guests: b.number_of_people,
-          price: b.total_price,
+          price: bookingRevenue({
+            servicePrice: b.service?.[0]?.price,
+            priceType: b.service?.[0]?.price_type,
+            guests: b.number_of_people,
+          }),
           service: b.service?.[0]?.name ?? null,
         })),
         recent_messages: messageRows,

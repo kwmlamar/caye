@@ -1,6 +1,11 @@
 import 'server-only'
 import { createServiceClient } from '@/lib/supabase-server'
 import type { Tool } from '../types'
+import {
+  bookingRevenue,
+  BOOKING_WITH_SERVICE_PRICE_SELECT,
+  type ServiceJoin,
+} from '../_revenue'
 
 interface GetRevenueInput {
   period?: 'today' | 'week' | 'month'
@@ -8,8 +13,9 @@ interface GetRevenueInput {
 
 interface BookingRow {
   status: string
-  total_price: number | null
   booking_date: string
+  number_of_people: number | null
+  service: ServiceJoin[] | null
 }
 
 export const getRevenue: Tool<GetRevenueInput> = {
@@ -40,17 +46,28 @@ export const getRevenue: Tool<GetRevenueInput> = {
 
     const { data, error } = await supabase
       .from('bookings')
-      .select('status, total_price, booking_date')
+      .select(`status, booking_date, number_of_people, ${BOOKING_WITH_SERVICE_PRICE_SELECT}`)
       .eq('user_id', ctx.workspaceId)
       .gte('booking_date', startISO)
       .lte('booking_date', endISO)
 
     if (error) return { ok: false, error: error.message }
-    const rows = (data ?? []) as BookingRow[]
+    const rows = (data ?? []) as unknown as BookingRow[]
     const confirmed = rows.filter((r) => r.status === 'confirmed')
     const pending = rows.filter((r) => r.status !== 'confirmed' && r.status !== 'cancelled')
-    const confirmedRevenue = confirmed.reduce((s, r) => s + (r.total_price ?? 0), 0)
-    const pendingRevenue = pending.reduce((s, r) => s + (r.total_price ?? 0), 0)
+    const sumRevenue = (rs: BookingRow[]) =>
+      rs.reduce(
+        (s, r) =>
+          s +
+          bookingRevenue({
+            servicePrice: r.service?.[0]?.price,
+            priceType: r.service?.[0]?.price_type,
+            guests: r.number_of_people,
+          }),
+        0
+      )
+    const confirmedRevenue = sumRevenue(confirmed)
+    const pendingRevenue = sumRevenue(pending)
 
     return {
       ok: true,
