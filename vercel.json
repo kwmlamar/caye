@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/caye/morning-briefing/cron",
+      "schedule": "0 * * * *"
+    }
+  ]
+}
