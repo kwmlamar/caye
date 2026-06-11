@@ -10,7 +10,7 @@
 // shadow, multi-layer atmospheric glow, staggered scroll reveal.
 
 import { useEffect, useRef, useState } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { motion, AnimatePresence, useInView, useReducedMotion } from 'framer-motion'
 
 interface Message {
   id: string
@@ -42,9 +42,10 @@ const CONVERSATIONS: ConvOption[] = [
   },
 ]
 
-// Pre-seeded conversation so the phone screen feels lived-in instead of
-// empty. Shows a real morning briefing → operator question → Caye reply
-// loop before the user is invited to tap a suggestion.
+// Opening conversation. Auto-plays with typing indicators when the phone
+// scrolls into view — a morning briefing → operator question → Caye reply
+// loop — then invites the visitor to tap a suggestion. Reduced-motion
+// visitors get the full conversation statically.
 const INITIAL_MESSAGES: Message[] = [
   {
     id: 'i1',
@@ -83,14 +84,60 @@ function nowTime(): string {
   })
 }
 
+// Per-message autoplay pacing. Caye's messages get a typing pause scaled
+// to length (reads as her composing); the operator's reply lands after a
+// short read-then-respond beat.
+function typingDelay(m: Message): number {
+  if (m.from === 'user') return 900
+  return Math.min(800 + m.text.length * 9, 2000)
+}
+
 export default function WhatsAppMockup() {
-  const [messages, setMessages] = useState<Message[]>(INITIAL_MESSAGES)
+  const prefersReducedMotion = useReducedMotion()
+  const [messages, setMessages] = useState<Message[]>([])
+  const [introDone, setIntroDone] = useState(false)
   const [usedPrompts, setUsedPrompts] = useState<Set<string>>(new Set())
   const [typing, setTyping] = useState(false)
-  const messagesEndRef = useRef<HTMLDivElement>(null)
+  const scrollAreaRef = useRef<HTMLDivElement>(null)
+  const phoneRef = useRef<HTMLDivElement>(null)
+  const phoneInView = useInView(phoneRef, { once: true, margin: '-180px' })
+  const introStarted = useRef(false)
 
+  // Auto-play the opening conversation once the phone is on screen.
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    if (!phoneInView || introStarted.current) return
+    introStarted.current = true
+
+    if (prefersReducedMotion) {
+      setMessages(INITIAL_MESSAGES)
+      setIntroDone(true)
+      return
+    }
+
+    let cancelled = false
+    ;(async () => {
+      await new Promise((r) => setTimeout(r, 600))
+      for (const m of INITIAL_MESSAGES) {
+        if (cancelled) return
+        if (m.from === 'caye') setTyping(true)
+        await new Promise((r) => setTimeout(r, typingDelay(m)))
+        if (cancelled) return
+        setTyping(false)
+        setMessages((prev) => [...prev, m])
+      }
+      await new Promise((r) => setTimeout(r, 400))
+      if (!cancelled) setIntroDone(true)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [phoneInView, prefersReducedMotion])
+
+  // Keep the chat pinned to the latest message — scroll the chat area
+  // directly (scrollIntoView could yank the page while autoplay runs).
+  useEffect(() => {
+    const el = scrollAreaRef.current
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
   }, [messages, typing])
 
   async function handleTap(option: ConvOption) {
@@ -199,6 +246,7 @@ export default function WhatsAppMockup() {
 
           {/* Phone with gentle float */}
           <motion.div
+            ref={phoneRef}
             initial={{ opacity: 0, y: 30, scale: 0.97 }}
             whileInView={{ opacity: 1, y: 0, scale: 1 }}
             viewport={{ once: true, margin: '-80px' }}
@@ -252,7 +300,10 @@ export default function WhatsAppMockup() {
                 </div>
 
                 {/* Messages — over WhatsApp doodle wallpaper */}
-                <div className="relative flex-1 overflow-y-auto px-3 py-3 space-y-1.5">
+                <div
+                  ref={scrollAreaRef}
+                  className="relative flex-1 overflow-y-auto px-3 py-3 space-y-1.5"
+                >
                   <DoodleWallpaper />
                   <div className="relative z-10 space-y-1.5">
                     <DateChip>Today</DateChip>
@@ -281,14 +332,17 @@ export default function WhatsAppMockup() {
                         <TypingBubble />
                       </motion.div>
                     )}
-                    <div ref={messagesEndRef} />
                   </div>
                 </div>
 
-                {/* Suggestion bar or CTA */}
+                {/* Suggestion bar or CTA — hidden until the opening
+                    conversation finishes playing */}
                 <div className="relative z-10">
-                  {!allDone ? (
-                    <div
+                  {!introDone ? null : !allDone ? (
+                    <motion.div
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.4, ease: [0.25, 0.1, 0.25, 1] }}
                       className="border-t border-near-black/10 px-3 py-2.5 space-y-1.5"
                       style={{ background: 'rgba(241,236,225,0.92)' }}
                     >
@@ -326,7 +380,7 @@ export default function WhatsAppMockup() {
                           </div>
                         </motion.button>
                       ))}
-                    </div>
+                    </motion.div>
                   ) : (
                     <motion.a
                       href="/signup"
@@ -377,7 +431,9 @@ export default function WhatsAppMockup() {
 
 function PhoneFrame({ children }: { children: React.ReactNode }) {
   return (
-    <div className="relative" style={{ width: 380 }}>
+    // Shrinks below 380px so the phone never clips on narrow viewports —
+    // the target customer is reading this on a phone.
+    <div className="relative" style={{ width: 'min(380px, calc(100vw - 40px))' }}>
       {/* Side buttons (right) */}
       <div
         aria-hidden
