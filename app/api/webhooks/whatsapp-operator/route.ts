@@ -24,7 +24,7 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { classifyOperatorIntent } from '@/lib/whatsapp/intent'
 import { getPendingHeldItems } from '@/lib/whatsapp/pending'
 import { dispatchOperatorIntent } from '@/lib/whatsapp/actions'
-import { enqueueOutbound } from '@/lib/whatsapp/outbound'
+import { enqueueOutbound, sendFreeFormWhatsApp } from '@/lib/whatsapp/outbound'
 import { cayeAgent } from '@/lib/caye-agent'
 
 // Held-item action intents stay on the legacy classifier+dispatch path
@@ -146,7 +146,7 @@ async function handleOneInbound(
   // Look up the workspace by operator number. Try both with and without leading '+'.
   const { data: cfg } = await supabase
     .from('workspace_ai_config')
-    .select('workspace_id, whatsapp_outbound_enabled')
+    .select('workspace_id, whatsapp_outbound_enabled, operator_whatsapp_number')
     .or(`operator_whatsapp_number.eq.${normalized},operator_whatsapp_number.eq.+${normalized}`)
     .maybeSingle()
 
@@ -264,12 +264,30 @@ async function handleOneInbound(
       return
     }
 
-    await enqueueOutbound({
-      workspaceId,
-      kind: 'ack',
-      payload: { body: agentResult.replyText },
-      idempotencyKey: `back-office-${message.id}`,
-    })
+    // Send back-office replies synchronously instead of via the queue.
+    // The queue requires a cron worker, which Vercel Hobby doesn't support
+    // at the cadence we need. Chat replies don't need queue semantics
+    // anyway — if Meta send fails, the operator just re-texts. We keep
+    // the queue path for proactive notifications (briefings, urgent
+    // alerts) where retry actually matters.
+    if (cfg.operator_whatsapp_number) {
+      const sendResult = await sendFreeFormWhatsApp(
+        cfg.operator_whatsapp_number,
+        agentResult.replyText,
+        `back-office-${message.id}`
+      )
+      if (sendResult.status === 'failed') {
+        console.error(
+          `[whatsapp-operator] Meta send failed for ${workspaceId}:`,
+          sendResult.error,
+          { transient: sendResult.transient, blocked: sendResult.blocked }
+        )
+      }
+    } else {
+      console.warn(
+        `[whatsapp-operator] no operator_whatsapp_number on workspace ${workspaceId}; reply produced but not sent`
+      )
+    }
 
     // Persist every turn produced during the tool loop (intermediate
     // assistant turns with tool_use blocks, intermediate user turns
