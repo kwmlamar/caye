@@ -16,6 +16,9 @@ import { unmuteCaye } from './write-low/unmute-caye'
 import { archiveThread } from './write-low/archive-thread'
 import { addInternalNote } from './write-low/add-internal-note'
 import { sendReply } from './write-high/send-reply'
+import { confirmBooking } from './write-high/confirm-booking'
+import { rescheduleBooking } from './write-high/reschedule-booking'
+import { cancelBooking } from './write-high/cancel-booking'
 
 /**
  * All tools available to the back-office agent.
@@ -47,6 +50,9 @@ export const TOOL_REGISTRY: AnyTool[] = [
   addInternalNote as AnyTool,
   // High-risk write (confirmation flow enforced via prompt)
   sendReply as AnyTool,
+  confirmBooking as AnyTool,
+  rescheduleBooking as AnyTool,
+  cancelBooking as AnyTool,
 ]
 
 export function findTool(name: string): AnyTool | undefined {
