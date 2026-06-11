@@ -9,18 +9,24 @@ import { getRecentActivity } from './read/get-recent-activity'
 import { getRecentBookings } from './read/get-recent-bookings'
 import { getPendingQuotes } from './read/get-pending-quotes'
 import { searchThreads } from './read/search-threads'
+import { markHandled } from './write-low/mark-handled'
+import { skipHeldItem } from './write-low/skip-held-item'
+import { muteCaye } from './write-low/mute-caye'
+import { unmuteCaye } from './write-low/unmute-caye'
+import { archiveThread } from './write-low/archive-thread'
+import { addInternalNote } from './write-low/add-internal-note'
 
 /**
  * All tools available to the back-office agent.
  *
- * Read tools (10): #38 + #40 — autonomous execution, no confirmation.
- * Low-risk write tools: #37 (mute, mark_handled, archive, ...)
- * High-risk write tools: #42/#43 — gated through confirmation flow.
+ * Read tools (10): #38 + #40 — autonomous execution
+ * Low-risk write tools (6): #37 — autonomous execution
+ * High-risk write tools (6): #42/#43 — gated through confirmation flow
  */
 type AnyTool = Tool<never>
 
 export const TOOL_REGISTRY: AnyTool[] = [
-  // Read tools — autonomous
+  // Read
   getCalendar as AnyTool,
   getHeldQueue as AnyTool,
   getTodaySummary as AnyTool,
@@ -31,6 +37,13 @@ export const TOOL_REGISTRY: AnyTool[] = [
   getRecentBookings as AnyTool,
   getPendingQuotes as AnyTool,
   searchThreads as AnyTool,
+  // Low-risk write
+  markHandled as AnyTool,
+  skipHeldItem as AnyTool,
+  muteCaye as AnyTool,
+  unmuteCaye as AnyTool,
+  archiveThread as AnyTool,
+  addInternalNote as AnyTool,
 ]
 
 export function findTool(name: string): AnyTool | undefined {
