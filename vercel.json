@@ -3,6 +3,10 @@
     {
       "path": "/api/caye/morning-briefing/cron",
       "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/caye/outbound-worker",
+      "schedule": "* * * * *"
     }
   ]
 }

@@ -71,8 +71,11 @@ interface WorkspaceConfig {
 export async function GET(request: NextRequest) {
   const secret = process.env.CRON_SECRET
   if (secret) {
-    const provided = request.headers.get('x-cron-secret')
-    if (provided !== secret) {
+    // Accept Vercel cron's Authorization: Bearer header OR legacy
+    // x-cron-secret header (for manual/external triggers).
+    const auth = request.headers.get('authorization')
+    const legacy = request.headers.get('x-cron-secret')
+    if (auth !== `Bearer ${secret}` && legacy !== secret) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
   }
