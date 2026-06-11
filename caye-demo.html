@@ -1,0 +1,681 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Caye — WhatsApp Demo</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    background: #071a17;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    padding: 24px 12px;
+    overflow: hidden;
+  }
+
+  /* ── Full-screen cards ──────────────────────────────────────────── */
+  .card {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    padding: 40px 28px;
+    text-align: center;
+    z-index: 100;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.6s ease;
+  }
+  .card.show { opacity: 1; pointer-events: auto; }
+
+  .card::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(ellipse 80% 60% at 30% 25%, rgba(0,119,139,0.55) 0%, transparent 65%),
+      radial-gradient(ellipse 70% 50% at 75% 70%, rgba(125,201,203,0.35) 0%, transparent 60%),
+      radial-gradient(ellipse 60% 40% at 55% 45%, rgba(255,214,143,0.18) 0%, transparent 55%),
+      #071a17;
+    z-index: -1;
+  }
+
+  /* ── Hook card — pain lines that stack in one at a time ─────────── */
+  .hook-line {
+    font-family: Georgia, 'Times New Roman', serif;
+    font-size: 27px;
+    font-weight: 400;
+    color: #f5f0e8;
+    line-height: 1.3;
+    max-width: 320px;
+    opacity: 0;
+    transform: translateY(14px);
+    transition: opacity 0.55s ease, transform 0.55s ease;
+  }
+  .hook-line.in { opacity: 1; transform: translateY(0); }
+  .hook-line.punch {
+    color: #ffd68f;
+    font-style: italic;
+    font-size: 31px;
+  }
+
+  .card-eyebrow {
+    font-size: 11px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.5);
+    font-weight: 500;
+  }
+
+  .card-logo {
+    font-family: Georgia, 'Times New Roman', serif;
+    font-size: 52px;
+    font-style: italic;
+    font-weight: 400;
+    color: #7dc9cb;
+    line-height: 1;
+    letter-spacing: -0.02em;
+  }
+
+  .card-headline {
+    font-family: Georgia, 'Times New Roman', serif;
+    font-size: 26px;
+    font-weight: 400;
+    color: #f5f0e8;
+    line-height: 1.25;
+    max-width: 320px;
+  }
+
+  .card-sub {
+    font-size: 14px;
+    color: rgba(255,255,255,0.55);
+    line-height: 1.5;
+    max-width: 280px;
+  }
+
+  .card-divider {
+    width: 40px;
+    height: 1px;
+    background: rgba(125,201,203,0.4);
+  }
+
+  .card-cta {
+    margin-top: 8px;
+    font-size: 13px;
+    color: #7dc9cb;
+    letter-spacing: 0.06em;
+  }
+
+  /* ── Phone frame ────────────────────────────────────────────────── */
+  .phone-wrap {
+    opacity: 0;
+    transition: opacity 0.6s ease;
+    width: 100%;
+    max-width: 380px;
+    display: flex;
+    flex-direction: column;
+  }
+  .phone-wrap.show { opacity: 1; }
+
+  .phone {
+    width: 100%;
+    height: min(730px, calc(100vh - 48px));
+    min-height: 540px;
+    background: #111;
+    border-radius: 44px;
+    padding: 10px;
+    box-shadow:
+      0 0 0 1.5px rgba(255,255,255,0.07),
+      0 40px 80px rgba(0,0,0,0.7),
+      0 12px 28px rgba(0,0,0,0.5);
+    position: relative;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .phone-screen {
+    flex: 1;
+    border-radius: 36px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    background: #ECE5DD;
+    position: relative;
+  }
+
+  .notch {
+    position: absolute;
+    top: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 110px;
+    height: 26px;
+    background: #000;
+    border-radius: 14px;
+    z-index: 30;
+  }
+
+  /* ── Status bar ─────────────────────────────────────────────────── */
+  .status-bar {
+    background: #075E54;
+    padding: 14px 18px 0 18px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+    z-index: 25;
+  }
+  .sb-time { color: #fff; font-size: 14px; font-weight: 600; }
+  .sb-icons { display: flex; align-items: center; gap: 5px; }
+
+  /* ── WhatsApp header ────────────────────────────────────────────── */
+  .wa-header {
+    background: #075E54;
+    color: #fff;
+    padding: 8px 12px 10px 12px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+    z-index: 20;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+  }
+
+  .wa-avatar {
+    width: 38px;
+    height: 38px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #c9a86a, #a8845a);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    color: #fff;
+    font-weight: 600;
+    position: relative;
+    flex-shrink: 0;
+  }
+
+  .online-dot {
+    position: absolute;
+    bottom: 0; right: 0;
+    width: 10px; height: 10px;
+    background: #25D366;
+    border-radius: 50%;
+    border: 2px solid #075E54;
+  }
+
+  .wa-title { flex: 1; min-width: 0; }
+  .wa-name { font-size: 15.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .wa-status { font-size: 12px; opacity: 0.85; min-height: 14px; }
+  .wa-icons { display: flex; gap: 18px; align-items: center; }
+
+  /* ── Chat ───────────────────────────────────────────────────────── */
+  .chat {
+    flex: 1;
+    overflow-y: auto;
+    padding: 14px 10px 10px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    background: #ECE5DD;
+    background-image:
+      url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='84' height='84' viewBox='0 0 84 84'><g fill='none' stroke='%23a89882' stroke-width='1' stroke-linecap='round' opacity='0.3'><circle cx='12' cy='14' r='2'/><path d='M30 22 q4 -3 8 0 t8 0'/><path d='M58 12 l3 3 l3 -3 l-3 -3 z'/><circle cx='72' cy='28' r='1.5'/><path d='M14 44 q3 -4 6 0'/><path d='M40 50 c2 -2 4 -2 6 0'/><circle cx='66' cy='52' r='2'/><path d='M22 72 l4 -2 l-2 4 z'/><path d='M48 76 q3 -3 6 0'/><circle cx='78' cy='70' r='1.5'/></g></svg>");
+    background-size: 84px 84px;
+    scroll-behavior: smooth;
+  }
+
+  .day-chip {
+    align-self: center;
+    background: rgba(225,217,201,0.95);
+    color: #5b6b70;
+    font-size: 11.5px;
+    padding: 5px 12px;
+    border-radius: 8px;
+    box-shadow: 0 1px 1px rgba(0,0,0,0.08);
+    margin-bottom: 4px;
+  }
+
+  .msg {
+    max-width: 78%;
+    padding: 7px 9px 5px 9px;
+    border-radius: 9px;
+    font-size: 14px;
+    line-height: 1.38;
+    color: #111b21;
+    box-shadow: 0 1px 1px rgba(0,0,0,0.1);
+    position: relative;
+    opacity: 0;
+    transform: translateY(10px) scale(0.97);
+    animation: msgIn 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.1) forwards;
+    word-wrap: break-word;
+  }
+
+  @keyframes msgIn {
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+
+  .msg .meta {
+    float: right;
+    margin: 5px -2px -2px 8px;
+    font-size: 10.5px;
+    color: rgba(0,0,0,0.42);
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    white-space: nowrap;
+  }
+
+  .ticks { color: #4FC3F7; font-size: 11px; letter-spacing: -3px; }
+
+  /* Customer — left, white (incoming) */
+  .msg.customer {
+    align-self: flex-start;
+    background: #fff;
+    border-top-left-radius: 2px;
+  }
+  .msg.customer::after {
+    content: "";
+    position: absolute;
+    top: 0; left: -7px;
+    border: 7px solid transparent;
+    border-top-color: #fff;
+    border-right-color: #fff;
+    border-bottom: 0; border-left: 0;
+  }
+
+  /* Caye replying as the business — right, WhatsApp green (outgoing) */
+  .msg.caye {
+    align-self: flex-end;
+    background: #DCF8C6;
+    border-top-right-radius: 2px;
+  }
+  .msg.caye::after {
+    content: "";
+    position: absolute;
+    top: 0; right: -7px;
+    border: 7px solid transparent;
+    border-top-color: #DCF8C6;
+    border-left-color: #DCF8C6;
+    border-bottom: 0; border-right: 0;
+  }
+
+  /* ── In-chat overlay line (the conversion punch) ────────────────── */
+  .chat-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 32px;
+    background: rgba(7,26,23,0.82);
+    backdrop-filter: blur(3px);
+    z-index: 40;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.5s ease;
+  }
+  .chat-overlay.show { opacity: 1; }
+  .chat-overlay p {
+    font-family: Georgia, 'Times New Roman', serif;
+    font-size: 23px;
+    font-style: italic;
+    color: #f5f0e8;
+    text-align: center;
+    line-height: 1.4;
+    max-width: 270px;
+  }
+  .chat-overlay .gold { color: #ffd68f; font-style: normal; }
+
+  /* ── Typing indicator (right side — Caye composing) ─────────────── */
+  .typing {
+    align-self: flex-end;
+    background: #DCF8C6;
+    border-radius: 9px;
+    border-top-right-radius: 2px;
+    padding: 11px 14px;
+    box-shadow: 0 1px 1px rgba(0,0,0,0.1);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    position: relative;
+    opacity: 0;
+    transform: translateY(8px);
+    animation: msgIn 0.22s ease-out forwards;
+  }
+  .typing::after {
+    content: "";
+    position: absolute;
+    top: 0; right: -7px;
+    border: 7px solid transparent;
+    border-top-color: #DCF8C6;
+    border-left-color: #DCF8C6;
+    border-bottom: 0; border-right: 0;
+  }
+  .typing .dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: #6a9a5e;
+    animation: bounce 1.2s infinite ease-in-out;
+  }
+  .typing .dot:nth-child(2) { animation-delay: 0.15s; }
+  .typing .dot:nth-child(3) { animation-delay: 0.3s; }
+  @keyframes bounce {
+    0%, 60%, 100% { transform: translateY(0); opacity: 0.45; }
+    30% { transform: translateY(-5px); opacity: 1; }
+  }
+
+  /* ── Input bar ──────────────────────────────────────────────────── */
+  .input-bar {
+    flex-shrink: 0;
+    background: #F0F0F0;
+    padding: 8px 10px 16px 10px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .input-pill {
+    flex: 1;
+    background: #fff;
+    border-radius: 22px;
+    padding: 9px 14px;
+    font-size: 13.5px;
+    color: #9aa5aa;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .send-btn {
+    width: 38px; height: 38px;
+    border-radius: 50%;
+    background: #075E54;
+    color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+
+  /* ── Full-screen on phone ───────────────────────────────────────── */
+  @media (max-width: 420px) {
+    body { padding: 0; background: #ECE5DD; }
+    .phone-wrap { max-width: 100%; }
+    .phone {
+      max-width: 100%; height: 100vh; height: 100dvh;
+      min-height: 0; border-radius: 0; padding: 0;
+      box-shadow: none;
+    }
+    .phone-screen { border-radius: 0; }
+    .notch { display: none; }
+    .status-bar { padding-top: max(14px, env(safe-area-inset-top)); }
+    .card { padding: 40px 28px max(40px, env(safe-area-inset-bottom)); }
+  }
+</style>
+</head>
+<body>
+
+<!-- Hook card — the pain, line by line -->
+<div class="card" id="hook-card">
+  <div class="hook-line" id="hook-1">You're out on the water.</div>
+  <div class="hook-line" id="hook-2">A customer messages you.</div>
+  <div class="hook-line" id="hook-3">You see it 4 hours later.</div>
+  <div class="hook-line punch" id="hook-4">They already booked with someone else.</div>
+</div>
+
+<!-- Transition card -->
+<div class="card" id="meet-card">
+  <div class="card-eyebrow">What if it answered itself?</div>
+  <div class="card-logo">Caye</div>
+</div>
+
+<!-- Outro card -->
+<div class="card" id="outro-card">
+  <div class="card-logo">Caye</div>
+  <div class="card-divider"></div>
+  <div class="card-headline">Your AI receptionist,<br>working 24/7 on WhatsApp.</div>
+  <div class="card-sub">No app to learn. No setup headache.<br>She just starts answering.</div>
+  <div class="card-cta">lamar@tropitech.org</div>
+</div>
+
+<!-- Phone demo -->
+<div class="phone-wrap" id="phone-wrap">
+  <div class="phone">
+    <div class="phone-screen">
+      <div class="notch"></div>
+
+      <div class="status-bar">
+        <div class="sb-time">9:41</div>
+        <div class="sb-icons">
+          <svg width="17" height="12" viewBox="0 0 17 12" fill="white" xmlns="http://www.w3.org/2000/svg">
+            <rect x="0" y="8" width="3" height="4" rx="0.5"/>
+            <rect x="4.5" y="5.5" width="3" height="6.5" rx="0.5"/>
+            <rect x="9" y="3" width="3" height="9" rx="0.5"/>
+            <rect x="13.5" y="0" width="3" height="12" rx="0.5" opacity="0.35"/>
+          </svg>
+          <svg width="16" height="12" viewBox="0 0 16 12" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M8 9.5a1.25 1.25 0 1 1 0 2.5 1.25 1.25 0 0 1 0-2.5z" fill="white"/>
+            <path d="M4.5 6.8C5.5 5.8 6.7 5.2 8 5.2s2.5.6 3.5 1.6" stroke="white" stroke-width="1.4" stroke-linecap="round" fill="none"/>
+            <path d="M1.5 4C3.3 2.2 5.5 1.2 8 1.2S12.7 2.2 14.5 4" stroke="white" stroke-width="1.4" stroke-linecap="round" fill="none"/>
+          </svg>
+          <svg width="25" height="12" viewBox="0 0 25 12" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect x="0.5" y="0.5" width="21" height="11" rx="2.5" stroke="white" stroke-opacity="0.6"/>
+            <rect x="2" y="2" width="15" height="8" rx="1.5" fill="white"/>
+            <path d="M23 4v4a2 2 0 0 0 0-4z" fill="white" opacity="0.5"/>
+          </svg>
+        </div>
+      </div>
+
+      <div class="wa-header">
+        <svg width="10" height="17" viewBox="0 0 10 17" fill="none" style="margin-right:2px;flex-shrink:0">
+          <path d="M8.5 1.5 2 8.5l6.5 7" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <div class="wa-avatar">S<span class="online-dot"></span></div>
+        <div class="wa-title">
+          <div class="wa-name">Sarah · Inquiry</div>
+          <div class="wa-status" id="status">online</div>
+        </div>
+        <div class="wa-icons">
+          <svg width="22" height="16" viewBox="0 0 22 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect x="1" y="2" width="13" height="12" rx="2" stroke="white" stroke-width="1.6" fill="none"/>
+            <path d="M14 6l6-4v12l-6-4V6z" stroke="white" stroke-width="1.6" stroke-linejoin="round" fill="none"/>
+          </svg>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.6 21 3 13.4 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+          </svg>
+          <svg width="4" height="18" viewBox="0 0 4 20" fill="white" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="2" cy="2" r="2"/>
+            <circle cx="2" cy="10" r="2"/>
+            <circle cx="2" cy="18" r="2"/>
+          </svg>
+        </div>
+      </div>
+
+      <div class="chat" id="chat"></div>
+
+      <!-- The conversion punch, overlaid on the finished chat -->
+      <div class="chat-overlay" id="chat-overlay">
+        <p>Booked in <span class="gold">40 seconds</span> —<br>and you never touched your&nbsp;phone.</p>
+      </div>
+
+      <div class="input-bar">
+        <div class="input-pill">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="12" cy="12" r="10" stroke="#9aa5aa" stroke-width="1.6" fill="none"/>
+            <path d="M8.5 14.5s1 1.5 3.5 1.5 3.5-1.5 3.5-1.5" stroke="#9aa5aa" stroke-width="1.6" stroke-linecap="round" fill="none"/>
+            <circle cx="9" cy="10" r="1" fill="#9aa5aa"/>
+            <circle cx="15" cy="10" r="1" fill="#9aa5aa"/>
+          </svg>
+          <span style="color:#9aa5aa;font-size:14px;">Message</span>
+          <span style="margin-left:auto;display:flex;gap:12px;align-items:center;">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" stroke="#9aa5aa" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" stroke="#9aa5aa" stroke-width="1.6" stroke-linejoin="round" fill="none"/>
+              <circle cx="12" cy="13" r="4" stroke="#9aa5aa" stroke-width="1.6" fill="none"/>
+            </svg>
+          </span>
+        </div>
+        <div class="send-btn">
+          <svg width="16" height="20" viewBox="0 0 24 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect x="8" y="1" width="8" height="14" rx="4" fill="white"/>
+            <path d="M4 13a8 8 0 0 0 16 0" stroke="white" stroke-width="1.8" stroke-linecap="round" fill="none"/>
+            <line x1="12" y1="21" x2="12" y2="25" stroke="white" stroke-width="1.8" stroke-linecap="round"/>
+            <line x1="9" y1="25" x2="15" y2="25" stroke="white" stroke-width="1.8" stroke-linecap="round"/>
+          </svg>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const chat      = document.getElementById('chat');
+  const statusEl  = document.getElementById('status');
+  const phoneWrap = document.getElementById('phone-wrap');
+  const hookCard  = document.getElementById('hook-card');
+  const meetCard  = document.getElementById('meet-card');
+  const outroCard = document.getElementById('outro-card');
+  const overlay   = document.getElementById('chat-overlay');
+  const hookLines = [1, 2, 3, 4].map(i => document.getElementById('hook-' + i));
+
+  // The booking, seen from the operator's business WhatsApp:
+  // customer on the left (white), Caye replying as the business on the
+  // right (green, with ticks). Tight — four messages, one beat each.
+  const script = [
+    {
+      from: 'customer',
+      text: 'Hi! Any space Saturday for 2 adults? 🌴',
+      time: '10:41 AM',
+      pause: 1100,
+    },
+    {
+      from: 'caye',
+      text: "Hey Sarah! Yes — Saturday has space for 2. Full day 8am–5pm with snorkeling, beach time, and lunch. $320 for both. Want me to hold your spots?",
+      time: '10:41 AM',
+      typing: 2000,
+      pause: 1400,
+    },
+    {
+      from: 'customer',
+      text: 'Yes please!! 🙌',
+      time: '10:42 AM',
+      pause: 1000,
+    },
+    {
+      from: 'caye',
+      text: "You're booked ✅ Confirmation and payment link coming your way. See you Saturday, Sarah! 🌊",
+      time: '10:42 AM',
+      typing: 1600,
+      pause: 1600,
+    },
+  ];
+
+  const wait = ms => new Promise(r => setTimeout(r, ms));
+
+  function scrollDown() { chat.scrollTop = chat.scrollHeight; }
+
+  function escapeHtml(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  function addDayChip(label) {
+    const chip = document.createElement('div');
+    chip.className = 'day-chip';
+    chip.textContent = label;
+    chat.appendChild(chip);
+  }
+
+  function addMessage(msg) {
+    const el = document.createElement('div');
+    el.className = 'msg ' + msg.from;
+    const ticks = (msg.from === 'caye') ? '<span class="ticks">✓✓</span>' : '';
+    el.innerHTML = escapeHtml(msg.text) +
+      '<span class="meta">' + msg.time + ticks + '</span>';
+    chat.appendChild(el);
+    scrollDown();
+  }
+
+  function showTyping() {
+    const el = document.createElement('div');
+    el.className = 'typing';
+    el.innerHTML = '<span class="dot"></span><span class="dot"></span><span class="dot"></span>';
+    chat.appendChild(el);
+    statusEl.textContent = 'Caye is replying…';
+    scrollDown();
+    return el;
+  }
+
+  function hideTyping(el) {
+    el.remove();
+    statusEl.textContent = 'online';
+  }
+
+  const show = el => el.classList.add('show');
+  const hide = el => el.classList.remove('show');
+
+  async function playDemo() {
+    // Reset everything
+    chat.innerHTML = '';
+    statusEl.textContent = 'online';
+    hide(phoneWrap); hide(meetCard); hide(outroCard); hide(overlay);
+    hookLines.forEach(l => l.classList.remove('in'));
+
+    // ── Hook: the pain, one line at a time (~7s) ──
+    show(hookCard);
+    await wait(400);
+    hookLines[0].classList.add('in'); await wait(1500);
+    hookLines[1].classList.add('in'); await wait(1500);
+    hookLines[2].classList.add('in'); await wait(1700);
+    hookLines[3].classList.add('in'); await wait(2300);
+    hide(hookCard);
+    await wait(500);
+
+    // ── Meet Caye (~2s) ──
+    show(meetCard);
+    await wait(2000);
+    hide(meetCard);
+    await wait(500);
+
+    // ── The booking (~11s) ──
+    show(phoneWrap);
+    await wait(600);
+    addDayChip('Today');
+    await wait(500);
+
+    for (const msg of script) {
+      if (msg.typing) {
+        const t = showTyping();
+        await wait(msg.typing);
+        hideTyping(t);
+      }
+      addMessage(msg);
+      await wait(msg.pause || 1100);
+    }
+
+    // ── The punch (~2.5s) ──
+    show(overlay);
+    await wait(2600);
+
+    // ── Outro (~4s) ──
+    hide(phoneWrap);
+    await wait(500);
+    show(outroCard);
+    await wait(4000);
+    hide(outroCard);
+    await wait(600);
+  }
+
+  (async function loop() {
+    while (true) { await playDemo(); }
+  })();
+</script>
+</body>
+</html>
