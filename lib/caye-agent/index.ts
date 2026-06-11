@@ -1,6 +1,7 @@
 import 'server-only'
 import Anthropic from '@anthropic-ai/sdk'
 import { createServiceClient } from '@/lib/supabase-server'
+import type { VoiceProfile } from '@/lib/voice-profile'
 import { loadOperatorContext } from './context'
 import { buildBackOfficeSystemPrompt } from './modes/back-office'
 import { runToolLoop } from './execute'
@@ -52,13 +53,16 @@ export async function cayeAgent(input: CayeAgentInput): Promise<CayeAgentResult>
 
   const { data: customer } = await supabase
     .from('customers')
-    .select('business_name, full_name')
+    .select('business_name, full_name, ai_voice_profile')
     .eq('id', input.workspaceId)
     .maybeSingle()
+
+  const voiceProfile = (customer?.ai_voice_profile as VoiceProfile | null) ?? null
 
   const systemPrompt = buildBackOfficeSystemPrompt({
     businessName: (customer?.business_name as string | null) ?? null,
     operatorName: (customer?.full_name as string | null) ?? null,
+    voiceProfile,
   })
 
   const history = await loadOperatorContext(input.workspaceId)

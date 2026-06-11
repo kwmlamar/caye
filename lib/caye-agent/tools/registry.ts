@@ -15,6 +15,7 @@ import { muteCaye } from './write-low/mute-caye'
 import { unmuteCaye } from './write-low/unmute-caye'
 import { archiveThread } from './write-low/archive-thread'
 import { addInternalNote } from './write-low/add-internal-note'
+import { sendReply } from './write-high/send-reply'
 
 /**
  * All tools available to the back-office agent.
@@ -44,6 +45,8 @@ export const TOOL_REGISTRY: AnyTool[] = [
   unmuteCaye as AnyTool,
   archiveThread as AnyTool,
   addInternalNote as AnyTool,
+  // High-risk write (confirmation flow enforced via prompt)
+  sendReply as AnyTool,
 ]
 
 export function findTool(name: string): AnyTool | undefined {
