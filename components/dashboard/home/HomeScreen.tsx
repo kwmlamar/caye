@@ -318,7 +318,7 @@ export default function HomeScreen() {
   }
 
   useEffect(() => {
-    scrollToBottom()
+    if (messages.length > 0 || typing) scrollToBottom()
   }, [messages, typing])
 
   const onSend = async (textToSend?: string) => {
