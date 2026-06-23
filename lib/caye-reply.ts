@@ -10,6 +10,10 @@ import { checkBookingAutonomy, AUTONOMY_WINDOW_HOURS } from './booking-policy'
 import { syncBookingToCalendar } from './calendar-sync'
 import { resolveTier, type PricingTier } from './services/resolve-tier'
 import {
+  evaluateOperatingDate,
+  type BlackoutRange,
+} from './services/operating-rules'
+import {
   matchServiceByName,
   extractCustomerTourName,
   buildMatchHintBlock,
@@ -88,7 +92,14 @@ const TOOLS: Anthropic.Tool[] = [
       'Look up what bookings already exist on a given date for this business. ' +
       'ALWAYS call this before create_booking so you can recommend an open slot ' +
       'and avoid double-booking. Returns a list of existing bookings with their ' +
-      'start time, duration, and party size.',
+      'start time, duration, and party size.\n\n' +
+      'It also enforces the business\'s operating rules. The result may include:\n' +
+      '- closed:true with closed_label — the business is CLOSED that date. Do NOT ' +
+      'quote or create_booking. send_reply warmly that they\'re closed then, offer ' +
+      'to help with another date, and set flag_for_owner_followup=true.\n' +
+      '- owner_only:true — that weekday is handled personally by the owner. Do NOT ' +
+      'quote or create_booking. send_reply acknowledging the request and that the ' +
+      'owner will follow up directly to arrange it, and set flag_for_owner_followup=true.',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -547,6 +558,13 @@ function buildSystem(
     '\n\nBOOKING POLICY:\n' +
     '- You can create bookings directly using check_availability + create_booking.\n' +
     '- Always check availability for a date before creating a booking on it.\n' +
+    '- CLOSED / OWNER-ONLY DATES — check_availability enforces the owner\'s operating ' +
+    'rules. If it returns closed:true, the business is closed that date: do NOT quote or ' +
+    'book, send_reply warmly that they\'re closed then (use closed_label if given), offer ' +
+    'another date, and set flag_for_owner_followup=true. If it returns owner_only:true, ' +
+    'that day is handled personally by the owner: do NOT quote or book, send_reply that the ' +
+    'owner will follow up directly to arrange that day, and set flag_for_owner_followup=true. ' +
+    'Never create_booking on a closed or owner_only date.\n' +
     '- Only create a booking when the customer has clearly agreed to a specific date and time.\n' +
     '- If they\'re vague ("sometime next week"), reply asking for a specific day and time first.\n' +
     '- STATUS RULE — new bookings are ALWAYS created with status="pending". Agreement is not payment. ' +
@@ -692,11 +710,44 @@ interface AvailabilitySlot {
   parties: Array<{ name?: string; guests: number }>
 }
 
+interface AvailabilityResult {
+  date: string
+  slots: AvailabilitySlot[]
+  /** True when the business is closed that date (blackout). */
+  closed?: boolean
+  /** Human-readable closure label, e.g. "Holiday closure". */
+  closed_label?: string
+  /** True when that weekday is handled personally by the owner, not Caye. */
+  owner_only?: boolean
+}
+
 async function checkAvailability(
   workspaceId: string,
   date: string
-): Promise<{ date: string; slots: AvailabilitySlot[] }> {
+): Promise<AvailabilityResult> {
   const supabase = createServiceClient()
+
+  // Operating rules first: a closed or owner-only date short-circuits before
+  // we bother computing slot capacity. Caye must not quote/book on these.
+  const { data: cfg } = await supabase
+    .from('workspace_ai_config')
+    .select('blackout_dates, owner_only_weekdays')
+    .eq('workspace_id', workspaceId)
+    .maybeSingle()
+
+  if (cfg) {
+    const verdict = evaluateOperatingDate(date, {
+      blackout_dates: (cfg.blackout_dates as BlackoutRange[]) ?? [],
+      owner_only_weekdays: (cfg.owner_only_weekdays as number[]) ?? [],
+    })
+    if (verdict.status === 'closed') {
+      return { date, slots: [], closed: true, closed_label: verdict.label }
+    }
+    if (verdict.status === 'owner_only') {
+      return { date, slots: [], owner_only: true }
+    }
+  }
+
   const { data, error } = await supabase
     .from('bookings')
     .select('service_id, customer_name, booking_time, number_of_people, status, service:booking_services(name, duration_minutes, is_shared, max_capacity)')
