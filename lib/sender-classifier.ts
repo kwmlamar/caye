@@ -59,3 +59,27 @@ export function isCalendarInvite(subject: string | null | undefined, body: strin
   if (body && VCALENDAR_BODY_RE.test(body)) return true
   return false
 }
+
+/**
+ * Detect ChargeAnywhere-style payment processor receipts. Sender is
+ * typically `noreply@chargeanywhere.com` (already caught by isNoReplySender)
+ * but the subject is generic ("Receipt", "Settlement Details for MM/DD/YY",
+ * "Payment Attempt Not Completed") and the body has a labeled-fields
+ * shape with Response / ApprovalCode / Customer Name.
+ *
+ * Used by the webhook to skip receipt emails entirely — the cron poll
+ * has the full receipt handling path (parse + match to pending booking +
+ * send thank-you). Webhook just gets out of the way.
+ *
+ * Mirrors the in-poll detector at app/api/email/poll/route.ts so both
+ * paths agree on what "looks like a receipt" means.
+ */
+export function isPaymentReceipt(subject: string | null | undefined, body: string | null | undefined): boolean {
+  if (subject && /RECEIPT PAGE/i.test(subject)) return true
+  if (!body) return false
+  return (
+    /^\s*Response:/im.test(body) &&
+    /^\s*ApprovalCode:/im.test(body) &&
+    /^\s*Customer Name:/im.test(body)
+  )
+}
