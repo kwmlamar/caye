@@ -32,13 +32,28 @@ import { syncBookingToCalendar } from '@/lib/calendar-sync'
 import type { VoiceProfile } from '@/lib/voice-profile'
 
 export async function POST(request: NextRequest) {
+  // Two auth modes:
+  //   1. x-cron-secret header matches CRON_SECRET — for server-to-server /
+  //      one-off scripts.
+  //   2. Authorization: Bearer <supabase_session_jwt> — for the dashboard
+  //      user (logged in to Caye) to trigger from the browser. We don't
+  //      gate on workspace ownership here in v1 — any authenticated user
+  //      can replay a conversation. Tighten later if needed.
   const secret = process.env.CRON_SECRET
-  if (secret) {
-    const auth = request.headers.get('authorization')
-    const legacy = request.headers.get('x-cron-secret')
-    if (auth !== `Bearer ${secret}` && legacy !== secret) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+  const auth = request.headers.get('authorization') ?? ''
+  const legacy = request.headers.get('x-cron-secret') ?? ''
+  const cronOk = !!secret && (auth === `Bearer ${secret}` || legacy === secret)
+
+  let sessionOk = false
+  if (!cronOk && auth.startsWith('Bearer ')) {
+    const token = auth.slice(7)
+    const probeSupabase = createServiceClient()
+    const { data: { user }, error } = await probeSupabase.auth.getUser(token)
+    if (!error && user) sessionOk = true
+  }
+
+  if (!cronOk && !sessionOk) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
   let body: { conversationId?: string }
