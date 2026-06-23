@@ -14,6 +14,16 @@ interface ProfileForm {
   timezone: string
   booking_url: string
   website_url: string
+  /** Operator's actual human name. Distinct from business_name. Loaded into the
+   *  back-office system prompt so Caye answers "who am I?" correctly. */
+  full_name: string
+  /** Operator's personal email — distinct from business contact_email. */
+  operator_personal_email: string
+  /** Operator's personal phone — distinct from business contact_phone. */
+  operator_personal_phone: string
+  /** Free-form context about the team and how the operator works. Loaded
+   *  verbatim into the back-office prompt. */
+  team_notes: string
 }
 
 /**
@@ -58,6 +68,10 @@ export default function ProfilePanel() {
     timezone: 'America/Nassau',
     booking_url: '',
     website_url: '',
+    full_name: '',
+    operator_personal_email: '',
+    operator_personal_phone: '',
+    team_notes: '',
   })
   const [orig, setOrig] = useState<ProfileForm>(form)
   const [isSaving, setIsSaving] = useState(false)
@@ -65,8 +79,39 @@ export default function ProfilePanel() {
   const [isUploading, setIsUploading] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
+  // Best-effort fetch for the operator-personal columns added 2026-06-22.
+  // workspace context may not yet expose them — query directly. Falls back
+  // to empty strings pre-migration.
   useEffect(() => {
-    const w = workspace as typeof workspace & { contact_phone?: string }
+    let cancelled = false
+    ;(async () => {
+      const supabase = getSupabase()
+      const { data } = await supabase
+        .from('customers')
+        .select('operator_personal_email, operator_personal_phone, team_notes')
+        .eq('id', workspaceId)
+        .maybeSingle()
+      if (cancelled || !data) return
+      setForm((f) => ({
+        ...f,
+        operator_personal_email: (data.operator_personal_email as string | null) ?? '',
+        operator_personal_phone: (data.operator_personal_phone as string | null) ?? '',
+        team_notes: (data.team_notes as string | null) ?? '',
+      }))
+      setOrig((o) => ({
+        ...o,
+        operator_personal_email: (data.operator_personal_email as string | null) ?? '',
+        operator_personal_phone: (data.operator_personal_phone as string | null) ?? '',
+        team_notes: (data.team_notes as string | null) ?? '',
+      }))
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [workspaceId])
+
+  useEffect(() => {
+    const w = workspace as typeof workspace & { contact_phone?: string; full_name?: string }
     const rawTz = workspace.timezone || 'America/Nassau'
     const initial: ProfileForm = {
       business_name: workspace.business_name || '',
@@ -75,9 +120,26 @@ export default function ProfilePanel() {
       timezone: rawTz,
       booking_url: workspace.booking_url || '',
       website_url: workspace.website_url || '',
+      full_name: w.full_name || '',
+      // These three load asynchronously above — leave blank here, the
+      // effect above will fill them once the query resolves.
+      operator_personal_email: '',
+      operator_personal_phone: '',
+      team_notes: '',
     }
-    setForm(initial)
-    setOrig(initial)
+    setForm((f) => ({
+      ...initial,
+      // Preserve the async-loaded values if they've already arrived.
+      operator_personal_email: f.operator_personal_email || initial.operator_personal_email,
+      operator_personal_phone: f.operator_personal_phone || initial.operator_personal_phone,
+      team_notes: f.team_notes || initial.team_notes,
+    }))
+    setOrig((o) => ({
+      ...initial,
+      operator_personal_email: o.operator_personal_email || initial.operator_personal_email,
+      operator_personal_phone: o.operator_personal_phone || initial.operator_personal_phone,
+      team_notes: o.team_notes || initial.team_notes,
+    }))
     setLogoUrl(workspace.avatar_url || '')
   }, [workspace])
 
@@ -91,10 +153,16 @@ export default function ProfilePanel() {
     form.contact_phone !== orig.contact_phone ||
     form.timezone !== orig.timezone ||
     form.booking_url !== orig.booking_url ||
-    form.website_url !== orig.website_url
+    form.website_url !== orig.website_url ||
+    form.full_name !== orig.full_name ||
+    form.operator_personal_email !== orig.operator_personal_email ||
+    form.operator_personal_phone !== orig.operator_personal_phone ||
+    form.team_notes !== orig.team_notes
 
-  const set = (k: keyof ProfileForm) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
-    setForm(f => ({ ...f, [k]: e.target.value }))
+  const set =
+    (k: keyof ProfileForm) =>
+    (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
+      setForm((f) => ({ ...f, [k]: e.target.value }))
 
   const handleDiscard = () => setForm(orig)
 
@@ -106,18 +174,39 @@ export default function ProfilePanel() {
     setIsSaving(true)
     try {
       const supabase = getSupabase()
-      const { error } = await supabase
+      // Operator-personal columns are best-effort — if the migration
+      // hasn't been applied in this environment yet, drop them from the
+      // update and retry rather than failing the whole save.
+      const baseUpdate = {
+        business_name: form.business_name,
+        contact_email: form.contact_email,
+        contact_phone: form.contact_phone,
+        timezone: form.timezone,
+        booking_url: form.booking_url.trim() || null,
+        website_url: form.website_url.trim() || null,
+        full_name: form.full_name.trim() || null,
+        updated_at: new Date().toISOString(),
+      }
+      const operatorUpdate = {
+        operator_personal_email: form.operator_personal_email.trim() || null,
+        operator_personal_phone: form.operator_personal_phone.trim() || null,
+        team_notes: form.team_notes.trim() || null,
+      }
+
+      let { error } = await supabase
         .from('customers')
-        .update({
-          business_name: form.business_name,
-          contact_email: form.contact_email,
-          contact_phone: form.contact_phone,
-          timezone: form.timezone,
-          booking_url: form.booking_url.trim() || null,
-          website_url: form.website_url.trim() || null,
-          updated_at: new Date().toISOString(),
-        })
+        .update({ ...baseUpdate, ...operatorUpdate })
         .eq('id', workspaceId)
+
+      if (error && /column.*(operator_personal|team_notes).*does not exist/i.test(error.message)) {
+        // Pre-migration environment — save the base fields only.
+        const retry = await supabase
+          .from('customers')
+          .update(baseUpdate)
+          .eq('id', workspaceId)
+        error = retry.error
+        if (!error) toast.warning('Saved (operator-personal fields not yet migrated)')
+      }
 
       if (error) throw new Error(error.message)
       setOrig(form)
@@ -277,6 +366,88 @@ export default function ProfilePanel() {
                 ))}
               </select>
               <div className="s-help">Used for response delays, the daily summary, and tour scheduling.</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="s-card">
+        <div className="s-card-head">
+          <div className="h">
+            <h3>About you (the operator)</h3>
+            <div className="desc">
+              Who Caye is working for. She uses this to answer questions like &ldquo;who am I?&rdquo;
+              and &ldquo;what&rsquo;s my email?&rdquo; when you message her on WhatsApp — and to know
+              the difference between you and your business.
+            </div>
+          </div>
+        </div>
+        <div className="s-card-body">
+          <div className="s-row">
+            <div className="s-label">
+              Your name
+              <span className="help">Your actual name, not the business name.</span>
+            </div>
+            <div className="s-field">
+              <input
+                className="s-input"
+                value={form.full_name}
+                onChange={set('full_name')}
+                placeholder="e.g. Karenda Swain-Rolle"
+              />
+            </div>
+          </div>
+
+          <div className="s-row">
+            <div className="s-label">Your personal email</div>
+            <div className="s-field">
+              <input
+                className="s-input"
+                type="email"
+                value={form.operator_personal_email}
+                onChange={set('operator_personal_email')}
+                placeholder="you@gmail.com"
+              />
+              <div className="s-help">
+                Different from the business email above. Optional — only fill in if you want
+                Caye to know where to reach you personally.
+              </div>
+            </div>
+          </div>
+
+          <div className="s-row">
+            <div className="s-label">Your personal phone</div>
+            <div className="s-field">
+              <input
+                className="s-input"
+                type="tel"
+                value={form.operator_personal_phone}
+                onChange={set('operator_personal_phone')}
+                placeholder="+1 555 000 0000"
+              />
+              <div className="s-help">
+                Different from the business phone above. Optional.
+              </div>
+            </div>
+          </div>
+
+          <div className="s-row">
+            <div className="s-label">
+              Team & context notes
+              <span className="help">Free text — Caye reads this verbatim.</span>
+            </div>
+            <div className="s-field">
+              <textarea
+                className="s-input"
+                rows={4}
+                value={form.team_notes}
+                onChange={set('team_notes')}
+                placeholder={'e.g. "Max is my husband, helps on the boat. I work a day job at Foundation Resilience so I can\'t always reply during the day."'}
+              />
+              <div className="s-help">
+                Anything you&rsquo;d want a new assistant to know on their first day —
+                who&rsquo;s on the team, when you&rsquo;re unreachable, the quirks of how you operate.
+              </div>
             </div>
           </div>
         </div>
