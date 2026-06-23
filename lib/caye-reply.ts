@@ -49,6 +49,18 @@ export type CayeAutoReply =
       note: string
       proposedReply?: string
       /**
+       * Optional warm one-liner to send to the customer immediately so they
+       * don't feel dropped while the held thread waits on the operator
+       * (receptionist-spec.md Q7). When set, the channel webhook sends it as
+       * a normal outbound message via the same path as autonomous replies.
+       * When absent, the customer hears silence — correct for newsletters,
+       * vendor pitches, and other non-question inbound.
+       *
+       * Already identity-guarded by caye-reply before this leaves the brain
+       * — webhooks can send the string verbatim.
+       */
+      customerAcknowledgement?: string
+      /**
        * Operator-ping urgency. Used by the WhatsApp outbound trigger layer to
        * decide whether to ping immediately or batch into the morning digest.
        * If absent, the caller should compute it with classifyHoldUrgency()
@@ -356,6 +368,19 @@ const TOOLS: Anthropic.Tool[] = [
             'The reply you would have sent if you were confident — used as the operator\'s ' +
             'starting draft. Same voice rules as send_reply content. Optional: omit only if ' +
             'you genuinely can\'t draft anything useful.',
+        },
+        customer_acknowledgement: {
+          type: 'string',
+          description:
+            'OPTIONAL short message sent IMMEDIATELY to the customer so they don\'t feel ' +
+            'dropped while the operator works the held thread. Warm, 1-2 short sentences, ' +
+            'no commitments on timing, never invents a price/date. Examples: "Thanks — let ' +
+            'me check on that and get back to you shortly." / "Got your note, will be in ' +
+            'touch about timing later today." ' +
+            'LEAVE EMPTY when: the inbound is a newsletter, vendor pitch, automated bounce, ' +
+            'or anything where the customer did not actually ask you a question — silence is ' +
+            'correct there and any reply would compound the noise. Same voice rules as ' +
+            'send_reply content. Never quote prices or promise specific times.',
         },
       },
       required: ['reason', 'note'],
@@ -1508,16 +1533,33 @@ export async function generateCayeAutoReply(
         }
         toolResults.push({ type: 'tool_result', tool_use_id: tool.id, content: 'ok' })
       } else if (tool.name === 'hold_for_human') {
-        const input = tool.input as { reason: string; note: string; proposed_reply?: string }
+        const input = tool.input as {
+          reason: string
+          note: string
+          proposed_reply?: string
+          customer_acknowledgement?: string
+        }
         const draft = input.proposed_reply?.trim() || undefined
         // Identity guard the proposed draft too — never surface a draft that
         // would have been blocked from sending.
         const draftLeak = draft ? detectIdentityLeak(draft) : null
+
+        // Customer-facing acknowledgement (receptionist-spec Q7): warm
+        // one-liner sent immediately so the customer hears something
+        // while the held thread waits on the operator. Same identity
+        // guard as the proposed draft — if it leaks Caye's AI identity
+        // it gets dropped silently rather than sent.
+        const ackRaw = input.customer_acknowledgement?.trim()
+        const ack = ackRaw && ackRaw.length > 0 ? ackRaw : undefined
+        const ackLeak = ack ? detectIdentityLeak(ack) : null
+        const safeAck = ackLeak ? undefined : ack
+
         terminal = {
           action: 'hold',
           reason: input.reason,
           note: input.note,
           proposedReply: draftLeak ? undefined : draft,
+          customerAcknowledgement: safeAck,
         }
         toolResults.push({ type: 'tool_result', tool_use_id: tool.id, content: 'ok' })
       } else if (tool.name === 'check_availability') {

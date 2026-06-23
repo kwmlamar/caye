@@ -376,9 +376,50 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
         generated_by: 'caye',
         hold_reason: decision.reason,
         proposed_reply: decision.proposedReply ?? null,
+        customer_acknowledgement: decision.customerAcknowledgement ?? null,
       },
     })
     console.log(`[zoho-email webhook] Held for human: ${fromEmail} — ${decision.reason}`)
+
+    // Customer-facing hold acknowledgement (receptionist-spec.md Q7) —
+    // send immediately as a normal outbound so the customer doesn't feel
+    // dropped. Empty means silence is the correct response (newsletter,
+    // vendor pitch, no actual question) — Caye explicitly decides per case.
+    if (decision.customerAcknowledgement) {
+      const ackSubject = subject.startsWith('Re:') ? subject : `Re: ${subject}`
+      const ackBody = decision.customerAcknowledgement
+      const ackSentAt = new Date().toISOString()
+      try {
+        await sendZohoReply(fromEmail, ackSubject, ackBody, threadId, workspaceId)
+        await supabase.from('unified_messages').insert({
+          conversation_id: conversation.id,
+          channel_message_id: `caye_ack_${Date.now()}`,
+          sender_type: 'business',
+          content: ackBody,
+          message_type: 'text',
+          sent_at: ackSentAt,
+          status: 'sent',
+          metadata: {
+            subject: ackSubject,
+            is_automated: true,
+            generated_by: 'caye',
+            is_hold_acknowledgement: true,
+          },
+        })
+        await supabase
+          .from('unified_conversations')
+          .update({
+            last_sender_type: 'business',
+            last_business_sender_kind: 'caye',
+            last_message_at: ackSentAt,
+            last_message_preview: ackBody.slice(0, 100),
+          })
+          .eq('id', conversation.id)
+      } catch (err) {
+        console.error('[zoho-email webhook] hold-ack send failed:', err)
+      }
+    }
+
     enqueueHoldPing({
       workspaceId,
       conversationId: conversation.id,
