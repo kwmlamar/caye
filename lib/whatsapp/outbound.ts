@@ -162,9 +162,33 @@ export interface EnqueueOutboundInput {
 /**
  * Insert a row into caye_outbound_queue. Idempotent on idempotency_key —
  * duplicate enqueues are silently ignored (returns the existing row's id).
+ *
+ * Honors `workspace_ai_config.notifications_paused` (receptionist-spec Q4 /
+ * 2026-06-22 migration): when paused, the row is NOT enqueued. Flipping
+ * pause back to false does NOT replay stale notifications — same shape as
+ * the existing whatsapp_outbound_enabled gate.
  */
 export async function enqueueOutbound(input: EnqueueOutboundInput): Promise<{ id: string } | null> {
   const supabase = createServiceClient()
+
+  // Hard pause gate — fail closed if the row is missing (a workspace with
+  // no config row shouldn't be receiving Caye-platform pings anyway).
+  const { data: cfg, error: cfgErr } = await supabase
+    .from('workspace_ai_config')
+    .select('notifications_paused')
+    .eq('workspace_id', input.workspaceId)
+    .maybeSingle()
+  if (cfgErr) {
+    console.error('[enqueueOutbound] config lookup failed:', cfgErr)
+    // Don't swallow the call entirely — caller expects either a row or null.
+    // But also don't blast notifications when we can't confirm the pause
+    // state. Treat lookup failure as paused.
+    return null
+  }
+  if (!cfg || cfg.notifications_paused === true) {
+    return null
+  }
+
   const { data, error } = await supabase
     .from('caye_outbound_queue')
     .insert({

@@ -66,6 +66,12 @@ interface WorkspaceConfig {
   whatsapp_unreachable: boolean
   whatsapp_blocked: boolean
   whatsapp_failure_streak: number
+  /** Receptionist-spec Q4 — hard kill on all operator pings. Defaults
+   *  true for new workspaces; explicit flip to false once loop validated. */
+  notifications_paused: boolean
+  /** Receptionist-spec Q4 — when set, all pings route here instead of
+   *  operator_whatsapp_number. Canonical operator number stays unchanged. */
+  operator_notification_override_phone: string | null
 }
 
 export async function GET(request: NextRequest) {
@@ -116,17 +122,18 @@ async function processRow(row: QueueRow): Promise<RowOutcome> {
 
   const { data: config, error: configErr } = await supabase
     .from('workspace_ai_config')
-    .select(
-      'workspace_id, whatsapp_outbound_enabled, operator_whatsapp_number, ' +
-        'operator_whatsapp_verified_at, whatsapp_muted_until, whatsapp_unreachable, ' +
-        'whatsapp_blocked, whatsapp_failure_streak'
-    )
+    .select('workspace_id, whatsapp_outbound_enabled, operator_whatsapp_number, operator_whatsapp_verified_at, whatsapp_muted_until, whatsapp_unreachable, whatsapp_blocked, whatsapp_failure_streak, notifications_paused, operator_notification_override_phone')
     .eq('workspace_id', row.workspace_id)
     .maybeSingle<WorkspaceConfig>()
 
   if (configErr || !config) {
     return cancel(row, `workspace_ai_config missing: ${configErr?.message ?? 'no row'}`)
   }
+
+  // Defense in depth — enqueueOutbound already gates on this, but a row
+  // queued before pause was flipped on could still be sitting here. Skip
+  // it cleanly rather than firing.
+  if (config.notifications_paused) return cancel(row, 'notifications_paused')
 
   // Precondition: feature flag on, operator verified, not blocked / unreachable.
   if (!config.whatsapp_outbound_enabled) return cancel(row, 'flag off')
@@ -177,7 +184,12 @@ async function processRow(row: QueueRow): Promise<RowOutcome> {
 }
 
 async function dispatch(row: QueueRow, config: WorkspaceConfig): Promise<SendResult> {
-  const phone = config.operator_whatsapp_number!
+  // Receptionist-spec Q4 — when an override is set (e.g. testing window
+  // for Bimini routes Karenda's pings to Lamar's number), send there
+  // instead of the canonical operator number. The canonical number stays
+  // as the workspace identity; only the SEND destination changes.
+  const phone =
+    config.operator_notification_override_phone ?? config.operator_whatsapp_number!
   const idem = row.idempotency_key ?? `queue-${row.id}`
 
   const windowOpen = await isWhatsAppWindowOpen(row.workspace_id)
