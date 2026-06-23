@@ -25,6 +25,17 @@ import { syncBookingToCalendar } from '@/lib/calendar-sync'
 import type { VoiceProfile } from '@/lib/voice-profile'
 import { maybeRefreshContactProfile } from '@/lib/contact-profile'
 import { htmlToPlainText } from '@/lib/email-text'
+import {
+  isNoReplySender,
+  isCalendarInvite,
+  isPaymentReceipt,
+} from '@/lib/sender-classifier'
+import {
+  isWeb3FormsNotification,
+  parseWeb3FormsFields,
+  buildWeb3FormsContext,
+  type Web3FormsParsed,
+} from '@/lib/email/web3forms'
 
 function verifySignature(rawBody: string, header: string | null, secret: string): boolean {
   if (!header) return false
@@ -112,6 +123,55 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
     return
   }
 
+  // ── Inbound classification (2026-06-23 receptionist-spec follow-up) ─────────
+  // Match the cron poll's handling so real-time push and cron resolve the
+  // same identity. Three checks in order:
+  //
+  //   1. Payment receipts → skip entirely. The poll path has the full
+  //      receipt-handling flow (parse + match to pending booking + auto
+  //      thank-you). Webhook gets out of the way; nothing in this route
+  //      knows how to process receipts correctly.
+  //
+  //   2. Web3Forms submissions → parse the customer identity out of the
+  //      body. The form service's notify+<id>@web3forms.com address is
+  //      NOT the customer — the real human's name + email + phone are
+  //      buried in the body as labeled form fields.
+  //
+  //   3. No-reply / calendar-invite senders → still create the conversation
+  //      for audit, but pre-archive it so Karenda's active inbox stays
+  //      clean. Caye doesn't try to auto-reply to bots.
+  if (isPaymentReceipt(subject, body)) {
+    console.log(
+      `[zoho-email webhook] Payment receipt detected from ${fromEmail} (subject="${subject}") — skipping; cron poll handles receipts.`
+    )
+    return
+  }
+
+  let web3FormsFields: Web3FormsParsed | null = null
+  if (isWeb3FormsNotification(fromEmail)) {
+    web3FormsFields = parseWeb3FormsFields(body)
+    if (!web3FormsFields) {
+      console.warn(
+        `[zoho-email webhook] Web3Forms sender but parse failed (messageId=${messageId}) — falling back to web3forms address as customer identity.`
+      )
+    }
+  }
+
+  // Effective customer identity — real human if we parsed a webform,
+  // otherwise the email's actual sender.
+  const effectiveEmail = web3FormsFields?.customerEmail ?? fromEmail
+  const effectiveName = web3FormsFields?.customerName ?? fromName
+  // For webform submissions, render the body as labeled fields rather
+  // than the raw web3forms HTML wrapper. This is what Caye's reply
+  // generator (and any future search / activity surfaces) will see.
+  const effectiveBody = web3FormsFields ? buildWeb3FormsContext(web3FormsFields) : body
+
+  // Pre-archive conversations from non-human senders. effectiveEmail is
+  // the parsed customer for webforms (so webforms aren't archived even
+  // though the raw From is noreply-style).
+  const archiveOnCreate =
+    isNoReplySender(effectiveEmail) || isCalendarInvite(subject, body)
+
   const supabase = createServiceClient()
 
   // Resolve workspace by the email address messages were sent TO
@@ -169,10 +229,10 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
     .upsert(
       {
         customer_id: workspaceId,
-        email: fromEmail,
-        name: fromName || fromEmail,
+        email: effectiveEmail,
+        name: effectiveName || effectiveEmail,
         channel_type: 'email',
-        channel_id: fromEmail,
+        channel_id: effectiveEmail,
         first_message_at: sentAt,
         last_message_at: sentAt,
         updated_at: nowISO,
@@ -203,7 +263,7 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
     .select('id, metadata')
     .eq('connected_account_id', account.id)
     .eq('channel_type', 'email')
-    .eq('customer_id', fromEmail)
+    .eq('customer_id', effectiveEmail)
     .maybeSingle()
 
   if (existingConv) {
@@ -217,9 +277,12 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
         metadata: {
           ...existingMeta,
           subject: existingMeta.subject ?? subject,
-          from: existingMeta.from ?? fromRaw,
+          from: existingMeta.from ?? (web3FormsFields ? effectiveEmail : fromRaw),
           thread_id: existingMeta.thread_id ?? threadId,
           related_thread_ids: relatedThreads,
+          ...(web3FormsFields
+            ? { source: 'web3forms', form_fields: web3FormsFields.fields }
+            : {}),
         },
       })
       .eq('id', existingConv.id)
@@ -231,11 +294,28 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
         connected_account_id: account.id,
         channel_type: 'email',
         channel_conversation_id: threadId,
-        customer_name: fromName || fromEmail,
-        customer_id: fromEmail,
+        customer_name: effectiveName || effectiveEmail,
+        customer_id: effectiveEmail,
         contact_id: contactRow?.id ?? null,
         status: 'open',
-        metadata: { subject, from: fromRaw, thread_id: threadId, related_thread_ids: [threadId] },
+        is_archived: archiveOnCreate,
+        metadata: {
+          subject,
+          from: web3FormsFields ? effectiveEmail : fromRaw,
+          thread_id: threadId,
+          related_thread_ids: [threadId],
+          ...(web3FormsFields
+            ? { source: 'web3forms', form_fields: web3FormsFields.fields }
+            : {}),
+          ...(archiveOnCreate
+            ? {
+                archived_on_create: true,
+                archive_reason: isCalendarInvite(subject, body)
+                  ? 'calendar_invite'
+                  : 'noreply_sender',
+              }
+            : {}),
+        },
       })
       .select('id')
       .single()
@@ -259,15 +339,16 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
       conversation_id: conversation.id,
       channel_message_id: messageId,
       sender_type: 'customer',
-      content: body || subject,
+      content: effectiveBody || subject,
       message_type: 'text',
       sent_at: sentAt,
       status: 'delivered',
       metadata: {
         subject,
-        from: fromRaw,
+        from: web3FormsFields ? effectiveEmail : fromRaw,
         zoho_message_id: messageId,
         zoho_thread_id: threadId,
+        ...(web3FormsFields ? { source: 'web3forms', form_fields: web3FormsFields.fields } : {}),
       },
     })
     if (inboundErr) {
@@ -275,7 +356,7 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
     } else {
       await supabase
         .from('unified_conversations')
-        .update({ last_sender_type: 'customer', last_message_at: sentAt, last_message_preview: (body || subject).slice(0, 100) })
+        .update({ last_sender_type: 'customer', last_message_at: sentAt, last_message_preview: (effectiveBody || subject).slice(0, 100) })
         .eq('id', conversation.id)
 
       // Fire-and-forget customer style learning. Never blocks the reply path.
@@ -285,6 +366,15 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
         )
       }
     }
+  }
+
+  // Don't auto-reply to pre-archived conversations (noreply senders /
+  // calendar invites). The audit row is in place; nothing else to do.
+  if (archiveOnCreate) {
+    console.log(
+      `[zoho-email webhook] Archived-on-create conversation for ${effectiveEmail} — skipping auto-reply.`
+    )
+    return
   }
 
   if (aiConfig?.ai_enabled === false) {
@@ -342,13 +432,13 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
     decision = await generateCayeAutoReply(
       systemPrompt,
       {
-        senderName: fromName || fromEmail,
-        body: body || subject,
+        senderName: effectiveName || effectiveEmail,
+        body: effectiveBody || subject,
         channel: 'email',
         subject,
         workspaceId,
         conversationId: conversation.id,
-        senderEmail: fromEmail,
+        senderEmail: effectiveEmail,
         currentChannelMessageId: messageId,
       },
       voiceProfile
@@ -379,7 +469,7 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
         customer_acknowledgement: decision.customerAcknowledgement ?? null,
       },
     })
-    console.log(`[zoho-email webhook] Held for human: ${fromEmail} — ${decision.reason}`)
+    console.log(`[zoho-email webhook] Held for human: ${effectiveEmail} — ${decision.reason}`)
 
     // Customer-facing hold acknowledgement (receptionist-spec.md Q7) —
     // send immediately as a normal outbound so the customer doesn't feel
@@ -390,7 +480,7 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
       const ackBody = decision.customerAcknowledgement
       const ackSentAt = new Date().toISOString()
       try {
-        await sendZohoReply(fromEmail, ackSubject, ackBody, threadId, workspaceId)
+        await sendZohoReply(effectiveEmail, ackSubject, ackBody, threadId, workspaceId)
         await supabase.from('unified_messages').insert({
           conversation_id: conversation.id,
           channel_message_id: `caye_ack_${Date.now()}`,
@@ -423,19 +513,20 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
     enqueueHoldPing({
       workspaceId,
       conversationId: conversation.id,
-      contactName: fromName || fromEmail,
+      contactName: effectiveName || effectiveEmail,
       reason: decision.reason,
       proposedReply: decision.proposedReply,
-      inboundBody: body,
+      inboundBody: effectiveBody,
       urgency: decision.urgency,
     }).catch((err) => console.error('[zoho-email webhook] enqueueHoldPing failed:', err))
     return
   }
 
-  // Send via Zoho
+  // Send via Zoho — to the real customer (parsed for webforms), not the
+  // form service's notify+ address.
   const replySubject = subject.startsWith('Re:') ? subject : `Re: ${subject}`
   try {
-    await sendZohoReply(fromEmail, replySubject, decision.content, threadId, workspaceId)
+    await sendZohoReply(effectiveEmail, replySubject, decision.content, threadId, workspaceId)
   } catch (err) {
     console.error('[zoho-email webhook] Zoho send failed:', err)
     return
@@ -474,5 +565,5 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
     )
   }
 
-  console.log(`[zoho-email webhook] Auto-reply sent to ${fromEmail} for workspace ${workspaceId}`)
+  console.log(`[zoho-email webhook] Auto-reply sent to ${effectiveEmail} for workspace ${workspaceId}`)
 }
