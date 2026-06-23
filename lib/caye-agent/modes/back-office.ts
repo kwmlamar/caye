@@ -2,6 +2,42 @@ import 'server-only'
 import type { VoiceProfile } from '@/lib/voice-profile'
 
 /**
+ * Snapshot of what Caye knows about the operator + business at prompt
+ * boot. Values are loaded from `customers` (canonical fields + the
+ * `business_brief` jsonb populated during onboarding) plus the new
+ * operator-personal columns added 2026-06-22.
+ *
+ * Every field is optional — buildBackOfficeSystemPrompt elides any
+ * line whose value is missing so the prompt stays clean as data
+ * coverage grows.
+ */
+export interface OperatorProfile {
+  operatorName: string | null
+  /** Business display name. May equal operatorName when onboarding wrote
+   *  the business into `customers.full_name` by mistake (Bimini case
+   *  2026-06-22). Detected in the prompt and recovered from gracefully. */
+  businessName: string | null
+  tagline?: string | null
+  website?: string | null
+  /** Business-line contact (whoever picks up if a customer calls / writes
+   *  the business address). Distinct from operatorPersonal* below. */
+  contactEmail?: string | null
+  contactPhone?: string | null
+  whatsappBusinessNumber?: string | null
+  businessAddress?: string | null
+  /** Owner-side personal contact — answers "what's my email?" instantly. */
+  operatorPersonalEmail?: string | null
+  operatorPersonalPhone?: string | null
+  /** Free-form team context. "Max is my husband, helps on the boat." */
+  teamNotes?: string | null
+  /** Display string, already formatted by the caller. e.g. "Daily 9-5, last
+   *  tour 3pm." Long structured JSON is not useful in a system prompt. */
+  businessHoursDisplay?: string | null
+  paymentMethods?: string[] | null
+  timezone?: string | null
+}
+
+/**
  * System prompt for back-office Caye — operator-facing mode.
  *
  * Personality (locked grill-me 2026-06-09): warm and quietly clever.
@@ -9,17 +45,35 @@ import type { VoiceProfile } from '@/lib/voice-profile'
  * not a customer. She is the SAME named entity as front-desk Caye, just
  * doing a different job.
  *
+ * Identity block (added 2026-06-22 per receptionist-spec.md Q11): all
+ * available operator + business facts are loaded up-front so basic
+ * questions ("who am I?", "what's my email?") never cost a tool call.
+ *
  * Voice profile is included when present so Caye can draft customer-
  * facing copy (for send_reply, send_quote, etc.) in the operator's
  * voice. The customer never knows the operator delegated to her.
  */
 export function buildBackOfficeSystemPrompt(args: {
-  businessName: string | null
-  operatorName: string | null
+  profile: OperatorProfile
   voiceProfile?: VoiceProfile | null
 }): string {
-  const operator = args.operatorName?.trim() || 'the owner'
-  const business = args.businessName?.trim() || 'their business'
+  const p = args.profile
+  const operatorRaw = p.operatorName?.trim() || ''
+  const businessRaw = p.businessName?.trim() || ''
+
+  // Data-bug detection: onboarding sometimes writes the business name
+  // into customers.full_name. When operatorName equals businessName we
+  // can't trust operatorName as a person identifier — fall back so the
+  // prompt doesn't read "Bimini Island Tours (the owner) is messaging
+  // you right now."
+  const operatorLooksLikeBusiness =
+    operatorRaw.length > 0 &&
+    businessRaw.length > 0 &&
+    operatorRaw.toLowerCase() === businessRaw.toLowerCase()
+
+  const operator =
+    !operatorLooksLikeBusiness && operatorRaw ? operatorRaw : 'the owner'
+  const business = businessRaw || 'their business'
 
   const lines: string[] = [
     `You are Caye — the AI assistant ${operator} hired to handle the front desk for ${business}.`,
@@ -29,6 +83,56 @@ export function buildBackOfficeSystemPrompt(args: {
     `- You are NOT talking to a customer. You are the back-office assistant — handling the owner directly.`,
     `- The owner knows you are AI. Don't pretend otherwise.`,
     '',
+  ]
+
+  // ── WHO YOUR BOSS IS — operator + business identity facts ────────────────
+  // Always-loaded. Elide any line whose value is missing.
+  const idLines: string[] = []
+  if (operatorLooksLikeBusiness) {
+    idLines.push(
+      `- ⚠ The operator's personal name is not on file yet (only the business name "${business}" is set). If asked their name, acknowledge you don't have it yet and offer to record it.`
+    )
+  } else if (operatorRaw) {
+    idLines.push(`- Operator: ${operator}`)
+  }
+  if (businessRaw) idLines.push(`- Business: ${business}`)
+  if (p.tagline?.trim()) idLines.push(`- Tagline: ${p.tagline.trim()}`)
+  if (p.website?.trim()) idLines.push(`- Website: ${p.website.trim()}`)
+  if (p.businessAddress?.trim())
+    idLines.push(`- Address: ${p.businessAddress.trim()}`)
+  if (p.timezone?.trim()) idLines.push(`- Timezone: ${p.timezone.trim()}`)
+  if (p.businessHoursDisplay?.trim())
+    idLines.push(`- Hours: ${p.businessHoursDisplay.trim()}`)
+  if (p.contactEmail?.trim())
+    idLines.push(`- Business email: ${p.contactEmail.trim()}`)
+  if (p.contactPhone?.trim())
+    idLines.push(`- Business phone: ${p.contactPhone.trim()}`)
+  if (p.whatsappBusinessNumber?.trim())
+    idLines.push(`- Business WhatsApp: ${p.whatsappBusinessNumber.trim()}`)
+  if (p.operatorPersonalEmail?.trim())
+    idLines.push(
+      `- ${operator}'s personal email: ${p.operatorPersonalEmail.trim()}`
+    )
+  if (p.operatorPersonalPhone?.trim())
+    idLines.push(
+      `- ${operator}'s personal phone: ${p.operatorPersonalPhone.trim()}`
+    )
+  if (p.paymentMethods && p.paymentMethods.length > 0)
+    idLines.push(`- Payment methods accepted: ${p.paymentMethods.join(', ')}`)
+  if (p.teamNotes?.trim()) {
+    idLines.push(`- Team / context notes:`)
+    for (const ln of p.teamNotes.trim().split('\n')) {
+      if (ln.trim()) idLines.push(`    ${ln.trim()}`)
+    }
+  }
+
+  if (idLines.length > 0) {
+    lines.push('WHO YOUR BOSS IS — answer identity questions from this block, no tool call needed')
+    lines.push(...idLines)
+    lines.push('')
+  }
+
+  lines.push(
     'YOUR VOICE (when talking to the owner)',
     '- Warm and quietly clever. Like a sharp coworker, not a chatbot.',
     `- Short, direct, WhatsApp-appropriate. Usually 1-3 sentences. No bullet lists unless it's genuinely a list.`,
@@ -71,7 +175,7 @@ export function buildBackOfficeSystemPrompt(args: {
     `    4. ONLY THEN call send_reply with the agreed body.`,
     `- If you're missing info to draft cleanly (which customer, what price, what date), ASK before drafting. Don't guess pricing, dates, or commitments.`,
     `- If ${operator} says "no" / "wait" / "let me think", drop the action and acknowledge.`,
-  ]
+  )
 
   if (args.voiceProfile) {
     lines.push('')
