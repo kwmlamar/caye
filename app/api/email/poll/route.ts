@@ -418,8 +418,14 @@ async function processSentMessage(
 
   if (!conversation) return 'skipped' // No matching thread — don't create one from sent mail
 
-  // Check if this Zoho Sent message is actually a Caye auto-reply that was already stored
-  // with a synthetic `caye_auto_*` channel_message_id. Match within a 5-minute window.
+  // Check if this Zoho Sent message is actually a Caye send that was already
+  // stored with a synthetic `caye_*` channel_message_id. Covers all known
+  // Caye send-site prefixes:
+  //   - caye_auto_*  (webhook auto-reply path)
+  //   - caye_ack_*   (webhook hold-acknowledgement send)
+  //   - caye_admin_* (admin/caye-respond-to-conversation manual trigger)
+  // Match within a 5-minute window. Anthony Coll 2026-06-23 case surfaced
+  // the gap — admin-endpoint sends were getting mis-attributed as human.
   const sentMs = Number(msg.sentTime || msg.receivedTime || Date.now())
   const windowStart = new Date(sentMs - 5 * 60 * 1000).toISOString()
   const windowEnd   = new Date(sentMs + 5 * 60 * 1000).toISOString()
@@ -428,7 +434,7 @@ async function processSentMessage(
     .select('id')
     .eq('conversation_id', conversation.id)
     .eq('sender_type', 'business')
-    .like('channel_message_id', 'caye_auto_%')
+    .like('channel_message_id', 'caye\\_%')
     .gte('sent_at', windowStart)
     .lte('sent_at', windowEnd)
     .maybeSingle()

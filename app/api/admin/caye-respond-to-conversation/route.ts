@@ -251,18 +251,32 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: `Zoho send failed: ${msg}` }, { status: 500 })
   }
 
-  // Note: we deliberately DO NOT insert a unified_messages row here.
-  // The email-poll cron (which sweeps Zoho's Sent folder every minute)
-  // will pick up Caye's outbound and persist it with the real Zoho
-  // channel_message_id so its own dedup check works. If we inserted
-  // here with a fabricated id, the poll would still insert its own row
-  // (different key) and we'd end up with two rows for one real email —
-  // see the Anthony Coll 2026-06-23 duplicate that triggered this fix.
-  //
-  // The trade-off: the dashboard won't reflect the outbound until the
-  // next poll tick (≤1 min). Acceptable for an admin-trigger surface;
-  // not appropriate for the webhook's real-time customer-facing path.
+  // Persist the outbound row with a `caye_admin_*` synthetic
+  // channel_message_id and full Caye attribution metadata. The email-poll
+  // cron's "is this a Caye send I already stored" check now uses a
+  // `caye_%` LIKE pattern (poll route, ~line 431) that recognizes this
+  // prefix and will back-fill the real Zoho message id when it sweeps
+  // the Sent folder a moment later — so the row persists with the
+  // correct attribution AND no duplicate is created.
   const replySentAt = new Date().toISOString()
+  await supabase.from('unified_messages').insert({
+    conversation_id: conversationId,
+    channel_message_id: `caye_admin_${Date.now()}`,
+    sender_type: 'business',
+    sender_attribution: 'caye_autopilot',
+    content: decision.content,
+    message_type: 'text',
+    sent_at: replySentAt,
+    status: 'sent',
+    metadata: {
+      subject: replySubject,
+      is_automated: true,
+      generated_by: 'caye',
+      sent_by: 'caye',
+      triggered_by: 'admin/caye-respond-to-conversation',
+    },
+  })
+
   await supabase
     .from('unified_conversations')
     .update({
