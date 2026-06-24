@@ -13,6 +13,7 @@ export const addInternalNote: Tool<AddInternalNoteInput> = {
   description:
     'Add an internal note on a customer thread — operator-only, NOT visible to the customer. Use when the operator wants to record context like "Daniel said he\'d call back Sunday" or "give him 10% off next time".',
   risk: 'low',
+  roles: ['owner', 'founder'],
   inputSchema: {
     type: 'object',
     properties: {

@@ -23,6 +23,7 @@ Never call this tool on the first turn for a customer-facing intent. The operato
 
 Use the VOICE PROFILE in the system prompt to draft customer-facing copy — write as the operator would, never as Caye. Customer never knows the operator delegated to you.`,
   risk: 'high',
+  roles: ['owner', 'founder'],
   inputSchema: {
     type: 'object',
     properties: {

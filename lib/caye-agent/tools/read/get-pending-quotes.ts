@@ -21,6 +21,7 @@ export const getPendingQuotes: Tool<Record<string, never>> = {
   description:
     'List drafts Caye prepared for held customer threads — the quotes and replies waiting on the operator to approve. Subset of the held queue; each item has a proposed reply Caye drafted but did not send. Use when the operator asks "what drafts are waiting?" or "anything pending my approval?".',
   risk: 'read',
+  roles: ['owner', 'founder'],
   inputSchema: {
     type: 'object',
     properties: {},

@@ -65,7 +65,10 @@ export async function composeEodSummary(args: {
     maxTokens: MAX_OUTPUT_TOKENS,
     systemPrompt,
     initialMessages: messages,
-    ctx: { workspaceId: args.workspaceId },
+    // Cron-driven system invocation — no human caller. 'founder' role
+    // grants access to every tool, matching the existing trusted-internal
+    // semantics. Locked 2026-06-24 (#48).
+    ctx: { workspaceId: args.workspaceId, callerRole: 'founder' },
   })
 
   return replyText
@@ -135,7 +138,10 @@ export async function composeMorningBriefing(args: {
     maxTokens: MAX_OUTPUT_TOKENS,
     systemPrompt,
     initialMessages: messages,
-    ctx: { workspaceId: args.workspaceId },
+    // Cron-driven system invocation — no human caller. 'founder' role
+    // grants access to every tool, matching the existing trusted-internal
+    // semantics. Locked 2026-06-24 (#48).
+    ctx: { workspaceId: args.workspaceId, callerRole: 'founder' },
   })
 
   return replyText

@@ -17,6 +17,7 @@ export const getHeldQueue: Tool<Record<string, never>> = {
   description:
     "Get the current held items needing the operator's call. Each item is a customer thread Caye paused because she wasn't confident enough to reply autonomously. Use this when the operator asks 'anything need my call?' / 'anyone held?' / 'what's pending?'.",
   risk: 'read',
+  roles: ['owner', 'founder'],
   inputSchema: {
     type: 'object',
     properties: {},

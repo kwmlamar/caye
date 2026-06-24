@@ -42,6 +42,7 @@ export const getCustomer: Tool<GetCustomerInput> = {
   description:
     'Look up a customer by name, phone, or email. Searches both the contacts profile table AND active conversation threads, since many customers exist only as a thread (no enriched contact row yet). Returns up to 5 matches across both sources.',
   risk: 'read',
+  roles: ['owner', 'founder'],
   inputSchema: {
     type: 'object',
     properties: {

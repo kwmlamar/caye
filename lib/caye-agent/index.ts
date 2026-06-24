@@ -5,6 +5,7 @@ import type { VoiceProfile } from '@/lib/voice-profile'
 import { loadOperatorContext } from './context'
 import { buildBackOfficeSystemPrompt } from './modes/back-office'
 import { runToolLoop } from './execute'
+import type { Role } from './tools/types'
 
 const MODEL = 'claude-sonnet-4-6'
 const MAX_OUTPUT_TOKENS = 1024
@@ -15,6 +16,13 @@ export interface CayeAgentInput {
   mode: CayeAgentMode
   workspaceId: string
   userMessage: string
+  /**
+   * Caller's role from operator_allowlist (#48). Enforced per-tool in
+   * runToolLoop. Webhook callers pass the looked-up role; cron paths
+   * (briefings) bypass cayeAgent entirely and call runToolLoop directly
+   * with callerRole: 'founder'.
+   */
+  callerRole: Role
 }
 
 export interface CayeAgentResult {
@@ -165,7 +173,7 @@ export async function cayeAgent(input: CayeAgentInput): Promise<CayeAgentResult>
     maxTokens: MAX_OUTPUT_TOKENS,
     systemPrompt,
     initialMessages,
-    ctx: { workspaceId: input.workspaceId },
+    ctx: { workspaceId: input.workspaceId, callerRole: input.callerRole },
   })
 
   return { replyText, newTurns }

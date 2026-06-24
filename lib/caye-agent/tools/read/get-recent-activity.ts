@@ -28,6 +28,7 @@ export const getRecentActivity: Tool<GetRecentActivityInput> = {
   description:
     "Get a chronological feed of recent activity: new bookings, status changes, holds opened. Defaults to last 24 hours. Use when the operator asks 'what happened?' or 'what's new since I last checked?'.",
   risk: 'read',
+  roles: ['owner', 'founder'],
   inputSchema: {
     type: 'object',
     properties: {

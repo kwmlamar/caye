@@ -113,6 +113,24 @@ export async function runToolLoop(args: ToolLoopArgs): Promise<ToolLoopResult> {
         })
         continue
       }
+      // Role gate (#48). Reject before execute so a misconfigured tool
+      // can't accidentally run for a caller it doesn't permit. Returns a
+      // structured error in the tool_result so the model can react in
+      // its reply (apologize, escalate) rather than silently failing.
+      if (!tool.roles.includes(args.ctx.callerRole)) {
+        toolResults.push({
+          type: 'tool_result',
+          tool_use_id: block.id,
+          content: JSON.stringify({
+            ok: false,
+            error:
+              `Tool '${block.name}' is not available to role '${args.ctx.callerRole}'. ` +
+              `Permitted roles: ${tool.roles.join(', ')}.`,
+          }),
+          is_error: true,
+        })
+        continue
+      }
       try {
         const result = await tool.execute(block.input as never, args.ctx)
         toolResults.push({

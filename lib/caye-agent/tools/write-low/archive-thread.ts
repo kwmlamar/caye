@@ -12,6 +12,7 @@ export const archiveThread: Tool<ArchiveThreadInput> = {
   description:
     'Archive a customer conversation thread so it stops appearing in the active inbox. Use when the operator says "archive that one" / "hide it" / "put it away".',
   risk: 'low',
+  roles: ['owner', 'founder'],
   inputSchema: {
     type: 'object',
     properties: {

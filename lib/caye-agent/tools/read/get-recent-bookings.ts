@@ -26,6 +26,7 @@ export const getRecentBookings: Tool<GetRecentBookingsInput> = {
   description:
     'List bookings created in the last N days (default 7). Use when the operator asks about the latest bookings or wants a quick scan of recent activity.',
   risk: 'read',
+  roles: ['owner', 'founder'],
   inputSchema: {
     type: 'object',
     properties: {

@@ -13,6 +13,7 @@ export const markHandled: Tool<MarkHandledInput> = {
   description:
     "Mark a held customer thread as handled — clears the hold flag so Caye stops waiting on the operator and stops surfacing it. Use when the operator says 'I got it' / 'handled' / 'I replied directly' about a held item. Does NOT send a customer reply; that's send_reply (high-risk, comes later).",
   risk: 'low',
+  roles: ['owner', 'founder'],
   inputSchema: {
     type: 'object',
     properties: {

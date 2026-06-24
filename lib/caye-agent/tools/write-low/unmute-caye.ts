@@ -7,6 +7,7 @@ export const unmuteCaye: Tool<Record<string, never>> = {
   description:
     "Resume Caye's customer auto-replies after a mute. Use when the operator says 'unmute' / 'back on' / 'resume'.",
   risk: 'low',
+  roles: ['owner', 'founder'],
   inputSchema: {
     type: 'object',
     properties: {},

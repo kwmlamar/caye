@@ -14,6 +14,7 @@ export const muteCaye: Tool<MuteCayeInput> = {
   description:
     "Pause Caye's customer auto-replies for a window. Default 8 hours if no duration given. Use when the operator says 'mute me' / 'shush for X hours' / 'quiet until tomorrow'.",
   risk: 'low',
+  roles: ['owner', 'founder'],
   inputSchema: {
     type: 'object',
     properties: {

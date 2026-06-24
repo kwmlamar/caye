@@ -19,6 +19,7 @@ export const confirmBooking: Tool<ConfirmBookingInput> = {
   name: 'confirm_booking',
   description: `Move a pending booking to confirmed status, optionally sending a confirmation message to the customer. ${HIGH_RISK_CONFIRMATION_PREAMBLE}`,
   risk: 'high',
+  roles: ['owner', 'founder'],
   inputSchema: {
     type: 'object',
     properties: {

@@ -12,6 +12,7 @@ export const skipHeldItem: Tool<SkipHeldItemInput> = {
   description:
     "Defer a held customer thread without action. Clears the hold and stops surfacing it, but records that it was skipped rather than handled. Use when the operator says 'skip' / 'leave it' / 'ignore' about a specific held item.",
   risk: 'low',
+  roles: ['owner', 'founder'],
   inputSchema: {
     type: 'object',
     properties: {

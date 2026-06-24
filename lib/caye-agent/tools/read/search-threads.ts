@@ -21,6 +21,7 @@ export const searchThreads: Tool<SearchThreadsInput> = {
   description:
     'Search across customer conversation threads by customer name or last-message text. Returns up to 8 matches. Use when the operator vaguely remembers a thread ("the woman who asked about Sunday") and wants to find it. v1 is LIKE-only — semantic search comes later.',
   risk: 'read',
+  roles: ['owner', 'founder'],
   inputSchema: {
     type: 'object',
     properties: {

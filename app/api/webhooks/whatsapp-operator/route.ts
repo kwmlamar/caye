@@ -143,19 +143,42 @@ async function handleOneInbound(
   const normalized = normalizeE164(fromRaw)
   if (!normalized) return
 
-  // Look up the workspace by operator number. Try both with and without leading '+'.
-  const { data: cfg } = await supabase
-    .from('workspace_ai_config')
-    .select('workspace_id, whatsapp_outbound_enabled, operator_whatsapp_number')
-    .or(`operator_whatsapp_number.eq.${normalized},operator_whatsapp_number.eq.+${normalized}`)
+  // Allowlist lookup (#48). Maps phone → workspace_id + role.
+  // Try both normalized and +-prefixed phone shapes. Founder's number
+  // matches multiple rows (one per workspace) — order by created_at desc
+  // and take the most recent. Multi-workspace founder routing UX is a
+  // future concern (one paid customer today; a "switch to <workspace>"
+  // command is the natural fix when it matters).
+  const { data: allow } = await supabase
+    .from('operator_allowlist')
+    .select('workspace_id, role')
+    .or(`phone.eq.${normalized},phone.eq.+${normalized}`)
+    .order('created_at', { ascending: false })
+    .limit(1)
     .maybeSingle()
 
-  if (!cfg) {
-    console.warn(`[whatsapp-operator] no workspace for from=${fromRaw}`)
+  if (!allow) {
+    console.warn(`[whatsapp-operator] no allowlist entry for from=${fromRaw}`)
     return
   }
 
-  const workspaceId: string = cfg.workspace_id
+  const workspaceId: string = allow.workspace_id
+  const callerRole = allow.role as 'owner' | 'staff' | 'founder'
+
+  // Fetch the workspace's outbound config (flag + canonical operator
+  // number). Separate query from the allowlist lookup so the allowlist
+  // is the source of truth for "who can talk to Caye" and the config row
+  // is the source of truth for "where do replies go".
+  const { data: cfg } = await supabase
+    .from('workspace_ai_config')
+    .select('whatsapp_outbound_enabled, operator_whatsapp_number')
+    .eq('workspace_id', workspaceId)
+    .maybeSingle()
+
+  if (!cfg) {
+    console.warn(`[whatsapp-operator] no workspace_ai_config for workspace=${workspaceId}`)
+    return
+  }
   const now = new Date().toISOString()
 
   // Open the 24h free-form window regardless of message type.
@@ -255,6 +278,7 @@ async function handleOneInbound(
       mode: 'back-office',
       workspaceId,
       userMessage: body,
+      callerRole,
     })
 
     if (!agentResult.replyText) {
