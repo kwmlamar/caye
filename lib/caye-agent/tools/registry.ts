@@ -19,6 +19,9 @@ import { updateBusinessHours } from './write-low/update-business-hours'
 import { addBlackoutDate } from './write-low/add-blackout-date'
 import { updateVoiceRegister } from './write-low/update-voice-register'
 import { addVoiceSample } from './write-low/add-voice-sample'
+import { addTeamMember } from './write-low/add-team-member'
+import { updateTeamMemberPermissions } from './write-low/update-team-member-permissions'
+import { removeTeamMember } from './write-high/remove-team-member'
 import { removeService } from './write-high/remove-service'
 import { removeBlackoutDate } from './write-high/remove-blackout-date'
 import { skipHeldItem } from './write-low/skip-held-item'
@@ -63,6 +66,8 @@ export const TOOL_REGISTRY: AnyTool[] = [
   addBlackoutDate as AnyTool,
   updateVoiceRegister as AnyTool,
   addVoiceSample as AnyTool,
+  addTeamMember as AnyTool,
+  updateTeamMemberPermissions as AnyTool,
   skipHeldItem as AnyTool,
   muteCaye as AnyTool,
   unmuteCaye as AnyTool,
@@ -75,6 +80,7 @@ export const TOOL_REGISTRY: AnyTool[] = [
   cancelBooking as AnyTool,
   removeService as AnyTool,
   removeBlackoutDate as AnyTool,
+  removeTeamMember as AnyTool,
 ]
 
 export function findTool(name: string): AnyTool | undefined {

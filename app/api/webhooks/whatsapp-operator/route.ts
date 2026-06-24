@@ -151,7 +151,7 @@ async function handleOneInbound(
   // command is the natural fix when it matters).
   const { data: allow } = await supabase
     .from('operator_allowlist')
-    .select('workspace_id, role')
+    .select('id, workspace_id, role, verified_at, pending_otp_code, pending_otp_expires_at')
     .or(`phone.eq.${normalized},phone.eq.+${normalized}`)
     .order('created_at', { ascending: false })
     .limit(1)
@@ -159,6 +159,42 @@ async function handleOneInbound(
 
   if (!allow) {
     console.warn(`[whatsapp-operator] no allowlist entry for from=${fromRaw}`)
+    return
+  }
+
+  // Pending verification (#55) — drop everything except a body that
+  // matches the pending OTP. On match, verify the row + send welcome
+  // template; on mismatch, drop silently (we don't want to leak the
+  // shape of the gate to a wrong-number guess).
+  if (!allow.verified_at && allow.pending_otp_code) {
+    const expired =
+      allow.pending_otp_expires_at &&
+      new Date(allow.pending_otp_expires_at).getTime() < Date.now()
+    if (expired) {
+      console.warn(`[whatsapp-operator] expired pending OTP for from=${fromRaw}`)
+      return
+    }
+    const body = message.type === 'text' ? (message.text?.body ?? '').trim() : ''
+    if (body === allow.pending_otp_code) {
+      await supabase
+        .from('operator_allowlist')
+        .update({
+          verified_at: new Date().toISOString(),
+          pending_otp_code: null,
+          pending_otp_expires_at: null,
+        })
+        .eq('id', allow.id)
+      const { sendTemplateWhatsApp } = await import('@/lib/whatsapp/outbound')
+      await sendTemplateWhatsApp(
+        `+${normalized}`,
+        'caye_welcome',
+        ['there'],
+        `team-welcome-${allow.workspace_id}-${normalized}-${Date.now()}`
+      )
+      console.log(`[whatsapp-operator] verified team member from=${fromRaw}`)
+    } else {
+      console.log(`[whatsapp-operator] dropping message from unverified ${fromRaw}`)
+    }
     return
   }
 
