@@ -102,6 +102,39 @@ const TOOL: Anthropic.Tool = {
   },
 }
 
+// Classifier-shape call: structured tool output, no voice generation, no
+// multi-turn reasoning. Routed to Haiku 4.5 for ~80-90% input / ~75% output
+// cost reduction vs Sonnet. Sonnet fallback fires on JSON-parse failure or
+// missing required `kind` field — single retry, logged for audit.
+// Locked 2026-06-24 (#47).
+const CLASSIFIER_MODEL = 'claude-haiku-4-5-20251001'
+const CLASSIFIER_FALLBACK_MODEL = 'claude-sonnet-4-6'
+
+async function callClassifier(
+  client: Anthropic,
+  model: string,
+  userContent: string
+): Promise<OperatorIntent | null> {
+  const response = await client.messages.create({
+    model,
+    max_tokens: 600,
+    system: SYSTEM,
+    tools: [TOOL],
+    tool_choice: { type: 'tool', name: 'classify_intent' },
+    messages: [{ role: 'user', content: userContent }],
+  })
+
+  const toolUse = response.content.find(
+    (b): b is Anthropic.ToolUseBlock => b.type === 'tool_use' && b.name === 'classify_intent'
+  )
+  if (!toolUse) return null
+
+  const raw = toolUse.input as Record<string, unknown>
+  if (typeof raw.kind !== 'string') return null
+
+  return normalizeIntent(raw)
+}
+
 export async function classifyOperatorIntent(input: ClassifyInput): Promise<OperatorIntent> {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
@@ -127,23 +160,16 @@ export async function classifyOperatorIntent(input: ClassifyInput): Promise<Oper
       : '') +
     `\n\nOPERATOR REPLY:\n"${input.operatorText}"`
 
-  const response = await client.messages.create({
-    model: 'claude-sonnet-4-6',
-    max_tokens: 600,
-    system: SYSTEM,
-    tools: [TOOL],
-    tool_choice: { type: 'tool', name: 'classify_intent' },
-    messages: [{ role: 'user', content: userContent }],
-  })
+  const haikuResult = await callClassifier(client, CLASSIFIER_MODEL, userContent)
+  if (haikuResult) return haikuResult
 
-  const toolUse = response.content.find(
-    (b): b is Anthropic.ToolUseBlock => b.type === 'tool_use' && b.name === 'classify_intent'
+  console.warn(
+    '[intent] Haiku classifier returned no valid tool_use; falling back to Sonnet for this call'
   )
-  if (!toolUse) {
-    return { kind: 'unclear', ask_back: '' }
-  }
+  const sonnetResult = await callClassifier(client, CLASSIFIER_FALLBACK_MODEL, userContent)
+  if (sonnetResult) return sonnetResult
 
-  return normalizeIntent(toolUse.input as Record<string, unknown>)
+  return { kind: 'unclear', ask_back: '' }
 }
 
 function normalizeIntent(raw: Record<string, unknown>): OperatorIntent {

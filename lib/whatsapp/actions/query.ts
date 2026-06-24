@@ -47,21 +47,32 @@ export async function actionQuery(
 VOICE: terse, lowercase ok, no emoji, no tropical metaphors, no "I'd be happy to". Sound like a quick reply over the radio.
 Keep it under 3 sentences. If state is empty, say so plainly.`
 
-  try {
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+  // Classifier-shape call: short structured answer, no voice generation.
+  // Routed to Haiku 4.5; Sonnet fallback on empty response. Locked
+  // 2026-06-24 (#47).
+  const QUERY_MODEL = 'claude-haiku-4-5-20251001'
+  const QUERY_FALLBACK_MODEL = 'claude-sonnet-4-6'
+
+  const userContent = `WORKSPACE STATE:\n${stateBlock}\n\nOPERATOR ASKED:\n"${intent.question}"\n\nAnswer.`
+
+  async function tryModel(client: Anthropic, model: string): Promise<string> {
     const response = await client.messages.create({
-      model: 'claude-sonnet-4-6',
+      model,
       max_tokens: 300,
       system,
-      messages: [
-        {
-          role: 'user',
-          content: `WORKSPACE STATE:\n${stateBlock}\n\nOPERATOR ASKED:\n"${intent.question}"\n\nAnswer.`,
-        },
-      ],
+      messages: [{ role: 'user', content: userContent }],
     })
     const block = response.content[0]
-    const text = block?.type === 'text' ? block.text.trim() : ''
+    return block?.type === 'text' ? block.text.trim() : ''
+  }
+
+  try {
+    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+    let text = await tryModel(client, QUERY_MODEL)
+    if (!text) {
+      console.warn('[actions/query] Haiku returned empty; falling back to Sonnet for this call')
+      text = await tryModel(client, QUERY_FALLBACK_MODEL)
+    }
     return {
       ackBody: text || "Nothing to report.",
       tag: { label: 'query', status: 'ok' },
