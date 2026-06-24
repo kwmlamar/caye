@@ -43,7 +43,20 @@ export interface ToolLoopResult {
  * later, not behavior here.
  */
 export async function runToolLoop(args: ToolLoopArgs): Promise<ToolLoopResult> {
+  // Cache breakpoint on the last tool caches the entire tools array.
+  // The back-office system prompt is workspace-stable (operator profile
+  // and voice profile only change on owner edits), so the system block
+  // is cached at 1h TTL alongside the tools. Locked 2026-06-24 (#46) —
+  // previously this path shipped zero caching (raw string system, no
+  // tool cache_control), giving ~0% cache reads on the back-office surface.
   const tools = TOOL_REGISTRY.map(asAnthropicTool)
+  if (tools.length > 0) {
+    const last = tools[tools.length - 1]
+    tools[tools.length - 1] = {
+      ...last,
+      cache_control: { type: 'ephemeral', ttl: '1h' },
+    } as Anthropic.Tool
+  }
   const messages: Anthropic.MessageParam[] = [...args.initialMessages]
   const newTurns: Anthropic.MessageParam[] = []
 
@@ -51,7 +64,13 @@ export async function runToolLoop(args: ToolLoopArgs): Promise<ToolLoopResult> {
     const response = await args.client.messages.create({
       model: args.model,
       max_tokens: args.maxTokens,
-      system: args.systemPrompt,
+      system: [
+        {
+          type: 'text',
+          text: args.systemPrompt,
+          cache_control: { type: 'ephemeral', ttl: '1h' },
+        },
+      ],
       messages,
       tools,
     })

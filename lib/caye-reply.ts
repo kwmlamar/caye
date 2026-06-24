@@ -396,7 +396,10 @@ const TOOLS: Anthropic.Tool[] = [
       },
       required: ['reason', 'note'],
     },
-    cache_control: { type: 'ephemeral' },
+    // Cache breakpoint on the last tool caches the entire tools array.
+    // 1h TTL chosen 2026-06-24 (#46): bursty traffic spans multiple 5-min
+    // windows, and the tools list is stable across deploys.
+    cache_control: { type: 'ephemeral', ttl: '1h' },
   },
 ]
 
@@ -420,6 +423,22 @@ interface BusinessLinks {
   website_url: string | null
 }
 
+/**
+ * Two-tier system prompt:
+ *   - `stable`: workspace-stable content (operator voice, services catalog,
+ *     policies, links). Cached at 1h TTL on the model side. Changes only
+ *     when the workspace settings change or the policy strings change in
+ *     code — both rare events that 1h cache absorbs.
+ *   - `dynamic`: per-message content (today's date, customer-specific
+ *     profile/history/facts, inbound tone hint, service-match hint,
+ *     channel/first-message format rules). NOT cached.
+ *
+ * The two are concatenated by the caller into a 2-block `system` array so
+ * the cached prefix bytes are stable across messages.
+ *
+ * Locked 2026-06-24 (#46) — previous single-block system mixed dynamic
+ * customer data into the cached prefix, giving 20% cache read ratio.
+ */
 function buildSystem(
   systemPrompt: string,
   voiceProfile: VoiceProfile | undefined,
@@ -434,10 +453,11 @@ function buildSystem(
   services: ServiceRow[],
   todayISO: string,
   serviceMatch: ServiceMatchResult | null
-): string {
-  let s = systemPrompt
+): { stable: string; dynamic: string } {
+  // ── STABLE PREFIX ───────────────────────────────────────────────────────
+  let stable = systemPrompt
 
-  s +=
+  stable +=
     '\n\nBUSINESS IDENTITY RULES:\n' +
     '- The operator\'s business is defined by the workspace context above. ' +
     'Never invent a name for the business, never refer to it by anything ' +
@@ -451,7 +471,7 @@ function buildSystem(
     'hallucinated business names.'
 
   if (voiceProfile) {
-    s +=
+    stable +=
       '\n\nVOICE PROFILE — write in this person\'s actual style:\n' +
       `- Formality: ${voiceProfile.formality_level}\n` +
       `- Style: ${voiceProfile.writing_style}\n` +
@@ -481,43 +501,11 @@ function buildSystem(
     }
 
     if (verbatimLines.length > 0) {
-      s +=
+      stable +=
         '\n\nVERBATIM ELEMENTS — these strings must appear EXACTLY as written, never paraphrased, never reworded, never translated:\n' +
         verbatimLines.join('\n')
     }
   }
-
-  if (contactProfile) {
-    s +=
-      '\n\nCUSTOMER STYLE — adapt your reply to match this person\'s communication style:\n' +
-      `- Formality: ${contactProfile.formality}\n` +
-      `- Style: ${contactProfile.message_style}\n` +
-      `- Language notes: ${contactProfile.language_notes}\n` +
-      'Match their energy — if they\'re brief, be brief. If they\'re formal, stay professional. ' +
-      'If they use emoji, one or two is fine. Mirror their vibe without abandoning the VOICE PROFILE ' +
-      'above (their style controls tone; your owner\'s voice profile controls word choice and identity).'
-  }
-
-  // Customer history (returning customer signal). The block renders empty
-  // for first-timers so this is safe to call unconditionally.
-  if (customerHistory) {
-    const historyBlock = formatCustomerHistoryBlock(customerHistory)
-    if (historyBlock) s += '\n\n' + historyBlock
-  }
-
-  // Customer facts (operational truths they told us — allergies, mobility,
-  // group, etc.). The block renders empty when no facts are populated.
-  if (contactFacts) {
-    const factsBlock = formatCustomerFactsBlock(contactFacts)
-    if (factsBlock) s += '\n\n' + factsBlock
-  }
-
-  // Inbound-context tone modifier. Pure classifier picks a category from
-  // the inbound body (or returns null when uncertain); toneHintFor maps
-  // the category to a short prompt addendum. When category is null the
-  // hint is empty — Caye falls back to her default tone.
-  const toneHint = toneHintFor(inboundCategory)
-  if (toneHint) s += '\n\n' + toneHint
 
   // Inject business links only when at least one is set — empty block adds
   // noise to the prompt and could confuse the model into mentioning links
@@ -526,7 +514,7 @@ function buildSystem(
     const lines: string[] = []
     if (businessLinks.booking_url) lines.push(`- Booking page: ${businessLinks.booking_url}`)
     if (businessLinks.website_url) lines.push(`- Website: ${businessLinks.website_url}`)
-    s +=
+    stable +=
       '\n\nBUSINESS LINKS — share when relevant, do not force:\n' +
       lines.join('\n') +
       '\n' +
@@ -536,25 +524,9 @@ function buildSystem(
       'and never invent URLs that aren\'t listed here.'
   }
 
-  s +=
-    `\n\nTODAY'S DATE: ${todayISO}. ` +
-    'When the customer says "tomorrow" / "this Saturday" / etc., resolve it against today.'
+  stable += `\n\nAVAILABLE SERVICES:\n${formatServicesList(services)}`
 
-  s += `\n\nAVAILABLE SERVICES:\n${formatServicesList(services)}`
-
-  // Append the deterministic service-name match hint when one was computed.
-  // This closes the Jeff Montenaro / James Stallings stall gap: when the
-  // customer's stated tour name differs from the canonical catalog name
-  // (e.g. "Historical" vs "Heritage"), the matcher pre-computes the best
-  // canonical service and tells the LLM to either use it directly (high
-  // confidence) or clarify between top candidates (medium/low). Either way,
-  // the LLM is explicitly told NOT to defer on a pure name mismatch.
-  if (serviceMatch) {
-    const hint = buildMatchHintBlock(serviceMatch)
-    if (hint) s += hint
-  }
-
-  s +=
+  stable +=
     '\n\nBOOKING POLICY:\n' +
     '- You can create bookings directly using check_availability + create_booking.\n' +
     '- Always check availability for a date before creating a booking on it.\n' +
@@ -595,7 +567,7 @@ function buildSystem(
     'If the slot is full, suggest the next time. Mention to the customer they\'ll be joining others.\n' +
     '- EXCLUSIVE services: only one party per slot. If the slot has any booking, suggest another time.'
 
-  s +=
+  stable +=
     '\n\nPRICING POLICY (CRITICAL):\n' +
     '- NEVER quote a price from memory, from the system prompt, or by reading pricing text. ' +
     'ALWAYS call lookup_price(service_id, group_size) and quote the values it returns verbatim.\n' +
@@ -610,7 +582,7 @@ function buildSystem(
     'This is non-negotiable — past pricing mistakes (e.g. quoting the per-person group rate for a 2-person ' +
     'Private tour) cost the owner real money and trust.'
 
-  s +=
+  stable +=
     '\n\nAUTONOMY DECISION TREE (when you cannot directly send a booking confirmation):\n' +
     'Holding is the last resort, not the first. Try these in order:\n' +
     '\n' +
@@ -643,7 +615,66 @@ function buildSystem(
     'in those modes; the owner gets a clean queue of "decision needed" items instead of a ' +
     'queue of "messages I need to read and respond to."'
 
-  s += isEmail
+  stable += '\n\nSCOPE: Only engage with messages that are actually for the business — booking inquiries, ' +
+    'customer questions, payment/logistics follow-ups. If the message is a newsletter, marketing blast, ' +
+    'industry/coaching content, cold sales outreach, partnership pitch, vendor notification, or any other ' +
+    'non-customer message, call hold_for_human with reason "not a customer message" and let the owner ' +
+    'decide. Never make commitments on the owner\'s behalf about signing up for things, attending events, ' +
+    'trying products, or replying to industry peers.'
+
+  stable += '\n\nTIME COMMITMENTS: Do NOT commit the owner to specific response windows. ' +
+    'Never say "within 24 hours", "by tomorrow", "later today", or any other fixed time promise ' +
+    'unless the system prompt or a prior owner instruction explicitly authorizes one for this context. ' +
+    'Use "shortly", "soon", "as soon as we can", or omit the time reference entirely. ' +
+    'The owner\'s actual response time is unpredictable — every fixed promise you make becomes a ' +
+    'broken promise we cannot control.'
+
+  // ── DYNAMIC SUFFIX ──────────────────────────────────────────────────────
+  // Per-message content that would bust the cache if folded into `stable`.
+  let dynamic = `TODAY'S DATE: ${todayISO}. ` +
+    'When the customer says "tomorrow" / "this Saturday" / etc., resolve it against today.'
+
+  if (contactProfile) {
+    dynamic +=
+      '\n\nCUSTOMER STYLE — adapt your reply to match this person\'s communication style:\n' +
+      `- Formality: ${contactProfile.formality}\n` +
+      `- Style: ${contactProfile.message_style}\n` +
+      `- Language notes: ${contactProfile.language_notes}\n` +
+      'Match their energy — if they\'re brief, be brief. If they\'re formal, stay professional. ' +
+      'If they use emoji, one or two is fine. Mirror their vibe without abandoning the VOICE PROFILE ' +
+      'above (their style controls tone; your owner\'s voice profile controls word choice and identity).'
+  }
+
+  // Customer history (returning customer signal). The block renders empty
+  // for first-timers so this is safe to call unconditionally.
+  if (customerHistory) {
+    const historyBlock = formatCustomerHistoryBlock(customerHistory)
+    if (historyBlock) dynamic += '\n\n' + historyBlock
+  }
+
+  // Customer facts (operational truths they told us — allergies, mobility,
+  // group, etc.). The block renders empty when no facts are populated.
+  if (contactFacts) {
+    const factsBlock = formatCustomerFactsBlock(contactFacts)
+    if (factsBlock) dynamic += '\n\n' + factsBlock
+  }
+
+  // Inbound-context tone modifier. Pure classifier picks a category from
+  // the inbound body (or returns null when uncertain); toneHintFor maps
+  // the category to a short prompt addendum. When category is null the
+  // hint is empty — Caye falls back to her default tone.
+  const toneHint = toneHintFor(inboundCategory)
+  if (toneHint) dynamic += '\n\n' + toneHint
+
+  // Deterministic service-name match hint (per-message — driven by the
+  // customer's inbound text). Closes the Jeff Montenaro / James Stallings
+  // stall gap on name mismatches like "Historical" vs "Heritage".
+  if (serviceMatch) {
+    const hint = buildMatchHintBlock(serviceMatch)
+    if (hint) dynamic += hint
+  }
+
+  dynamic += isEmail
     ? '\n\nWrite only the reply body — no headers, no markdown, no subject line. Plain prose.' +
       '\n\nSIGN-OFF: Use the exact sign-off block specified earlier in this system prompt — verbatim, ' +
       'including name, business, phone, and email if given. Do NOT invent your own signature. ' +
@@ -662,7 +693,7 @@ function buildSystem(
   // before the actual qualifying question. Reads like a chatbot. Karenda
   // would write three sentences total.
   if (isEmail && isFirstMessage) {
-    s +=
+    dynamic +=
       '\n\nBREVITY (FIRST-CONTACT EMAILS):\n' +
       '- Maximum 2 short paragraphs in the body. One brief acknowledgement, one clear next step (the price, the question, the booking confirmation). Then sign off.\n' +
       '- No more than 2 sentences per paragraph. No restating what the customer already told you.\n' +
@@ -671,23 +702,9 @@ function buildSystem(
       '- This is about respecting the customer\'s time. Karenda is direct and warm. Caye should be the same.'
   }
 
-  s += '\n\nSCOPE: Only engage with messages that are actually for the business — booking inquiries, ' +
-    'customer questions, payment/logistics follow-ups. If the message is a newsletter, marketing blast, ' +
-    'industry/coaching content, cold sales outreach, partnership pitch, vendor notification, or any other ' +
-    'non-customer message, call hold_for_human with reason "not a customer message" and let the owner ' +
-    'decide. Never make commitments on the owner\'s behalf about signing up for things, attending events, ' +
-    'trying products, or replying to industry peers.'
+  dynamic += '\n\nYou MUST end every turn by calling either send_reply or hold_for_human.'
 
-  s += '\n\nTIME COMMITMENTS: Do NOT commit the owner to specific response windows. ' +
-    'Never say "within 24 hours", "by tomorrow", "later today", or any other fixed time promise ' +
-    'unless the system prompt or a prior owner instruction explicitly authorizes one for this context. ' +
-    'Use "shortly", "soon", "as soon as we can", or omit the time reference entirely. ' +
-    'The owner\'s actual response time is unpredictable — every fixed promise you make becomes a ' +
-    'broken promise we cannot control.'
-
-  s += '\n\nYou MUST end every turn by calling either send_reply or hold_for_human.'
-
-  return s
+  return { stable, dynamic }
 }
 
 interface AvailabilityRow {
@@ -1454,7 +1471,7 @@ export async function generateCayeAutoReply(
     )
   }
 
-  const system = buildSystem(
+  const { stable: systemStable, dynamic: systemDynamic } = buildSystem(
     systemPrompt,
     voiceProfile,
     contactProfile,
@@ -1495,7 +1512,16 @@ export async function generateCayeAutoReply(
     const response = await client.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 1024,
-      system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
+      // Two-block system: stable prefix cached at 1h TTL, dynamic suffix
+      // (today's date, per-customer profile/history/facts, tone hint,
+      // service-match hint, channel/first-message format rules) carried
+      // uncached. The cached prefix bytes are stable across messages so
+      // bursty traffic amortizes the cache write across many reads.
+      // Locked 2026-06-24 (#46).
+      system: [
+        { type: 'text', text: systemStable, cache_control: { type: 'ephemeral', ttl: '1h' } },
+        { type: 'text', text: systemDynamic },
+      ],
       tools: TOOLS,
       tool_choice: { type: 'any' },
       messages,
