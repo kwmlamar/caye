@@ -27,6 +27,11 @@ import {
 } from './customer-history'
 import { classifyInbound, toneHintFor, type InboundCategory } from './inbound-classifier'
 import { formatCustomerFactsBlock, type CustomerFacts } from './customer-facts'
+import {
+  fetchBusinessFacts,
+  formatBusinessFactsBlock,
+  type BusinessFactRow,
+} from './business-facts'
 import { loggedMessagesCreate } from './llm-telemetry'
 import {
   detectForcedEscalation,
@@ -567,7 +572,8 @@ function buildSystem(
   isFirstMessage: boolean,
   services: ServiceRow[],
   todayISO: string,
-  serviceMatch: ServiceMatchResult | null
+  serviceMatch: ServiceMatchResult | null,
+  businessFacts: BusinessFactRow[]
 ): { stable: string; dynamic: string } {
   // ── STABLE PREFIX ───────────────────────────────────────────────────────
   let stable = systemPrompt
@@ -786,6 +792,13 @@ function buildSystem(
     const factsBlock = formatCustomerFactsBlock(contactFacts)
     if (factsBlock) dynamic += '\n\n' + factsBlock
   }
+
+  // Business facts (what the owner has taught Caye via add_business_fact —
+  // policies, service details, special handling, logistics). Dynamic, not
+  // cached: facts change whenever the owner adds one, and the cache TTL
+  // would defeat the purpose.
+  const bizFactsBlock = formatBusinessFactsBlock(businessFacts)
+  if (bizFactsBlock) dynamic += '\n\n' + bizFactsBlock
 
   // Inbound-context tone modifier. Pure classifier picks a category from
   // the inbound body (or returns null when uncertain); toneHintFor maps
@@ -1629,6 +1642,8 @@ export async function generateCayeAutoReply(
     )
   }
 
+  const businessFacts = await fetchBusinessFacts(inbound.workspaceId)
+
   const { stable: systemStable, dynamic: systemDynamic } = buildSystem(
     systemPrompt,
     voiceProfile,
@@ -1642,7 +1657,8 @@ export async function generateCayeAutoReply(
     inbound.isFirstMessage ?? false,
     services,
     todayISO,
-    serviceMatch
+    serviceMatch,
+    businessFacts
   )
 
   // Pull prior conversation history (if we have a conversation to query) so

@@ -9,7 +9,9 @@ import { getRecentActivity } from './read/get-recent-activity'
 import { getRecentBookings } from './read/get-recent-bookings'
 import { getPendingQuotes } from './read/get-pending-quotes'
 import { searchThreads } from './read/search-threads'
+import { queryBusinessKnowledge } from './read/query-business-knowledge'
 import { markHandled } from './write-low/mark-handled'
+import { addBusinessFact } from './write-low/add-business-fact'
 import { skipHeldItem } from './write-low/skip-held-item'
 import { muteCaye } from './write-low/mute-caye'
 import { unmuteCaye } from './write-low/unmute-caye'
@@ -41,8 +43,10 @@ export const TOOL_REGISTRY: AnyTool[] = [
   getRecentBookings as AnyTool,
   getPendingQuotes as AnyTool,
   searchThreads as AnyTool,
+  queryBusinessKnowledge as AnyTool,
   // Low-risk write
   markHandled as AnyTool,
+  addBusinessFact as AnyTool,
   skipHeldItem as AnyTool,
   muteCaye as AnyTool,
   unmuteCaye as AnyTool,
