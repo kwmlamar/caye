@@ -22,6 +22,7 @@ export const updateServicePrice: Tool<UpdateServicePriceInput> = {
     "category that caused the Stallings incident; we don't fix one by introducing another.",
   risk: 'low',
   roles: ['owner', 'founder'],
+  modes: ['back-office'],
   inputSchema: {
     type: 'object',
     properties: {

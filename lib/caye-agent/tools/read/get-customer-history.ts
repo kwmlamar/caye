@@ -33,6 +33,7 @@ export const getCustomerHistory: Tool<GetCustomerHistoryInput> = {
     "Get a customer's past bookings + the last 10 messages with them. Pass contact_id (richer profile) OR conversation_id (for conversation-only customers without an enriched contact row — common in Bimini's data). Use after a get_customer call: if the match's source was 'contact', pass contact_id; if 'conversation', pass conversation_id.",
   risk: 'read',
   roles: ['owner', 'founder'],
+  modes: ['back-office'],
   inputSchema: {
     type: 'object',
     properties: {

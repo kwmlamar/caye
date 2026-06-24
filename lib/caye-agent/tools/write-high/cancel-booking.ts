@@ -21,6 +21,7 @@ export const cancelBooking: Tool<CancelBookingInput> = {
   description: `Cancel a booking, recording the reason and notifying the customer. ${HIGH_RISK_CONFIRMATION_PREAMBLE}`,
   risk: 'high',
   roles: ['owner', 'founder'],
+  modes: ['back-office'],
   inputSchema: {
     type: 'object',
     properties: {

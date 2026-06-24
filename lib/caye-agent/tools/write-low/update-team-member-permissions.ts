@@ -16,6 +16,7 @@ export const updateTeamMemberPermissions: Tool<UpdateTeamMemberPermissionsInput>
     "disambiguate. founder rows cannot be modified through this tool — founder is platform-set.",
   risk: 'low',
   roles: ['owner', 'founder'],
+  modes: ['back-office'],
   inputSchema: {
     type: 'object',
     properties: {

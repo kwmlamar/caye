@@ -32,6 +32,7 @@ export const removeBlackoutDate: Tool<RemoveBlackoutDateInput> = {
     `Errors when multiple closures match — be more specific. ${HIGH_RISK_CONFIRMATION_PREAMBLE}`,
   risk: 'high',
   roles: ['owner', 'founder'],
+  modes: ['back-office'],
   inputSchema: {
     type: 'object',
     properties: {

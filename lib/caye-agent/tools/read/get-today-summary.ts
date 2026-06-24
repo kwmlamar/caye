@@ -19,6 +19,7 @@ export const getTodaySummary: Tool<Record<string, never>> = {
     "Get a high-level summary of today: confirmed bookings count, pending bookings count, confirmed revenue, and held items count. Use when the operator asks 'how's today looking?' or wants a quick read of where things stand.",
   risk: 'read',
   roles: ['owner', 'founder'],
+  modes: ['back-office'],
   inputSchema: {
     type: 'object',
     properties: {},

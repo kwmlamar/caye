@@ -35,6 +35,7 @@ export const updateVoiceRegister: Tool<UpdateVoiceRegisterInput> = {
     "- vip: reserved for the VIP segment (not yet auto-detected in v1 — sets the value for future use).",
   risk: 'low',
   roles: ['owner', 'founder'],
+  modes: ['back-office'],
   inputSchema: {
     type: 'object',
     properties: {

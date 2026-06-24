@@ -32,6 +32,7 @@ export const addTeamMember: Tool<AddTeamMemberInput> = {
     "owner can safely add a wrong number without it actually granting access.",
   risk: 'low',
   roles: ['owner', 'founder'],
+  modes: ['back-office'],
   inputSchema: {
     type: 'object',
     properties: {

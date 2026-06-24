@@ -44,6 +44,7 @@ export const queryBusinessKnowledge: Tool<QueryBusinessKnowledgeInput> = {
   risk: 'read',
   // Open to staff too — knowledge lookup is harmless.
   roles: ['owner', 'staff', 'founder'],
+  modes: ['back-office'],
   inputSchema: {
     type: 'object',
     properties: {

@@ -15,6 +15,7 @@ export const removeTeamMember: Tool<RemoveTeamMemberInput> = {
     `founder rows cannot be removed through this tool. ${HIGH_RISK_CONFIRMATION_PREAMBLE}`,
   risk: 'high',
   roles: ['owner', 'founder'],
+  modes: ['back-office'],
   inputSchema: {
     type: 'object',
     properties: {

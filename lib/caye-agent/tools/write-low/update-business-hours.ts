@@ -26,6 +26,7 @@ export const updateBusinessHours: Tool<UpdateBusinessHoursInput> = {
     "in add_blackout_date instead — they take precedence over the weekly hours.",
   risk: 'low',
   roles: ['owner', 'founder'],
+  modes: ['back-office'],
   inputSchema: {
     type: 'object',
     properties: {

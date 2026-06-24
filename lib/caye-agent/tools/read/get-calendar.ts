@@ -22,6 +22,7 @@ export const getCalendar: Tool<GetCalendarInput> = {
     "Get confirmed and pending bookings for a date or date range. Use when the operator asks about today's schedule, what's booked tomorrow, who's coming next week, etc. Cancelled bookings are excluded.",
   risk: 'read',
   roles: ['owner', 'founder'],
+  modes: ['back-office'],
   inputSchema: {
     type: 'object',
     properties: {

@@ -1,7 +1,7 @@
 import 'server-only'
 import type Anthropic from '@anthropic-ai/sdk'
 import { TOOL_REGISTRY, findTool } from './tools/registry'
-import { asAnthropicTool, type ToolContext } from './tools/types'
+import { asAnthropicTool, type ToolContext, type ToolMode } from './tools/types'
 import { loggedMessagesCreate } from '@/lib/llm-telemetry'
 
 // Safety: bound the tool loop so a misbehaving model can't call tools
@@ -15,6 +15,14 @@ export interface ToolLoopArgs {
   systemPrompt: string
   initialMessages: Anthropic.MessageParam[]
   ctx: ToolContext
+  /**
+   * Caye surface this call is on (#56). Filters TOOL_REGISTRY to tools
+   * whose modes[] includes this value before the schemas are shipped to
+   * Claude. Defaults to 'back-office' since every existing call site is
+   * back-office; pass 'front-desk' when caye-reply.ts migrates onto this
+   * runner (separate work, #14).
+   */
+  mode?: ToolMode
 }
 
 export interface ToolLoopResult {
@@ -50,7 +58,8 @@ export async function runToolLoop(args: ToolLoopArgs): Promise<ToolLoopResult> {
   // is cached at 1h TTL alongside the tools. Locked 2026-06-24 (#46) —
   // previously this path shipped zero caching (raw string system, no
   // tool cache_control), giving ~0% cache reads on the back-office surface.
-  const tools = TOOL_REGISTRY.map(asAnthropicTool)
+  const mode: ToolMode = args.mode ?? 'back-office'
+  const tools = TOOL_REGISTRY.filter((t) => t.modes.includes(mode)).map(asAnthropicTool)
   if (tools.length > 0) {
     const last = tools[tools.length - 1]
     tools[tools.length - 1] = {

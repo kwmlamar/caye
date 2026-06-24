@@ -30,6 +30,7 @@ export const addService: Tool<AddServiceInput> = {
     "uses it in proactive recommendations.",
   risk: 'low',
   roles: ['owner', 'founder'],
+  modes: ['back-office'],
   inputSchema: {
     type: 'object',
     properties: {

@@ -28,6 +28,7 @@ export const addVoiceSample: Tool<AddVoiceSampleInput> = {
     "stay in the pool unless the owner explicitly asks to clear them.",
   risk: 'low',
   roles: ['owner', 'founder'],
+  modes: ['back-office'],
   inputSchema: {
     type: 'object',
     properties: {

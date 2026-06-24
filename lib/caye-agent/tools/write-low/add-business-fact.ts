@@ -26,6 +26,7 @@ export const addBusinessFact: Tool<AddBusinessFactInput> = {
     "fact (\"weather cancellations get a full refund or rebook\").",
   risk: 'low',
   roles: ['owner', 'founder'],
+  modes: ['back-office'],
   inputSchema: {
     type: 'object',
     properties: {

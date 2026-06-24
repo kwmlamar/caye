@@ -24,6 +24,22 @@ export type ToolRisk = 'read' | 'low' | 'high'
  */
 export type Role = 'owner' | 'staff' | 'founder'
 
+/**
+ * Which Caye surface a tool is available on (#56).
+ *
+ * - back-office: the operator-facing agent (WhatsApp pings, briefings,
+ *   EOD summaries) — the existing TOOL_REGISTRY surface.
+ * - front-desk: the customer-facing reply path in lib/caye-reply.ts.
+ *   Front-desk tools currently live inline in caye-reply.ts and are
+ *   NOT in TOOL_REGISTRY yet (cross-registry unification is #14).
+ *
+ * runToolLoop filters TOOL_REGISTRY by the request's mode so the API
+ * call only ships the tool schemas relevant to the current surface,
+ * dropping input tokens per request. Tools tagged with both modes are
+ * cross-cutting (e.g. escalate_to_team eventually).
+ */
+export type ToolMode = 'front-desk' | 'back-office'
+
 export interface ToolContext {
   workspaceId: string
   /** Caller role. Cron paths pass 'founder' (system invocation). */
@@ -54,6 +70,13 @@ export interface Tool<T = unknown> {
    * rather than failing silently. Locked 2026-06-24 (#48).
    */
   roles: Role[]
+  /**
+   * Which Caye surfaces this tool is available on (#56). runToolLoop
+   * filters TOOL_REGISTRY by request mode before shipping schemas to
+   * Claude. All v1 back-office tools are tagged ['back-office']; future
+   * cross-cutting tools can declare both.
+   */
+  modes: ToolMode[]
   execute: (args: T, ctx: ToolContext) => Promise<ToolResult>
 }
 

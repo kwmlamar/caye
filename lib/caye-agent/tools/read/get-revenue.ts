@@ -24,6 +24,7 @@ export const getRevenue: Tool<GetRevenueInput> = {
     'Get confirmed-booking revenue for a period. Defaults to today. Use when the operator asks about money in the door, this week\'s take, etc.',
   risk: 'read',
   roles: ['owner', 'founder'],
+  modes: ['back-office'],
   inputSchema: {
     type: 'object',
     properties: {

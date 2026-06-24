@@ -16,6 +16,7 @@ export const removeService: Tool<RemoveServiceInput> = {
     `bookings on this service are NOT affected. ${HIGH_RISK_CONFIRMATION_PREAMBLE}`,
   risk: 'high',
   roles: ['owner', 'founder'],
+  modes: ['back-office'],
   inputSchema: {
     type: 'object',
     properties: {

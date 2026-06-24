@@ -18,6 +18,7 @@ export const setServiceVisibility: Tool<SetServiceVisibilityInput> = {
     "charter, but honor it if they ask by name\".",
   risk: 'low',
   roles: ['owner', 'founder'],
+  modes: ['back-office'],
   inputSchema: {
     type: 'object',
     properties: {

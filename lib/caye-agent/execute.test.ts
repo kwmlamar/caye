@@ -19,6 +19,7 @@ vi.mock('./tools/registry', async () => {
     description: 'A tool only the owner can call.',
     risk: 'low',
     roles: ['owner', 'founder'],
+    modes: ['back-office'],
     inputSchema: {
       type: 'object',
       properties: { note: { type: 'string' } },

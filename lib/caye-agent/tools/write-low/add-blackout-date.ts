@@ -26,6 +26,7 @@ export const addBlackoutDate: Tool<AddBlackoutDateInput> = {
     "Existing bookings on those dates are NOT cancelled — closures only block future inquiries.",
   risk: 'low',
   roles: ['owner', 'founder'],
+  modes: ['back-office'],
   inputSchema: {
     type: 'object',
     properties: {

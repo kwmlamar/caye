@@ -25,6 +25,7 @@ export const rescheduleBooking: Tool<RescheduleBookingInput> = {
   description: `Move a booking to a new date (and optionally a new time), notifying the customer. ${HIGH_RISK_CONFIRMATION_PREAMBLE}`,
   risk: 'high',
   roles: ['owner', 'founder'],
+  modes: ['back-office'],
   inputSchema: {
     type: 'object',
     properties: {
