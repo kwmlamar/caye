@@ -1,6 +1,7 @@
 import 'server-only'
 import Anthropic from '@anthropic-ai/sdk'
 import type { VoiceProfile } from '@/lib/voice-profile'
+import { loggedMessagesCreate } from '@/lib/llm-telemetry'
 
 /**
  * Generates a WhatsApp reply using Claude claude-sonnet-4-6.
@@ -29,7 +30,7 @@ export async function generateWhatsAppReply(
     '\n\nWrite only the reply body. Plain conversational prose — no markdown, no bullet points, no headers. ' +
     'Keep it brief — WhatsApp, not email. Sign off naturally.'
 
-  const response = await client.messages.create({
+  const response = await loggedMessagesCreate(client, {
     model: 'claude-sonnet-4-6',
     max_tokens: 500,
     system: fullSystem,
@@ -39,7 +40,7 @@ export async function generateWhatsAppReply(
         content: `Reply to this WhatsApp message:\n\nFrom: ${inbound.senderName}\n\n${inbound.body}`,
       },
     ],
-  })
+  }, { source: 'lib/whatsapp.ts:generateWhatsAppReply' })
 
   const block = response.content[0]
   if (block.type !== 'text') {

@@ -3,6 +3,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { createServiceClient } from '@/lib/supabase-server'
 import type { ActionContext, ActionResult } from './types'
 import type { PendingHeldItem } from '../pending'
+import { loggedMessagesCreate } from '@/lib/llm-telemetry'
 
 /**
  * Read-only query handler. Pulls a slim slice of workspace state (pending
@@ -56,12 +57,12 @@ Keep it under 3 sentences. If state is empty, say so plainly.`
   const userContent = `WORKSPACE STATE:\n${stateBlock}\n\nOPERATOR ASKED:\n"${intent.question}"\n\nAnswer.`
 
   async function tryModel(client: Anthropic, model: string): Promise<string> {
-    const response = await client.messages.create({
+    const response = await loggedMessagesCreate(client, {
       model,
       max_tokens: 300,
       system,
       messages: [{ role: 'user', content: userContent }],
-    })
+    }, { source: 'lib/whatsapp/actions/query.ts:actionQuery', workspaceId: ctx.workspaceId })
     const block = response.content[0]
     return block?.type === 'text' ? block.text.trim() : ''
   }

@@ -16,6 +16,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { createServiceClient, createServerClient } from '@/lib/supabase-server'
+import { loggedMessagesCreate } from '@/lib/llm-telemetry'
 
 const ZOHO_TOKEN_URL = 'https://accounts.zoho.com/oauth/v2/token'
 
@@ -170,11 +171,11 @@ Respond in this exact JSON format:
 If a section has nothing to extract, set it to an empty string "".`
 
   try {
-    const response = await anthropic.messages.create({
+    const response = await loggedMessagesCreate(anthropic, {
       model: 'claude-sonnet-4-5',
       max_tokens: 800,
       messages: [{ role: 'user', content: prompt }],
-    })
+    }, { source: 'app/api/caye/discovery/route.ts:extractBusinessKnowledge' })
 
     const rawText = response.content
       .filter(b => b.type === 'text')

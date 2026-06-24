@@ -5,6 +5,7 @@ import { dispatchOperatorReply } from '../channel-dispatch'
 import { resolveItemRef, type PendingHeldItem } from '../pending'
 import type { ActionContext, ActionResult } from './types'
 import type { VoiceProfile } from '@/lib/voice-profile'
+import { loggedMessagesCreate } from '@/lib/llm-telemetry'
 
 /**
  * Compose a revised draft per the operator's instruction, then send.
@@ -103,12 +104,12 @@ async function composeRevisedReply(
 
   try {
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
-    const response = await client.messages.create({
+    const response = await loggedMessagesCreate(client, {
       model: 'claude-sonnet-4-6',
       max_tokens: 500,
       system,
       messages: [{ role: 'user', content: userPrompt }],
-    })
+    }, { source: 'lib/whatsapp/actions/edit.ts:composeRevisedReply', workspaceId })
     const block = response.content[0]
     if (block?.type !== 'text') return null
     return block.text.trim()

@@ -1,6 +1,7 @@
 import 'server-only'
 import Anthropic from '@anthropic-ai/sdk'
 import type { PendingHeldItem } from './pending'
+import { loggedMessagesCreate } from '@/lib/llm-telemetry'
 
 /**
  * Operator-reply intent classifier.
@@ -115,14 +116,14 @@ async function callClassifier(
   model: string,
   userContent: string
 ): Promise<OperatorIntent | null> {
-  const response = await client.messages.create({
+  const response = await loggedMessagesCreate(client, {
     model,
     max_tokens: 600,
     system: SYSTEM,
     tools: [TOOL],
     tool_choice: { type: 'tool', name: 'classify_intent' },
     messages: [{ role: 'user', content: userContent }],
-  })
+  }, { source: 'lib/whatsapp/intent.ts:callClassifier' })
 
   const toolUse = response.content.find(
     (b): b is Anthropic.ToolUseBlock => b.type === 'tool_use' && b.name === 'classify_intent'

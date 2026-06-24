@@ -4,6 +4,7 @@ import type { VoiceProfile } from '@/lib/voice-profile'
 import type { ContactStyleProfile } from '@/types/database'
 import { detectIdentityLeak } from './caye-identity-guard'
 import { sanitizeDashes } from './sanitize-dashes'
+import { loggedMessagesCreate } from '@/lib/llm-telemetry'
 
 /**
  * Generates the body of a proactive nudge email. Reuses the same persona
@@ -105,12 +106,12 @@ export async function generateCayeNudge(ctx: NudgeContext): Promise<NudgeResult>
       ? `Write the post-tour follow-up to ${ctx.customerName}.`
       : `Write the friendly check-in to ${ctx.customerName}.`
 
-  const response = await client.messages.create({
+  const response = await loggedMessagesCreate(client, {
     model: 'claude-sonnet-4-6',
     max_tokens: 512,
     system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
     messages: [{ role: 'user', content: userPrompt }],
-  })
+  }, { source: 'lib/caye-nudge.ts:generateCayeNudge' })
 
   const textBlock = response.content.find(b => b.type === 'text')
   const text = textBlock && textBlock.type === 'text' ? textBlock.text.trim() : ''

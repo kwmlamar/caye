@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { createServiceClient, createServerClient } from '@/lib/supabase-server'
+import { loggedMessagesCreate } from '@/lib/llm-telemetry'
 import { syncBookingToCalendar } from '@/lib/calendar-sync'
 import { dispatchOperatorReply } from '@/lib/whatsapp/channel-dispatch'
 import { sendZohoEmail } from '@/lib/email-ai'
@@ -1052,12 +1053,12 @@ export async function POST(req: NextRequest) {
     let summarizerError: string | null = null
     try {
       const summarizer = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
-      const response = await summarizer.messages.create({
+      const response = await loggedMessagesCreate(summarizer, {
         model: 'claude-sonnet-4-6',
         max_tokens: 1800,
         system: summarizerSystem,
         messages: [{ role: 'user', content: summarizerUser }],
-      })
+      }, { source: 'app/api/caye/chat/route.ts:summarizer', workspaceId })
       const text = response.content
         .filter(b => b.type === 'text')
         .map(b => (b as { type: 'text'; text: string }).text)
@@ -1113,7 +1114,7 @@ export async function POST(req: NextRequest) {
 
   try {
     for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
-      const response = await client.messages.create({
+      const response = await loggedMessagesCreate(client, {
         model: 'claude-sonnet-4-6',
         max_tokens: 2000,
         system: [
@@ -1125,7 +1126,7 @@ export async function POST(req: NextRequest) {
         ],
         tools: TOOLS,
         messages,
-      })
+      }, { source: 'app/api/caye/chat/route.ts:chatLoop', workspaceId })
 
       if (response.stop_reason === 'end_turn') {
         const textBlock = response.content.find((b) => b.type === 'text')

@@ -27,6 +27,7 @@ import {
 } from './customer-history'
 import { classifyInbound, toneHintFor, type InboundCategory } from './inbound-classifier'
 import { formatCustomerFactsBlock, type CustomerFacts } from './customer-facts'
+import { loggedMessagesCreate } from './llm-telemetry'
 
 export type CayeAutoReply =
   | {
@@ -1509,7 +1510,7 @@ export async function generateCayeAutoReply(
   let createdBookingId: string | undefined
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-    const response = await client.messages.create({
+    const response = await loggedMessagesCreate(client, {
       model: 'claude-sonnet-4-6',
       max_tokens: 1024,
       // Two-block system: stable prefix cached at 1h TTL, dynamic suffix
@@ -1525,7 +1526,7 @@ export async function generateCayeAutoReply(
       tools: TOOLS,
       tool_choice: { type: 'any' },
       messages,
-    })
+    }, { source: 'lib/caye-reply.ts:generateCayeAutoReply', workspaceId: inbound.workspaceId })
 
     messages.push({ role: 'assistant', content: response.content })
 

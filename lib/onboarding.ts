@@ -2,6 +2,7 @@ import 'server-only'
 import Anthropic from '@anthropic-ai/sdk'
 import { createServiceClient } from '@/lib/supabase-server'
 import type { VoiceProfile } from '@/lib/voice-profile'
+import { loggedMessagesCreate } from '@/lib/llm-telemetry'
 
 export interface OnboardingQuestion {
   id: string
@@ -90,7 +91,7 @@ export async function buildBusinessProfile(
     (q) => `${q.question}\nAnswer: ${answers[q.id] || answers[q.field] || '(not provided)'}`
   ).join('\n\n')
 
-  const message = await client.messages.create({
+  const message = await loggedMessagesCreate(client, {
     model: 'claude-sonnet-4-6',
     max_tokens: 2048,
     system: `You are building an AI configuration profile for a service business's AI receptionist named Caye.
@@ -111,7 +112,7 @@ Return ONLY valid JSON matching this exact shape — no markdown, no explanation
         content: `Business name: ${businessName}\n\nOnboarding answers:\n\n${answersText}`,
       },
     ],
-  })
+  }, { source: 'lib/onboarding.ts:buildBusinessProfile' })
 
   const raw = message.content[0].type === 'text' ? message.content[0].text : ''
   const text = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim()

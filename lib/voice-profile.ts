@@ -1,5 +1,6 @@
 import 'server-only'
 import Anthropic from '@anthropic-ai/sdk'
+import { loggedMessagesCreate } from '@/lib/llm-telemetry'
 
 export interface VoiceProfile {
   writing_style: string
@@ -23,7 +24,7 @@ export async function extractVoiceProfile(samples: string[]): Promise<VoiceProfi
     .map((s, i) => `--- Message ${i + 1} ---\n${s.trim()}`)
     .join('\n\n')
 
-  const message = await client.messages.create({
+  const message = await loggedMessagesCreate(client, {
     model: 'claude-sonnet-4-6',
     max_tokens: 1536,
     system: `Analyze these writing samples and extract the author's communication style AND any literal strings they reuse verbatim.
@@ -50,7 +51,7 @@ Rules:
         content: `Analyze these writing samples and extract the voice profile:\n\n${samplesText}`,
       },
     ],
-  })
+  }, { source: 'lib/voice-profile.ts:extractVoiceProfile' })
 
   const raw = message.content[0].type === 'text' ? message.content[0].text : ''
   const text = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim()

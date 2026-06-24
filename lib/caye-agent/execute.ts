@@ -2,6 +2,7 @@ import 'server-only'
 import type Anthropic from '@anthropic-ai/sdk'
 import { TOOL_REGISTRY, findTool } from './tools/registry'
 import { asAnthropicTool, type ToolContext } from './tools/types'
+import { loggedMessagesCreate } from '@/lib/llm-telemetry'
 
 // Safety: bound the tool loop so a misbehaving model can't call tools
 // forever. 5 iterations is generous — most operator asks resolve in 1-2.
@@ -61,7 +62,7 @@ export async function runToolLoop(args: ToolLoopArgs): Promise<ToolLoopResult> {
   const newTurns: Anthropic.MessageParam[] = []
 
   for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
-    const response = await args.client.messages.create({
+    const response = await loggedMessagesCreate(args.client, {
       model: args.model,
       max_tokens: args.maxTokens,
       system: [
@@ -73,7 +74,7 @@ export async function runToolLoop(args: ToolLoopArgs): Promise<ToolLoopResult> {
       ],
       messages,
       tools,
-    })
+    }, { source: 'lib/caye-agent/execute.ts:runToolLoop', workspaceId: args.ctx.workspaceId })
 
     const assistantTurn: Anthropic.MessageParam = {
       role: 'assistant',
