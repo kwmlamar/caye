@@ -15,6 +15,11 @@ export interface VoiceProfile {
   tagline: string | null
   standard_signoff: string | null
   standard_opener: string | null
+  // Register override layered on at fetch time from
+  // customers.voice_register_overrides (#54). Not extracted by the LLM —
+  // these are set conversationally via update_voice_register.
+  register_override?: string | null
+  register_scope?: 'default' | 'b2b' | 'vip' | null
 }
 
 export async function extractVoiceProfile(samples: string[]): Promise<VoiceProfile> {

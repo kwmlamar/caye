@@ -17,6 +17,8 @@ import { addService } from './write-low/add-service'
 import { setServiceVisibility } from './write-low/set-service-visibility'
 import { updateBusinessHours } from './write-low/update-business-hours'
 import { addBlackoutDate } from './write-low/add-blackout-date'
+import { updateVoiceRegister } from './write-low/update-voice-register'
+import { addVoiceSample } from './write-low/add-voice-sample'
 import { removeService } from './write-high/remove-service'
 import { removeBlackoutDate } from './write-high/remove-blackout-date'
 import { skipHeldItem } from './write-low/skip-held-item'
@@ -59,6 +61,8 @@ export const TOOL_REGISTRY: AnyTool[] = [
   setServiceVisibility as AnyTool,
   updateBusinessHours as AnyTool,
   addBlackoutDate as AnyTool,
+  updateVoiceRegister as AnyTool,
+  addVoiceSample as AnyTool,
   skipHeldItem as AnyTool,
   muteCaye as AnyTool,
   unmuteCaye as AnyTool,

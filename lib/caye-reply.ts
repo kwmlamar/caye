@@ -602,7 +602,10 @@ function buildSystem(
       `- Formality: ${voiceProfile.formality_level}\n` +
       `- Style: ${voiceProfile.writing_style}\n` +
       `- Common phrases to use naturally: ${(voiceProfile.common_phrases ?? []).join(', ')}\n` +
-      `- Tone notes: ${voiceProfile.tone_notes}`
+      `- Tone notes: ${voiceProfile.tone_notes}` +
+      (voiceProfile.register_override
+        ? `\n- Register override (from update_voice_register${voiceProfile.register_scope ? `, scope=${voiceProfile.register_scope}` : ''}): ${voiceProfile.register_override} — bias your phrasing toward this register without abandoning the rest of the profile above.`
+        : '')
 
     const verbatimLines: string[] = []
     if (voiceProfile.standard_opener) {
@@ -1523,9 +1526,10 @@ export async function generateCayeAutoReply(
   // 48h window for workspaces outside Nassau.
   let businessLinks: BusinessLinks | undefined
   let workspaceTimezone = 'America/Nassau' // sane default
+  let voiceRegisterOverrides: Record<string, string> | null = null
   const { data: workspaceRow } = await supabase
     .from('customers')
-    .select('booking_url, website_url, timezone')
+    .select('booking_url, website_url, timezone, voice_register_overrides')
     .eq('id', inbound.workspaceId)
     .maybeSingle()
   if (workspaceRow) {
@@ -1536,6 +1540,8 @@ export async function generateCayeAutoReply(
       }
     }
     if (workspaceRow.timezone) workspaceTimezone = workspaceRow.timezone
+    voiceRegisterOverrides =
+      (workspaceRow.voice_register_overrides as Record<string, string> | null) ?? null
   }
 
   // If this conversation is linked to a contact, look up their style profile
@@ -1601,6 +1607,36 @@ export async function generateCayeAutoReply(
     inbound.subject ?? ''
   )
 
+  // Layer the voice register override (#54) onto the voice profile. b2b
+  // override fires only for B2B-classified inbound; otherwise default.
+  // Falls back to no override (cleanly null) when none is set.
+  let effectiveVoiceProfile: VoiceProfile | undefined = voiceProfile
+  if (voiceRegisterOverrides) {
+    const scope: 'b2b' | 'default' =
+      inboundCategory === 'b2b_partnership' && voiceRegisterOverrides.b2b
+        ? 'b2b'
+        : 'default'
+    const override = voiceRegisterOverrides[scope]
+    if (override) {
+      effectiveVoiceProfile = {
+        ...(voiceProfile ?? {
+          writing_style: '',
+          common_phrases: [],
+          greeting_style: '',
+          signoff_style: '',
+          formality_level: 'warm-professional',
+          tone_notes: '',
+          signature_block: null,
+          tagline: null,
+          standard_signoff: null,
+          standard_opener: null,
+        }),
+        register_override: override,
+        register_scope: scope,
+      }
+    }
+  }
+
   // Layer 1 confidence model (#57) — deterministic forced-escalation
   // triggers. If the inbound matches a known shape (complaint, B2B,
   // refund, custom request), skip the LLM entirely and return a
@@ -1651,7 +1687,7 @@ export async function generateCayeAutoReply(
 
   const { stable: systemStable, dynamic: systemDynamic } = buildSystem(
     systemPrompt,
-    voiceProfile,
+    effectiveVoiceProfile,
     contactProfile,
     contactFacts,
     businessLinks,
