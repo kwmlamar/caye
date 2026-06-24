@@ -21,6 +21,7 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { sendZohoReply } from '@/lib/email-ai'
 import { generateCayeAutoReply } from '@/lib/caye-reply'
 import { enqueueHoldPing } from '@/lib/whatsapp/triggers'
+import { applyEscalation } from '@/lib/whatsapp/escalation'
 import { syncBookingToCalendar } from '@/lib/calendar-sync'
 import type { VoiceProfile } from '@/lib/voice-profile'
 import { maybeRefreshContactProfile } from '@/lib/contact-profile'
@@ -447,6 +448,12 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
     console.error('[zoho-email webhook] AI reply generation failed:', err)
     return
   }
+
+  decision = await applyEscalation(decision, {
+    workspaceId,
+    conversationId: conversation.id,
+    contactName: effectiveName || effectiveEmail,
+  })
 
   if (decision.action === 'hold') {
     await supabase

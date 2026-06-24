@@ -149,6 +149,8 @@ export type OutboundKind =
   | 'welcome'
   | 'otp'
   | 'ack'
+  | 'escalation'
+  | 'escalation_followup'
 
 export interface EnqueueOutboundInput {
   workspaceId: string

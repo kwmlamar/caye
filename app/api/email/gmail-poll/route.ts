@@ -21,6 +21,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase-server'
 import { generateCayeAutoReply } from '@/lib/caye-reply'
 import { enqueueHoldPing } from '@/lib/whatsapp/triggers'
+import { applyEscalation } from '@/lib/whatsapp/escalation'
 import { htmlToPlainText } from '@/lib/email-text'
 import { sendGmailReply } from '@/lib/gmail-send'
 import { isNoReplySender, isCalendarInvite } from '@/lib/sender-classifier'
@@ -366,6 +367,12 @@ async function processGmailMessage(
     console.error(`[gmail-poll] Caye decision failed for ${messageId}:`, err)
     return 'error'
   }
+
+  decision = await applyEscalation(decision, {
+    workspaceId,
+    conversationId,
+    contactName: fromName || fromEmail,
+  })
 
   // Caye chose to reply → actually send via Gmail. Fall back to held-draft
   // on any send failure so the owner can still recover the conversation.

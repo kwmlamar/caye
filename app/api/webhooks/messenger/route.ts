@@ -26,6 +26,7 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { sendMetaMessage, fetchMetaSenderName } from '@/lib/meta-reply'
 import { generateCayeAutoReply } from '@/lib/caye-reply'
 import { enqueueHoldPing } from '@/lib/whatsapp/triggers'
+import { applyEscalation } from '@/lib/whatsapp/escalation'
 import { maybeRefreshContactProfile } from '@/lib/contact-profile'
 import { syncBookingToCalendar } from '@/lib/calendar-sync'
 import type { VoiceProfile } from '@/lib/voice-profile'
@@ -251,6 +252,12 @@ async function processInboundMessenger(payload: Record<string, unknown>): Promis
         console.error('[messenger webhook] AI reply generation failed:', err)
         continue
       }
+
+      decision = await applyEscalation(decision, {
+        workspaceId,
+        conversationId: conversation.id,
+        contactName: customerName,
+      })
 
       if (decision.action === 'hold') {
         await supabase

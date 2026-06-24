@@ -29,7 +29,24 @@ import { classifyInbound, toneHintFor, type InboundCategory } from './inbound-cl
 import { formatCustomerFactsBlock, type CustomerFacts } from './customer-facts'
 import { loggedMessagesCreate } from './llm-telemetry'
 
+export type EscalationCategory = 'gap' | 'policy' | 'knowledge' | 'sensitive'
+export type EscalationRouteTo = 'owner' | 'founder' | 'both'
+
 export type CayeAutoReply =
+  | {
+      action: 'escalate'
+      /** Customer-facing reply Caye sends immediately. Vague by default ("Let
+       *  me check with the team"). The customer hears something now; the
+       *  operator handles the substance asynchronously. */
+      content: string
+      /** Routing + categorization that the webhook layer turns into queue
+       *  rows + a caye_escalations record. */
+      category: EscalationCategory
+      routeTo: EscalationRouteTo
+      /** Internal context for the operator ping — full thread summary,
+       *  customer ask, Caye's reasoning, suggested response. */
+      internalContext: string
+    }
   | {
       action: 'reply'
       content: string
@@ -397,6 +414,78 @@ const TOOLS: Anthropic.Tool[] = [
       },
       required: ['reason', 'note'],
     },
+  },
+  {
+    name: 'escalate_to_team',
+    description:
+      'Open a categorized escalation when Caye lacks the TOOL, POLICY authority, or ' +
+      'KNOWLEDGE to answer — instead of refusing or saying "I can\'t help with that." ' +
+      'Customer-facing message goes out immediately (warm, vague on timing, never names a ' +
+      'specific human); the operator gets a WhatsApp ping with the full thread + your ' +
+      'reasoning + a suggested reply.\n\n' +
+      'PREFER escalate_to_team OVER hold_for_human whenever the situation fits one of the ' +
+      'four categories below — escalation is the structural safety net so "Caye says she ' +
+      'can\'t" never happens. Use hold_for_human only for the genuinely-ambiguous cases ' +
+      'where even an escalation message has nothing useful to acknowledge.\n\n' +
+      'CATEGORY → ROUTE:\n' +
+      '- gap (Caye literally lacks the tool — a feature that should exist but doesn\'t, or ' +
+      'a bug) → route_to=\'founder\'. The operator can\'t fix this.\n' +
+      '- policy (custom price, refund request, exception, complaint, special arrangement) ' +
+      '→ route_to=\'owner\'. Only the owner can decide.\n' +
+      '- knowledge (a factual gap about the business Caye doesn\'t know — opening hours ' +
+      'for a one-off, what\'s included in a specific package, vendor contact) → ' +
+      'route_to=\'owner\'. Owner answers; the answer will be captured for next time.\n' +
+      '- sensitive (B2B / partnership / commercial-terms / press / regulatory) → ' +
+      'route_to=\'owner\'. Per the 2026-06-06 lock — Caye does not handle these.\n' +
+      'Use route_to=\'both\' only when the issue genuinely needs the owner\'s call AND the ' +
+      'founder needs to be aware (e.g. a category=\'gap\' that is blocking a paying ' +
+      'customer mid-booking).\n\n' +
+      'CUSTOMER-FACING MESSAGE rules:\n' +
+      '- Vague on timing — "let me check with the team and circle back shortly" / "I\'ll ' +
+      'get this to the team and get back to you soon." Never "within 24 hours", never ' +
+      '"by tomorrow", never specifies who.\n' +
+      '- Never names the human ("Karenda will reply"). Use "the team" / "we".\n' +
+      '- Never promises an outcome ("we\'ll honor that", "the refund is on its way") — ' +
+      'the owner decides, not you.\n' +
+      '- Voice rules apply exactly as send_reply: no emoji, no tropical metaphors, match ' +
+      'the operator voice profile.\n\n' +
+      'INTERNAL CONTEXT rules — write it like a handoff. 2-5 sentences: what the customer ' +
+      'actually wants, the specific gap you hit (which tool you tried, what came back), ' +
+      'what you\'d suggest the operator do.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        category: {
+          type: 'string',
+          enum: ['gap', 'policy', 'knowledge', 'sensitive'],
+          description:
+            'Pick the one that fits best — see the CATEGORY → ROUTE list above. The ' +
+            'category drives both the routing and the knowledge auto-capture behavior.',
+        },
+        route_to: {
+          type: 'string',
+          enum: ['owner', 'founder', 'both'],
+          description:
+            'Who gets the ping. Follow the category → route mapping unless there\'s a ' +
+            'specific reason to fan out (rare — use \'both\' sparingly).',
+        },
+        customer_facing_message: {
+          type: 'string',
+          description:
+            'The message sent to the customer immediately. Follows the CUSTOMER-FACING ' +
+            'MESSAGE rules above. For complaint-flavored escalations, prepend a brief ' +
+            'empathy line ("I\'m sorry you had that experience — let me get this to the ' +
+            'team and we\'ll make it right.").',
+        },
+        internal_context: {
+          type: 'string',
+          description:
+            'Handoff note for the operator — what the customer wants, why you escalated, ' +
+            'suggested reply if you have one. 2-5 sentences.',
+        },
+      },
+      required: ['category', 'route_to', 'customer_facing_message', 'internal_context'],
+    },
     // Cache breakpoint on the last tool caches the entire tools array.
     // 1h TTL chosen 2026-06-24 (#46): bursty traffic spans multiple 5-min
     // windows, and the tools list is stable across deploys.
@@ -606,13 +695,26 @@ function buildSystem(
     '   Set flag_for_owner_followup=true and owner_note describing what the owner needs ' +
     'to decide (e.g. "Quote custom transport day for 4 adults Sept 25 — Max requested").\n' +
     '\n' +
-    '3. HOLD — hold_for_human (last resort).\n' +
-    '   Use when: customer is upset/complaining, request is genuinely outside the business\'s ' +
-    'scope, message is ambiguous in ways even the customer cannot clarify, or you genuinely ' +
-    'cannot draft a sensible acknowledgment.\n' +
-    '   When holding, always include proposed_reply with the draft you would have sent.\n' +
+    '3. ESCALATE — escalate_to_team (categorized handoff).\n' +
+    '   Use when: you can\'t answer because of a gap in tools, policy authority, or ' +
+    'knowledge — AND the situation fits one of the four categories (gap / policy / ' +
+    'knowledge / sensitive). See the escalate_to_team tool description for the full ' +
+    'category → route_to mapping.\n' +
+    '   Customer-facing message goes out immediately (warm, vague on timing — never ' +
+    '"by tomorrow", never names the human). Operator gets a categorized WhatsApp ping ' +
+    'with the full thread + your suggested reply.\n' +
+    '   Prefer ESCALATE over HOLD whenever the situation maps to one of the four ' +
+    'categories — escalation is the structural safety net so "Caye says she can\'t" ' +
+    'never happens.\n' +
     '\n' +
-    'Default to (1) or (2) whenever possible. The customer always gets an immediate response ' +
+    '4. HOLD — hold_for_human (last resort).\n' +
+    '   Use when: the message is ambiguous in ways even the customer cannot clarify, ' +
+    'or you genuinely cannot draft a sensible acknowledgment (angry complaint with zero ' +
+    'context, garbled inbound, off-topic message that doesn\'t fit any escalation ' +
+    'category). When holding, always include proposed_reply with the draft you would ' +
+    'have sent.\n' +
+    '\n' +
+    'Default to (1), (2), or (3) whenever possible. The customer always gets an immediate response ' +
     'in those modes; the owner gets a clean queue of "decision needed" items instead of a ' +
     'queue of "messages I need to read and respond to."'
 
@@ -1607,6 +1709,37 @@ export async function generateCayeAutoReply(
             } catch (err) {
               console.error('[caye-reply] Failed to flag conversation for owner followup:', err)
             }
+          }
+        }
+        toolResults.push({ type: 'tool_result', tool_use_id: tool.id, content: 'ok' })
+      } else if (tool.name === 'escalate_to_team') {
+        const input = tool.input as {
+          category: EscalationCategory
+          route_to: EscalationRouteTo
+          customer_facing_message: string
+          internal_context: string
+        }
+        // Same identity guard as send_reply — the customer-facing message
+        // ships verbatim, so it must clear the AI-identity sniff.
+        const leak = detectIdentityLeak(input.customer_facing_message)
+        if (leak) {
+          console.warn(`[caye-reply] Identity guard blocked escalation: ${leak}`)
+          terminal = {
+            action: 'hold',
+            reason: `Identity guard: ${leak}`,
+            note:
+              `Caye tried to escalate (${input.category} → ${input.route_to}) but the ` +
+              `identity guard blocked the customer message (${leak}). Review the draft ` +
+              `below and send manually if appropriate.\n\n---\n\nCustomer-facing draft:\n` +
+              `${input.customer_facing_message}\n\n---\n\nInternal context:\n${input.internal_context}`,
+          }
+        } else {
+          terminal = {
+            action: 'escalate',
+            content: sanitizeDashes(input.customer_facing_message),
+            category: input.category,
+            routeTo: input.route_to,
+            internalContext: input.internal_context,
           }
         }
         toolResults.push({ type: 'tool_result', tool_use_id: tool.id, content: 'ok' })

@@ -38,6 +38,10 @@ const TEMPLATE_REQUIRED_KINDS = new Set([
   'morning_digest',
   'urgent_hold',
   'auth_failure',
+  // Escalations may go to the founder, who has no 24h window with the
+  // workspace's Caye number. Always template — match urgent_hold's shape.
+  'escalation',
+  'escalation_followup',
 ])
 
 // Kinds where silence is dangerous → email fallback if WhatsApp fails.
@@ -184,12 +188,16 @@ async function processRow(row: QueueRow): Promise<RowOutcome> {
 }
 
 async function dispatch(row: QueueRow, config: WorkspaceConfig): Promise<SendResult> {
-  // Receptionist-spec Q4 — when an override is set (e.g. testing window
-  // for Bimini routes Karenda's pings to Lamar's number), send there
-  // instead of the canonical operator number. The canonical number stays
-  // as the workspace identity; only the SEND destination changes.
+  // Escalation rows pre-resolve the destination phone in payload.to_phone
+  // (one row per recipient — owner uses the override-aware lookup; founder
+  // uses operator_allowlist directly). All other kinds keep the existing
+  // override-aware lookup against the canonical operator number.
+  const payloadPhone =
+    typeof row.payload.to_phone === 'string' ? (row.payload.to_phone as string) : null
   const phone =
-    config.operator_notification_override_phone ?? config.operator_whatsapp_number!
+    payloadPhone ??
+    config.operator_notification_override_phone ??
+    config.operator_whatsapp_number!
   const idem = row.idempotency_key ?? `queue-${row.id}`
 
   const windowOpen = await isWhatsAppWindowOpen(row.workspace_id)
@@ -372,6 +380,24 @@ function templateForKind(
         name: 'caye_urgent_hold',
         placeholders: [str('guest', 'A guest'), 'booked for today'],
       }
+    case 'escalation': {
+      // Reuse the urgent_hold template — operator-side it reads the same
+      // ("a guest needs your call"). Category prefix in the reason
+      // placeholder gives the operator one-glance triage.
+      const category = str('category', 'policy')
+      const ask = str('internalContext', 'needs your call').slice(0, 80)
+      return {
+        name: 'caye_urgent_hold',
+        placeholders: [str('contactName', 'A guest'), `${category}: ${ask}`],
+      }
+    }
+    case 'escalation_followup': {
+      const category = str('category', 'policy')
+      return {
+        name: 'caye_urgent_hold',
+        placeholders: [str('contactName', 'A guest'), `still waiting (${category}) — please respond`],
+      }
+    }
     default:
       return null
   }

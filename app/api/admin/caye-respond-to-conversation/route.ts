@@ -28,6 +28,7 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { sendZohoReply } from '@/lib/email-ai'
 import { generateCayeAutoReply } from '@/lib/caye-reply'
 import { enqueueHoldPing } from '@/lib/whatsapp/triggers'
+import { applyEscalation } from '@/lib/whatsapp/escalation'
 import { syncBookingToCalendar } from '@/lib/calendar-sync'
 import type { VoiceProfile } from '@/lib/voice-profile'
 
@@ -174,6 +175,12 @@ export async function POST(request: NextRequest) {
     const msg = err instanceof Error ? err.message : String(err)
     return NextResponse.json({ error: `Caye reply generation failed: ${msg}` }, { status: 500 })
   }
+
+  decision = await applyEscalation(decision, {
+    workspaceId,
+    conversationId: conversationId,
+    contactName: customerName,
+  })
 
   // Hold branch
   if (decision.action === 'hold') {

@@ -13,6 +13,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase-server'
 import { generateCayeAutoReply } from '@/lib/caye-reply'
 import { enqueueHoldPing } from '@/lib/whatsapp/triggers'
+import { applyEscalation } from '@/lib/whatsapp/escalation'
 import { htmlToPlainText } from '@/lib/email-text'
 import { maybeRefreshOwnerVoiceProfile } from '@/lib/owner-voice-learning'
 import { detectOwnerCorrection } from '@/lib/owner-correction'
@@ -810,7 +811,7 @@ async function processMessage(
               console.log(`[email/poll] AI disabled — receipt using template fallback`)
             } else {
               try {
-                const decision = await generateCayeAutoReply(
+                let decision = await generateCayeAutoReply(
                   receiptSystemPrompt,
                   {
                     senderName: receipt.customerName,
@@ -822,6 +823,11 @@ async function processMessage(
                     senderEmail: customerEmail,
                   }
                 )
+                decision = await applyEscalation(decision, {
+                  workspaceId,
+                  conversationId,
+                  contactName: receipt.customerName,
+                })
                 if (decision.action === 'reply') {
                   thankYou = decision.content
                 } else {
@@ -1266,6 +1272,12 @@ async function processMessage(
     console.error('[email/poll] AI reply generation failed:', err)
     return 'error'
   }
+
+  decision = await applyEscalation(decision, {
+    workspaceId,
+    conversationId: conversation.id,
+    contactName: effectiveName || effectiveEmail,
+  })
 
   if (decision.action === 'hold') {
     await supabase
