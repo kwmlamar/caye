@@ -109,6 +109,7 @@ interface ServiceRow {
   description?: string | null
   is_shared: boolean
   max_capacity: number
+  visibility?: 'public' | 'private' | null
 }
 
 const MAX_TOOL_ROUNDS = 6
@@ -533,7 +534,11 @@ function formatServicesList(services: ServiceRow[]): string {
       const capacity = s.is_shared
         ? `, SHARED group tour, capacity ${s.max_capacity} guests/slot`
         : ', exclusive (one party per slot)'
-      return `- ${s.name} (${s.duration_minutes} min${capacity}) [id: ${s.id}]${desc}`
+      const privateTag =
+        s.visibility === 'private'
+          ? ' [PRIVATE — do NOT proactively suggest; honor + quote only when guest names it directly]'
+          : ''
+      return `- ${s.name} (${s.duration_minutes} min${capacity}) [id: ${s.id}]${privateTag}${desc}`
     })
     .join('\n')
 }
@@ -1504,7 +1509,7 @@ export async function generateCayeAutoReply(
   const supabase = createServiceClient()
   const { data: serviceRows } = await supabase
     .from('booking_services')
-    .select('id, name, duration_minutes, description, is_shared, max_capacity')
+    .select('id, name, duration_minutes, description, is_shared, max_capacity, visibility')
     .eq('user_id', inbound.workspaceId)
     .eq('active', true)
     .order('name')

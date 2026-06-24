@@ -12,6 +12,10 @@ import { searchThreads } from './read/search-threads'
 import { queryBusinessKnowledge } from './read/query-business-knowledge'
 import { markHandled } from './write-low/mark-handled'
 import { addBusinessFact } from './write-low/add-business-fact'
+import { updateServicePrice } from './write-low/update-service-price'
+import { addService } from './write-low/add-service'
+import { setServiceVisibility } from './write-low/set-service-visibility'
+import { removeService } from './write-high/remove-service'
 import { skipHeldItem } from './write-low/skip-held-item'
 import { muteCaye } from './write-low/mute-caye'
 import { unmuteCaye } from './write-low/unmute-caye'
@@ -47,6 +51,9 @@ export const TOOL_REGISTRY: AnyTool[] = [
   // Low-risk write
   markHandled as AnyTool,
   addBusinessFact as AnyTool,
+  updateServicePrice as AnyTool,
+  addService as AnyTool,
+  setServiceVisibility as AnyTool,
   skipHeldItem as AnyTool,
   muteCaye as AnyTool,
   unmuteCaye as AnyTool,
@@ -57,6 +64,7 @@ export const TOOL_REGISTRY: AnyTool[] = [
   confirmBooking as AnyTool,
   rescheduleBooking as AnyTool,
   cancelBooking as AnyTool,
+  removeService as AnyTool,
 ]
 
 export function findTool(name: string): AnyTool | undefined {
