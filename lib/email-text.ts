@@ -103,6 +103,21 @@ function stripQuotedReply(text: string): string {
   )
   if (forwardHeader !== -1) candidates.push(forwardHeader)
 
+  // International forward headers — same shape (one header followed by
+  // another within a few lines) but in non-English languages. GMX
+  // (Michelle Helmer 2026-06-24 case) uses "Gesendet: ... Von: ... An:
+  // ... Betreff:". Order varies by client. Covered:
+  //   - German:  Von, Gesendet, An, Betreff
+  //   - French:  Envoyé, À, Objet  (note: bare "De" omitted — too
+  //              ambiguous with names / addresses, even with colon)
+  //   - Spanish: Enviado, Asunto   (same reason — bare "De" / "A" out)
+  // The pattern requires ANY two of these labels within ~3 lines so a
+  // single false-positive label can't trigger a cut.
+  const i18nHeader =
+    /(^|\n)\s*(von|gesendet|an|betreff|envoyé|à|objet|enviado|asunto):\s.+\n(?:.*\n){0,3}\s*(von|gesendet|an|betreff|envoyé|à|objet|enviado|asunto):\s/i
+  const i18nForward = text.search(i18nHeader)
+  if (i18nForward !== -1) candidates.push(i18nForward)
+
   // First run of ">"-prefixed lines (plain-text quoting). We anchor on
   // a line start so ">" mid-sentence (rare) doesn't trip us.
   const angleQuote = text.search(/(^|\n)>\s?.+/)

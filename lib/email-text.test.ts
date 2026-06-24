@@ -75,6 +75,28 @@ div.zm_1526803674744298471_parse_4423952575885412991 li.MsoNormal { margin: 0; }
     expect(out).not.toContain('Please resubmit banking info')
   })
 
+  it('cuts the German GMX forward header (Gesendet:/Von:/An:/Betreff:)', () => {
+    // GMX webmail and Outlook.de wrap quoted replies in a German header
+    // block. Michelle Helmer 2026-06-24 case — the entire prior thread
+    // was getting persisted in her message content because none of the
+    // English patterns matched.
+    const text =
+      `Hello,\n\n` +
+      `I am a bit confused by your latest email. Please confirm the booking.\n\n` +
+      `Best regards,\nMichelle\n\n` +
+      `Gesendet: Mittwoch, 24. Juni 2026 um 15:06\n\n` +
+      `Von: "Bimini Island Tours" <info@tourbimini.com>\n\n` +
+      `An: helmermichelle <helmer.michelle@gmx.de>\n\n` +
+      `Betreff: Re:Aw: Bimini Island Tours\n\n` +
+      `Hello, Thank you for your message. We would be delighted to host you...`
+    const out = htmlToPlainText(text)
+    expect(out).toContain('confused by your latest email')
+    expect(out).toContain('Michelle')
+    expect(out).not.toContain('Gesendet:')
+    expect(out).not.toContain('Bimini Island Tours')
+    expect(out).not.toContain('delighted to host')
+  })
+
   it('cuts plain-text ">" quoted reply lines', () => {
     const text =
       `Sounds good — confirming for 4 guests at 10am.\n\n` +
