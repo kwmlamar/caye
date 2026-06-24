@@ -28,6 +28,12 @@ import {
 import { classifyInbound, toneHintFor, type InboundCategory } from './inbound-classifier'
 import { formatCustomerFactsBlock, type CustomerFacts } from './customer-facts'
 import { loggedMessagesCreate } from './llm-telemetry'
+import {
+  detectForcedEscalation,
+  detectSubtleComplaint,
+  buildSubtleComplaintEscalation,
+  type ForcedEscalation,
+} from './forced-escalation'
 
 export type EscalationCategory = 'gap' | 'policy' | 'knowledge' | 'sensitive'
 export type EscalationRouteTo = 'owner' | 'founder' | 'both'
@@ -214,8 +220,27 @@ const TOOLS: Anthropic.Tool[] = [
             'what they need to do (e.g. "Quote Bimini Beach Experience for 2 adults on ' +
             'Sept 6 — Alice Town + beach with amenities"). Shown in the inbox.',
         },
+        confidence: {
+          type: 'string',
+          enum: ['high', 'medium', 'low'],
+          description:
+            'YOUR self-rated confidence in this reply (Layer 2 of the confidence model, #57). ' +
+            'Rate honestly — under-confidence is fine, over-confidence is not.\n' +
+            '- high: you have direct evidence for every fact in the reply (a tool returned ' +
+            'it this turn, or it\'s in AVAILABLE SERVICES / the system prompt). You\'d be ' +
+            'comfortable sending this verbatim with no operator review.\n' +
+            '- medium: the reply is reasonable but you\'re inferring at least one piece of ' +
+            'information from context rather than direct evidence (e.g. assuming a default ' +
+            'duration the customer didn\'t specify, guessing intent from vague phrasing).\n' +
+            '- low: you drafted something but you\'re not sure it\'s right — the customer ' +
+            'asked about something outside what you have data on, or the request feels ' +
+            'borderline and might need owner judgment.\n\n' +
+            'medium or low triggers an escalation automatically — your drafted reply still ' +
+            'goes to the customer (no silent hold), but the operator is pinged with the ' +
+            'thread and gets the chance to follow up. This is the safety net; use it.',
+        },
       },
-      required: ['content'],
+      required: ['content', 'confidence'],
     },
   },
   {
@@ -1558,6 +1583,36 @@ export async function generateCayeAutoReply(
     inbound.subject ?? ''
   )
 
+  // Layer 1 confidence model (#57) — deterministic forced-escalation
+  // triggers. If the inbound matches a known shape (complaint, B2B,
+  // refund, custom request), skip the LLM entirely and return a
+  // controlled-template escalation. Cheaper, faster, and removes any
+  // chance Caye drafts something commercial she shouldn't.
+  let forced: ForcedEscalation | null = detectForcedEscalation(inbound.body, inboundCategory)
+  if (!forced) {
+    // Hybrid sentiment cascade — Haiku second-pass when the keyword
+    // classifier returned nothing OR landed on general_question (the
+    // ambiguous bucket). We skip when the classifier is confident about
+    // a non-complaint shape (booking_inquiry, gratitude, etc.) so we
+    // don't pay for Haiku on every normal customer message. Matches the
+    // cascade pattern from #47.
+    const ambiguous =
+      inboundCategory === null || inboundCategory === 'general_question'
+    if (ambiguous) {
+      const subtle = await detectSubtleComplaint(inbound.body, inbound.workspaceId)
+      if (subtle) forced = buildSubtleComplaintEscalation(inbound.body)
+    }
+  }
+  if (forced) {
+    return {
+      action: 'escalate',
+      content: sanitizeDashes(forced.customerFacingMessage),
+      category: forced.category,
+      routeTo: forced.routeTo,
+      internalContext: forced.internalContext,
+    }
+  }
+
   // Pre-compute a deterministic service-name match. If the inbound body
   // contains an intake-form "Tour: <name>" line or a recognizable free-text
   // tour reference, run it against the canonical AVAILABLE SERVICES so the
@@ -1664,6 +1719,7 @@ export async function generateCayeAutoReply(
           content: string
           flag_for_owner_followup?: boolean
           owner_note?: string
+          confidence?: 'high' | 'medium' | 'low'
         }
         const leak = detectIdentityLeak(input.content)
         if (leak) {
@@ -1676,6 +1732,27 @@ export async function generateCayeAutoReply(
             note:
               `Caye drafted a reply but the identity guard blocked it (${leak}). ` +
               `Review the draft below and send manually if appropriate.\n\n---\n\n${input.content}`,
+          }
+        } else if (input.confidence && input.confidence !== 'high') {
+          // Layer 2 confidence model (#57) — medium/low confidence escalates
+          // automatically. The drafted reply still ships to the customer (no
+          // silent hold per spec) but the operator is pinged so they can
+          // follow up before the customer hears back again. Category defaults
+          // to 'knowledge' since send_reply confidence ≠ high typically means
+          // Caye is unsure of a fact she stated.
+          terminal = {
+            action: 'escalate',
+            content: sanitizeDashes(input.content),
+            category: 'knowledge',
+            routeTo: 'owner',
+            internalContext:
+              `Caye self-rated confidence=${input.confidence} on her reply. ` +
+              `She sent it (per the Layer 2 spec, drafts ship even at medium/low) but the ` +
+              `escalation is open so you can review and follow up if the answer needs ` +
+              `correction.` +
+              (input.owner_note?.trim()
+                ? `\n\nCaye's note: ${input.owner_note.trim()}`
+                : ''),
           }
         } else {
           const needsFollowup = !!input.flag_for_owner_followup
