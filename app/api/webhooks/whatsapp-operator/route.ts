@@ -184,11 +184,12 @@ async function handleOneInbound(
           pending_otp_expires_at: null,
         })
         .eq('id', allow.id)
-      const { sendTemplateWhatsApp } = await import('@/lib/whatsapp/outbound')
-      await sendTemplateWhatsApp(
+      // Free-form send (no template needed) — the user just messaged us
+      // with their OTP, so the 24h window is open. Saves a Meta template.
+      const { sendFreeFormWhatsApp } = await import('@/lib/whatsapp/outbound')
+      await sendFreeFormWhatsApp(
         `+${normalized}`,
-        'caye_welcome',
-        ['there'],
+        "You're verified. Welcome aboard.\n\nAnything you need — check bookings, draft a reply, update prices, manage the schedule — just text me.",
         `team-welcome-${allow.workspace_id}-${normalized}-${Date.now()}`
       )
       console.log(`[whatsapp-operator] verified team member from=${fromRaw}`)
