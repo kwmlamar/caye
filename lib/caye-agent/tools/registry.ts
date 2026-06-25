@@ -10,6 +10,7 @@ import { getRecentBookings } from './read/get-recent-bookings'
 import { getPendingQuotes } from './read/get-pending-quotes'
 import { searchThreads } from './read/search-threads'
 import { queryBusinessKnowledge } from './read/query-business-knowledge'
+import { getServices } from './read/get-services'
 import { markHandled } from './write-low/mark-handled'
 import { addBusinessFact } from './write-low/add-business-fact'
 import { updateServicePrice } from './write-low/update-service-price'
@@ -56,6 +57,7 @@ export const TOOL_REGISTRY: AnyTool[] = [
   getPendingQuotes as AnyTool,
   searchThreads as AnyTool,
   queryBusinessKnowledge as AnyTool,
+  getServices as AnyTool,
   // Low-risk write
   markHandled as AnyTool,
   addBusinessFact as AnyTool,

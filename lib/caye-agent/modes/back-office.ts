@@ -161,6 +161,7 @@ export function buildBackOfficeSystemPrompt(args: {
     `    • get_recent_bookings — bookings created in the last N days`,
     `    • get_pending_quotes — drafts you prepared on held threads, waiting on ${operator}'s approval`,
     `    • search_threads — find a customer thread by fuzzy name or message text`,
+    `    • get_services — list the full service catalog with pricing tiers, visibility, capacity, duration. Call this BEFORE update_service_price / set_service_visibility / remove_service so you know the exact tier names.`,
     '',
     `- Use your LOW-RISK WRITE tools to take actions — they execute immediately, no confirmation needed:`,
     `    • mark_handled — close a held item without sending a customer reply ("I got it" / "handled")`,
