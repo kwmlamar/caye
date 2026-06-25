@@ -6,8 +6,8 @@
  * hour in the workspace's local timezone and (b) we haven't sent a
  * briefing yet today (in local time).
  *
- * Authenticated via Vercel cron's bearer token (Authorization header
- * matches process.env.CRON_SECRET). Configured in vercel.json.
+ * Authenticated via CRON_SECRET. Accepts either `x-cron-secret: <secret>`
+ * or `Authorization: Bearer <secret>`. Registered on cron-job.org.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -25,11 +25,13 @@ interface WorkspaceRow {
 }
 
 export async function GET(request: NextRequest) {
-  // Vercel cron sends Authorization: Bearer ${CRON_SECRET}.
+  // Accept either Authorization: Bearer <secret> or x-cron-secret: <secret>
+  // — matches outbound-worker so all cron-job.org jobs share one header shape.
   const secret = process.env.CRON_SECRET
   if (secret) {
-    const provided = request.headers.get('authorization')
-    if (provided !== `Bearer ${secret}`) {
+    const auth = request.headers.get('authorization')
+    const legacy = request.headers.get('x-cron-secret')
+    if (auth !== `Bearer ${secret}` && legacy !== secret) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
   }

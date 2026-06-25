@@ -16,7 +16,8 @@
  * owner_responded_at and skip — no reassurance needed, the customer has
  * already heard back.
  *
- * Authenticated via Vercel cron's bearer token. Configured in vercel.json.
+ * Authenticated via CRON_SECRET. Accepts either `x-cron-secret: <secret>`
+ * or `Authorization: Bearer <secret>`. Registered on cron-job.org.
  */
 
 import { NextRequest, NextResponse } from 'next/server'

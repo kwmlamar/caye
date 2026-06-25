@@ -22,7 +22,7 @@
  * pattern.
  *
  * Recommended cadence: once daily at the workspace's morning briefing
- * time. Configure in vercel.json. Failure to send for one workspace
+ * time. Registered on cron-job.org. Failure to send for one workspace
  * does not block the sweep for others — errors are logged and the
  * scan continues.
  */
