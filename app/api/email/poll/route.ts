@@ -450,27 +450,29 @@ async function processSentMessage(
     return 'skipped'
   }
 
-  // Same dedup but for human-sent replies from the dashboard:
-  // messages/send writes channel_message_id='manual_<ts>' with
-  // metadata.sent_by='human'. When Zoho echoes it back through the sent
-  // folder a few seconds later, we'd otherwise create a duplicate row that
-  // renders as a second chat bubble. Match within the same 5-min window
-  // and backfill the real Zoho message ID so future polls skip cleanly.
-  const { data: manualMsg } = await supabase
+  // Dedup against rows we already inserted at send time with a placeholder
+  // channel_message_id. Two send paths produce placeholders:
+  //   - 'manual_<ts>' from the dashboard messages/send endpoint
+  //   - 'op-wa-<ts>'  from channel-dispatch.ts (back-office send_reply tool
+  //                   + admin caye-respond endpoint)
+  // Without this, the Zoho Sent folder echo creates a duplicate row that
+  // renders as a second chat bubble. Match within the 5-min window and
+  // backfill the real Zoho message ID so future polls skip cleanly.
+  const { data: placeholderMsg } = await supabase
     .from('unified_messages')
     .select('id')
     .eq('conversation_id', conversation.id)
     .eq('sender_type', 'business')
-    .like('channel_message_id', 'manual_%')
+    .or('channel_message_id.like.manual_%,channel_message_id.like.op-wa-%')
     .gte('sent_at', windowStart)
     .lte('sent_at', windowEnd)
     .maybeSingle()
 
-  if (manualMsg) {
+  if (placeholderMsg) {
     await supabase
       .from('unified_messages')
       .update({ channel_message_id: messageId })
-      .eq('id', manualMsg.id)
+      .eq('id', placeholderMsg.id)
     return 'skipped'
   }
 
