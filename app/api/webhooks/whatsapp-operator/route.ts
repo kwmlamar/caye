@@ -146,20 +146,56 @@ async function handleOneInbound(
   // Allowlist lookup (#48). Maps phone → workspace_id + role.
   // Try both normalized and +-prefixed phone shapes. Founder's number
   // matches multiple rows (one per workspace) — order by created_at desc
-  // and take the most recent. Multi-workspace founder routing UX is a
-  // future concern (one paid customer today; a "switch to <workspace>"
-  // command is the natural fix when it matters).
-  const { data: allow } = await supabase
+  // for the initial fallback, then override with the founder's
+  // platform_settings active-workspace pointer (set via switch_workspace
+  // tool) so cross-workspace operation is stateful and explicit.
+  let allow = (await supabase
     .from('operator_allowlist')
     .select('id, workspace_id, role, verified_at, pending_otp_code, pending_otp_expires_at')
     .or(`phone.eq.${normalized},phone.eq.+${normalized}`)
     .order('created_at', { ascending: false })
     .limit(1)
-    .maybeSingle()
+    .maybeSingle()).data
 
   if (!allow) {
     console.warn(`[whatsapp-operator] no allowlist entry for from=${fromRaw}`)
     return
+  }
+
+  // Founder workspace switching: if the caller is a founder AND they've
+  // explicitly switched to a workspace via the switch_workspace tool, route
+  // to that workspace instead of the most-recent allowlist row. Only applies
+  // when the active-workspace pointer is set AND the founder still has a
+  // verified founder row on that workspace (defense in depth — a removed
+  // founder row shouldn't grant access via stale state).
+  if (allow.role === 'founder') {
+    const activeKeys = [
+      `founder_active_workspace_${normalized}`,
+      `founder_active_workspace_+${normalized}`,
+    ]
+    const { data: activeRow } = await supabase
+      .from('platform_settings')
+      .select('value')
+      .in('key', activeKeys)
+      .limit(1)
+      .maybeSingle()
+    if (activeRow?.value && activeRow.value !== allow.workspace_id) {
+      const { data: targetRow } = await supabase
+        .from('operator_allowlist')
+        .select('id, workspace_id, role, verified_at, pending_otp_code, pending_otp_expires_at')
+        .or(`phone.eq.${normalized},phone.eq.+${normalized}`)
+        .eq('workspace_id', activeRow.value)
+        .eq('role', 'founder')
+        .limit(1)
+        .maybeSingle()
+      if (targetRow?.verified_at) {
+        allow = targetRow
+      } else {
+        console.warn(
+          `[whatsapp-operator] founder ${fromRaw} has active_workspace=${activeRow.value} but no verified founder row there; falling back to most-recent`
+        )
+      }
+    }
   }
 
   // Pending verification (#55) — drop everything except a body that

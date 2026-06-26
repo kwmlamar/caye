@@ -22,6 +22,7 @@ import { updateVoiceRegister } from './write-low/update-voice-register'
 import { addVoiceSample } from './write-low/add-voice-sample'
 import { addTeamMember } from './write-low/add-team-member'
 import { updateTeamMemberPermissions } from './write-low/update-team-member-permissions'
+import { switchWorkspace } from './write-low/switch-workspace'
 import { removeTeamMember } from './write-high/remove-team-member'
 import { removeService } from './write-high/remove-service'
 import { removeBlackoutDate } from './write-high/remove-blackout-date'
@@ -70,6 +71,7 @@ export const TOOL_REGISTRY: AnyTool[] = [
   addVoiceSample as AnyTool,
   addTeamMember as AnyTool,
   updateTeamMemberPermissions as AnyTool,
+  switchWorkspace as AnyTool,
   skipHeldItem as AnyTool,
   muteCaye as AnyTool,
   unmuteCaye as AnyTool,
