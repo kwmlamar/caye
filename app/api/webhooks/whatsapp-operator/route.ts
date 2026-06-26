@@ -12,7 +12,7 @@
  *      - Stamp last_whatsapp_inbound_at (opens the 24h free-form window).
  *      - Persist to caye_operator_messages (inbound) for audit.
  *      - Classify intent against the current pending held items.
- *      - Dispatch action handler; queue any ack body back via enqueueOutbound.
+ *      - Dispatch action handler; send any ack body back synchronously via sendFreeFormWhatsApp.
  *
  * Configure Meta to call this URL for the Caye-platform phone number's
  * webhook subscription. The verify token matches META_WEBHOOK_VERIFY_TOKEN.
@@ -24,7 +24,7 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { classifyOperatorIntent } from '@/lib/whatsapp/intent'
 import { getPendingHeldItems } from '@/lib/whatsapp/pending'
 import { dispatchOperatorIntent } from '@/lib/whatsapp/actions'
-import { enqueueOutbound, sendFreeFormWhatsApp } from '@/lib/whatsapp/outbound'
+import { sendFreeFormWhatsApp } from '@/lib/whatsapp/outbound'
 import { cayeAgent } from '@/lib/caye-agent'
 
 // Held-item action intents stay on the legacy classifier+dispatch path
@@ -291,12 +291,29 @@ async function handleOneInbound(
   if (LEGACY_DISPATCH_KINDS.has(intent.kind)) {
     const result = await dispatchOperatorIntent({ workspaceId }, intent, pending)
     if (result.ackBody && result.ackBody.trim()) {
-      await enqueueOutbound({
-        workspaceId,
-        kind: 'ack',
-        payload: { body: result.ackBody },
-        idempotencyKey: `ack-${message.id}`,
-      })
+      // Send ack synchronously instead of via the outbound queue. The
+      // operator JUST messaged us so the 24h window is open — no template
+      // needed, no queue drain delay. Mirrors the back-office agent path
+      // below. Previously acks queued as kind='ack' and waited up to a
+      // full outbound-worker tick to send (observed 4-min delays in live
+      // testing, which destroys the chat flow).
+      if (cfg.operator_whatsapp_number) {
+        const sendResult = await sendFreeFormWhatsApp(
+          cfg.operator_whatsapp_number,
+          result.ackBody,
+          `ack-${message.id}`
+        )
+        if (sendResult.status === 'failed') {
+          console.error(
+            `[whatsapp-operator] ack send failed for ${workspaceId}:`,
+            sendResult.error
+          )
+        }
+      } else {
+        console.warn(
+          `[whatsapp-operator] no operator_whatsapp_number on workspace ${workspaceId}; ack produced but not sent`
+        )
+      }
       await supabase.from('caye_operator_messages').insert({
         workspace_id: workspaceId,
         direction: 'outbound',
