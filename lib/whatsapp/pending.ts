@@ -34,7 +34,12 @@ export async function getPendingHeldItems(workspaceId: string): Promise<PendingH
     .eq('connected_account.user_id', workspaceId)
     .eq('human_agent_enabled', true)
     .order('last_message_at', { ascending: false })
-    .limit(20)
+    // Bumped from 20 → 50 (2026-06-26) — workspaces with bigger
+    // historical backlogs (Bimini had 22 held when the bulk-skip test ran)
+    // were getting items silently truncated, so "clear all" couldn't reach
+    // positions 21+. 50 covers any realistic operator-day pending list
+    // without exploding the classifier prompt.
+    .limit(50)
 
   if (error || !data) {
     console.error('[pending] held items fetch failed:', error)

@@ -24,10 +24,18 @@ export async function actionMute(
   }
 
   const supabase = createServiceClient()
-  await supabase
+  const { error } = await supabase
     .from('workspace_ai_config')
     .update({ whatsapp_muted_until: until.toISOString() })
     .eq('workspace_id', ctx.workspaceId)
+
+  if (error) {
+    console.error('[action/mute] DB update failed:', error)
+    return {
+      ackBody: `Couldn't apply the mute — ${error.message}.`,
+      tag: { label: 'mute', status: 'failed' },
+    }
+  }
 
   return {
     ackBody: `Muted until ${formatRelative(until)}. Auth failures still ping. Reply 'unmute' anytime.`,

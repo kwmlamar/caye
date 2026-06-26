@@ -20,10 +20,18 @@ export async function actionSkip(
   }
 
   const supabase = createServiceClient()
-  await supabase
+  const { error } = await supabase
     .from('unified_conversations')
     .update({ human_agent_enabled: false, human_agent_reason: null })
     .eq('id', item.conversationId)
+
+  if (error) {
+    console.error('[action/skip] DB update failed:', error)
+    return {
+      ackBody: `Couldn't skip ${item.contactName} — ${error.message}.`,
+      tag: { label: `skip ${item.contactName}`, status: 'failed' },
+    }
+  }
 
   return {
     ackBody: `Closed ${item.contactName}.`,

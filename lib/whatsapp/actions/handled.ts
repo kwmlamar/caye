@@ -20,13 +20,21 @@ export async function actionHandled(
   }
 
   const supabase = createServiceClient()
-  await supabase
+  const { error } = await supabase
     .from('unified_conversations')
     .update({
       human_agent_enabled: false,
       human_agent_reason: 'operator handled directly',
     })
     .eq('id', item.conversationId)
+
+  if (error) {
+    console.error('[action/handled] DB update failed:', error)
+    return {
+      ackBody: `Couldn't mark ${item.contactName} as handled — ${error.message}.`,
+      tag: { label: `handled ${item.contactName}`, status: 'failed' },
+    }
+  }
 
   return {
     ackBody: `Got it — marked ${item.contactName} as handled.`,
