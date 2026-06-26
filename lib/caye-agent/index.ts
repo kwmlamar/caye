@@ -23,6 +23,15 @@ export interface CayeAgentInput {
    * with callerRole: 'founder'.
    */
   callerRole: Role
+  /**
+   * Caller's display name from operator_allowlist.name when known. Used
+   * by the back-office prompt to distinguish the actual messenger from
+   * the workspace owner — load-bearing when a founder DMs into a
+   * workspace they don't own (e.g. Lamar texting Caye about Bimini).
+   * Without this, Caye conflates caller with workspace owner and answers
+   * "who am I?" with the wrong person.
+   */
+  callerName?: string | null
 }
 
 export interface CayeAgentResult {
@@ -156,6 +165,10 @@ export async function cayeAgent(input: CayeAgentInput): Promise<CayeAgentResult>
       timezone: (customer?.timezone as string | null) ?? null,
     },
     voiceProfile,
+    caller: {
+      role: input.callerRole,
+      name: input.callerName ?? null,
+    },
   })
 
   const history = await loadOperatorContext(input.workspaceId)

@@ -1,5 +1,6 @@
 import 'server-only'
 import type { VoiceProfile } from '@/lib/voice-profile'
+import type { Role } from '../tools/types'
 
 /**
  * Snapshot of what Caye knows about the operator + business at prompt
@@ -53,13 +54,21 @@ export interface OperatorProfile {
  * facing copy (for send_reply, send_quote, etc.) in the operator's
  * voice. The customer never knows the operator delegated to her.
  */
+export interface CallerIdentity {
+  role: Role
+  /** Display name from operator_allowlist.name. May be null for legacy rows. */
+  name?: string | null
+}
+
 export function buildBackOfficeSystemPrompt(args: {
   profile: OperatorProfile
   voiceProfile?: VoiceProfile | null
+  caller?: CallerIdentity
 }): string {
   const p = args.profile
   const operatorRaw = p.operatorName?.trim() || ''
   const businessRaw = p.businessName?.trim() || ''
+  const caller = args.caller
 
   // Data-bug detection: onboarding sometimes writes the business name
   // into customers.full_name. When operatorName equals businessName we
@@ -75,15 +84,37 @@ export function buildBackOfficeSystemPrompt(args: {
     !operatorLooksLikeBusiness && operatorRaw ? operatorRaw : 'the owner'
   const business = businessRaw || 'their business'
 
+  // Caller identity — load-bearing for "who am I" and any first-person
+  // reference. When the caller is the workspace owner (or unknown — legacy
+  // path), Caye treats messages as coming from the owner. When the caller
+  // is the founder (Lamar) DMing into a workspace he doesn't own, the
+  // prompt MUST distinguish him from the workspace owner or Caye will
+  // conflate them and answer "who am I?" with the wrong person.
+  const callerIsFounder = caller?.role === 'founder'
+  const callerName = caller?.name?.trim() || ''
+  const callerDisplay = callerIsFounder
+    ? callerName || 'the TropiTech founder'
+    : operator
+
   const lines: string[] = [
     `You are Caye — the AI assistant ${operator} hired to handle the front desk for ${business}.`,
     '',
     'WHO YOU ARE TALKING TO',
-    `- ${operator} (the owner) is messaging you on WhatsApp right now.`,
-    `- You are NOT talking to a customer. You are the back-office assistant — handling the owner directly.`,
-    `- The owner knows you are AI. Don't pretend otherwise.`,
-    '',
   ]
+  if (callerIsFounder) {
+    lines.push(
+      `- ${callerDisplay} (the TropiTech founder — your platform-side support + observability) is messaging you on WhatsApp right now.`,
+      `- The workspace OWNER is ${operator}. ${callerDisplay} is NOT the owner. Do not conflate them. If asked "who am I?", answer with ${callerDisplay}'s name. If asked about the business owner, answer with ${operator}.`,
+      `- ${callerDisplay} has full operator powers on this workspace via founder role — same tool access as ${operator} — but treat them as a distinct person.`
+    )
+  } else {
+    lines.push(`- ${callerDisplay} (the owner) is messaging you on WhatsApp right now.`)
+  }
+  lines.push(
+    `- You are NOT talking to a customer. You are the back-office assistant — handling an operator directly.`,
+    `- The person messaging you knows you are AI. Don't pretend otherwise.`,
+    ''
+  )
 
   // ── WHO YOUR BOSS IS — operator + business identity facts ────────────────
   // Always-loaded. Elide any line whose value is missing.

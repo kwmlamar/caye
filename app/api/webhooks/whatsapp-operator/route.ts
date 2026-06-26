@@ -151,7 +151,7 @@ async function handleOneInbound(
   // tool) so cross-workspace operation is stateful and explicit.
   let allow = (await supabase
     .from('operator_allowlist')
-    .select('id, workspace_id, role, verified_at, pending_otp_code, pending_otp_expires_at')
+    .select('id, workspace_id, role, name, verified_at, pending_otp_code, pending_otp_expires_at')
     .or(`phone.eq.${normalized},phone.eq.+${normalized}`)
     .order('created_at', { ascending: false })
     .limit(1)
@@ -182,7 +182,7 @@ async function handleOneInbound(
     if (activeRow?.value && activeRow.value !== allow.workspace_id) {
       const { data: targetRow } = await supabase
         .from('operator_allowlist')
-        .select('id, workspace_id, role, verified_at, pending_otp_code, pending_otp_expires_at')
+        .select('id, workspace_id, role, name, verified_at, pending_otp_code, pending_otp_expires_at')
         .or(`phone.eq.${normalized},phone.eq.+${normalized}`)
         .eq('workspace_id', activeRow.value)
         .eq('role', 'founder')
@@ -237,6 +237,7 @@ async function handleOneInbound(
 
   const workspaceId: string = allow.workspace_id
   const callerRole = allow.role as 'owner' | 'staff' | 'founder'
+  const callerName = (allow as { name?: string | null }).name ?? null
 
   // Fetch the workspace's outbound config (flag + canonical operator
   // number). Separate query from the allowlist lookup so the allowlist
@@ -378,6 +379,7 @@ async function handleOneInbound(
       workspaceId,
       userMessage: body,
       callerRole,
+      callerName,
     })
 
     if (!agentResult.replyText) {
