@@ -381,21 +381,28 @@ function templateForKind(
         placeholders: [str('guest', 'A guest'), 'booked for today'],
       }
     case 'escalation': {
-      // Reuse the urgent_hold template — operator-side it reads the same
-      // ("a guest needs your call"). Category prefix in the reason
-      // placeholder gives the operator one-glance triage.
-      const category = str('category', 'policy')
-      const ask = str('internalContext', 'needs your call').slice(0, 80)
+      // Reuse the urgent_hold template. Prefer the operator-friendly
+      // ping_summary supplied by the trigger; fall back to the older
+      // "<category>: <internalContext>" shape only when ping_summary is
+      // missing (legacy queue rows from before the field landed).
+      const summary =
+        str('ping_summary', '') ||
+        `${str('category', 'policy')}: ${str('internalContext', 'needs your call').slice(0, 80)}`
       return {
         name: 'caye_urgent_hold',
-        placeholders: [str('contactName', 'A guest'), `${category}: ${ask}`],
+        placeholders: [str('contactName', 'A guest'), summary],
       }
     }
     case 'escalation_followup': {
-      const category = str('category', 'policy')
+      // 6h+ unanswered — keep the original ping_summary so the operator sees
+      // the same customer-ask context they had on the first ping, with a
+      // "still waiting" suffix for urgency.
+      const baseSummary =
+        str('ping_summary', '') ||
+        `${str('category', 'policy')} escalation`
       return {
         name: 'caye_urgent_hold',
-        placeholders: [str('contactName', 'A guest'), `still waiting (${category}) — please respond`],
+        placeholders: [str('contactName', 'A guest'), `still waiting — ${baseSummary}`],
       }
     }
     default:

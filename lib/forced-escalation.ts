@@ -43,6 +43,12 @@ export interface ForcedEscalation {
   routeTo: 'owner' | 'founder' | 'both'
   customerFacingMessage: string
   internalContext: string
+  /** One-line operator-friendly description for the WhatsApp ping. Goes into
+   *  the caye_urgent_hold template's reason placeholder. Designed to read
+   *  cleanly when truncated to ~80 chars — leads with the trigger label, then
+   *  the customer's actual ask. Distinct from internalContext which is the
+   *  verbose handoff written for the dashboard internal note. */
+  pingSummary: string
 }
 
 // ── Per-trigger empathy templates ──────────────────────────────────────────
@@ -58,6 +64,16 @@ const TEMPLATES: Record<ForcedTrigger, string> = {
     "Thanks for letting me know — checking with the team on this and we'll get back to you shortly.",
   custom_request:
     "Thanks for the details — let me check on this with the team and circle back shortly.",
+}
+
+/** Operator-friendly trigger labels for the WhatsApp ping. Short enough that
+ *  the trigger label + customer-message excerpt both fit in the ~80-char
+ *  template placeholder without truncating the actually-useful customer text. */
+const PING_LABELS: Record<ForcedTrigger, string> = {
+  b2b_partnership: 'B2B inquiry',
+  complaint: 'Complaint',
+  refund: 'Refund request',
+  custom_request: 'Custom request',
 }
 
 // ── Keyword patterns ───────────────────────────────────────────────────────
@@ -125,11 +141,15 @@ function build(
   body: string,
   why: string
 ): ForcedEscalation {
+  // Distill the customer's first sentence for the ping summary — strip newlines
+  // and trim so the WhatsApp template renders cleanly.
+  const customerAsk = body.replace(/\s+/g, ' ').trim().slice(0, 100)
   return {
     trigger,
     category,
     routeTo,
     customerFacingMessage: TEMPLATES[trigger],
+    pingSummary: `${PING_LABELS[trigger]} — "${customerAsk}"`,
     internalContext:
       `Forced escalation — ${trigger} (${why}). ` +
       `Customer message excerpt: "${body.slice(0, 280)}". ` +

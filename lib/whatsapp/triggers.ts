@@ -145,6 +145,10 @@ export interface EscalationPingInput {
   suggestedReply: string
   /** Short summary of the customer ask + Caye's reasoning. */
   internalContext: string
+  /** Operator-friendly one-liner for the WhatsApp ping (~80-100 chars). Goes
+   *  into the caye_urgent_hold template's reason placeholder so the operator
+   *  sees a readable summary instead of truncated dev-debug text. */
+  pingSummary?: string
   /** Used to make the idempotency key unique across retries on the same
    *  escalation row. */
   timestamp?: string
@@ -186,6 +190,10 @@ export async function enqueueEscalationPings(
         category: input.category,
         suggestedReply: input.suggestedReply.slice(0, 800),
         internalContext: input.internalContext.slice(0, 800),
+        // ping_summary is the operator-friendly text the outbound worker
+        // drops into the caye_urgent_hold template's reason placeholder.
+        // Falls back inside the worker if absent.
+        ping_summary: input.pingSummary?.slice(0, 120),
         escalationId: input.escalationId,
       },
       // Each recipient gets one row, immediate. Quiet-hours don't apply —

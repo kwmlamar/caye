@@ -15,6 +15,10 @@ export interface RecordEscalationInput {
   routeTo: EscalationRouteTo
   customerFacingMessage: string
   internalContext: string
+  /** Optional one-line operator-friendly summary for the WhatsApp ping.
+   *  Forced escalations always supply one; LLM-driven escalate_to_team
+   *  falls back to deriving from category + customerFacingMessage. */
+  pingSummary?: string
 }
 
 /**
@@ -78,6 +82,14 @@ export async function recordEscalation(
     })
   }
 
+  // Derive a fallback ping summary for LLM-driven escalations that didn't
+  // supply one. Format mirrors the forced-escalation shape so operator pings
+  // read consistently regardless of trigger path. Caps at 100 chars so the
+  // template renders cleanly.
+  const pingSummary =
+    input.pingSummary ??
+    `${labelForCategory(input.category)} — "${input.customerFacingMessage.replace(/\s+/g, ' ').trim().slice(0, 100)}"`
+
   enqueueEscalationPings({
     workspaceId: input.workspaceId,
     escalationId: data.id,
@@ -87,6 +99,7 @@ export async function recordEscalation(
     routeTo: input.routeTo,
     suggestedReply: input.customerFacingMessage,
     internalContext: input.internalContext,
+    pingSummary,
   }).catch((err) => console.error('[escalation] enqueueEscalationPings failed:', err))
 
   return { escalationId: data.id }
@@ -116,4 +129,17 @@ export async function applyEscalation(
   })
 
   return { action: 'reply', content: decision.content }
+}
+
+function labelForCategory(category: EscalationCategory): string {
+  switch (category) {
+    case 'gap':
+      return 'Tool gap'
+    case 'policy':
+      return 'Policy call'
+    case 'knowledge':
+      return 'Knowledge gap'
+    case 'sensitive':
+      return 'Sensitive / commercial'
+  }
 }
