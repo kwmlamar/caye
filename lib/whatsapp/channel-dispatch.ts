@@ -95,7 +95,17 @@ export async function dispatchOperatorReply(
     sent_at: now,
     status: 'sent',
     is_internal: false,
-    metadata: { sent_by: senderLabel, generated_by: 'caye' },
+    // sent_by carries the path (caye-operator-wa vs caye-dashboard) so future
+    // audit can tell HOW the operator initiated the send. generated_by='caye'
+    // signals "Caye composed the body" — voice-learning correctly excludes
+    // these so Caye doesn't learn from her own output.
+    // operator_approved=true distinguishes "operator authorized Caye to send"
+    // from "Caye auto-replied on her own"; UI can surface a "via operator" tag.
+    metadata: {
+      sent_by: senderLabel,
+      generated_by: 'caye',
+      operator_approved: true,
+    },
   })
 
   await supabase
@@ -104,7 +114,12 @@ export async function dispatchOperatorReply(
       last_message_at: now,
       last_message_preview: trimmed.slice(0, 100),
       last_sender_type: 'business',
-      last_business_sender_kind: 'human',
+      // 'caye' not 'human' — Caye composed the body, even though the operator
+      // authorized the send. Honest rendering: chat bubble should match other
+      // Caye-authored messages so the operator can see at a glance "Caye
+      // wrote this" vs "I typed this." The operator-approved flag in metadata
+      // lets the UI surface a "via operator" subtitle/tag if desired.
+      last_business_sender_kind: 'caye',
       human_agent_enabled: false,
       human_agent_reason: null,
     })
