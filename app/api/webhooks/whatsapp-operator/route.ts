@@ -324,6 +324,15 @@ async function handleOneInbound(
   // Held-item action kinds keep the legacy classifier+dispatch path.
   // Everything else (query / unclear) routes through the new
   // back-office agent — slice 1 of epic #35.
+  // Reply destination: send back to whoever messaged us, NOT to the
+  // workspace's canonical operator number. Critical for founders DMing on
+  // a workspace they don't own (e.g. Lamar texting Caye about Bimini —
+  // without this, Caye's reply was going to Karenda's phone). For owners
+  // the inbound number == operator_whatsapp_number anyway, so this is a
+  // no-op for them. Carries a leading + because Meta returns the from
+  // without it but our send helper expects the canonical form.
+  const replyTo = `+${normalized}`
+
   if (LEGACY_DISPATCH_KINDS.has(intent.kind)) {
     const result = await dispatchOperatorIntent({ workspaceId }, intent, pending)
     if (result.ackBody && result.ackBody.trim()) {
@@ -333,9 +342,9 @@ async function handleOneInbound(
       // below. Previously acks queued as kind='ack' and waited up to a
       // full outbound-worker tick to send (observed 4-min delays in live
       // testing, which destroys the chat flow).
-      if (cfg.operator_whatsapp_number) {
+      if (replyTo) {
         const sendResult = await sendFreeFormWhatsApp(
-          cfg.operator_whatsapp_number,
+          replyTo,
           result.ackBody,
           `ack-${message.id}`
         )
@@ -347,7 +356,7 @@ async function handleOneInbound(
         }
       } else {
         console.warn(
-          `[whatsapp-operator] no operator_whatsapp_number on workspace ${workspaceId}; ack produced but not sent`
+          `[whatsapp-operator] no reply destination resolved for caller on workspace ${workspaceId}; ack produced but not sent`
         )
       }
       await supabase.from('caye_operator_messages').insert({
@@ -379,14 +388,12 @@ async function handleOneInbound(
     }
 
     // Send back-office replies synchronously instead of via the queue.
-    // The queue requires a cron worker, which Vercel Hobby doesn't support
-    // at the cadence we need. Chat replies don't need queue semantics
-    // anyway — if Meta send fails, the operator just re-texts. We keep
-    // the queue path for proactive notifications (briefings, urgent
-    // alerts) where retry actually matters.
-    if (cfg.operator_whatsapp_number) {
+    // Reply destination is the CALLER (replyTo, set above), not the
+    // workspace's canonical operator number — critical for founders DMing
+    // on a workspace they don't own.
+    if (replyTo) {
       const sendResult = await sendFreeFormWhatsApp(
-        cfg.operator_whatsapp_number,
+        replyTo,
         agentResult.replyText,
         `back-office-${message.id}`
       )
@@ -399,7 +406,7 @@ async function handleOneInbound(
       }
     } else {
       console.warn(
-        `[whatsapp-operator] no operator_whatsapp_number on workspace ${workspaceId}; reply produced but not sent`
+        `[whatsapp-operator] no reply destination resolved for caller on workspace ${workspaceId}; reply produced but not sent`
       )
     }
 
