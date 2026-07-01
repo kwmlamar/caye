@@ -14,6 +14,11 @@ export interface WorkspaceContextValue {
   workspaceId: string
   workspaces: WorkspaceMembership[]
   isOwner: boolean
+  /** True when the logged-in user is on the FOUNDER_USER_IDS list
+   *  (lib/founder.ts). Founders see the full power-user dashboard;
+   *  non-founders see operator surface only (Home / Billing / Settings).
+   *  Per CLAUDE.md dashboard scope lock. */
+  isFounder: boolean
 }
 
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null)

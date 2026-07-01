@@ -7,6 +7,7 @@ import ViewportRedirect from "@/components/mobile/ViewportRedirect"
 import { getSession, getSupabase } from "@/lib/supabase"
 import { WorkspaceProvider, type WorkspaceMembership } from "@/lib/workspace-context"
 import { DashboardProvider, useDashboard } from "@/lib/dashboard-context"
+import { isFounderUserId } from "@/lib/founder"
 import type { Customer } from "@/types/database"
 
 interface ShellProps {
@@ -15,10 +16,11 @@ interface ShellProps {
   workspaceId: string
   workspaces: WorkspaceMembership[]
   isOwner: boolean
+  isFounder: boolean
 }
 
 // Separate inner component so it can access DashboardContext
-function DashboardShell({ children, workspace, workspaceId, workspaces, isOwner }: ShellProps) {
+function DashboardShell({ children, workspace, workspaceId, workspaces, isOwner, isFounder }: ShellProps) {
   const { panelOpen, setPanelOpen, sidebarExpanded, setSidebarExpanded } = useDashboard()
 
   useEffect(() => {
@@ -33,7 +35,7 @@ function DashboardShell({ children, workspace, workspaceId, workspaces, isOwner 
   }, [panelOpen, setPanelOpen])
 
   return (
-    <WorkspaceProvider value={{ workspace, workspaceId, workspaces, isOwner }}>
+    <WorkspaceProvider value={{ workspace, workspaceId, workspaces, isOwner, isFounder }}>
       <ViewportRedirect mode="toMobile" workspaceId={workspaceId} />
       <div className="tc-root">
         <div className="tc-frame">
@@ -91,6 +93,7 @@ export default function WorkspaceLayout({
   const [workspace, setWorkspace] = useState<Customer | null>(null)
   const [workspaces, setWorkspaces] = useState<WorkspaceMembership[]>([])
   const [isOwner, setIsOwner] = useState(false)
+  const [isFounder, setIsFounder] = useState(false)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -164,6 +167,7 @@ export default function WorkspaceLayout({
 
         setWorkspace(currentMembership.customer)
         setIsOwner(currentMembership.role === 'owner')
+        setIsFounder(isFounderUserId(session.user.id))
         localStorage.setItem('lastActiveWorkspaceId', workspaceId)
         setLoading(false)
       } catch (err) {
@@ -199,6 +203,7 @@ export default function WorkspaceLayout({
           workspaceId={workspaceId}
           workspaces={workspaces}
           isOwner={isOwner}
+          isFounder={isFounder}
         >
           {children}
         </DashboardShell>

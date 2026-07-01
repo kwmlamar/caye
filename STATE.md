@@ -6,7 +6,7 @@ last_updated: 2026-06-01
 
 # Caye — Product State
 
-Caye is TropiTech's AI receptionist for Caribbean SMBs. **Caye is the brand and the agent** — one name, two internal modes:
+Caye is TropiTech's AI employee for Caribbean SMBs. **Caye is the brand and the agent** — one name, two internal modes:
 
 - **Front desk** — client-facing. Answers inbound (email now; WhatsApp/IG/Messenger wired), books customers, replies in the owner's voice, never reveals she's AI. Auth: public. *This is the wedge — every SMB has inbound.*
 - **Back office** — crew/owner-facing ops assistant. Sees job files, costs, blockers, decisions queue. Knows she's AI. Auth: per-workspace phone allowlist. *This is the expansion — not built yet; ODS is the first customer who'll need it.*

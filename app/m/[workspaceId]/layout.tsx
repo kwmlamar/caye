@@ -4,6 +4,7 @@ import { useEffect, useState, use } from 'react'
 import { useRouter } from 'next/navigation'
 import { getSession, getSupabase } from '@/lib/supabase'
 import { WorkspaceProvider, type WorkspaceMembership } from '@/lib/workspace-context'
+import { isFounderUserId } from '@/lib/founder'
 import ServiceWorkerRegistrar from '@/components/mobile/ServiceWorkerRegistrar'
 import ViewportRedirect from '@/components/mobile/ViewportRedirect'
 import type { Customer } from '@/types/database'
@@ -26,6 +27,7 @@ export default function MobileLayout({
   const [workspace, setWorkspace] = useState<Customer | null>(null)
   const [workspaces, setWorkspaces] = useState<WorkspaceMembership[]>([])
   const [isOwner, setIsOwner] = useState(false)
+  const [isFounder, setIsFounder] = useState(false)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -74,6 +76,7 @@ export default function MobileLayout({
 
         setWorkspace(currentMembership.customer)
         setIsOwner(currentMembership.role === 'owner')
+        setIsFounder(isFounderUserId(session.user.id))
         localStorage.setItem('lastActiveWorkspaceId', workspaceId)
         setLoading(false)
       } catch (err) {
@@ -96,7 +99,7 @@ export default function MobileLayout({
   if (!workspace) return null
 
   return (
-    <WorkspaceProvider value={{ workspace, workspaceId, workspaces, isOwner }}>
+    <WorkspaceProvider value={{ workspace, workspaceId, workspaces, isOwner, isFounder }}>
       <ServiceWorkerRegistrar />
       <ViewportRedirect mode="toDesktop" workspaceId={workspaceId} />
       <div className="m-viewport">{children}</div>

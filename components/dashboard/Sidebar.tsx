@@ -451,7 +451,7 @@ export default function Sidebar({ workspaceId }: SidebarProps) {
   const pathname = usePathname()
   const router = useRouter()
   const { setPanelOpen, sidebarExpanded, setSidebarExpanded } = useDashboard()
-  const { workspace, workspaces } = useWorkspace()
+  const { workspace, workspaces, isFounder } = useWorkspace()
   const [switcherOpen, setSwitcherOpen] = useState(false)
   const userButtonRef = useRef<HTMLButtonElement>(null)
   
@@ -676,22 +676,26 @@ export default function Sidebar({ workspaceId }: SidebarProps) {
             </button>
           </div>
 
-          {/* Primary "+ New chat" button */}
-          <button
-            onClick={handleAskCaye}
-            className="sb-new-chat-btn"
-            title="New chat"
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0">
-              <line x1="12" y1="5" x2="12" y2="19"></line>
-              <line x1="5" y1="12" x2="19" y2="12"></line>
-            </svg>
-            <span className="sb-label">New chat</span>
-          </button>
+          {/* Primary "+ New chat" button — founder-only. Operators talk to
+              Caye on WhatsApp, not via the dashboard chat surface. */}
+          {isFounder && (
+            <button
+              onClick={handleAskCaye}
+              className="sb-new-chat-btn"
+              title="New chat"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg>
+              <span className="sb-label">New chat</span>
+            </button>
+          )}
         </div>
 
-        {/* Recent threads list (Caye conversations) filling the middle */}
-        <div className="flex-1 overflow-y-auto py-2 transition-opacity duration-200" style={{ display: sidebarExpanded ? 'block' : 'none', minHeight: 0 }}>
+        {/* Recent threads list (Caye conversations) filling the middle —
+            founder-only per the dashboard scope lock. */}
+        <div className="flex-1 overflow-y-auto py-2 transition-opacity duration-200" style={{ display: (sidebarExpanded && isFounder) ? 'block' : 'none', minHeight: 0 }}>
           {(groupedThreads.today.length + groupedThreads.yesterday.length + groupedThreads.thisWeek.length) > 0 && (
             <span className="sb-section-label px-2" style={{ paddingLeft: 8, display: 'block', marginBottom: 8 }}>Recent Chats</span>
           )}
