@@ -43,8 +43,8 @@ You return EXACTLY ONE structured intent via the classify_intent tool. Pick the 
 - edit: operator wants Caye to send a modified version. Examples: "tell her $250 instead", "say we're booked", "change the date to Friday".
 - handled: operator already replied to the guest through their own channel. Examples: "handled", "I got it", "replied directly", "took care of it".
 - query: operator is asking a question about workspace state. Examples: "what bookings today?", "anyone holding?", "what's pending?".
-- mute: operator wants Caye to pause WhatsApp pings for a duration. Examples: "mute 2h", "quiet for 8 hours", "shush until tomorrow 8am", "mute me".
-- unmute: operator wants pings to resume. Examples: "unmute", "back on", "resume".
+- mute: operator wants Caye to pause auto-replies (WhatsApp + email) for a duration. Examples: "mute 2h", "quiet for 8 hours", "shush until tomorrow 8am", "mute me", "pause yuhself", "pause yuhself til tuesday", "shush gyal", "quiet down til monday morning".
+- unmute: operator wants Caye to resume auto-replies. Examples: "unmute", "back on", "resume", "resume yuhself", "wake up", "you good now".
 - multi: operator references multiple items in one message. Examples: "1: send, 2: skip", "send 1 and edit 3 to say $200".
 - unclear: low confidence — set ask_back to a single short Caye-voice question.
 

@@ -803,14 +803,19 @@ async function processMessage(
               'You are Caye, an AI receptionist for a Caribbean small business. Reply to customer emails warmly and professionally. When in doubt, hold for the business owner.'
             const { data: receiptAiConfig } = await supabase
               .from('workspace_ai_config')
-              .select('system_prompt, ai_enabled')
+              .select('system_prompt, ai_enabled, whatsapp_muted_until')
               .eq('workspace_id', workspaceId)
               .maybeSingle()
             if (receiptAiConfig?.system_prompt) receiptSystemPrompt = receiptAiConfig.system_prompt
 
-            if (receiptAiConfig?.ai_enabled === false) {
-              // AI disabled — fall back to template send so receipts still confirm.
-              console.log(`[email/poll] AI disabled — receipt using template fallback`)
+            const receiptCayeMutedUntil = receiptAiConfig?.whatsapp_muted_until ? new Date(receiptAiConfig.whatsapp_muted_until) : null
+            const receiptIsMuted = receiptCayeMutedUntil && receiptCayeMutedUntil > new Date()
+
+            if (receiptAiConfig?.ai_enabled === false || receiptIsMuted) {
+              // AI disabled or Caye muted — fall back to template send so receipts still confirm.
+              // Receipts are factual administrative confirmations; the operator still wants them
+              // to land even when Caye herself is paused.
+              console.log(`[email/poll] ${receiptIsMuted ? 'Caye muted' : 'AI disabled'} — receipt using template fallback`)
             } else {
               try {
                 let decision = await generateCayeAutoReply(
@@ -1013,9 +1018,12 @@ async function processMessage(
   // Fetch workspace AI prompt
   let systemPrompt =
     'You are Caye, an AI receptionist for a Caribbean small business. Reply to customer emails warmly and professionally. When in doubt, hold for the business owner.'
+  // whatsapp_muted_until: column name is legacy from when mute_caye only gated
+  // WhatsApp. Now gates email too (the customer's "pause yuhself" expectation
+  // is a Caye-wide pause). Rename to caye_muted_until is queued for v1.1.
   const { data: aiConfig } = await supabase
     .from('workspace_ai_config')
-    .select('system_prompt, ai_enabled')
+    .select('system_prompt, ai_enabled, whatsapp_muted_until')
     .eq('workspace_id', workspaceId)
     .maybeSingle()
   if (aiConfig?.system_prompt) systemPrompt = aiConfig.system_prompt
@@ -1188,6 +1196,16 @@ async function processMessage(
 
   if (aiConfig?.ai_enabled === false) {
     console.log(`[email/poll] AI disabled for workspace ${workspaceId} — skipping auto-reply`)
+    return 'skipped'
+  }
+
+  // Caye-wide mute gate. mute_caye writes whatsapp_muted_until; the column name
+  // is legacy but semantics are now Caye-wide (operator's "pause yuhself"
+  // expectation is total, not per-channel). If muted, skip email auto-reply
+  // entirely — owner gets the inbound visibly in Zoho and decides.
+  const cayeMutedUntil = aiConfig?.whatsapp_muted_until ? new Date(aiConfig.whatsapp_muted_until) : null
+  if (cayeMutedUntil && cayeMutedUntil > new Date()) {
+    console.log(`[email/poll] Caye muted for workspace ${workspaceId} until ${cayeMutedUntil.toISOString()} — skipping auto-reply`)
     return 'skipped'
   }
 
