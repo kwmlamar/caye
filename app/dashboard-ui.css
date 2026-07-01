@@ -2404,13 +2404,16 @@
 }
 .caye-banner .cb-mark {
   width: 42px; height: 42px;
-  border-radius: 11px;
-  background: conic-gradient(from 200deg, var(--tc-teal), var(--tc-sun), var(--tc-coral), var(--tc-teal));
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 22% 22%, rgba(255,255,255,0.6), transparent 38%),
+    radial-gradient(circle at 18% 20%, #7DC9CB 0%, transparent 48%),
+    radial-gradient(circle at 88% 15%, #FFD68F 0%, transparent 52%),
+    radial-gradient(circle at 82% 88%, #00778B 0%, transparent 58%),
+    radial-gradient(circle at 12% 85%, #A8DCC0 0%, transparent 52%),
+    #F5E8D0;
   flex-shrink: 0;
   display: inline-flex; align-items: center; justify-content: center;
-  color: #fff;
-  font-weight: 700;
-  font-size: 16px;
   box-shadow: 0 6px 14px -4px rgba(30,97,87,0.35);
 }
 .caye-banner .cb-body { flex: 1; min-width: 0; }

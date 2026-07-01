@@ -654,27 +654,16 @@ function TypingBubble() {
 function CayeAvatar({ size }: { size: number }) {
   return (
     <div
-      className="rounded-full flex items-center justify-center flex-shrink-0 relative"
+      className="rounded-full flex-shrink-0 relative"
       style={{
         width: size,
         height: size,
         background:
-          'radial-gradient(circle at 30% 25%, #FFFCF5 0%, #FAF7F2 65%, #EFE9DC 100%)',
+          'radial-gradient(circle at 22% 22%, rgba(255,255,255,0.6), transparent 38%), radial-gradient(circle at 18% 20%, #7DC9CB 0%, transparent 48%), radial-gradient(circle at 88% 15%, #FFD68F 0%, transparent 52%), radial-gradient(circle at 82% 88%, #00778B 0%, transparent 58%), radial-gradient(circle at 12% 85%, #A8DCC0 0%, transparent 52%), #F5E8D0',
         boxShadow:
-          '0 1px 2px rgba(14,26,26,0.18), inset 0 0 0 1px rgba(14,26,26,0.06), inset 0 -1px 1px rgba(14,26,26,0.05)',
+          '0 1px 2px rgba(14,26,26,0.18), inset 0 0 0 1px rgba(14,26,26,0.06)',
       }}
-    >
-      <span
-        className="italic text-caribbean-teal-deep font-normal leading-none"
-        style={{
-          fontFamily: 'var(--font-instrument)',
-          fontSize: size * 0.66,
-          marginTop: size * 0.04,
-        }}
-      >
-        c
-      </span>
-    </div>
+    />
   )
 }
 

@@ -59,7 +59,7 @@ export default function HomeScreen({
       <div className="caye-card">
         <div className="row1">
           <div className="who">
-            <span className="caye-mark">C</span>
+            <span className="caye-mark" />
             <div>
               <div className="nm">Caye</div>
               <div className="st">

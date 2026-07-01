@@ -209,7 +209,7 @@ export default function CayeAIPanel() {
       </header>
 
       <div className="caye-banner">
-        <div className="cb-mark">C</div>
+        <div className="cb-mark" />
         <div className="cb-body">
           <div className="cb-title">
             {stats.loading ? 'Loading…' : `Caye handled ${stats.conversations} conversation${stats.conversations !== 1 ? 's' : ''} this week`}

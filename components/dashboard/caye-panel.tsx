@@ -15,24 +15,20 @@ type Message = {
   text: string
 }
 
+// Landing-page hero mesh-gradient palette (PALETTE_DEEP in app/page.tsx) —
+// plain orb, no letter/face, matching components/brand/CayeMark.
 const CayeMark = ({ size = 16 }: { size?: number }) => (
   <span
     style={{
       width: size,
       height: size,
-      fontSize: size * 0.55,
-      background: "conic-gradient(from 0deg, var(--tc-teal), var(--tc-sun), var(--tc-coral), var(--tc-teal))",
+      background:
+        'radial-gradient(circle at 22% 22%, rgba(255,255,255,0.6), transparent 38%), radial-gradient(circle at 18% 20%, #7DC9CB 0%, transparent 48%), radial-gradient(circle at 88% 15%, #FFD68F 0%, transparent 52%), radial-gradient(circle at 82% 88%, #00778B 0%, transparent 58%), radial-gradient(circle at 12% 85%, #A8DCC0 0%, transparent 52%), #F5E8D0',
       display: "inline-flex",
-      alignItems: "center",
-      justifyContent: "center",
       borderRadius: "50%",
       flexShrink: 0,
-      fontWeight: "bold",
-      color: "white",
     }}
-  >
-    C
-  </span>
+  />
 )
 
 export function CayePanel({ open, onClose, conversationCount = 0 }: CayePanelProps) {

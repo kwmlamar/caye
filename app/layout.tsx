@@ -53,10 +53,9 @@ export const metadata: Metadata = {
   description: 'AI-powered workspace for tour operators',
   icons: {
     icon: [
-      { url: '/brand/caye-mark.svg', type: 'image/svg+xml' },
-      { url: '/favicon.ico' },
+      { url: '/brand/caye-orb.svg', type: 'image/svg+xml' },
     ],
-    apple: '/brand/caye-mark-primary-teal.svg',
+    apple: '/brand/caye-orb.svg',
   },
 }
 

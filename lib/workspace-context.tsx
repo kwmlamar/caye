@@ -44,3 +44,10 @@ export function useWorkspace() {
   }
   return context
 }
+
+/** Non-throwing variant for components (e.g. ChannelsPanel) that may render
+ *  outside a WorkspaceProvider, such as during onboarding before a full
+ *  workspace membership record exists. */
+export function useWorkspaceOptional() {
+  return useContext(WorkspaceContext)
+}

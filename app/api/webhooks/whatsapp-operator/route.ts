@@ -26,6 +26,13 @@ import { getPendingHeldItems } from '@/lib/whatsapp/pending'
 import { dispatchOperatorIntent } from '@/lib/whatsapp/actions'
 import { sendFreeFormWhatsApp } from '@/lib/whatsapp/outbound'
 import { cayeAgent } from '@/lib/caye-agent'
+import {
+  extractSignupCode,
+  tryAutoProvisionOwner,
+  firstDiscoveryMessage,
+  handleDiscoveryAnswer,
+  normalizeE164,
+} from '@/lib/onboarding-whatsapp'
 
 // Held-item action intents stay on the legacy classifier+dispatch path
 // for now — those reply flows (send / skip / edit / handled / mute /
@@ -158,6 +165,29 @@ async function handleOneInbound(
     .maybeSingle()).data
 
   if (!allow) {
+    // First contact from an unrecognized phone — fallback path in case
+    // they messaged from a phone that wasn't pre-registered via the
+    // /onboarding phone step (e.g. an old shared link). Check for a
+    // signup deep-link code before giving up.
+    const bodyText = message.type === 'text' ? message.text?.body ?? '' : ''
+    const signupWorkspaceId = extractSignupCode(bodyText)
+    if (signupWorkspaceId) {
+      const provisioned = await tryAutoProvisionOwner(supabase, signupWorkspaceId, normalized)
+      if (provisioned) {
+        allow = {
+          id: provisioned.id,
+          workspace_id: provisioned.workspace_id,
+          role: provisioned.role,
+          name: provisioned.name,
+          verified_at: provisioned.verified_at,
+          pending_otp_code: null,
+          pending_otp_expires_at: null,
+        }
+      }
+    }
+  }
+
+  if (!allow) {
     console.warn(`[whatsapp-operator] no allowlist entry for from=${fromRaw}`)
     return
   }
@@ -245,7 +275,9 @@ async function handleOneInbound(
   // is the source of truth for "where do replies go".
   const { data: cfg } = await supabase
     .from('workspace_ai_config')
-    .select('whatsapp_outbound_enabled, operator_whatsapp_number')
+    .select(
+      'whatsapp_outbound_enabled, operator_whatsapp_number, system_prompt, onboarding_wa_question_index, onboarding_wa_answers'
+    )
     .eq('workspace_id', workspaceId)
     .maybeSingle()
 
@@ -260,6 +292,75 @@ async function handleOneInbound(
     .from('workspace_ai_config')
     .update({ last_whatsapp_inbound_at: now })
     .eq('workspace_id', workspaceId)
+
+  // ── WhatsApp-native discovery grill ─────────────────────────────────
+  // system_prompt is only ever set once (by handleDiscoveryAnswer /
+  // saveBusinessProfile) at the end of the 8-question interview, so its
+  // absence means this workspace hasn't finished onboarding yet. This
+  // branch runs even though whatsapp_outbound_enabled is still false —
+  // that flag flips true only once discovery completes.
+  const replyTo = `+${normalized}`
+  if (!cfg.system_prompt) {
+    // Question index still at 0 with no answers recorded means discovery
+    // hasn't actually started yet — whatever this first message says
+    // (however the phone got recognized: pre-registered via /onboarding's
+    // phone step, or the [ws:...] code fallback), treat it as "hello,"
+    // not as an answer to question 1.
+    const discoveryNotStarted =
+      (cfg.onboarding_wa_question_index ?? 0) === 0 &&
+      Object.keys(cfg.onboarding_wa_answers ?? {}).length === 0
+
+    if (discoveryNotStarted) {
+      const replyText = firstDiscoveryMessage()
+      await supabase.from('caye_operator_messages').insert({
+        workspace_id: workspaceId,
+        direction: 'inbound',
+        wa_message_id: message.id,
+        body: message.type === 'text' ? message.text?.body ?? '' : `[${message.type}]`,
+        intent: null,
+      })
+      const sendResult = await sendFreeFormWhatsApp(replyTo, replyText, `discovery-start-${message.id}`)
+      if (sendResult.status === 'failed') {
+        console.error(`[whatsapp-operator] discovery-start send failed for ${workspaceId}:`, sendResult.error)
+      }
+      await supabase.from('caye_operator_messages').insert({
+        workspace_id: workspaceId,
+        direction: 'outbound',
+        wa_message_id: null,
+        body: replyText,
+        intent: null,
+      })
+      return
+    }
+
+    if (message.type !== 'text' || !message.text?.body) {
+      // Non-text reply mid-interview — we only collect answers as text.
+      return
+    }
+
+    const answerText = message.text.body.trim()
+    await supabase.from('caye_operator_messages').insert({
+      workspace_id: workspaceId,
+      direction: 'inbound',
+      wa_message_id: message.id,
+      body: answerText,
+      intent: null,
+    })
+
+    const { replyText } = await handleDiscoveryAnswer(supabase, workspaceId, answerText)
+    const sendResult = await sendFreeFormWhatsApp(replyTo, replyText, `discovery-${message.id}`)
+    if (sendResult.status === 'failed') {
+      console.error(`[whatsapp-operator] discovery send failed for ${workspaceId}:`, sendResult.error)
+    }
+    await supabase.from('caye_operator_messages').insert({
+      workspace_id: workspaceId,
+      direction: 'outbound',
+      wa_message_id: null,
+      body: replyText,
+      intent: null,
+    })
+    return
+  }
 
   if (message.type !== 'text' || !message.text?.body) {
     // Non-text — just log and bail. We don't classify media in v1.
@@ -332,7 +433,7 @@ async function handleOneInbound(
   // the inbound number == operator_whatsapp_number anyway, so this is a
   // no-op for them. Carries a leading + because Meta returns the from
   // without it but our send helper expects the canonical form.
-  const replyTo = `+${normalized}`
+  // (replyTo was already declared above the discovery-grill branch.)
 
   if (LEGACY_DISPATCH_KINDS.has(intent.kind)) {
     const result = await dispatchOperatorIntent({ workspaceId }, intent, pending)
@@ -454,8 +555,4 @@ function summarizeTurnBody(turn: import('@anthropic-ai/sdk').default.MessagePara
     else if (block.type === 'tool_result') parts.push(`[tool_result]`)
   }
   return parts.join(' ').trim() || '[empty]'
-}
-
-function normalizeE164(phone: string): string {
-  return phone.replace(/^\+/, '').replace(/\D/g, '')
 }

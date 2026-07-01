@@ -11,6 +11,24 @@ export default function AuthCallbackPage() {
   useEffect(() => {
     const client = getSupabase()
 
+    async function routeAfterAuth(userId: string) {
+      // Onboarding (the discovery chat) is only "done" once it has written
+      // a system prompt to workspace_ai_config. New sign-ins with no config
+      // yet go through onboarding first instead of landing straight on the
+      // dashboard with an unconfigured Caye.
+      const { data: aiConfig } = await client
+        .from("workspace_ai_config")
+        .select("system_prompt")
+        .eq("workspace_id", userId)
+        .maybeSingle()
+
+      if (aiConfig?.system_prompt) {
+        router.push(`/dashboard/${userId}`)
+      } else {
+        router.push(`/onboarding?ws=${userId}`)
+      }
+    }
+
     const { data: { subscription } } = client.auth.onAuthStateChange(
       async (event, session) => {
         if ((event !== "SIGNED_IN" && event !== "INITIAL_SESSION") || !session || processed.current) return
@@ -25,7 +43,7 @@ export default function AuthCallbackPage() {
           role: "owner",
         }, { onConflict: "workspace_id,user_id" })
 
-        router.push(`/dashboard/${user.id}`)
+        await routeAfterAuth(user.id)
       }
     )
 
@@ -34,7 +52,7 @@ export default function AuthCallbackPage() {
       const { data: { session } } = await client.auth.getSession()
       if (session) {
         processed.current = true
-        router.push(`/dashboard/${session.user.id}`)
+        await routeAfterAuth(session.user.id)
       } else {
         router.push("/login")
       }

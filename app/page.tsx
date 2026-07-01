@@ -4,7 +4,6 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { motion } from 'framer-motion'
 import { MeshGradient } from '@paper-design/shaders-react'
-import { CayeLogo } from '@/components/brand/CayeLogo'
 import WhatsAppMockup from '@/components/landing/WhatsAppMockup'
 
 // Simplified landing — credibility surface, not a conversion engine.
@@ -118,7 +117,9 @@ export default function LandingPage() {
         {/* Top bar */}
         <header className="relative z-10 max-w-7xl w-full mx-auto px-6 md:px-12 py-7 flex items-center justify-between">
           <Link href="/" className="flex items-center select-none">
-            <CayeLogo size={26} />
+            <span className="font-logo font-semibold tracking-tight text-[#0E1A1A]" style={{ fontSize: 22 }}>
+              caye
+            </span>
           </Link>
           <Link
             href="/login"

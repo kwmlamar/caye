@@ -328,54 +328,66 @@
 }
 .login-switch a:hover { border-bottom-color: var(--tc-ink); }
 
-/* ─── DARK theme for login/signup ───────────────────────────────────────────
+/* ─── DARK theme for login/signup — Tomo-inspired ───────────────────────────
    Scoped to .login-root.login-dark so it doesn't leak into the rest of the
-   app until full dark-mode work ships. */
+   app until full dark-mode work ships. Flat near-black, no card chrome,
+   content floats directly on the background; pill-shaped buttons carry
+   the whole visual weight instead of a bordered box. */
 .login-root.login-dark {
-  background: #0a1418;
+  background: #0a0a0b;
   color: #e9e2d4;
 }
 .login-root.login-dark::before {
-  background:
-    radial-gradient(900px 600px at 20% 0%, rgba(30, 97, 87, 0.18), transparent 60%),
-    radial-gradient(700px 500px at 100% 100%, rgba(232, 90, 60, 0.10), transparent 55%);
+  /* No gradient wash — Tomo's login is flat, not glowy. */
+  background: none;
 }
 .login-dark .login-card {
-  background: #0f1d22;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.04) inset,
-    0 32px 80px -32px rgba(0, 0, 0, 0.6);
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+  max-width: 360px;
 }
-.login-dark .login-eyebrow { color: rgba(233, 226, 212, 0.45); }
-.login-dark .login-heading { color: #f5efe2; }
-.login-dark .login-sub { color: rgba(233, 226, 212, 0.55); }
+.login-dark .login-brand { margin-bottom: 32px; transform: scale(1.15); }
+.login-dark .login-eyebrow {
+  color: rgba(245, 245, 244, 0.4);
+  letter-spacing: 0.28em;
+}
+.login-dark .login-heading {
+  font-family: var(--font-sans, ui-sans-serif, system-ui, sans-serif);
+  font-weight: 600;
+  font-size: 26px;
+  color: #f5f5f4;
+}
+.login-dark .login-sub { color: rgba(245, 245, 244, 0.5); }
 .login-dark .login-error {
   background: rgba(232, 90, 60, 0.14);
-  border-color: rgba(232, 90, 60, 0.28);
+  border: 1px solid rgba(232, 90, 60, 0.28);
+  border-radius: 999px;
   color: #ffc9b8;
+  padding: 10px 16px;
 }
+.login-dark .login-oauth-stack { gap: 12px; }
 .login-dark .login-oauth {
-  background: #ffffff;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  color: #0a1418;
+  background: #f5f5f4;
+  border: none;
+  border-radius: 999px;
+  color: #0a0a0b;
   font-weight: 600;
-  padding: 11px 16px;
-  font-size: 14px;
+  padding: 14px 20px;
+  font-size: 14.5px;
+  transition: background .15s ease, transform .1s ease;
 }
-.login-dark .login-oauth:hover {
-  background: #f5efe2;
-  border-color: rgba(255, 255, 255, 0.16);
-}
-.login-dark .login-switch { color: rgba(233, 226, 212, 0.55); }
+.login-dark .login-oauth:hover { background: #ffffff; transform: translateY(-1px); }
+.login-dark .login-switch { color: rgba(245, 245, 244, 0.45); margin-top: 24px; }
 .login-dark .login-switch a {
-  color: #f5efe2;
-  border-bottom-color: rgba(255, 255, 255, 0.18);
+  color: #f5f5f4;
+  border-bottom-color: rgba(255, 255, 255, 0.22);
 }
-.login-dark .login-switch a:hover { border-bottom-color: #f5efe2; }
-.login-dark .login-legal { color: rgba(233, 226, 212, 0.35); }
-.login-dark .login-legal a { color: rgba(233, 226, 212, 0.55); }
-.login-dark .login-legal a:hover { color: #f5efe2; }
+.login-dark .login-switch a:hover { border-bottom-color: #f5f5f4; }
+.login-dark .login-legal { color: rgba(245, 245, 244, 0.3); }
+.login-dark .login-legal a { color: rgba(245, 245, 244, 0.5); }
+.login-dark .login-legal a:hover { color: #f5f5f4; }
 .login-error {
   background: var(--tc-coral-soft);
   color: var(--tc-coral-deep);

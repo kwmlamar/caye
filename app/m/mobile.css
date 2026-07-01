@@ -178,14 +178,17 @@
 
 .caye-mark {
   width: 28px; height: 28px;
-  border-radius: 9px;
-  background: linear-gradient(140deg, var(--m-teal) 0%, var(--m-teal-deep) 100%);
-  color: #fff;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 22% 22%, rgba(255,255,255,0.6), transparent 38%),
+    radial-gradient(circle at 18% 20%, #7DC9CB 0%, transparent 48%),
+    radial-gradient(circle at 88% 15%, #FFD68F 0%, transparent 52%),
+    radial-gradient(circle at 82% 88%, #00778B 0%, transparent 58%),
+    radial-gradient(circle at 12% 85%, #A8DCC0 0%, transparent 52%),
+    #F5E8D0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-weight: 700;
-  font-size: 13px;
   flex-shrink: 0;
   position: relative;
 }

@@ -22,7 +22,7 @@ declare global {
 import { useParams, useSearchParams, useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 import SIcon from './SIcon'
-import { useWorkspace } from '@/lib/workspace-context'
+import { useWorkspaceOptional } from '@/lib/workspace-context'
 import { getSupabase } from '@/lib/supabase'
 
 interface ConnectedAccount {
@@ -85,12 +85,14 @@ function pickBest(rows: ConnectedAccount[]): ConnectedAccount {
   return pool.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0]
 }
 
-export default function ChannelsPanel() {
+export default function ChannelsPanel({ workspaceId: propWorkspaceId }: { workspaceId?: string } = {}) {
   const params = useParams()
   const urlWorkspaceId = params?.workspaceId as string | undefined
-  const { workspaceId: ctxWorkspaceId } = useWorkspace()
-  // Prefer the URL param — it's always authoritative for which workspace we're viewing
-  const workspaceId = urlWorkspaceId || ctxWorkspaceId
+  const ctxWorkspaceId = useWorkspaceOptional()?.workspaceId
+  // Prefer an explicit prop (e.g. onboarding, before a WorkspaceProvider exists),
+  // then the URL param — it's authoritative for which workspace we're viewing —
+  // then workspace context.
+  const workspaceId = propWorkspaceId || urlWorkspaceId || ctxWorkspaceId
   const [byType, setByType] = useState<Record<string, ConnectedAccount>>({})
   const [loading, setLoading] = useState(true)
   const [whatsappPages, setWhatsappPages] = useState<{ id: string; name: string; token: string; display_phone_number: string }[] | null>(null)
