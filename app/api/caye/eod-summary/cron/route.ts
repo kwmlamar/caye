@@ -15,6 +15,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase-server'
 import { composeEodSummary } from '@/lib/caye-agent/briefing'
 import { sendFreeFormWhatsApp } from '@/lib/whatsapp/outbound'
+import { resolveOperatorByPhone } from '@/lib/operator-identity'
 
 interface WorkspaceRow {
   workspace_id: string
@@ -98,6 +99,7 @@ export async function GET(request: NextRequest) {
         .update({ last_eod_sent_at: nowISO })
         .eq('workspace_id', row.workspace_id)
 
+      const operator = await resolveOperatorByPhone(supabase, row.workspace_id, row.operator_whatsapp_number)
       await supabase.from('caye_operator_messages').insert({
         workspace_id: row.workspace_id,
         direction: 'outbound',
@@ -105,6 +107,9 @@ export async function GET(request: NextRequest) {
         body: text,
         intent: null,
         claude_format: { role: 'assistant', content: text },
+        operator_allowlist_id: operator?.id ?? null,
+        operator_name: operator?.name ?? null,
+        operator_role: operator?.role ?? null,
       })
 
       results.push({ workspace_id: row.workspace_id, status: 'sent' })

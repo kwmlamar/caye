@@ -269,6 +269,8 @@ async function handleOneInbound(
   const workspaceId: string = allow.workspace_id
   const callerRole = allow.role as 'owner' | 'staff' | 'founder'
   const callerName = (allow as { name?: string | null }).name ?? null
+  const operatorId: number = allow.id
+  const operator = { id: operatorId, name: callerName, role: callerRole }
 
   // Fetch the workspace's outbound config (flag + canonical operator
   // number). Separate query from the allowlist lookup so the allowlist
@@ -319,6 +321,9 @@ async function handleOneInbound(
         wa_message_id: message.id,
         body: message.type === 'text' ? message.text?.body ?? '' : `[${message.type}]`,
         intent: null,
+        operator_allowlist_id: operator.id,
+        operator_name: operator.name,
+        operator_role: operator.role,
       })
       const sendResult = await sendFreeFormWhatsApp(replyTo, replyText, `discovery-start-${message.id}`)
       if (sendResult.status === 'failed') {
@@ -330,6 +335,9 @@ async function handleOneInbound(
         wa_message_id: null,
         body: replyText,
         intent: null,
+        operator_allowlist_id: operator.id,
+        operator_name: operator.name,
+        operator_role: operator.role,
       })
       return
     }
@@ -346,6 +354,9 @@ async function handleOneInbound(
       wa_message_id: message.id,
       body: answerText,
       intent: null,
+      operator_allowlist_id: operator.id,
+      operator_name: operator.name,
+      operator_role: operator.role,
     })
 
     const { replyText } = await handleDiscoveryAnswer(supabase, workspaceId, answerText)
@@ -359,6 +370,9 @@ async function handleOneInbound(
       wa_message_id: null,
       body: replyText,
       intent: null,
+      operator_allowlist_id: operator.id,
+      operator_name: operator.name,
+      operator_role: operator.role,
     })
     return
   }
@@ -371,6 +385,9 @@ async function handleOneInbound(
       wa_message_id: message.id,
       body: `[${message.type}]`,
       intent: null,
+      operator_allowlist_id: operator.id,
+      operator_name: operator.name,
+      operator_role: operator.role,
     })
     return
   }
@@ -388,6 +405,7 @@ async function handleOneInbound(
       .from('caye_operator_messages')
       .select('body')
       .eq('workspace_id', workspaceId)
+      .eq('operator_allowlist_id', operatorId)
       .eq('direction', 'outbound')
       .order('created_at', { ascending: false })
       .limit(1)
@@ -413,6 +431,9 @@ async function handleOneInbound(
     body,
     intent,
     claude_format: { role: 'user', content: body },
+    operator_allowlist_id: operator.id,
+    operator_name: operator.name,
+    operator_role: operator.role,
   })
 
   // If the workspace flag is off we don't act on intents — but we still logged
@@ -469,6 +490,9 @@ async function handleOneInbound(
         body: result.ackBody,
         intent: null,
         claude_format: { role: 'assistant', content: result.ackBody },
+        operator_allowlist_id: operator.id,
+        operator_name: operator.name,
+        operator_role: operator.role,
       })
     }
     return
@@ -482,6 +506,7 @@ async function handleOneInbound(
       userMessage: body,
       callerRole,
       callerName,
+      operatorId,
     })
 
     if (!agentResult.replyText) {
@@ -520,7 +545,7 @@ async function handleOneInbound(
     // the sliding-window loader sees them on the next round. Shared with
     // the web-based Caye Direct route (app/api/founder/caye-direct) so
     // both persist identically.
-    await persistAgentTurns(supabase, workspaceId, agentResult.newTurns)
+    await persistAgentTurns(supabase, workspaceId, agentResult.newTurns, operator)
   } catch (err) {
     console.error(
       `[whatsapp-operator] back-office agent failed for ${workspaceId}:`,

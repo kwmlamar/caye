@@ -16,21 +16,35 @@ const SLIDING_WINDOW_HOURS = 24
  * reconstructing {role, content: body} from `direction` + `body` for
  * legacy rows that predate the column.
  *
+ * Scoped to a single operator (not just the workspace) — a workspace can
+ * have multiple operators (owner, staff, founder) sharing the back-office
+ * channel, and each one's exchange with Caye needs its own memory. Before
+ * this scoping existed, Caye's context mixed every operator's messages
+ * together, so a reply to one operator could leak context from another's
+ * unrelated conversation.
+ *
  * Returns oldest-first so it can be passed straight to Claude.
  */
 export async function loadOperatorContext(
-  workspaceId: string
+  workspaceId: string,
+  operatorAllowlistId: number | null
 ): Promise<Anthropic.MessageParam[]> {
   const supabase = createServiceClient()
   const cutoffISO = new Date(
     Date.now() - SLIDING_WINDOW_HOURS * 60 * 60 * 1000
   ).toISOString()
 
-  const { data, error } = await supabase
+  let query = supabase
     .from('caye_operator_messages')
     .select('direction, body, claude_format, created_at')
     .eq('workspace_id', workspaceId)
     .gte('created_at', cutoffISO)
+
+  query = operatorAllowlistId != null
+    ? query.eq('operator_allowlist_id', operatorAllowlistId)
+    : query.is('operator_allowlist_id', null)
+
+  const { data, error } = await query
     .order('created_at', { ascending: false })
     .limit(SLIDING_WINDOW_MESSAGES)
 

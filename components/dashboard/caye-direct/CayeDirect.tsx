@@ -1,170 +1,137 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { getSession } from '@/lib/supabase'
+import { CayeMark } from '@/components/brand/CayeMark'
+import CayeDirectThread from './CayeDirectThread'
 
-const CARD_BG = '#121214'
 const CARD_BORDER = '#1f1f23'
+const GRADIENT = 'linear-gradient(90deg, #00778B, #7DC9CB, #FFD68F)'
 
-interface OperatorMessage {
-  id: string
-  direction: 'inbound' | 'outbound'
-  body: string
-  created_at: string
+interface Operator {
+  id: number
+  name: string | null
+  role: 'owner' | 'staff' | 'founder'
 }
 
-const QUICK_COMMANDS = ['pause yuhself', 'status briefing', 'vibe check', 'cancellation override']
+const ROLE_LABEL: Record<Operator['role'], string> = {
+  founder: 'Founder',
+  owner: 'Owner',
+  staff: 'Staff',
+}
 
-// Web front end for the same back-office agent the founder already
-// texts over WhatsApp (lib/caye-agent, mode: 'back-office') — same
-// history (caye_operator_messages), same tools, same trust level.
-// Not a read-only log: sending a message here really calls the agent.
+function operatorLabel(op: Operator): string {
+  if (op.name) return op.name
+  return op.role === 'founder' ? 'You' : ROLE_LABEL[op.role]
+}
+
+function OperatorRow({ op, active, onClick }: { op: Operator; active: boolean; onClick: () => void }) {
+  const [hover, setHover] = useState(false)
+  const label = operatorLabel(op)
+  return (
+    <button
+      onClick={onClick}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        position: 'relative',
+        display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left',
+        border: 'none', cursor: 'pointer', borderRadius: 10, padding: '9px 10px 9px 13px', marginBottom: 2,
+        background: active ? 'rgba(125,201,203,0.09)' : hover ? 'rgba(255,255,255,0.04)' : 'transparent',
+        transition: 'background 0.12s ease',
+      }}
+    >
+      {active && (
+        <span aria-hidden style={{ position: 'absolute', left: 3, top: 7, bottom: 7, width: 2.5, borderRadius: 3, background: '#7DC9CB' }} />
+      )}
+      <div style={{
+        width: 22, height: 22, borderRadius: '50%', flexShrink: 0,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: 'rgba(125,201,203,0.12)', color: '#7DC9CB', fontSize: 10, fontWeight: 700, fontFamily: 'var(--font-mono)',
+      }}>
+        {label.slice(0, 1).toUpperCase()}
+      </div>
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <div style={{ fontSize: 12.5, fontWeight: 600, color: '#f4f4f5', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {label}
+        </div>
+        <div style={{ fontSize: 9.5, fontFamily: 'var(--font-mono)', color: '#71717a', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+          {ROLE_LABEL[op.role]}
+        </div>
+      </div>
+    </button>
+  )
+}
+
+// Read-only operator switcher (owner/staff/founder from operator_allowlist)
+// + a per-operator conversation thread. No add/edit/remove here — team
+// membership changes stay a Caye-chat action (the add_team_member tool),
+// per the dashboard's locked scope in Products/Caye/CLAUDE.md. This is
+// purely a lens on operators who already exist, same as Command
+// Conversations is a lens on unified_conversations.
 export default function CayeDirect({ workspaceId }: { workspaceId: string }) {
-  const [messages, setMessages] = useState<OperatorMessage[]>([])
-  const [input, setInput] = useState('')
-  const [loading, setLoading] = useState(true)
-  const [sending, setSending] = useState(false)
-  const scrollRef = useRef<HTMLDivElement>(null)
+  const [operators, setOperators] = useState<Operator[] | null>(null)
+  const [selectedId, setSelectedId] = useState<number | null>(null)
 
   useEffect(() => {
     let cancelled = false
+    setOperators(null)
+    setSelectedId(null)
     async function load() {
-      setLoading(true)
       const { session } = await getSession()
-      if (!session) { setLoading(false); return }
-      const res = await fetch(`/api/founder/caye-direct?workspaceId=${workspaceId}`, {
+      if (!session) return
+      const res = await fetch(`/api/founder/caye-operators?workspaceId=${workspaceId}`, {
         headers: { Authorization: `Bearer ${session.access_token}` },
       })
       const json = await res.json()
-      if (!cancelled && res.ok) setMessages(json.messages)
-      if (!cancelled) setLoading(false)
+      if (cancelled || !res.ok) return
+      const ops: Operator[] = json.operators ?? []
+      setOperators(ops)
+      const founder = ops.find((o) => o.role === 'founder')
+      setSelectedId(founder?.id ?? ops[0]?.id ?? null)
     }
     load()
     return () => { cancelled = true }
   }, [workspaceId])
 
-  useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
-  }, [messages])
-
-  async function send(text: string) {
-    const trimmed = text.trim()
-    if (!trimmed || sending) return
-    setSending(true)
-    setInput('')
-
-    const optimistic: OperatorMessage = {
-      id: `pending-${Date.now()}`,
-      direction: 'inbound',
-      body: trimmed,
-      created_at: new Date().toISOString(),
-    }
-    setMessages((prev) => [...prev, optimistic])
-
-    const { session } = await getSession()
-    if (!session) { setSending(false); return }
-
-    try {
-      const res = await fetch('/api/founder/caye-direct', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
-        body: JSON.stringify({ workspaceId, message: trimmed }),
-      })
-      const json = await res.json()
-      if (res.ok && json.replyText) {
-        setMessages((prev) => [...prev, {
-          id: `reply-${Date.now()}`,
-          direction: 'outbound',
-          body: json.replyText,
-          created_at: new Date().toISOString(),
-        }])
-      }
-    } finally {
-      setSending(false)
-    }
-  }
+  const selected = operators?.find((o) => o.id === selectedId) ?? null
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', color: '#f4f4f5' }}>
-      <div style={{ padding: '14px 16px', borderBottom: `1px solid ${CARD_BORDER}`, display: 'flex', alignItems: 'center', gap: 10 }}>
-        <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', fontWeight: 700, letterSpacing: '0.05em' }}>CAYE DIRECT</span>
-        <span style={{ fontSize: 9, fontFamily: 'var(--font-mono)', color: '#7DC9CB', background: 'rgba(125,201,203,0.1)', border: '1px solid rgba(125,201,203,0.3)', borderRadius: 999, padding: '2px 8px' }}>
-          BACK-OFFICE SHELL
-        </span>
-      </div>
-
-      <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {loading ? (
-          <div style={{ fontSize: 12.5, color: '#71717a' }}>Loading…</div>
-        ) : messages.length === 0 ? (
-          <div style={{ fontSize: 12.5, color: '#71717a' }}>No history yet — say hello.</div>
-        ) : (
-          messages.map((m) => (
-            <div
-              key={m.id}
-              style={{
-                alignSelf: m.direction === 'outbound' ? 'flex-start' : 'flex-end',
-                maxWidth: '82%',
-                background: m.direction === 'outbound' ? 'rgba(125,201,203,0.1)' : 'rgba(255,255,255,0.06)',
-                border: `1px solid ${CARD_BORDER}`,
-                borderRadius: 12,
-                padding: '8px 12px',
-              }}
-            >
-              <p style={{ fontSize: 13, lineHeight: 1.45, whiteSpace: 'pre-wrap' }}>{m.body}</p>
-            </div>
-          ))
-        )}
-        {sending && <div style={{ fontSize: 11.5, color: '#71717a', alignSelf: 'flex-start' }}>Caye is thinking…</div>}
-      </div>
-
-      <div style={{ padding: 14, borderTop: `1px solid ${CARD_BORDER}` }}>
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
-          {QUICK_COMMANDS.map((cmd) => (
-            <button
-              key={cmd}
-              onClick={() => send(cmd)}
-              disabled={sending}
-              style={{
-                fontSize: 11, fontFamily: 'var(--font-mono)', color: '#a1a1aa',
-                background: CARD_BG, border: `1px solid ${CARD_BORDER}`, borderRadius: 999,
-                padding: '5px 10px', cursor: sending ? 'default' : 'pointer',
-              }}
-            >
-              {cmd}
-            </button>
-          ))}
+    <div style={{ display: 'flex', height: '100%', color: '#f4f4f5' }}>
+      <div style={{ width: 168, flexShrink: 0, borderRight: `1px solid ${CARD_BORDER}`, display: 'flex', flexDirection: 'column' }}>
+        <div style={{ position: 'relative', padding: '14px 14px 10px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <CayeMark size={18} />
+            <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 700, letterSpacing: '0.05em' }}>CAYE DIRECT</span>
+          </div>
+          <div aria-hidden style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 1, background: GRADIENT, opacity: 0.35 }} />
         </div>
-        <form
-          onSubmit={(e) => { e.preventDefault(); send(input) }}
-          style={{ display: 'flex', gap: 8 }}
-        >
-          <input
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="Direct command to Caye (e.g. 'pause yuhself')…"
-            disabled={sending}
-            style={{
-              flex: 1, background: 'rgba(255,255,255,0.05)', border: `1px solid ${CARD_BORDER}`,
-              borderRadius: 10, padding: '9px 12px', fontSize: 13, color: '#f4f4f5', outline: 'none',
-            }}
-          />
-          <button
-            type="submit"
-            disabled={sending || !input.trim()}
-            style={{
-              width: 38, height: 38, borderRadius: 10, flexShrink: 0,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              background: '#7DC9CB', border: 'none', color: '#0a0a0b', cursor: sending ? 'default' : 'pointer',
-              opacity: !input.trim() || sending ? 0.5 : 1,
-            }}
-          >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" />
-            </svg>
-          </button>
-        </form>
+        <div style={{ padding: '8px 6px', flex: 1, overflowY: 'auto' }}>
+          {operators === null ? (
+            <div style={{ fontSize: 11, color: '#52525b', padding: '6px 8px' }}>Loading…</div>
+          ) : operators.length === 0 ? (
+            <div style={{ fontSize: 11, color: '#52525b', padding: '6px 8px' }}>No operators yet.</div>
+          ) : (
+            operators.map((op) => (
+              <OperatorRow key={op.id} op={op} active={op.id === selectedId} onClick={() => setSelectedId(op.id)} />
+            ))
+          )}
+        </div>
       </div>
+
+      {selected ? (
+        <CayeDirectThread
+          key={selected.id}
+          workspaceId={workspaceId}
+          operatorId={selected.id}
+          operatorLabel={operatorLabel(selected)}
+          readOnly={selected.role !== 'founder'}
+        />
+      ) : (
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#52525b', fontSize: 13 }}>
+          {operators === null ? 'Loading…' : 'Select an operator.'}
+        </div>
+      )}
     </div>
   )
 }

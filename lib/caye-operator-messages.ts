@@ -1,6 +1,7 @@
 import 'server-only'
 import Anthropic from '@anthropic-ai/sdk'
 import { createServiceClient } from '@/lib/supabase-server'
+import type { OperatorIdentity } from '@/lib/operator-identity'
 
 /**
  * Render a one-line body summary for a Claude MessageParam — used for
@@ -28,7 +29,8 @@ export function summarizeTurnBody(turn: Anthropic.MessageParam): string {
 export async function persistAgentTurns(
   supabase: ReturnType<typeof createServiceClient>,
   workspaceId: string,
-  turns: Anthropic.MessageParam[]
+  turns: Anthropic.MessageParam[],
+  operator: OperatorIdentity | null
 ): Promise<void> {
   for (const turn of turns) {
     const direction = turn.role === 'assistant' ? 'outbound' : 'inbound'
@@ -39,6 +41,9 @@ export async function persistAgentTurns(
       body: summarizeTurnBody(turn),
       intent: null,
       claude_format: turn,
+      operator_allowlist_id: operator?.id ?? null,
+      operator_name: operator?.name ?? null,
+      operator_role: operator?.role ?? null,
     })
   }
 }

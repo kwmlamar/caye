@@ -50,7 +50,7 @@ export async function GET(req: NextRequest) {
 
   const { data: messages, error } = await supabase
     .from('unified_messages')
-    .select('id, sender_type, content, sent_at')
+    .select('id, sender_type, content, sent_at, metadata, is_internal')
     .eq('conversation_id', conversationId)
     .order('sent_at', { ascending: true })
     .limit(100)

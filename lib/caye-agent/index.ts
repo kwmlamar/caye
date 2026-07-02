@@ -32,6 +32,15 @@ export interface CayeAgentInput {
    * "who am I?" with the wrong person.
    */
   callerName?: string | null
+  /**
+   * The caller's operator_allowlist.id — scopes both the sliding-window
+   * context load and (via the caller persisting turns separately) the
+   * message history itself to this one operator's conversation with
+   * Caye, so multiple operators sharing a workspace's back-office
+   * channel don't bleed into each other's context or Caye Direct view.
+   * Null only for pre-migration rows that couldn't be backfilled.
+   */
+  operatorId: number | null
 }
 
 export interface CayeAgentResult {
@@ -171,7 +180,7 @@ export async function cayeAgent(input: CayeAgentInput): Promise<CayeAgentResult>
     },
   })
 
-  const history = await loadOperatorContext(input.workspaceId)
+  const history = await loadOperatorContext(input.workspaceId, input.operatorId)
   const currentUserTurn: Anthropic.MessageParam = {
     role: 'user',
     content: input.userMessage,

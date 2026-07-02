@@ -52,16 +52,26 @@ function StatusPill({ status }: { status: CustomerStatus }) {
 }
 
 function ExpandButton({ expanded, onClick }: { expanded: boolean; onClick: () => void }) {
+  const [focused, setFocused] = useState(false)
+  const [hover, setHover] = useState(false)
+  const active = focused || hover
   return (
     <button
       onClick={onClick}
+      onFocus={() => setFocused(true)}
+      onBlur={() => setFocused(false)}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
       title={expanded ? 'Collapse' : 'Expand'}
       style={{
         position: 'absolute', top: 10, right: 10, zIndex: 1,
         width: 26, height: 26, borderRadius: 8,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        background: 'rgba(255,255,255,0.06)', border: `1px solid ${CARD_BORDER}`,
-        color: '#a1a1aa', cursor: 'pointer',
+        background: active ? 'rgba(125,201,203,0.12)' : 'rgba(255,255,255,0.06)',
+        border: `1px solid ${active ? 'rgba(125,201,203,0.45)' : CARD_BORDER}`,
+        color: active ? '#7DC9CB' : '#a1a1aa', cursor: 'pointer',
+        outline: 'none', boxShadow: focused ? '0 0 0 2px rgba(125,201,203,0.35)' : 'none',
+        transition: 'background 0.15s ease, border-color 0.15s ease, color 0.15s ease',
       }}
     >
       {expanded ? (
@@ -81,11 +91,14 @@ function ExpandButton({ expanded, onClick }: { expanded: boolean; onClick: () =>
 
 function StatCard({ label, value, valueColor = '#f4f4f5' }: { label: string; value: string; valueColor?: string }) {
   return (
-    <div style={{ background: CARD_BG, border: `1px solid ${CARD_BORDER}`, borderRadius: 16, padding: '16px 18px' }}>
-      <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', letterSpacing: '0.06em', textTransform: 'uppercase', color: LABEL_COLOR }}>
+    <div style={{
+      background: CARD_BG, border: `1px solid ${CARD_BORDER}`, borderRadius: 18, padding: '16px 18px',
+      display: 'flex', flexDirection: 'column', justifyContent: 'space-between', minHeight: 96,
+    }}>
+      <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', textTransform: 'uppercase', color: LABEL_COLOR, marginBottom: 8 }}>
         {label}
       </div>
-      <div style={{ fontSize: 20, fontFamily: 'var(--font-display)', fontWeight: 600, color: valueColor, marginTop: 6 }}>
+      <div style={{ fontSize: 20, fontFamily: 'var(--font-display)', fontWeight: 600, color: valueColor, fontVariantNumeric: 'tabular-nums' }}>
         {value}
       </div>
     </div>
@@ -120,17 +133,21 @@ const RAIL_ITEMS: { id: RailId; label: string; icon: ReactNode; stub: boolean }[
 ]
 
 function RailButton({ item, active, onClick }: { item: (typeof RAIL_ITEMS)[number]; active: boolean; onClick: () => void }) {
+  const [hover, setHover] = useState(false)
   return (
     <button
       onClick={onClick}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
       title={item.label}
       style={{
         width: 44, height: 44, borderRadius: 12, flexShrink: 0,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        background: active ? 'rgba(255,255,255,0.08)' : 'transparent',
-        border: `1px solid ${active ? '#2d2d34' : 'transparent'}`,
-        color: active ? '#7DC9CB' : '#52525b',
+        background: active ? 'rgba(125,201,203,0.1)' : hover ? 'rgba(255,255,255,0.05)' : 'transparent',
+        border: `1px solid ${active ? 'rgba(125,201,203,0.35)' : 'transparent'}`,
+        color: active ? '#7DC9CB' : hover ? '#a1a1aa' : '#52525b',
         cursor: 'pointer',
+        transition: 'background 0.15s ease, border-color 0.15s ease, color 0.15s ease',
       }}
     >
       <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -180,8 +197,19 @@ export default function FounderHome() {
         width: 64, flexShrink: 0, background: '#08080a', borderRight: `1px solid ${CARD_BORDER}`,
         display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, padding: '16px 0',
       }}>
-        <div style={{ marginBottom: 6 }}><CayeMark size={28} /></div>
-        {RAIL_ITEMS.map((item) => (
+        <button
+          onClick={() => setRailView('dashboard')}
+          title="Caye Command"
+          style={{
+            width: 44, height: 44, borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: 'transparent',
+            border: 'transparent',
+            cursor: 'pointer',
+          }}
+        >
+          <CayeMark size={28} />
+        </button>
+        {RAIL_ITEMS.filter((item) => item.id !== 'dashboard').map((item) => (
           <RailButton key={item.id} item={item} active={railView === item.id} onClick={() => setRailView(item.id)} />
         ))}
       </nav>
@@ -189,7 +217,6 @@ export default function FounderHome() {
       {/* ── Placements sidebar (real cross-workspace list) ── */}
       <aside style={{ width: 250, flexShrink: 0, borderRight: `1px solid ${CARD_BORDER}`, padding: 16, overflowY: 'auto' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
-          <CayeMark size={20} />
           <span style={{ fontSize: 12, fontWeight: 700, fontFamily: 'var(--font-mono)', letterSpacing: '0.06em', color: LABEL_COLOR }}>
             PLACEMENTS
           </span>
@@ -202,13 +229,20 @@ export default function FounderHome() {
                 key={m.workspace_id}
                 onClick={() => router.push(`/dashboard/${m.workspace_id}`)}
                 style={{
+                  position: 'relative',
                   display: 'flex', flexDirection: 'column', gap: 6,
                   textAlign: 'left', border: `1px solid ${active ? '#2d2d34' : 'transparent'}`,
                   cursor: 'pointer', borderRadius: 12,
-                  padding: '12px 14px',
+                  padding: '12px 14px 12px 17px',
                   background: active ? 'rgba(24,24,27,0.9)' : 'transparent',
                 }}
               >
+                {active && (
+                  <span aria-hidden style={{
+                    position: 'absolute', left: 5, top: 10, bottom: 10, width: 3, borderRadius: 3,
+                    background: GRADIENT,
+                  }} />
+                )}
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                   <span style={{
                     fontSize: 13, fontWeight: 600, letterSpacing: '-0.01em',
@@ -226,7 +260,15 @@ export default function FounderHome() {
       </aside>
 
       {/* ── Main ── */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0 }}>
+      <div style={{ position: 'relative', flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0 }}>
+        {/* Faint brand-gradient atmosphere, echoing the landing hero mesh
+            without competing with the data-dense console below it. */}
+        <div aria-hidden style={{
+          position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: -1,
+          background:
+            'radial-gradient(ellipse 900px 500px at 100% -10%, rgba(0,119,139,0.14), transparent 60%), ' +
+            'radial-gradient(ellipse 700px 400px at -5% 110%, rgba(255,214,143,0.05), transparent 60%)',
+        }} />
         {/* Top status bar */}
         <div style={{ padding: '16px 24px', borderBottom: `1px solid ${CARD_BORDER}`, display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
           <h1 style={{ fontSize: 16, fontWeight: 600, fontFamily: 'var(--font-display)', margin: 0 }}>{workspace.business_name}</h1>
@@ -236,9 +278,10 @@ export default function FounderHome() {
         {activeRailItem.stub ? (
           <StubConsole label={activeRailItem.label} />
         ) : (
-          <div style={{ flex: 1, overflowY: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 16, minHeight: 0 }}>
-            {/* Overview strip */}
-            <div style={{ flexShrink: 0, display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
+          <div style={{ flex: 1, overflowY: expanded ? 'hidden' : 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 16, minHeight: 0 }}>
+            {/* Overview strip — hidden while a panel is expanded, so the
+                expanded panel gets the whole page under the top bar. */}
+            <div style={{ flexShrink: 0, display: expanded ? 'none' : 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
               <StatCard
                 label="Deployment"
                 value={data ? (data.whatsapp_outbound_enabled ? 'Active & Chatting' : 'Paused') : '—'}
@@ -253,21 +296,26 @@ export default function FounderHome() {
               <StatCard label="7-day spend" value={data ? `$${data.total_cost_usd.toFixed(2)}` : '—'} />
             </div>
 
-            {/* Calendar + Conversations. Either can expand to take the full
-                row — the other stays mounted but hidden, so its state
+            {/* Calendar + Conversations. Either can expand to take the whole
+                page — the other stays mounted but hidden, so its state
                 (open thread, list scroll position) survives collapsing
-                back rather than resetting. */}
+                back rather than resetting. Caye Direct is hidden too while
+                one of these is expanded, so the expanded panel truly owns
+                the page. */}
             <div style={{
-              flexShrink: 0,
               display: expanded === 'cayeDirect' ? 'none' : 'grid',
               gridTemplateColumns: expanded ? '1fr' : '1fr 1fr',
-              gap: 14, height: 420,
+              gap: 14,
+              ...(expanded === 'calendar' || expanded === 'conversations'
+                ? { flex: 1, minHeight: 0 }
+                : { flexShrink: 0, height: 420 }),
             }}>
               <div style={{
                 display: expanded === 'conversations' ? 'none' : 'block',
                 position: 'relative',
                 border: `1px solid ${CARD_BORDER}`, borderRadius: 16, overflow: 'hidden', background: CARD_BG,
               }}>
+                <div aria-hidden style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 2, background: GRADIENT, opacity: 0.45, zIndex: 1 }} />
                 <ExpandButton expanded={expanded === 'calendar'} onClick={() => setExpanded(expanded === 'calendar' ? null : 'calendar')} />
                 {data && <CommandCalendar bookings={data.bookings} weekStart={data.week_start} />}
               </div>
@@ -276,6 +324,7 @@ export default function FounderHome() {
                 position: 'relative',
                 border: `1px solid ${CARD_BORDER}`, borderRadius: 16, overflow: 'hidden', background: CARD_BG,
               }}>
+                <div aria-hidden style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 2, background: GRADIENT, opacity: 0.45, zIndex: 1 }} />
                 <ExpandButton expanded={expanded === 'conversations'} onClick={() => setExpanded(expanded === 'conversations' ? null : 'conversations')} />
                 {data && <CommandConversations workspaceId={workspaceId} conversations={data.conversations} />}
               </div>
@@ -286,6 +335,7 @@ export default function FounderHome() {
                 Performance Scorecard will take the other half of this
                 row once built (next pass). */}
             <div style={{
+              display: expanded === 'calendar' || expanded === 'conversations' ? 'none' : 'block',
               position: 'relative',
               ...(expanded === 'cayeDirect'
                 ? { flex: 1, minHeight: 0 }
@@ -296,7 +346,7 @@ export default function FounderHome() {
               <CayeDirect workspaceId={workspaceId} />
             </div>
 
-            <div aria-hidden style={{ flexShrink: 0, height: 3, borderRadius: 3, background: GRADIENT, opacity: 0.4 }} />
+            <div aria-hidden style={{ display: expanded ? 'none' : 'block', flexShrink: 0, height: 3, borderRadius: 3, background: GRADIENT, opacity: 0.4 }} />
           </div>
         )}
       </div>
