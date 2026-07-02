@@ -14,34 +14,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase-server'
-
-// Per-million-token prices in USD. Update as Anthropic pricing changes.
-// Cache write columns store the 1h-TTL price (#46); if we ever cache at
-// 5m TTL again, split the column or add a TTL field to the log row.
-const PRICING: Record<
-  string,
-  { input: number; output: number; cache_read: number; cache_write_1h: number }
-> = {
-  'claude-sonnet-4-6': { input: 3, output: 15, cache_read: 0.3, cache_write_1h: 6 },
-  'claude-haiku-4-5-20251001': { input: 1, output: 5, cache_read: 0.1, cache_write_1h: 2 },
-}
-
-function costFor(
-  model: string,
-  input: number,
-  output: number,
-  cacheRead: number,
-  cacheWrite: number
-): number {
-  const p = PRICING[model]
-  if (!p) return 0
-  return (
-    (input * p.input) / 1_000_000 +
-    (output * p.output) / 1_000_000 +
-    (cacheRead * p.cache_read) / 1_000_000 +
-    (cacheWrite * p.cache_write_1h) / 1_000_000
-  )
-}
+import { costForModel } from '@/lib/llm-pricing'
 
 export async function GET(req: NextRequest) {
   const secret = process.env.CRON_SECRET
@@ -117,7 +90,7 @@ export async function GET(req: NextRequest) {
     .map((a) => ({
       ...a,
       cost_usd: Number(
-        costFor(a.model, a.input_tokens, a.output_tokens, a.cache_read_tokens, a.cache_creation_tokens).toFixed(4)
+        costForModel(a.model, a.input_tokens, a.output_tokens, a.cache_read_tokens, a.cache_creation_tokens).toFixed(4)
       ),
     }))
     .sort((a, b) => b.cost_usd - a.cost_usd)

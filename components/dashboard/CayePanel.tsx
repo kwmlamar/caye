@@ -7,6 +7,7 @@ import ChatsScreen from '@/components/dashboard/chats/ChatsScreen'
 import BookingsScreen from '@/components/dashboard/bookings/BookingsScreen'
 import CalendarScreen from '@/components/dashboard/calendar/CalendarScreen'
 import ContactsScreen from '@/components/dashboard/contacts/ContactsScreen'
+import CommandScreen from '@/components/dashboard/command/CommandScreen'
 
 const MIN_WIDTH = 420
 const MAX_WIDTH = 800
@@ -20,6 +21,7 @@ export default function CayePanel({ open, onClose }: { open: boolean; onClose: (
     { id: 'bookings', label: 'bookings' },
     { id: 'calendar', label: 'calendar' },
     { id: 'contacts', label: 'contacts' },
+    { id: 'command', label: 'command' },
   ]
 
   return (
@@ -93,6 +95,7 @@ export default function CayePanel({ open, onClose }: { open: boolean; onClose: (
         {panelScreen === 'bookings' && <BookingsScreen inPanel={true} />}
         {panelScreen === 'calendar' && <CalendarScreen inPanel={true} />}
         {panelScreen === 'contacts' && <ContactsScreen inPanel={true} />}
+        {panelScreen === 'command' && <CommandScreen />}
       </div>
     </aside>
   )
