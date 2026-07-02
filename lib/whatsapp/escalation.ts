@@ -83,12 +83,15 @@ export async function recordEscalation(
   }
 
   // Derive a fallback ping summary for LLM-driven escalations that didn't
-  // supply one. Format mirrors the forced-escalation shape so operator pings
-  // read consistently regardless of trigger path. Caps at 100 chars so the
-  // template renders cleanly.
+  // supply one. Uses internalContext (Caye's actual briefing + proposed
+  // action for the operator), not customerFacingMessage (what she told
+  // the customer) — the operator needs the substance of the ask, not an
+  // echo of her own reply. Format mirrors the forced-escalation shape so
+  // operator pings read consistently regardless of trigger path. Caps at
+  // 200 chars — enough room for "what's needed" + a proposed action.
   const pingSummary =
     input.pingSummary ??
-    `${labelForCategory(input.category)} — "${input.customerFacingMessage.replace(/\s+/g, ' ').trim().slice(0, 100)}"`
+    `${labelForCategory(input.category)} — ${input.internalContext.replace(/\s+/g, ' ').trim().slice(0, 200)}`
 
   enqueueEscalationPings({
     workspaceId: input.workspaceId,

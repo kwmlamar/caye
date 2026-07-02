@@ -138,8 +138,8 @@ async function processEscalation(row: EscalationRow): Promise<Outcome> {
     if (conv?.customer_name) contactName = conv.customer_name
   }
   const pingSummary =
-    `${labelForCategory(row.category as EscalationCategory)} — ` +
-    `"${row.customer_facing_message.replace(/\s+/g, ' ').trim().slice(0, 100)}"`
+    `Still waiting — ${labelForCategory(row.category as EscalationCategory)} — ` +
+    row.internal_context.replace(/\s+/g, ' ').trim().slice(0, 180)
 
   // Re-ping the operator(s) with escalation_followup framing. The customer
   // reassurance lives in the operator-side script ("send a softer line to

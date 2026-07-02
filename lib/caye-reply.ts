@@ -512,7 +512,12 @@ const TOOLS: Anthropic.Tool[] = [
           type: 'string',
           description:
             'Handoff note for the operator — what the customer wants, why you escalated, ' +
-            'suggested reply if you have one. 2-5 sentences.',
+            'suggested reply if you have one. 2-5 sentences. This text is what actually ' +
+            'gets sent to the operator (WhatsApp ping + dashboard) — not customer_facing_message. ' +
+            'ALWAYS end with a concrete proposed next action framed as a yes/no the operator ' +
+            'can just confirm, e.g. "Want me to confirm Jeff\'s Aug 23 spot at $375 and send ' +
+            'payment details, or handle differently?" — never end on a bare status update ' +
+            'like "needs your input" with no proposal attached.',
         },
       },
       required: ['category', 'route_to', 'customer_facing_message', 'internal_context'],
