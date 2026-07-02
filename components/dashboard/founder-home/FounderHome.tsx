@@ -7,6 +7,7 @@ import { useWorkspace } from '@/lib/workspace-context'
 import { useCommandOverview } from '@/lib/useCommandOverview'
 import CommandCalendar from '@/components/dashboard/command-calendar/CommandCalendar'
 import CommandConversations from '@/components/dashboard/command-conversations/CommandConversations'
+import CayeDirect from '@/components/dashboard/caye-direct/CayeDirect'
 import type { CustomerStatus } from '@/types/database'
 
 // Tokens lifted directly from Sandbox/caye-command (the reference
@@ -277,6 +278,14 @@ export default function FounderHome() {
                 <ExpandButton expanded={expanded === 'conversations'} onClick={() => setExpanded(expanded === 'conversations' ? null : 'conversations')} />
                 {data && <CommandConversations workspaceId={workspaceId} conversations={data.conversations} />}
               </div>
+            </div>
+
+            {/* Caye Direct — same back-office agent the founder already
+                texts over WhatsApp, now with a web front end. Employee
+                Performance Scorecard will take the other half of this
+                row once built (next pass). */}
+            <div style={{ height: 380, border: `1px solid ${CARD_BORDER}`, borderRadius: 16, overflow: 'hidden', background: CARD_BG }}>
+              <CayeDirect workspaceId={workspaceId} />
             </div>
 
             <div aria-hidden style={{ height: 3, borderRadius: 3, background: GRADIENT, opacity: 0.4 }} />
