@@ -1327,18 +1327,22 @@
 .bk-card.by-caye .bk-status.confirmed { background: rgba(30,97,87,0.15); color: var(--tc-teal); }
 .bk-ship { color: var(--tc-ink-mute); }
 
+/* Founder-only panel — dark theme, distinct from the cream operator
+   dashboard behind it. Matches login/signup/onboarding's .login-dark
+   palette so today's founder-tooling surfaces read as one family. */
 .caye-panel {
   position: relative;
   height: 100%;
   width: 0;
   max-width: 90vw;
-  background: rgba(255, 255, 255, 0.92);
+  background: rgba(10, 10, 11, 0.96);
   backdrop-filter: blur(28px);
   -webkit-backdrop-filter: blur(28px);
-  border-left: 0px solid rgba(14, 26, 26, 0.07);
+  border-left: 0px solid rgba(255, 255, 255, 0.08);
   box-shadow: none;
   display: flex; flex-direction: column;
   z-index: 10;
+  color: #f5f5f4;
   transition: width 200ms ease-out, border-left-width 200ms ease-out, box-shadow 200ms ease-out;
   will-change: width, border-left-width, box-shadow;
   overflow: hidden;
@@ -1346,11 +1350,18 @@
 .caye-panel.open {
   width: 480px;
   border-left-width: 1px;
-  box-shadow: -1px 0 0 rgba(14, 26, 26, 0.06);
+  box-shadow: -1px 0 0 rgba(0, 0, 0, 0.3);
 }
 
-/* Remove background from inner sections to let the glassmorphism bleed through */
-.caye-panel .cp-head,
+/* .cp-head is the one section that should stay transparent over the new
+   dark .caye-panel background (2026-07-01 redesign, shell + Command tab
+   only). Inbox/Bookings/Calendar/Contacts are out of scope for that
+   redesign and were built assuming a *light* panel background (dark
+   text) — restore their original light surface explicitly instead of
+   inheriting the new dark background, or their text goes dark-on-dark. */
+.caye-panel .cp-head {
+  background: transparent !important;
+}
 .caye-panel .inbox-col,
 .caye-panel .thread-col,
 .caye-panel .thread-head,
@@ -1364,7 +1375,8 @@
 .caye-panel .bk-inline-container,
 .caye-panel .bk-inline-foot,
 .caye-panel .contact-detail {
-  background: transparent !important;
+  background: var(--tc-bg-soft) !important;
+  color: var(--tc-ink);
 }
 
 @media (max-width: 640px) {
@@ -1433,11 +1445,53 @@
   position: relative;
   display: flex; align-items: center; justify-content: space-between;
   padding: 18px 16px 16px 20px;
-  border-bottom: 1px solid rgba(28, 22, 16, 0.08);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   overflow: hidden;
   flex-shrink: 0;
-  background: var(--tc-bg-soft);
+  background: transparent;
 }
+
+/* Tab bar — pill segmented control, dark. Replaces the light-theme
+   Tailwind utility classes (bg-near-black/5 etc.) that assumed a cream
+   background. */
+.cp-tabs {
+  display: flex;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 999px;
+  padding: 3px;
+  gap: 2px;
+}
+.cp-tab {
+  flex: 1;
+  border: none;
+  background: none;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: rgba(245, 245, 244, 0.5);
+  cursor: pointer;
+  transition: background .15s ease, color .15s ease;
+}
+.cp-tab:hover { color: #f5f5f4; }
+.cp-tab.active {
+  background: #f5f5f4;
+  color: #0a0a0b;
+}
+.cp-back {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: none;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: rgba(245, 245, 244, 0.6);
+  cursor: pointer;
+  transition: color .15s ease;
+}
+.cp-back:hover { color: #f5f5f4; }
 /* Subtle warm aura animation without green/teal */
 @keyframes cp-aura-breath {
   0%, 100% { opacity: 0.4; transform: scale(1); }
@@ -1479,14 +1533,17 @@
 }
 .cp-close {
   position: relative;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
   width: 28px; height: 28px;
   border-radius: 7px;
-  color: var(--tc-ink-mute);
+  color: #f5f5f4;
   font-size: 18px; line-height: 1;
+  cursor: pointer;
   transition: all .15s;
   opacity: 0.55;
 }
-.cp-close:hover { background: rgba(28,22,16,0.06); opacity: 1; color: var(--tc-ink); }
+.cp-close:hover { background: rgba(255,255,255,0.08); opacity: 1; color: #f5f5f4; }
 
 /* Typing / loading indicator */
 .cp-thinking {
