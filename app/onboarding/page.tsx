@@ -1,3 +1,4 @@
+import { encodeSignupCode } from "@/lib/onboarding-whatsapp"
 import OnboardingClient from "./OnboardingClient"
 
 export default async function OnboardingPage({
@@ -6,5 +7,10 @@ export default async function OnboardingPage({
   searchParams: Promise<{ ws?: string }>
 }) {
   const { ws } = await searchParams
-  return <OnboardingClient workspaceIdHint={ws} />
+  return (
+    <OnboardingClient
+      workspaceIdHint={ws}
+      signupCode={ws ? encodeSignupCode(ws) : undefined}
+    />
+  )
 }

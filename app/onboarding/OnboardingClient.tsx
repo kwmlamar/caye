@@ -1,10 +1,10 @@
 "use client"
 
-import { useState, FormEvent } from "react"
 import { CayeMark } from "@/components/brand/CayeMark"
 
 interface Props {
   workspaceIdHint?: string
+  signupCode?: string
 }
 
 // The discovery interview (8 questions → business profile) now runs as a
@@ -14,49 +14,17 @@ interface Props {
 // nothing more. Per CLAUDE.md — if it can happen in chat, it happens in
 // chat, not in a web form.
 //
-// Phone is registered server-side *before* the wa.me link is revealed
-// (see /api/onboarding/register-phone) so the prefilled message can stay
-// clean — no visible [ws:...] tracking code for the owner to see.
-export default function OnboardingClient({ workspaceIdHint }: Props) {
+// signupCode is invisible zero-width characters appended to the
+// prefilled message (see lib/onboarding-whatsapp.ts encodeSignupCode) —
+// carries the workspace id to the webhook without the owner ever seeing
+// a tracking code, and without an extra "type your number" step.
+export default function OnboardingClient({ workspaceIdHint, signupCode }: Props) {
   const cayeNumber = process.env.NEXT_PUBLIC_CAYE_WHATSAPP_NUMBER
 
-  const [phone, setPhone] = useState("")
-  const [status, setStatus] = useState<"idle" | "submitting" | "registered" | "error">("idle")
-  const [errorMsg, setErrorMsg] = useState<string | null>(null)
-
-  const prefill = "Hi Caye! I just signed up and I'm ready to get set up."
+  const prefill = `Hi Caye! I just signed up and I'm ready to get set up.${signupCode ?? ""}`
   const waHref = cayeNumber
     ? `https://wa.me/${cayeNumber}?text=${encodeURIComponent(prefill)}`
     : undefined
-
-  async function handleSubmit(e: FormEvent) {
-    e.preventDefault()
-    if (!workspaceIdHint) {
-      setStatus("error")
-      setErrorMsg("Missing workspace — try the signup link again.")
-      return
-    }
-    setStatus("submitting")
-    setErrorMsg(null)
-
-    try {
-      const res = await fetch("/api/onboarding/register-phone", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ workspaceId: workspaceIdHint, phone }),
-      })
-      const data = await res.json()
-      if (!res.ok) {
-        setStatus("error")
-        setErrorMsg(data.error || "Something went wrong — try again.")
-        return
-      }
-      setStatus("registered")
-    } catch {
-      setStatus("error")
-      setErrorMsg("Couldn't reach the server — check your connection and try again.")
-    }
-  }
 
   return (
     <div className="login-root login-dark">
@@ -71,30 +39,7 @@ export default function OnboardingClient({ workspaceIdHint }: Props) {
           She&apos;ll ask a few quick questions about your business over WhatsApp — about 3 minutes — then she&apos;s live.
         </p>
 
-        {status !== "registered" ? (
-          <form onSubmit={handleSubmit} className="login-form" style={{ textAlign: "left" }}>
-            <div className="login-field">
-              <label>Your WhatsApp number</label>
-              <input
-                type="tel"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                placeholder="+1 242 555 0123"
-                required
-                autoComplete="tel"
-              />
-            </div>
-            {status === "error" && errorMsg && <div className="login-error">{errorMsg}</div>}
-            <button
-              type="submit"
-              className="btn-primary"
-              disabled={status === "submitting" || !phone.trim()}
-              style={{ width: "100%", justifyContent: "center" }}
-            >
-              {status === "submitting" ? "One sec…" : "Continue"}
-            </button>
-          </form>
-        ) : waHref ? (
+        {waHref ? (
           <a
             href={waHref}
             target="_blank"

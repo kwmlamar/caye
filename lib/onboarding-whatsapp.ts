@@ -8,16 +8,44 @@ export function normalizeE164(phone: string): string {
   return phone.replace(/^\+/, '').replace(/\D/g, '')
 }
 
-// Signup deep-links embed a marker like "[ws:<uuid>]" in the prefilled
-// WhatsApp message text (see /onboarding page) so a first-contact message
-// from an unrecognized phone can be tied back to the workspace that was
-// just created. First-claim-wins: once a workspace has a verified owner
-// row, the code is inert.
-const SIGNUP_CODE_RE = /\[ws:([0-9a-f-]{36})\]/i
+// Signup deep-links carry the workspace id as a trailing run of
+// zero-width characters appended to the friendly prefilled WhatsApp
+// message (see /onboarding page) — invisible in the chat UI, but intact
+// in the message body so a first-contact message from an unrecognized
+// phone can be tied back to the workspace that generated the link.
+// First-claim-wins: once a workspace has a verified owner row, the code
+// is inert (tryAutoProvisionOwner below no-ops).
+//
+// Encoding: each hex nibble of the UUID (dashes stripped, 32 nibbles) is
+// 4 bits, each bit mapped to one of two zero-width characters. 128
+// invisible characters total — negligible size, invisible to the eye,
+// untouched by WhatsApp's plain-text rendering.
+const ZW = ['​', '‌'] // zero-width space (0) / zero-width non-joiner (1)
+const ZW_RUN_RE = new RegExp(`[${ZW[0]}${ZW[1]}]{128}$`)
+
+export function encodeSignupCode(workspaceId: string): string {
+  const hex = workspaceId.replace(/-/g, '')
+  return hex
+    .split('')
+    .map((ch) => {
+      const nibble = parseInt(ch, 16)
+      return [3, 2, 1, 0].map((bit) => ZW[(nibble >> bit) & 1]).join('')
+    })
+    .join('')
+}
 
 export function extractSignupCode(body: string): string | null {
-  const match = body.match(SIGNUP_CODE_RE)
-  return match ? match[1] : null
+  const match = body.match(ZW_RUN_RE)
+  if (!match) return null
+
+  const bits = match[0].split('').map((ch) => (ch === ZW[1] ? '1' : '0'))
+  let hex = ''
+  for (let i = 0; i < bits.length; i += 4) {
+    hex += parseInt(bits.slice(i, i + 4).join(''), 2).toString(16)
+  }
+  if (!/^[0-9a-f]{32}$/.test(hex)) return null
+
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
 }
 
 export interface ProvisionedOwner {
