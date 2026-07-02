@@ -8,6 +8,17 @@ import CommandCalendar from '@/components/dashboard/command-calendar/CommandCale
 import CommandConversations from '@/components/dashboard/command-conversations/CommandConversations'
 import type { CustomerStatus } from '@/types/database'
 
+// Tokens lifted directly from Sandbox/caye-command (the reference
+// mockup) via computed styles — bg-[#09090b]/[#121214]/border-[#1f1f23],
+// font-mono labels, font-display (Space Grotesk) values. The one thing
+// NOT copied from the mockup is its cyan/purple/rose accent gradient —
+// that's replaced with our own teal/gold mesh palette (matches the
+// landing hero + CayeMark orb), per the earlier gradient-consistency
+// decision. 2026-07-02 theme pass.
+const APP_BG = '#09090b'
+const CARD_BG = '#121214'
+const CARD_BORDER = '#1f1f23'
+const LABEL_COLOR = '#71717a' // zinc-500
 const GRADIENT = 'linear-gradient(90deg, #00778B, #7DC9CB, #FFD68F)'
 
 const STATUS_LABEL: Record<CustomerStatus, string> = {
@@ -17,21 +28,37 @@ const STATUS_LABEL: Record<CustomerStatus, string> = {
   suspended: 'Blocked',
 }
 const STATUS_COLOR: Record<CustomerStatus, string> = {
-  active: '#22c55e',
+  active: '#34d399', // emerald-400
   trial: '#FFD68F',
-  inactive: 'rgba(245,245,244,0.4)',
-  suspended: '#ff8a6b',
+  inactive: '#71717a',
+  suspended: '#fb7185', // rose-400
 }
 
 function StatusPill({ status }: { status: CustomerStatus }) {
+  const color = STATUS_COLOR[status]
   return (
     <span style={{
-      fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em',
-      color: STATUS_COLOR[status], border: `1px solid ${STATUS_COLOR[status]}55`,
+      fontSize: 10, fontWeight: 600, fontFamily: 'var(--font-mono)', textTransform: 'uppercase',
+      color, background: `${color}1a`, border: `1px solid ${color}33`,
       borderRadius: 999, padding: '2px 8px', flexShrink: 0,
+      display: 'inline-flex', alignItems: 'center', gap: 5,
     }}>
+      <span style={{ width: 5, height: 5, borderRadius: '50%', background: color }} />
       {STATUS_LABEL[status]}
     </span>
+  )
+}
+
+function StatCard({ label, value, valueColor = '#f4f4f5' }: { label: string; value: string; valueColor?: string }) {
+  return (
+    <div style={{ background: CARD_BG, border: `1px solid ${CARD_BORDER}`, borderRadius: 16, padding: '16px 18px' }}>
+      <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', letterSpacing: '0.06em', textTransform: 'uppercase', color: LABEL_COLOR }}>
+        {label}
+      </div>
+      <div style={{ fontSize: 20, fontFamily: 'var(--font-display)', fontWeight: 600, color: valueColor, marginTop: 6 }}>
+        {value}
+      </div>
+    </div>
   )
 }
 
@@ -48,77 +75,77 @@ export default function FounderHome() {
   const { data } = useCommandOverview(workspaceId)
 
   return (
-    <div style={{ display: 'flex', height: '100%', background: '#0a0a0b', color: '#f5f5f4', overflow: 'hidden' }}>
+    <div style={{ display: 'flex', height: '100%', background: APP_BG, color: '#f4f4f5', overflow: 'hidden', fontFamily: 'var(--font-sans)' }}>
       {/* ── Placements sidebar (real cross-workspace list) ── */}
-      <aside style={{ width: 240, flexShrink: 0, borderRight: '1px solid rgba(255,255,255,0.08)', padding: 16, overflowY: 'auto' }}>
+      <aside style={{ width: 250, flexShrink: 0, borderRight: `1px solid ${CARD_BORDER}`, padding: 16, overflowY: 'auto' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
           <CayeMark size={20} />
-          <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.04em', color: 'rgba(245,245,244,0.55)' }}>
+          <span style={{ fontSize: 12, fontWeight: 700, fontFamily: 'var(--font-mono)', letterSpacing: '0.06em', color: LABEL_COLOR }}>
             PLACEMENTS
           </span>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          {workspaces.map((m) => (
-            <button
-              key={m.workspace_id}
-              onClick={() => router.push(`/dashboard/${m.workspace_id}`)}
-              style={{
-                display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
-                textAlign: 'left', border: 'none', cursor: 'pointer', borderRadius: 10,
-                padding: '10px 10px',
-                background: m.workspace_id === workspaceId ? 'rgba(255,255,255,0.06)' : 'transparent',
-              }}
-            >
-              <span style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {m.customer.business_name}
-              </span>
-              <StatusPill status={m.customer.status} />
-            </button>
-          ))}
+          {workspaces.map((m) => {
+            const active = m.workspace_id === workspaceId
+            return (
+              <button
+                key={m.workspace_id}
+                onClick={() => router.push(`/dashboard/${m.workspace_id}`)}
+                style={{
+                  display: 'flex', flexDirection: 'column', gap: 6,
+                  textAlign: 'left', border: `1px solid ${active ? '#2d2d34' : 'transparent'}`,
+                  cursor: 'pointer', borderRadius: 12,
+                  padding: '12px 14px',
+                  background: active ? 'rgba(24,24,27,0.9)' : 'transparent',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                  <span style={{
+                    fontSize: 13, fontWeight: 600, letterSpacing: '-0.01em',
+                    color: active ? '#f4f4f5' : '#a1a1aa',
+                    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                  }}>
+                    {m.customer.business_name}
+                  </span>
+                  <StatusPill status={m.customer.status} />
+                </div>
+              </button>
+            )
+          })}
         </div>
       </aside>
 
       {/* ── Main ── */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
         {/* Top status bar */}
-        <div style={{ padding: '16px 24px', borderBottom: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
-          <h1 style={{ fontSize: 16, fontWeight: 700, margin: 0 }}>{workspace.business_name}</h1>
+        <div style={{ padding: '16px 24px', borderBottom: `1px solid ${CARD_BORDER}`, display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+          <h1 style={{ fontSize: 16, fontWeight: 600, fontFamily: 'var(--font-display)', margin: 0 }}>{workspace.business_name}</h1>
           <StatusPill status={workspace.status} />
         </div>
 
         <div style={{ flex: 1, overflowY: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 16, minHeight: 0 }}>
           {/* Overview strip */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
-            <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 14, padding: '14px 16px' }}>
-              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'rgba(245,245,244,0.4)' }}>Deployment</div>
-              <div style={{ fontSize: 15, fontWeight: 700, color: data?.whatsapp_outbound_enabled ? '#22c55e' : 'rgba(245,245,244,0.4)', marginTop: 6 }}>
-                {data ? (data.whatsapp_outbound_enabled ? 'Active & Chatting' : 'Paused') : '—'}
-              </div>
-            </div>
-            <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 14, padding: '14px 16px' }}>
-              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'rgba(245,245,244,0.4)' }}>Bookings this week</div>
-              <div style={{ fontSize: 22, fontWeight: 700, marginTop: 4 }}>{data ? data.bookings.length : '—'}</div>
-            </div>
-            <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 14, padding: '14px 16px' }}>
-              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'rgba(245,245,244,0.4)' }}>Needs review</div>
-              <div style={{ fontSize: 22, fontWeight: 700, color: data && data.pending_escalation_count > 0 ? '#ff8a6b' : '#f5f5f4', marginTop: 4 }}>
-                {data ? data.pending_escalation_count : '—'}
-              </div>
-            </div>
-            <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 14, padding: '14px 16px' }}>
-              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'rgba(245,245,244,0.4)' }}>7-day spend</div>
-              <div style={{ fontSize: 22, fontWeight: 700, marginTop: 4 }}>
-                {data ? `$${data.total_cost_usd.toFixed(2)}` : '—'}
-              </div>
-            </div>
+            <StatCard
+              label="Deployment"
+              value={data ? (data.whatsapp_outbound_enabled ? 'Active & Chatting' : 'Paused') : '—'}
+              valueColor={data?.whatsapp_outbound_enabled ? '#34d399' : '#71717a'}
+            />
+            <StatCard label="Bookings this week" value={data ? String(data.bookings.length) : '—'} />
+            <StatCard
+              label="Needs review"
+              value={data ? String(data.pending_escalation_count) : '—'}
+              valueColor={data && data.pending_escalation_count > 0 ? '#fb7185' : '#f4f4f5'}
+            />
+            <StatCard label="7-day spend" value={data ? `$${data.total_cost_usd.toFixed(2)}` : '—'} />
           </div>
 
           {/* Calendar + Conversations, side by side, always visible */}
           <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, minHeight: 420 }}>
-            <div style={{ border: '1px solid rgba(255,255,255,0.08)', borderRadius: 16, overflow: 'hidden', background: 'rgba(255,255,255,0.02)' }}>
+            <div style={{ border: `1px solid ${CARD_BORDER}`, borderRadius: 16, overflow: 'hidden', background: CARD_BG }}>
               {data && <CommandCalendar bookings={data.bookings} weekStart={data.week_start} />}
             </div>
-            <div style={{ border: '1px solid rgba(255,255,255,0.08)', borderRadius: 16, overflow: 'hidden', background: 'rgba(255,255,255,0.02)' }}>
+            <div style={{ border: `1px solid ${CARD_BORDER}`, borderRadius: 16, overflow: 'hidden', background: CARD_BG }}>
               {data && <CommandConversations workspaceId={workspaceId} conversations={data.conversations} />}
             </div>
           </div>

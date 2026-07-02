@@ -38,8 +38,8 @@ export default function CommandCalendar({ bookings, weekStart }: Props) {
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 16 }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ fontSize: 11, fontWeight: 700, color: 'rgba(245,245,244,0.5)' }}>SOURCE CALENDAR</span>
-            <span style={{ fontSize: 10, fontWeight: 700, color: '#7DC9CB', border: '1px solid rgba(125,201,203,0.4)', borderRadius: 999, padding: '2px 8px' }}>
+            <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 600, letterSpacing: '0.06em', color: '#71717a' }}>SOURCE CALENDAR</span>
+            <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', fontWeight: 600, color: '#7DC9CB', background: 'rgba(125,201,203,0.1)', border: '1px solid rgba(125,201,203,0.3)', borderRadius: 999, padding: '2px 8px' }}>
               SYNCED
             </span>
           </div>
@@ -88,8 +88,8 @@ export default function CommandCalendar({ bookings, weekStart }: Props) {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 6 }}>
           {week.map((d) => (
             <div key={d.label} style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 10, padding: 8, minHeight: 96 }}>
-              <div style={{ fontSize: 9, color: 'rgba(245,245,244,0.35)', letterSpacing: '0.06em' }}>{d.label}</div>
-              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>{d.date}</div>
+              <div style={{ fontSize: 9, fontFamily: 'var(--font-mono)', color: '#71717a', letterSpacing: '0.06em' }}>{d.label}</div>
+              <div style={{ fontSize: 13, fontFamily: 'var(--font-display)', fontWeight: 600, marginBottom: 6 }}>{d.date}</div>
               {d.bookings.length === 0 ? (
                 <div style={{ fontSize: 9, color: 'rgba(245,245,244,0.25)' }}>no bookings</div>
               ) : (

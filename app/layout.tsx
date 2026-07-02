@@ -1,5 +1,5 @@
 import type { Metadata } from 'next'
-import { Geist, JetBrains_Mono, Playfair_Display, Fraunces, Instrument_Serif, DM_Serif_Display, Newsreader } from 'next/font/google'
+import { Geist, JetBrains_Mono, Playfair_Display, Fraunces, Instrument_Serif, DM_Serif_Display, Newsreader, Space_Grotesk } from 'next/font/google'
 import { Toaster } from 'sonner'
 import './globals.css'
 import './dashboard-ui.css'
@@ -48,6 +48,14 @@ const newsreader = Newsreader({
   weight: ['400', '500', '600', '700'],
 })
 
+// Founder-console display font — matches the caye-command reference
+// mockup's stat-card numerals (2026-07-02 theme pass).
+const spaceGrotesk = Space_Grotesk({
+  variable: '--font-display',
+  subsets: ['latin'],
+  weight: ['500', '600', '700'],
+})
+
 export const metadata: Metadata = {
   title: 'Caye',
   description: 'AI-powered workspace for tour operators',
@@ -62,7 +70,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body className={`${geist.variable} ${jetbrainsMono.variable} ${playfair.variable} ${fraunces.variable} ${instrumentSerif.variable} ${dmSerif.variable} ${newsreader.variable}`}>
+      <body className={`${geist.variable} ${jetbrainsMono.variable} ${playfair.variable} ${fraunces.variable} ${instrumentSerif.variable} ${dmSerif.variable} ${newsreader.variable} ${spaceGrotesk.variable}`}>
         {children}
         <Toaster position="bottom-right" richColors />
       </body>

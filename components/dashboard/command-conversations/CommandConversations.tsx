@@ -121,7 +121,7 @@ export default function CommandConversations({ workspaceId, conversations }: Pro
                     <span style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                       {c.customer_name || 'Unknown'}
                     </span>
-                    <span style={{ fontSize: 9, fontWeight: 700, color, border: `1px solid ${color}66`, borderRadius: 999, padding: '1px 6px', flexShrink: 0 }}>
+                    <span style={{ fontSize: 9, fontFamily: 'var(--font-mono)', fontWeight: 600, color, background: `${color}1a`, border: `1px solid ${color}4d`, borderRadius: 999, padding: '1px 6px', flexShrink: 0 }}>
                       {label}
                     </span>
                   </div>
