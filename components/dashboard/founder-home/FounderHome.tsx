@@ -37,15 +37,11 @@ function StatusPill({ status }: { status: CustomerStatus }) {
 
 // The founder's entire dashboard, one page — matches the reference
 // mockup's structure (placements sidebar, top status bar, overview
-// cards, calendar + conversations side by side), built with a strong
-// preference for real data over new mocks: the placements list, workspace
-// name, and status all come from the founder's actual cross-workspace
-// membership already wired in workspace-context, not invented data.
-// Only "Bookings made" and "Deployment" below are still placeholders —
-// Calendar/Conversations bodies are mock (2026-07-02 frontend-first
-// pass); Needs Review + Weekly Spend are real (useCommandOverview).
-// Replaces the old FounderHome + CayePanel slide-out entirely: no more
-// panel-toggle model for founders.
+// cards, calendar + conversations side by side). All data here is real
+// (2026-07-02 data-wiring pass): placements list from workspace-context,
+// bookings/conversations/escalations/spend/deployment status from
+// /api/founder/command-overview. Replaces the old FounderHome + CayePanel
+// slide-out entirely — no more panel-toggle model for founders.
 export default function FounderHome() {
   const router = useRouter()
   const { workspace, workspaceId, workspaces } = useWorkspace()
@@ -95,11 +91,13 @@ export default function FounderHome() {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
             <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 14, padding: '14px 16px' }}>
               <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'rgba(245,245,244,0.4)' }}>Deployment</div>
-              <div style={{ fontSize: 15, fontWeight: 700, color: '#22c55e', marginTop: 6 }}>Active & Chatting</div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: data?.whatsapp_outbound_enabled ? '#22c55e' : 'rgba(245,245,244,0.4)', marginTop: 6 }}>
+                {data ? (data.whatsapp_outbound_enabled ? 'Active & Chatting' : 'Paused') : '—'}
+              </div>
             </div>
             <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 14, padding: '14px 16px' }}>
-              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'rgba(245,245,244,0.4)' }}>Bookings made</div>
-              <div style={{ fontSize: 22, fontWeight: 700, marginTop: 4 }}>—</div>
+              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'rgba(245,245,244,0.4)' }}>Bookings this week</div>
+              <div style={{ fontSize: 22, fontWeight: 700, marginTop: 4 }}>{data ? data.bookings.length : '—'}</div>
             </div>
             <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 14, padding: '14px 16px' }}>
               <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'rgba(245,245,244,0.4)' }}>Needs review</div>
@@ -118,10 +116,10 @@ export default function FounderHome() {
           {/* Calendar + Conversations, side by side, always visible */}
           <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, minHeight: 420 }}>
             <div style={{ border: '1px solid rgba(255,255,255,0.08)', borderRadius: 16, overflow: 'hidden', background: 'rgba(255,255,255,0.02)' }}>
-              <CommandCalendar />
+              {data && <CommandCalendar bookings={data.bookings} weekStart={data.week_start} />}
             </div>
             <div style={{ border: '1px solid rgba(255,255,255,0.08)', borderRadius: 16, overflow: 'hidden', background: 'rgba(255,255,255,0.02)' }}>
-              <CommandConversations />
+              {data && <CommandConversations workspaceId={workspaceId} conversations={data.conversations} />}
             </div>
           </div>
 

@@ -13,12 +13,35 @@ export interface Escalation {
   owner_responded_at: string | null
 }
 
+export interface Booking {
+  id: string
+  customer_name: string
+  booking_date: string
+  booking_time: string
+  status: string
+  number_of_people: number
+}
+
+export interface ConversationSummary {
+  id: string
+  channel_type: string
+  customer_name: string | null
+  last_message_preview: string | null
+  last_message_at: string
+  human_agent_enabled: boolean
+  human_agent_reason: string | null
+}
+
 export interface CommandOverview {
   escalations: Escalation[]
   pending_escalation_count: number
   daily_cost: { day: string; cost_usd: number }[]
   total_cost_usd: number
   llm_call_count: number
+  bookings: Booking[]
+  week_start: string
+  conversations: ConversationSummary[]
+  whatsapp_outbound_enabled: boolean
 }
 
 // Shared by CommandScreen (the panel tab) and FounderHome (the founder's
