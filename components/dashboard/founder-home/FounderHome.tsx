@@ -238,7 +238,7 @@ export default function FounderHome() {
         ) : (
           <div style={{ flex: 1, overflowY: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 16, minHeight: 0 }}>
             {/* Overview strip */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
+            <div style={{ flexShrink: 0, display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
               <StatCard
                 label="Deployment"
                 value={data ? (data.whatsapp_outbound_enabled ? 'Active & Chatting' : 'Paused') : '—'}
@@ -258,9 +258,9 @@ export default function FounderHome() {
                 (open thread, list scroll position) survives collapsing
                 back rather than resetting. */}
             <div style={{
-              flex: 1, display: 'grid',
+              flexShrink: 0, display: 'grid',
               gridTemplateColumns: expanded ? '1fr' : '1fr 1fr',
-              gap: 14, minHeight: 420,
+              gap: 14, height: 420,
             }}>
               <div style={{
                 display: expanded === 'conversations' ? 'none' : 'block',
@@ -284,11 +284,11 @@ export default function FounderHome() {
                 texts over WhatsApp, now with a web front end. Employee
                 Performance Scorecard will take the other half of this
                 row once built (next pass). */}
-            <div style={{ height: 380, border: `1px solid ${CARD_BORDER}`, borderRadius: 16, overflow: 'hidden', background: CARD_BG }}>
+            <div style={{ flexShrink: 0, height: 380, border: `1px solid ${CARD_BORDER}`, borderRadius: 16, overflow: 'hidden', background: CARD_BG }}>
               <CayeDirect workspaceId={workspaceId} />
             </div>
 
-            <div aria-hidden style={{ height: 3, borderRadius: 3, background: GRADIENT, opacity: 0.4 }} />
+            <div aria-hidden style={{ flexShrink: 0, height: 3, borderRadius: 3, background: GRADIENT, opacity: 0.4 }} />
           </div>
         )}
       </div>
