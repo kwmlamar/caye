@@ -131,7 +131,7 @@ export async function applyEscalation(
   return { action: 'reply', content: decision.content }
 }
 
-function labelForCategory(category: EscalationCategory): string {
+export function labelForCategory(category: EscalationCategory): string {
   switch (category) {
     case 'gap':
       return 'Tool gap'

@@ -31,6 +31,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase-server'
 import { enqueueEscalationPings } from '@/lib/whatsapp/triggers'
+import { labelForCategory } from '@/lib/whatsapp/escalation'
+import type { EscalationCategory } from '@/lib/caye-reply'
 
 const ESCALATION_FOLLOWUP_HOURS = 6
 const FOLLOWUP_REPEAT_HOURS = 24 // re-nudge once a day until resolved
@@ -123,6 +125,22 @@ async function processEscalation(row: EscalationRow): Promise<Outcome> {
     }
   }
 
+  // Real customer name + a substantive summary — without this the ping
+  // (and its mirror in Caye Direct) just says "A guest — <category>
+  // escalation," which tells the operator nothing they can act on.
+  let contactName = 'A guest'
+  if (row.conversation_id) {
+    const { data: conv } = await supabase
+      .from('unified_conversations')
+      .select('customer_name')
+      .eq('id', row.conversation_id)
+      .maybeSingle()
+    if (conv?.customer_name) contactName = conv.customer_name
+  }
+  const pingSummary =
+    `${labelForCategory(row.category as EscalationCategory)} — ` +
+    `"${row.customer_facing_message.replace(/\s+/g, ' ').trim().slice(0, 100)}"`
+
   // Re-ping the operator(s) with escalation_followup framing. The customer
   // reassurance lives in the operator-side script ("send a softer line to
   // <contact> — they're 6h in") rather than as an autonomous send: each
@@ -134,11 +152,12 @@ async function processEscalation(row: EscalationRow): Promise<Outcome> {
         workspaceId: row.workspace_id,
         escalationId: row.id,
         conversationId: row.conversation_id,
-        contactName: 'A guest',
+        contactName,
         category: row.category,
         routeTo: row.route_to,
         suggestedReply: row.customer_facing_message,
         internalContext: row.internal_context,
+        pingSummary,
         timestamp: new Date().toISOString(),
       },
       'escalation_followup'
