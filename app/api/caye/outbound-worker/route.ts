@@ -26,6 +26,23 @@ import {
 } from '@/lib/whatsapp/outbound'
 import { isWhatsAppWindowOpen } from '@/lib/whatsapp/window'
 import { emailFallbackForFailedPing } from '@/lib/whatsapp/email-fallback'
+import { resolveOperatorByPhone } from '@/lib/operator-identity'
+
+// Kinds that represent Caye proactively messaging an operator about
+// something (as opposed to system plumbing like otp/welcome/ack) — these
+// get mirrored into caye_operator_messages so they show up in that
+// operator's Caye Direct thread, not just as a WhatsApp they may or may
+// not have noticed. Without this, a real escalation ping can go out over
+// WhatsApp and never appear anywhere in the dashboard's conversation
+// history, which reads as "Caye said she'd follow up but never did."
+const OPERATOR_LOGGABLE_KINDS = new Set([
+  'urgent_hold',
+  'escalation',
+  'escalation_followup',
+  'same_day_booking',
+  'morning_digest',
+  'auth_failure',
+])
 
 const CONCURRENCY = 10
 const RETRY_DELAY_MS = 5 * 60 * 1000
@@ -183,11 +200,11 @@ async function processRow(row: QueueRow): Promise<RowOutcome> {
   }
 
   // Build & send.
-  const sendOutcome = await dispatch(row, config)
-  return handleResult(row, config, sendOutcome)
+  const { result: sendOutcome, phone } = await dispatch(row, config)
+  return handleResult(row, config, sendOutcome, phone)
 }
 
-async function dispatch(row: QueueRow, config: WorkspaceConfig): Promise<SendResult> {
+async function dispatch(row: QueueRow, config: WorkspaceConfig): Promise<{ result: SendResult; phone: string }> {
   // Escalation rows pre-resolve the destination phone in payload.to_phone
   // (one row per recipient — owner uses the override-aware lookup; founder
   // uses operator_allowlist directly). All other kinds keep the existing
@@ -206,22 +223,64 @@ async function dispatch(row: QueueRow, config: WorkspaceConfig): Promise<SendRes
   if (mustUseTemplate) {
     const tmpl = templateForKind(row.kind, row.payload)
     if (!tmpl) {
-      return { status: 'failed', error: `no template mapped for kind=${row.kind}`, transient: false }
+      return { result: { status: 'failed', error: `no template mapped for kind=${row.kind}`, transient: false }, phone }
     }
-    return sendTemplateWhatsApp(phone, tmpl.name, tmpl.placeholders, idem)
+    return { result: await sendTemplateWhatsApp(phone, tmpl.name, tmpl.placeholders, idem), phone }
   }
 
   const body = freeFormBodyForKind(row.kind, row.payload)
   if (!body) {
-    return { status: 'failed', error: `no free-form body for kind=${row.kind}`, transient: false }
+    return { result: { status: 'failed', error: `no free-form body for kind=${row.kind}`, transient: false }, phone }
   }
-  return sendFreeFormWhatsApp(phone, body, idem)
+  return { result: await sendFreeFormWhatsApp(phone, body, idem), phone }
+}
+
+// Human-readable summary of a sent ping, for the caye_operator_messages
+// audit log — doesn't need to match the literal Meta template rendering,
+// just needs to read sensibly in Caye Direct's thread view.
+function operatorPingLogBody(kind: string, payload: Record<string, unknown>): string {
+  const str = (k: string, fallback = ''): string =>
+    typeof payload[k] === 'string' ? (payload[k] as string) : fallback
+
+  switch (kind) {
+    case 'urgent_hold':
+      return `[Held for you] ${str('contactName', 'A guest')} — ${str('reason', 'needs your call')}`
+    case 'escalation':
+      return `[Escalated] ${str('contactName', 'A guest')} — ${str('ping_summary') || str('internalContext', 'needs your call')}`
+    case 'escalation_followup':
+      return `[Still waiting] ${str('contactName', 'A guest')} — ${str('ping_summary') || `${str('category', 'policy')} escalation`}`
+    case 'same_day_booking':
+      return `[Same-day booking] ${str('guest', 'A guest')} booked for today.`
+    case 'morning_digest':
+      return `[Digest] ${payload.heldCount ?? 0} held, ${payload.bookingsTodayCount ?? 0} booked today.`
+    case 'auth_failure':
+      return `[Connection issue] ${str('service', 'A connected service')} needs reconnecting.`
+    default:
+      return `[${kind}]`
+  }
+}
+
+async function logOperatorPing(workspaceId: string, phone: string, kind: string, payload: Record<string, unknown>): Promise<void> {
+  if (!OPERATOR_LOGGABLE_KINDS.has(kind)) return
+  const supabase = createServiceClient()
+  const operator = await resolveOperatorByPhone(supabase, workspaceId, phone)
+  await supabase.from('caye_operator_messages').insert({
+    workspace_id: workspaceId,
+    direction: 'outbound',
+    wa_message_id: null,
+    body: operatorPingLogBody(kind, payload),
+    intent: null,
+    operator_allowlist_id: operator?.id ?? null,
+    operator_name: operator?.name ?? null,
+    operator_role: operator?.role ?? null,
+  })
 }
 
 async function handleResult(
   row: QueueRow,
   config: WorkspaceConfig,
-  result: SendResult
+  result: SendResult,
+  phone: string
 ): Promise<RowOutcome> {
   const supabase = createServiceClient()
   const now = new Date().toISOString()
@@ -238,6 +297,7 @@ async function handleResult(
         last_whatsapp_outbound_status: 'sent',
       })
       .eq('workspace_id', row.workspace_id)
+    await logOperatorPing(row.workspace_id, phone, row.kind, row.payload)
     return 'sent'
   }
 

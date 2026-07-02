@@ -1,7 +1,7 @@
 import 'server-only'
 import { createServiceClient } from '@/lib/supabase-server'
 import type { Tool } from '../types'
-import { assertConversationOwnedByWorkspace } from './_guards'
+import { assertConversationOwnedByWorkspace, resolveOpenEscalations } from './_guards'
 
 interface SkipHeldItemInput {
   conversation_id: string
@@ -43,6 +43,9 @@ export const skipHeldItem: Tool<SkipHeldItemInput> = {
       .eq('id', args.conversation_id)
 
     if (error) return { ok: false, error: error.message }
+
+    await resolveOpenEscalations(supabase, args.conversation_id)
+
     return {
       ok: true,
       data: { conversation_id: args.conversation_id, skipped: true },

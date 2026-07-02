@@ -2,7 +2,7 @@ import 'server-only'
 import { createServiceClient } from '@/lib/supabase-server'
 import { dispatchOperatorReply } from '@/lib/whatsapp/channel-dispatch'
 import type { Tool } from '../types'
-import { assertConversationOwnedByWorkspace } from '../write-low/_guards'
+import { assertConversationOwnedByWorkspace, resolveOpenEscalations } from '../write-low/_guards'
 
 interface SendReplyInput {
   conversation_id: string
@@ -69,6 +69,10 @@ Use the VOICE PROFILE in the system prompt to draft customer-facing copy — wri
           human_agent_reason: 'back-office Caye sent reply',
         })
         .eq('id', args.conversation_id)
+
+      // Resolve immediately rather than waiting on escalation-followup's
+      // hourly operatorRepliedSince check to notice this same send.
+      await resolveOpenEscalations(supabase, args.conversation_id)
 
       return {
         ok: true,

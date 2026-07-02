@@ -35,3 +35,24 @@ export async function assertConversationOwnedByWorkspace(
   }
   return { ok: true }
 }
+
+/**
+ * Close out any still-open caye_escalations rows tied to a conversation
+ * when the operator disposes of it via chat (mark_handled / skip_held_item)
+ * rather than by sending an actual customer-facing reply. Without this,
+ * the escalation row stays pending forever — human_agent_enabled flips
+ * back to false (so it drops off the Review tab) but
+ * escalation-followup/cron's operatorRepliedSince check never fires
+ * (no outbound message was actually sent), and the "Needs review" stat
+ * card keeps counting a thread nobody can act on anymore.
+ */
+export async function resolveOpenEscalations(
+  supabase: ReturnType<typeof createServiceClient>,
+  conversationId: string
+): Promise<void> {
+  await supabase
+    .from('caye_escalations')
+    .update({ owner_responded_at: new Date().toISOString() })
+    .eq('conversation_id', conversationId)
+    .is('owner_responded_at', null)
+}

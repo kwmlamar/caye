@@ -8,6 +8,7 @@ import { useCommandOverview } from '@/lib/useCommandOverview'
 import CommandCalendar from '@/components/dashboard/command-calendar/CommandCalendar'
 import CommandConversations from '@/components/dashboard/command-conversations/CommandConversations'
 import CayeDirect from '@/components/dashboard/caye-direct/CayeDirect'
+import GlobalPerformance from '@/components/dashboard/global-performance/GlobalPerformance'
 import type { CustomerStatus } from '@/types/database'
 
 // Tokens lifted directly from Sandbox/caye-command (the reference
@@ -118,7 +119,7 @@ const RAIL_ITEMS: { id: RailId; label: string; icon: ReactNode; stub: boolean }[
   { id: 'placements', label: 'Placements', stub: false, icon: (
     <><circle cx="9" cy="8" r="3" /><path d="M2 21c0-3.5 3-6 7-6s7 2.5 7 6" /><circle cx="17" cy="8" r="2.5" /><path d="M17 13.5c2.5.3 4 2.3 4 5.5" /></>
   ) },
-  { id: 'performance', label: 'Global Performance', stub: true, icon: (
+  { id: 'performance', label: 'Global Performance', stub: false, icon: (
     <path d="M2 12h4l2-7 4 14 3-9 2 4h5" />
   ) },
   { id: 'playbook', label: 'Standard Operating Playbook', stub: true, icon: (
@@ -271,11 +272,19 @@ export default function FounderHome() {
         }} />
         {/* Top status bar */}
         <div style={{ padding: '16px 24px', borderBottom: `1px solid ${CARD_BORDER}`, display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
-          <h1 style={{ fontSize: 16, fontWeight: 600, fontFamily: 'var(--font-display)', margin: 0 }}>{workspace.business_name}</h1>
-          <StatusPill status={workspace.status} />
+          {railView === 'performance' ? (
+            <h1 style={{ fontSize: 16, fontWeight: 600, fontFamily: 'var(--font-display)', margin: 0 }}>Global Performance — All Workspaces</h1>
+          ) : (
+            <>
+              <h1 style={{ fontSize: 16, fontWeight: 600, fontFamily: 'var(--font-display)', margin: 0 }}>{workspace.business_name}</h1>
+              <StatusPill status={workspace.status} />
+            </>
+          )}
         </div>
 
-        {activeRailItem.stub ? (
+        {railView === 'performance' ? (
+          <GlobalPerformance />
+        ) : activeRailItem.stub ? (
           <StubConsole label={activeRailItem.label} />
         ) : (
           <div style={{ flex: 1, overflowY: expanded ? 'hidden' : 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 16, minHeight: 0 }}>

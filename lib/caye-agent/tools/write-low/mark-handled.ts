@@ -1,7 +1,7 @@
 import 'server-only'
 import { createServiceClient } from '@/lib/supabase-server'
 import type { Tool } from '../types'
-import { assertConversationOwnedByWorkspace } from './_guards'
+import { assertConversationOwnedByWorkspace, resolveOpenEscalations } from './_guards'
 
 interface MarkHandledInput {
   conversation_id: string
@@ -48,6 +48,9 @@ export const markHandled: Tool<MarkHandledInput> = {
       .eq('id', args.conversation_id)
 
     if (error) return { ok: false, error: error.message }
+
+    await resolveOpenEscalations(supabase, args.conversation_id)
+
     return {
       ok: true,
       data: {

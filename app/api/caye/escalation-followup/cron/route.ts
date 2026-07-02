@@ -5,12 +5,20 @@
  *   - have no owner response on the conversation (any outbound business
  *     message after created_at counts — same shape as the outbound-worker
  *     race-suppression check),
- *   - have not already received a follow-up,
+ *   - haven't had a follow-up sent in the last FOLLOWUP_REPEAT_HOURS,
  * and:
  *   1. Sends the customer a soft reassurance ack via the conversation's
  *      channel ("still working on this — apologies for the wait").
  *   2. Re-pings the same operator route_to with kind=escalation_followup so
  *      the urgency framing changes.
+ *
+ * follow_up_sent_at is the LAST follow-up timestamp, not a one-shot marker
+ * — an escalation keeps getting nudged roughly once a day until it's
+ * actually resolved. The original one-shot design (nudge once, then never
+ * again past a 72h lookback) meant anything that sat past three days went
+ * completely silent forever — confirmed live: a real customer's Sunday
+ * booking follow-up (2026-06-26) got exactly one ping and then nothing for
+ * a week while it sat "pending."
  *
  * If an operator response IS observed since created_at, we mark
  * owner_responded_at and skip — no reassurance needed, the customer has
@@ -25,7 +33,8 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { enqueueEscalationPings } from '@/lib/whatsapp/triggers'
 
 const ESCALATION_FOLLOWUP_HOURS = 6
-const LOOKBACK_HOURS = 72 // don't pull ancient rows; once past this, owner is gone for the day
+const FOLLOWUP_REPEAT_HOURS = 24 // re-nudge once a day until resolved
+const LOOKBACK_HOURS = 24 * 30 // 30 days — a sane outer bound, not a silent-abandon trigger
 
 interface EscalationRow {
   id: string
@@ -66,6 +75,7 @@ export async function GET(request: NextRequest) {
   const now = Date.now()
   const cutoff = new Date(now - ESCALATION_FOLLOWUP_HOURS * 60 * 60 * 1000).toISOString()
   const lookback = new Date(now - LOOKBACK_HOURS * 60 * 60 * 1000).toISOString()
+  const repeatCutoff = new Date(now - FOLLOWUP_REPEAT_HOURS * 60 * 60 * 1000).toISOString()
 
   const { data: rows, error } = await supabase
     .from('caye_escalations')
@@ -73,7 +83,7 @@ export async function GET(request: NextRequest) {
       'id, workspace_id, conversation_id, category, route_to, customer_facing_message, internal_context, created_at'
     )
     .is('owner_responded_at', null)
-    .is('follow_up_sent_at', null)
+    .or(`follow_up_sent_at.is.null,follow_up_sent_at.lte.${repeatCutoff}`)
     .lte('created_at', cutoff)
     .gte('created_at', lookback)
     .order('created_at', { ascending: true })
