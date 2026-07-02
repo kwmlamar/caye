@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { CayeMark } from '@/components/brand/CayeMark'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -49,6 +50,34 @@ function StatusPill({ status }: { status: CustomerStatus }) {
   )
 }
 
+function ExpandButton({ expanded, onClick }: { expanded: boolean; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      title={expanded ? 'Collapse' : 'Expand'}
+      style={{
+        position: 'absolute', top: 10, right: 10, zIndex: 1,
+        width: 26, height: 26, borderRadius: 8,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: 'rgba(255,255,255,0.06)', border: `1px solid ${CARD_BORDER}`,
+        color: '#a1a1aa', cursor: 'pointer',
+      }}
+    >
+      {expanded ? (
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="4 14 10 14 10 20" /><polyline points="20 10 14 10 14 4" />
+          <line x1="14" y1="10" x2="21" y2="3" /><line x1="3" y1="21" x2="10" y2="14" />
+        </svg>
+      ) : (
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="15 3 21 3 21 9" /><polyline points="9 21 3 21 3 15" />
+          <line x1="21" y1="3" x2="14" y2="10" /><line x1="3" y1="21" x2="10" y2="14" />
+        </svg>
+      )}
+    </button>
+  )
+}
+
 function StatCard({ label, value, valueColor = '#f4f4f5' }: { label: string; value: string; valueColor?: string }) {
   return (
     <div style={{ background: CARD_BG, border: `1px solid ${CARD_BORDER}`, borderRadius: 16, padding: '16px 18px' }}>
@@ -73,6 +102,7 @@ export default function FounderHome() {
   const router = useRouter()
   const { workspace, workspaceId, workspaces } = useWorkspace()
   const { data } = useCommandOverview(workspaceId)
+  const [expanded, setExpanded] = useState<'calendar' | 'conversations' | null>(null)
 
   return (
     <div style={{ display: 'flex', height: '100%', background: APP_BG, color: '#f4f4f5', overflow: 'hidden', fontFamily: 'var(--font-sans)' }}>
@@ -140,12 +170,29 @@ export default function FounderHome() {
             <StatCard label="7-day spend" value={data ? `$${data.total_cost_usd.toFixed(2)}` : '—'} />
           </div>
 
-          {/* Calendar + Conversations, side by side, always visible */}
-          <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, minHeight: 420 }}>
-            <div style={{ border: `1px solid ${CARD_BORDER}`, borderRadius: 16, overflow: 'hidden', background: CARD_BG }}>
+          {/* Calendar + Conversations. Either can expand to take the full
+              row — the other stays mounted but hidden, so its state
+              (open thread, list scroll position) survives collapsing
+              back rather than resetting. */}
+          <div style={{
+            flex: 1, display: 'grid',
+            gridTemplateColumns: expanded ? '1fr' : '1fr 1fr',
+            gap: 14, minHeight: 420,
+          }}>
+            <div style={{
+              display: expanded === 'conversations' ? 'none' : 'block',
+              position: 'relative',
+              border: `1px solid ${CARD_BORDER}`, borderRadius: 16, overflow: 'hidden', background: CARD_BG,
+            }}>
+              <ExpandButton expanded={expanded === 'calendar'} onClick={() => setExpanded(expanded === 'calendar' ? null : 'calendar')} />
               {data && <CommandCalendar bookings={data.bookings} weekStart={data.week_start} />}
             </div>
-            <div style={{ border: `1px solid ${CARD_BORDER}`, borderRadius: 16, overflow: 'hidden', background: CARD_BG }}>
+            <div style={{
+              display: expanded === 'calendar' ? 'none' : 'block',
+              position: 'relative',
+              border: `1px solid ${CARD_BORDER}`, borderRadius: 16, overflow: 'hidden', background: CARD_BG,
+            }}>
+              <ExpandButton expanded={expanded === 'conversations'} onClick={() => setExpanded(expanded === 'conversations' ? null : 'conversations')} />
               {data && <CommandConversations workspaceId={workspaceId} conversations={data.conversations} />}
             </div>
           </div>
