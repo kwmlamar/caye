@@ -39,9 +39,12 @@ function DashboardShell({ children, workspace, workspaceId, workspaces, isOwner,
       <ViewportRedirect mode="toMobile" workspaceId={workspaceId} />
       <div className="tc-root">
         <div className="tc-frame">
-          <Sidebar workspaceId={workspaceId} />
-          <div className={`tc-main${panelOpen ? ' caye-open' : ''}${!sidebarExpanded ? ' sb-collapsed' : ''}`} style={{ position: 'relative' }}>
-            {!sidebarExpanded && (
+          {/* Founder gets one full-page view (FounderHome) with its own
+              placements list built in — no shared Sidebar, no slide-out
+              CayePanel. Owners (e.g. Karenda) keep both, untouched. */}
+          {!isFounder && <Sidebar workspaceId={workspaceId} />}
+          <div className={`tc-main${panelOpen ? ' caye-open' : ''}${!isFounder && !sidebarExpanded ? ' sb-collapsed' : ''}`} style={{ position: 'relative' }}>
+            {!isFounder && !sidebarExpanded && (
               <button
                 onClick={() => setSidebarExpanded(true)}
                 className="sb-expand-trigger-btn"

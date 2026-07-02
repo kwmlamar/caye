@@ -3,23 +3,29 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useDashboard } from '@/lib/dashboard-context'
 import type { Screen } from '@/lib/types'
-import ChatsScreen from '@/components/dashboard/chats/ChatsScreen'
-import BookingsScreen from '@/components/dashboard/bookings/BookingsScreen'
-import CalendarScreen from '@/components/dashboard/calendar/CalendarScreen'
 import ContactsScreen from '@/components/dashboard/contacts/ContactsScreen'
 import CommandScreen from '@/components/dashboard/command/CommandScreen'
+import CommandCalendar from '@/components/dashboard/command-calendar/CommandCalendar'
+import CommandConversations from '@/components/dashboard/command-conversations/CommandConversations'
 import { CayeMark } from '@/components/brand/CayeMark'
 
 const MIN_WIDTH = 420
 const MAX_WIDTH = 800
 const DEFAULT_WIDTH = 480
 
+// 2026-07-02 redesign: 'chats' now renders CommandConversations and
+// 'calendar' renders CommandCalendar (which folds in what 'bookings'
+// used to be its own tab for — the mockup shows one combined
+// calendar/bookings panel, not two). Both are frontend-first with mock
+// data; ChatsScreen/BookingsScreen/CalendarScreen are left on disk
+// unreferenced until the real-data pass, so reverting this is a
+// one-line change if the new look doesn't land. Contacts has no
+// equivalent in the reference mockup, so it's untouched.
 export default function CayePanel({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { panelScreen, setPanelScreen, isPanelDetail, setIsPanelDetail } = useDashboard()
 
   const tabs: { id: Screen; label: string }[] = [
-    { id: 'chats', label: 'inbox' },
-    { id: 'bookings', label: 'bookings' },
+    { id: 'chats', label: 'conversations' },
     { id: 'calendar', label: 'calendar' },
     { id: 'contacts', label: 'contacts' },
     { id: 'command', label: 'command' },
@@ -69,9 +75,8 @@ export default function CayePanel({ open, onClose }: { open: boolean; onClose: (
 
       {/* Screen Content Wrapper */}
       <div className="flex-1 overflow-hidden" style={{ display: 'flex', flexDirection: 'column' }}>
-        {panelScreen === 'chats' && <ChatsScreen openCaye={() => {}} inPanel={true} />}
-        {panelScreen === 'bookings' && <BookingsScreen inPanel={true} />}
-        {panelScreen === 'calendar' && <CalendarScreen inPanel={true} />}
+        {panelScreen === 'chats' && <CommandConversations />}
+        {panelScreen === 'calendar' && <CommandCalendar />}
         {panelScreen === 'contacts' && <ContactsScreen inPanel={true} />}
         {panelScreen === 'command' && <CommandScreen />}
       </div>
