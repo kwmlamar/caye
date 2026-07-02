@@ -166,7 +166,7 @@ export default function FounderHome() {
   const router = useRouter()
   const { workspace, workspaceId, workspaces } = useWorkspace()
   const { data } = useCommandOverview(workspaceId)
-  const [expanded, setExpanded] = useState<'calendar' | 'conversations' | null>(null)
+  const [expanded, setExpanded] = useState<'calendar' | 'conversations' | 'cayeDirect' | null>(null)
   const [railView, setRailView] = useState<RailId>('dashboard')
   const activeRailItem = RAIL_ITEMS.find((r) => r.id === railView)!
 
@@ -258,7 +258,8 @@ export default function FounderHome() {
                 (open thread, list scroll position) survives collapsing
                 back rather than resetting. */}
             <div style={{
-              flexShrink: 0, display: 'grid',
+              flexShrink: 0,
+              display: expanded === 'cayeDirect' ? 'none' : 'grid',
               gridTemplateColumns: expanded ? '1fr' : '1fr 1fr',
               gap: 14, height: 420,
             }}>
@@ -284,7 +285,14 @@ export default function FounderHome() {
                 texts over WhatsApp, now with a web front end. Employee
                 Performance Scorecard will take the other half of this
                 row once built (next pass). */}
-            <div style={{ flexShrink: 0, height: 380, border: `1px solid ${CARD_BORDER}`, borderRadius: 16, overflow: 'hidden', background: CARD_BG }}>
+            <div style={{
+              position: 'relative',
+              ...(expanded === 'cayeDirect'
+                ? { flex: 1, minHeight: 0 }
+                : { flexShrink: 0, height: 380 }),
+              border: `1px solid ${CARD_BORDER}`, borderRadius: 16, overflow: 'hidden', background: CARD_BG,
+            }}>
+              <ExpandButton expanded={expanded === 'cayeDirect'} onClick={() => setExpanded(expanded === 'cayeDirect' ? null : 'cayeDirect')} />
               <CayeDirect workspaceId={workspaceId} />
             </div>
 
