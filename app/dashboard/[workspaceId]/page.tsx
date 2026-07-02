@@ -13,7 +13,7 @@ export default function DashboardPage() {
 
   return (
     <div className="tc-content" style={{ display: 'flex', flex: 1, height: '100%', overflow: 'hidden' }}>
-      <main style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%', minWidth: 0 }}>
+      <main style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%', minWidth: 0, minHeight: 0 }}>
         {isFounder ? <FounderHome /> : <HomeScreen />}
       </main>
     </div>
