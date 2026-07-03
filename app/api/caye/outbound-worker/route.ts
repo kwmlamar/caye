@@ -236,25 +236,38 @@ async function dispatch(row: QueueRow, config: WorkspaceConfig): Promise<{ resul
 }
 
 // Human-readable summary of a sent ping, for the caye_operator_messages
-// audit log — doesn't need to match the literal Meta template rendering,
-// just needs to read sensibly in Caye Direct's thread view.
+// audit log — this is what actually renders in Caye Direct's thread view,
+// so it has to read like Caye talking, not a debug-log line. Every kind
+// that needs the operator's attention closes with a concrete offer to
+// take it off their hands — say the word and Caye runs with it, same
+// yes/no confirmation flow as back-office chat. Purely informational kinds
+// (same-day booking, digest) don't get a nudge — nothing to decide there.
 function operatorPingLogBody(kind: string, payload: Record<string, unknown>): string {
   const str = (k: string, fallback = ''): string =>
     typeof payload[k] === 'string' ? (payload[k] as string) : fallback
 
   switch (kind) {
-    case 'urgent_hold':
-      return `[Held for you] ${str('contactName', 'A guest')} — ${str('reason', 'needs your call')}`
-    case 'escalation':
-      return `[Escalated] ${str('contactName', 'A guest')} — ${str('ping_summary') || str('internalContext', 'needs your call')}`
-    case 'escalation_followup':
-      return `[Still waiting] ${str('contactName', 'A guest')} — ${str('ping_summary') || `${str('category', 'policy')} escalation`}`
+    case 'urgent_hold': {
+      const who = str('contactName', 'A guest')
+      const reason = str('reason', 'needs your call')
+      return `${who} came in — ${reason}. Want me to take a first pass, or you got this one?`
+    }
+    case 'escalation': {
+      const who = str('contactName', 'A guest')
+      const summary = str('ping_summary') || str('internalContext', 'needs your call')
+      return `Kicking this one up to you — ${who}: ${summary}. Tell me what to say and I'll send it, or handle it yourself and I'll stand down.`
+    }
+    case 'escalation_followup': {
+      const who = str('contactName', 'A guest')
+      const summary = str('ping_summary') || `${str('category', 'policy')} escalation`
+      return `Still sitting on this one — ${who} has been waiting a while now: ${summary}. Say the word and I'll send a holding reply, or let me know you've got it.`
+    }
     case 'same_day_booking':
-      return `[Same-day booking] ${str('guest', 'A guest')} booked for today.`
+      return `Heads up — ${str('guest', 'A guest')} just booked for today.`
     case 'morning_digest':
-      return `[Digest] ${payload.heldCount ?? 0} held, ${payload.bookingsTodayCount ?? 0} booked today.`
+      return `${payload.heldCount ?? 0} threads holding for you, ${payload.bookingsTodayCount ?? 0} booked today. Want me to work through the held ones with you?`
     case 'auth_failure':
-      return `[Connection issue] ${str('service', 'A connected service')} needs reconnecting.`
+      return `${str('service', 'A connected service')} needs reconnecting — I can't see new messages there until you do. Want me to walk you through it?`
     default:
       return `[${kind}]`
   }
