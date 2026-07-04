@@ -79,12 +79,21 @@ function ConversationRow({ c, active, onClick }: { c: ConversationSummary; activ
           {label}
         </span>
       </div>
-      <p style={{ fontSize: 11.5, color: 'rgba(245,245,244,0.4)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-        {c.last_message_preview}
+      <p style={{
+        fontSize: 11.5, marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+        color: c.human_agent_enabled ? 'rgba(251,113,133,0.85)' : 'rgba(245,245,244,0.4)',
+      }}>
+        {c.human_agent_enabled ? (c.human_agent_reason || 'Needs review') : c.last_message_preview}
       </p>
       {c.human_agent_enabled && (
-        <span style={{ fontSize: 9, fontWeight: 700, color: '#ff8a6b', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-          {c.human_agent_reason || 'Needs review'}
+        <span style={{
+          display: 'inline-flex', alignItems: 'center', gap: 5, marginTop: 4,
+          fontSize: 9, fontWeight: 600, fontFamily: 'var(--font-mono)', letterSpacing: '0.06em', textTransform: 'uppercase',
+          color: '#fb7185', background: 'rgba(251,113,133,0.1)', border: '1px solid rgba(251,113,133,0.3)',
+          borderRadius: 999, padding: '2px 8px',
+        }}>
+          <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#fb7185', flexShrink: 0 }} />
+          Needs review
         </span>
       )}
     </button>
@@ -184,16 +193,21 @@ export default function CommandConversations({ workspaceId, conversations }: Pro
         </div>
       </div>
 
-      {/* ── Thread detail ── */}
-      <div ref={threadContainerRef} style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: 16, overflowY: 'auto' }}>
+      {/* ── Thread detail — header stays pinned; only the message list
+          scrolls, so landing scrolled-to-bottom never hides who/what
+          channel this is (matches CayeDirectThread's pattern). ── */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
         {!activeSummary ? (
-          <div style={{ fontSize: 13, color: 'rgba(245,245,244,0.35)' }}>Select a conversation.</div>
+          <div style={{ padding: 16, fontSize: 13, color: 'rgba(245,245,244,0.35)' }}>Select a conversation.</div>
         ) : (
           <>
-            <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 2 }}>{activeSummary.customer_name || 'Unknown'}</div>
-            <div style={{ fontSize: 11, color: 'rgba(245,245,244,0.35)', marginBottom: 14 }}>
-              Channel: {CHANNEL_LABEL[activeSummary.channel_type] ?? activeSummary.channel_type}
+            <div style={{ padding: '14px 16px', flexShrink: 0, borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+              <div style={{ fontSize: 14, fontWeight: 700 }}>{activeSummary.customer_name || 'Unknown'}</div>
+              <div style={{ fontSize: 11, color: 'rgba(245,245,244,0.35)', marginTop: 2 }}>
+                Channel: {CHANNEL_LABEL[activeSummary.channel_type] ?? activeSummary.channel_type}
+              </div>
             </div>
+            <div ref={threadContainerRef} style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 16 }}>
             {threadLoading ? (
               <div style={{ fontSize: 12.5, color: 'rgba(245,245,244,0.4)' }}>Loading…</div>
             ) : (
@@ -265,6 +279,7 @@ export default function CommandConversations({ workspaceId, conversations }: Pro
                 })}
               </div>
             )}
+            </div>
           </>
         )}
       </div>

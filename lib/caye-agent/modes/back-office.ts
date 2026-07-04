@@ -204,6 +204,7 @@ export function buildBackOfficeSystemPrompt(args: {
     `    • unmute_caye — resume`,
     `    • archive_thread — hide a conversation from the active inbox`,
     `    • add_internal_note — write an operator-only note on a thread (never customer-visible)`,
+    `    • send_payment_confirmation — ${operator} says a customer paid ("Jeff paid", "mark Maria's booking as paid"), you send that customer a payment confirmation and mark it. ${operator} stating it happened IS the confirmation — call this immediately, don't ask "want me to send it?" first. If the name matches more than one booking (or none), the tool tells you — ask ${operator} which one instead of guessing.`,
     '',
     `- Use your HIGH-RISK WRITE tools ONLY AFTER confirming with ${operator}:`,
     `    • send_reply — send a customer-facing message on their thread`,

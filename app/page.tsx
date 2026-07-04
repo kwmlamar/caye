@@ -130,12 +130,12 @@ export default function LandingPage() {
         </header>
 
         {/* Hero content */}
-        <div className="relative z-10 flex-1 flex items-center justify-center px-6">
-          <div className="max-w-3xl mx-auto text-center pb-24">
+        <div className="relative z-10 flex-1 flex flex-col items-center px-6 pt-2 md:pt-6">
+          <div className="max-w-3xl mx-auto text-center">
             {/* Eyebrow — editorial dateline */}
             <motion.div
               {...heroItem(0.05)}
-              className="flex items-center justify-center gap-3 mb-10"
+              className="flex items-center justify-center gap-3 mb-8"
             >
               <span className="h-px w-8 bg-near-black/30" />
               <span className="font-mono text-[10.5px] uppercase tracking-[0.22em] text-near-black/60 font-medium">
@@ -160,7 +160,7 @@ export default function LandingPage() {
             {/* Subhead — Newsreader editorial deck */}
             <motion.p
               {...heroItem(0.34)}
-              className="mt-9 font-newsreader text-[1.2rem] md:text-[1.35rem] leading-[1.45] text-near-black/75 max-w-2xl mx-auto font-light"
+              className="mt-8 font-newsreader text-[1.2rem] md:text-[1.35rem] leading-[1.45] text-near-black/75 max-w-2xl mx-auto font-light"
               style={{ fontStyle: 'normal' }}
             >
               Caye answers customers, quotes prices, and books in your voice. No
@@ -171,7 +171,7 @@ export default function LandingPage() {
             {/* Primary CTA */}
             <motion.div
               {...heroItem(0.5)}
-              className="mt-12 flex flex-col items-center gap-3"
+              className="mt-10 flex flex-col items-center gap-3"
             >
               <Link
                 href="/signup"
@@ -205,32 +205,38 @@ export default function LandingPage() {
               </a>
             </motion.div>
           </div>
+
         </div>
 
-        {/* Scroll affordance — quiet pulse at the bottom of the hero so
-            visitors know there's content below the fold. */}
-        <div className="absolute inset-x-0 bottom-8 flex justify-center z-10 pointer-events-none">
-          <div className="flex flex-col items-center gap-2 text-near-black/55 animate-[bob_2.4s_ease-in-out_infinite]">
-            <span className="font-mono text-[9.5px] uppercase tracking-[0.22em]">
-              Scroll
-            </span>
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 14 14"
-              fill="none"
-              aria-hidden
-            >
-              <path
-                d="M7 2.5v9M3.5 8 7 11.5 10.5 8"
-                stroke="currentColor"
-                strokeWidth="1.4"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
+        {/* Phone dock — the real product surface, live in the hero and
+            cropped by the fold (same move Viktor makes with their Slack
+            window, Tomo with iMessage). WhatsApp is where Caye actually
+            lives, so we lead with it instead of a screenshot further
+            down the page. Absolutely positioned so it's clipped by the
+            section's overflow-hidden rather than stretching the section
+            to fit it. */}
+        <motion.div
+          initial={{ opacity: 0, y: 46 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.9, ease: heroEase, delay: 0.62 }}
+          className="absolute left-1/2 -translate-x-1/2 top-[80%] sm:top-[78%] md:top-[76%] z-10"
+        >
+          <div className="scale-[0.75] sm:scale-[0.85] md:scale-100 origin-top">
+            <WhatsAppMockup />
           </div>
-        </div>
+        </motion.div>
+
+        {/* Dissolve fade — sits above the phone (z-20) so its cropped
+            edge melts into the cream below instead of getting hard-cut
+            against the mesh/cream seam. */}
+        <div
+          aria-hidden
+          className="absolute inset-x-0 bottom-0 h-[18vh] md:h-[22vh] pointer-events-none z-20"
+          style={{
+            background:
+              'linear-gradient(to bottom, rgba(250,247,242,0) 0%, rgba(250,247,242,0.4) 45%, rgba(250,247,242,0.82) 75%, rgba(250,247,242,1) 100%)',
+          }}
+        />
       </section>
 
       {/* ── Channel strip — install-and-go proof ─────────────────── */}
@@ -275,9 +281,6 @@ export default function LandingPage() {
           </div>
         </div>
       </section>
-
-      {/* ── WhatsApp mockup — daily operator surface ─────────────── */}
-      <WhatsAppMockup />
 
       {/* ── Proof — first paid-customer quote goes here ──────────────
           Slot is built and styled; flip `SHOW_TESTIMONIAL` to true and

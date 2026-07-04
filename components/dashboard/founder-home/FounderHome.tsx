@@ -1,14 +1,16 @@
 'use client'
 
 import { useState, type ReactNode } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { CayeMark } from '@/components/brand/CayeMark'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useCommandOverview } from '@/lib/useCommandOverview'
+import type { FounderRailId } from '@/lib/types'
 import CommandCalendar from '@/components/dashboard/command-calendar/CommandCalendar'
 import CommandConversations from '@/components/dashboard/command-conversations/CommandConversations'
 import CayeDirect from '@/components/dashboard/caye-direct/CayeDirect'
 import GlobalPerformance from '@/components/dashboard/global-performance/GlobalPerformance'
+import ContactsPanel from '@/components/dashboard/founder-home/ContactsPanel'
 import type { CustomerStatus } from '@/types/database'
 
 // Tokens lifted directly from Sandbox/caye-command (the reference
@@ -110,13 +112,16 @@ function StatCard({ label, value, valueColor = '#f4f4f5' }: { label: string; val
 // Plain inline SVGs rather than a new icon-library import — avoids
 // guessing at export names for a package whose install layout couldn't
 // be confirmed in this pass.
-type RailId = 'dashboard' | 'placements' | 'performance' | 'playbook' | 'risk' | 'admin'
+// RailId type lives in lib/types.ts as FounderRailId, imported below —
+// it's shared with DashboardContext so the active tab survives workspace
+// switches (which navigate to a new route and remount this component).
+type RailId = FounderRailId
 
 const RAIL_ITEMS: { id: RailId; label: string; icon: ReactNode; stub: boolean }[] = [
   { id: 'dashboard', label: 'Caye Command', stub: false, icon: (
     <path d="M12 2l1.5 5.5L19 9l-5.5 1.5L12 16l-1.5-5.5L5 9l5.5-1.5L12 2z" />
   ) },
-  { id: 'placements', label: 'Placements', stub: false, icon: (
+  { id: 'contacts', label: 'Contacts', stub: false, icon: (
     <><circle cx="9" cy="8" r="3" /><path d="M2 21c0-3.5 3-6 7-6s7 2.5 7 6" /><circle cx="17" cy="8" r="2.5" /><path d="M17 13.5c2.5.3 4 2.3 4 5.5" /></>
   ) },
   { id: 'performance', label: 'Global Performance', stub: false, icon: (
@@ -174,23 +179,42 @@ function StubConsole({ label }: { label: string }) {
 }
 
 // The founder's entire dashboard, one page — matches the reference
-// mockup's structure (placements sidebar, top status bar, overview
+// mockup's structure (workspaces sidebar, top status bar, overview
 // cards, calendar + conversations side by side). All data here is real
-// (2026-07-02 data-wiring pass): placements list from workspace-context,
+// (2026-07-02 data-wiring pass): workspaces list from workspace-context,
 // bookings/conversations/escalations/spend/deployment status from
 // /api/founder/command-overview. Replaces the old FounderHome + CayePanel
 // slide-out entirely — no more panel-toggle model for founders.
+const RAIL_IDS = RAIL_ITEMS.map((r) => r.id)
+
 export default function FounderHome() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const { workspace, workspaceId, workspaces } = useWorkspace()
   const { data } = useCommandOverview(workspaceId)
   const [expanded, setExpanded] = useState<'calendar' | 'conversations' | 'cayeDirect' | null>(null)
-  const [railView, setRailView] = useState<RailId>('dashboard')
+  // Read from the URL (?rail=), not local state — switching workspaces
+  // navigates to a new /dashboard/[workspaceId] route, which remounts this
+  // component (confirmed: even lifting this to a persistent layout-level
+  // context still reset, so the whole [workspaceId] layout subtree remounts
+  // on param change here). The URL survives any remount since it's re-read
+  // fresh on every render.
+  const rawRail = searchParams.get('rail')
+  const railView: FounderRailId = (rawRail && RAIL_IDS.includes(rawRail as FounderRailId))
+    ? (rawRail as FounderRailId)
+    : 'dashboard'
+  const setRailView = (id: FounderRailId) => {
+    const params = new URLSearchParams(searchParams.toString())
+    if (id === 'dashboard') params.delete('rail')
+    else params.set('rail', id)
+    const qs = params.toString()
+    router.replace(`/dashboard/${workspaceId}${qs ? `?${qs}` : ''}`, { scroll: false })
+  }
   const activeRailItem = RAIL_ITEMS.find((r) => r.id === railView)!
 
   return (
     <div style={{ display: 'flex', height: '100%', background: APP_BG, color: '#f4f4f5', overflow: 'hidden', fontFamily: 'var(--font-sans)' }}>
-      {/* ── Icon rail — Caye Command / Placements are real, the rest are
+      {/* ── Icon rail — Caye Command / Contacts are real, the rest are
           stub destinations matching how the reference mockup itself
           left them (unbuilt), per explicit direction to add the rail
           now with temp pages rather than wait for all of it. ── */}
@@ -215,11 +239,11 @@ export default function FounderHome() {
         ))}
       </nav>
 
-      {/* ── Placements sidebar (real cross-workspace list) ── */}
+      {/* ── Workspaces sidebar (real cross-workspace list) ── */}
       <aside style={{ width: 250, flexShrink: 0, borderRight: `1px solid ${CARD_BORDER}`, padding: 16, overflowY: 'auto' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
           <span style={{ fontSize: 12, fontWeight: 700, fontFamily: 'var(--font-mono)', letterSpacing: '0.06em', color: LABEL_COLOR }}>
-            PLACEMENTS
+            WORKSPACES
           </span>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -228,7 +252,9 @@ export default function FounderHome() {
             return (
               <button
                 key={m.workspace_id}
-                onClick={() => router.push(`/dashboard/${m.workspace_id}`)}
+                onClick={() => router.push(
+                  `/dashboard/${m.workspace_id}${railView !== 'dashboard' ? `?rail=${railView}` : ''}`
+                )}
                 style={{
                   position: 'relative',
                   display: 'flex', flexDirection: 'column', gap: 6,
@@ -284,6 +310,8 @@ export default function FounderHome() {
 
         {railView === 'performance' ? (
           <GlobalPerformance />
+        ) : railView === 'contacts' ? (
+          <ContactsPanel workspaceId={workspaceId} />
         ) : activeRailItem.stub ? (
           <StubConsole label={activeRailItem.label} />
         ) : (

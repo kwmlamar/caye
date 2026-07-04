@@ -139,3 +139,9 @@ export interface NotificationPrefs {
 export type Screen = 'home' | 'chats' | 'bookings' | 'calendar' | 'contacts' | 'command'
 export type SettingsSection = 'profile' | 'channels' | 'caye' | 'health' | 'notifications' | 'team' | 'billing' | 'services' | 'whatsapp'
 export type ActiveSection = Screen | 'settings'
+
+// Founder rail tab (FounderHome.tsx). Lifted here so it can live in
+// DashboardContext, which persists across workspace switches — unlike
+// FounderHome's own state, which gets reset because switching workspaces
+// navigates to a new /dashboard/[workspaceId] route and remounts page.tsx.
+export type FounderRailId = 'dashboard' | 'contacts' | 'performance' | 'playbook' | 'risk' | 'admin'

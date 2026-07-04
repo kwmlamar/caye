@@ -194,6 +194,32 @@ async function processInboundWhatsApp(payload: Record<string, unknown>): Promise
     const contact = contacts?.find(c => c.wa_id === from)
     const customerName = contact?.profile?.name ?? from
 
+    // Upsert a contact row for this WhatsApp sender, keyed on
+    // (workspace, channel, wa number) — mirrors the email webhook's
+    // contact upsert (zoho-email/route.ts) so Caye's per-customer style
+    // learning also works for the primary front-desk channel.
+    const { data: contactRow, error: contactErr } = await supabase
+      .from('contacts')
+      .upsert(
+        {
+          customer_id: workspaceId,
+          name: customerName,
+          phone_number: from,
+          channel_type: 'whatsapp',
+          channel_id: from,
+          first_message_at: sentAt,
+          last_message_at: sentAt,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'customer_id,channel_type,channel_id', ignoreDuplicates: false }
+      )
+      .select('id')
+      .single()
+
+    if (contactErr) {
+      console.warn('[whatsapp webhook] Contact upsert failed (continuing):', contactErr.message)
+    }
+
     // Upsert conversation keyed on sender's WA number
     const { data: conversation, error: convErr } = await supabase
       .from('unified_conversations')
@@ -204,6 +230,7 @@ async function processInboundWhatsApp(payload: Record<string, unknown>): Promise
           channel_conversation_id: from,
           customer_name: customerName,
           customer_id: from,
+          contact_id: contactRow?.id,
           status: 'open',
           last_message_at: sentAt,
           last_message_preview: isTextMessage ? body.slice(0, 100) : `[${message.type}]`,

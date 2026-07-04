@@ -5,7 +5,7 @@ import FounderHome from '@/components/dashboard/founder-home/FounderHome'
 import { useWorkspace } from '@/lib/workspace-context'
 
 // 2026-07-02: founders get one full-page view (FounderHome — its own
-// placements list, stats, calendar, and conversations all in one
+// workspaces list, stats, calendar, and conversations all in one
 // layout, no slide-out panel). Owners (e.g. Karenda) keep HomeScreen
 // exactly as it was — this redesign never touches their surface.
 export default function DashboardPage() {

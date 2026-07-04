@@ -1,13 +1,14 @@
 'use client'
 
-// Interactive WhatsApp demo. Replaces the dashboard mockup as the
-// landing's product proof: per the locked positioning, WhatsApp is
-// Caye's daily operator surface.
+// Interactive WhatsApp demo — the landing's central product proof, per
+// the locked positioning that WhatsApp is Caye's daily operator surface.
+// Docked directly in the hero below the CTA (Viktor/Tomo-style: lead
+// with the real product surface, not a screenshot further down the
+// page), cropped by the hero's overflow-hidden edge.
 //
-// Design intent: turn the phone from "screenshot-on-cream" into a
-// tactile artifact — a phone sitting in soft Caribbean light, not
-// pasted on a background. Refined hardware, doodle wallpaper, ground
-// shadow, multi-layer atmospheric glow, staggered scroll reveal.
+// Design intent: a tactile artifact — a phone sitting in soft Caribbean
+// light, not pasted on a background. Refined hardware, doodle
+// wallpaper, ground shadow, gentle float, auto-playing intro.
 
 import { useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence, useInView, useReducedMotion } from 'framer-motion'
@@ -169,80 +170,17 @@ export default function WhatsAppMockup() {
   const firstTapNotYet = usedPrompts.size === 0
 
   return (
-    <section className="relative bg-cream py-28 md:py-36 px-6 overflow-hidden">
-      {/* ── Atmospheric layers ───────────────────────────────────── */}
-      {/* Deep teal pool behind the phone */}
+    <div className="relative mx-auto" style={{ width: 'fit-content' }}>
+      {/* Ground shadow */}
       <div
         aria-hidden
-        className="absolute left-1/2 top-[42%] -translate-x-1/2 -translate-y-1/2 w-[640px] h-[640px] rounded-full pointer-events-none"
+        className="absolute left-1/2 -translate-x-1/2 bottom-[-32px] w-[300px] h-[40px] pointer-events-none"
         style={{
           background:
-            'radial-gradient(circle, rgba(0,119,139,0.10) 0%, rgba(0,119,139,0.04) 45%, transparent 70%)',
-          filter: 'blur(40px)',
+            'radial-gradient(ellipse, rgba(14,26,26,0.22) 0%, rgba(14,26,26,0.10) 40%, transparent 70%)',
+          filter: 'blur(8px)',
         }}
       />
-      {/* Warm gold sunlight from upper right */}
-      <div
-        aria-hidden
-        className="absolute right-[12%] top-[18%] w-[420px] h-[420px] rounded-full pointer-events-none"
-        style={{
-          background:
-            'radial-gradient(circle, rgba(255,214,143,0.18) 0%, rgba(255,214,143,0.06) 50%, transparent 75%)',
-          filter: 'blur(60px)',
-        }}
-      />
-      {/* Soft mint glow from lower left */}
-      <div
-        aria-hidden
-        className="absolute left-[10%] bottom-[20%] w-[360px] h-[360px] rounded-full pointer-events-none"
-        style={{
-          background:
-            'radial-gradient(circle, rgba(168,220,192,0.20) 0%, rgba(168,220,192,0.06) 50%, transparent 75%)',
-          filter: 'blur(50px)',
-        }}
-      />
-      {/* Note: removed the mix-blend-overlay grain texture — even at 4%
-          opacity it softened text rendering noticeably across the phone
-          screen. The radial glows do enough atmospheric work on their
-          own. */}
-
-      <div className="relative max-w-6xl mx-auto">
-        {/* ── Editorial caption ─────────────────────────────────── */}
-        <motion.div
-          initial={{ opacity: 0, y: 14 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true, margin: '-120px' }}
-          transition={{ duration: 0.7, ease: [0.25, 0.1, 0.25, 1] }}
-          className="text-center mb-16 md:mb-20"
-        >
-          <div className="flex items-center justify-center gap-3 mb-6">
-            <span className="h-px w-8 bg-near-black/25" />
-            <span className="font-mono text-[10.5px] uppercase tracking-[0.22em] text-near-black/60 font-medium">
-              Tap to try
-            </span>
-            <span className="h-px w-8 bg-near-black/25" />
-          </div>
-          <h2 className="font-instrument text-4xl md:text-5xl lg:text-6xl tracking-[-0.024em] text-near-black leading-[1.02]">
-            Just text her.{' '}
-            <span className="italic text-caribbean-teal-deep">She handles it</span>.
-          </h2>
-          <p className="mt-6 font-newsreader font-light text-[1.15rem] md:text-[1.25rem] text-near-black/70 max-w-md mx-auto leading-snug">
-            Set up the dashboard once. After that, Caye lives in WhatsApp &mdash; talk to her like an employee.
-          </p>
-        </motion.div>
-
-        {/* ── Phone stage ──────────────────────────────────────── */}
-        <div className="relative mx-auto" style={{ width: 'fit-content' }}>
-          {/* Ground shadow */}
-          <div
-            aria-hidden
-            className="absolute left-1/2 -translate-x-1/2 bottom-[-32px] w-[300px] h-[40px] pointer-events-none"
-            style={{
-              background:
-                'radial-gradient(ellipse, rgba(14,26,26,0.22) 0%, rgba(14,26,26,0.10) 40%, transparent 70%)',
-              filter: 'blur(8px)',
-            }}
-          />
 
           {/* Phone with gentle float */}
           <motion.div
@@ -409,21 +347,7 @@ export default function WhatsAppMockup() {
               </PhoneFrame>
             </div>
           </motion.div>
-        </div>
-
-        {/* ── Sub-caption ──────────────────────────────────────── */}
-        <motion.p
-          initial={{ opacity: 0, y: 10 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true, margin: '-60px' }}
-          transition={{ duration: 0.6, delay: 0.4 }}
-          className="mt-14 text-center font-newsreader italic text-[15px] text-near-black/60 max-w-lg mx-auto leading-relaxed"
-        >
-          No workflows to build. No automations to wire. You message Caye like a
-          coworker, and she figures the rest out.
-        </motion.p>
-      </div>
-    </section>
+    </div>
   )
 }
 

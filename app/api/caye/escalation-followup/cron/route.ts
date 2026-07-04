@@ -24,6 +24,21 @@
  * owner_responded_at and skip — no reassurance needed, the customer has
  * already heard back.
  *
+ * Founder-tier escalation (2026-07-03): confirmed pattern is decision-
+ * avoidance, not just slow response — the operator sees these pings (quick-
+ * reply buttons already exist) and still doesn't act. Nagging the same
+ * person harder doesn't fix that, so escalations routed to 'owner' only
+ * additionally loop in the founder once they've sat unresolved past a
+ * threshold: FOUNDER_ESCALATION_URGENT_HOURS if the held item reads as
+ * time-sensitive (near-term date / "today"/"tomorrow" language, reusing the
+ * same classifyHoldUrgency heuristic as the hold-ping scheduler),
+ * FOUNDER_ESCALATION_HOURS otherwise. This does NOT widen Caye's own
+ * autonomy — every category that reaches this queue is a genuine judgment
+ * call (b2b/complaint/refund/custom, pricing ambiguity, near-term changes);
+ * the founder is a human backstop, not an auto-send path. Fires once per
+ * escalation (founder_escalated_at is a one-shot marker, unlike
+ * follow_up_sent_at which repeats).
+ *
  * Authenticated via CRON_SECRET. Accepts either `x-cron-secret: <secret>`
  * or `Authorization: Bearer <secret>`. Registered on cron-job.org.
  */
@@ -32,11 +47,15 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase-server'
 import { enqueueEscalationPings } from '@/lib/whatsapp/triggers'
 import { labelForCategory } from '@/lib/whatsapp/escalation'
+import { classifyHoldUrgency } from '@/lib/whatsapp/urgency'
 import type { EscalationCategory } from '@/lib/caye-reply'
 
 const ESCALATION_FOLLOWUP_HOURS = 6
 const FOLLOWUP_REPEAT_HOURS = 24 // re-nudge once a day until resolved
 const LOOKBACK_HOURS = 24 * 30 // 30 days — a sane outer bound, not a silent-abandon trigger
+
+const FOUNDER_ESCALATION_HOURS = 24 * 7 // 7 days — normal categories
+const FOUNDER_ESCALATION_URGENT_HOURS = 24 // time-sensitive holds
 
 interface EscalationRow {
   id: string
@@ -47,6 +66,7 @@ interface EscalationRow {
   customer_facing_message: string
   internal_context: string
   created_at: string
+  founder_escalated_at: string | null
 }
 
 interface ConversationRow {
@@ -82,7 +102,7 @@ export async function GET(request: NextRequest) {
   const { data: rows, error } = await supabase
     .from('caye_escalations')
     .select(
-      'id, workspace_id, conversation_id, category, route_to, customer_facing_message, internal_context, created_at'
+      'id, workspace_id, conversation_id, category, route_to, customer_facing_message, internal_context, created_at, founder_escalated_at'
     )
     .is('owner_responded_at', null)
     .or(`follow_up_sent_at.is.null,follow_up_sent_at.lte.${repeatCutoff}`)
@@ -96,12 +116,19 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 
-  const summary = { scanned: rows?.length ?? 0, resolved: 0, followed_up: 0, skipped: 0 }
+  const summary = {
+    scanned: rows?.length ?? 0,
+    resolved: 0,
+    followed_up: 0,
+    skipped: 0,
+    founder_escalated: 0,
+  }
   if (!rows?.length) return NextResponse.json(summary)
 
   for (const row of rows as EscalationRow[]) {
-    const outcome = await processEscalation(row)
+    const { outcome, founderEscalated } = await processEscalation(row)
     summary[outcome] += 1
+    if (founderEscalated) summary.founder_escalated += 1
   }
 
   return NextResponse.json(summary)
@@ -109,7 +136,9 @@ export async function GET(request: NextRequest) {
 
 type Outcome = 'resolved' | 'followed_up' | 'skipped'
 
-async function processEscalation(row: EscalationRow): Promise<Outcome> {
+async function processEscalation(
+  row: EscalationRow
+): Promise<{ outcome: Outcome; founderEscalated: boolean }> {
   const supabase = createServiceClient()
 
   // If the operator already replied since the escalation opened, mark
@@ -121,7 +150,7 @@ async function processEscalation(row: EscalationRow): Promise<Outcome> {
         .from('caye_escalations')
         .update({ owner_responded_at: new Date().toISOString() })
         .eq('id', row.id)
-      return 'resolved'
+      return { outcome: 'resolved', founderEscalated: false }
     }
   }
 
@@ -164,7 +193,7 @@ async function processEscalation(row: EscalationRow): Promise<Outcome> {
     )
   } catch (err) {
     console.error('[escalation-followup] enqueue failed:', err)
-    return 'skipped'
+    return { outcome: 'skipped', founderEscalated: false }
   }
 
   await supabase
@@ -172,7 +201,65 @@ async function processEscalation(row: EscalationRow): Promise<Outcome> {
     .update({ follow_up_sent_at: new Date().toISOString() })
     .eq('id', row.id)
 
-  return 'followed_up'
+  const founderEscalated = await maybeEscalateToFounder(row, contactName, pingSummary)
+
+  return { outcome: 'followed_up', founderEscalated }
+}
+
+/**
+ * Loop the founder in once an 'owner'-only escalation has sat unresolved
+ * past a threshold. Not an autonomous action on the customer side — this
+ * only adds a recipient to the same escalation_followup ping, so a human
+ * (you) becomes the backstop when the operator won't decide. Skips rows
+ * already routed to 'founder' or 'both' (founder's already in the loop) and
+ * fires at most once per escalation.
+ */
+async function maybeEscalateToFounder(
+  row: EscalationRow,
+  contactName: string,
+  pingSummary: string
+): Promise<boolean> {
+  if (row.founder_escalated_at) return false
+  if (row.route_to === 'founder' || row.route_to === 'both') return false
+
+  const ageHours = (Date.now() - new Date(row.created_at).getTime()) / (60 * 60 * 1000)
+  const urgent =
+    classifyHoldUrgency({
+      inboundBody: `${row.internal_context} ${row.customer_facing_message}`,
+    }) === 'urgent'
+  const threshold = urgent ? FOUNDER_ESCALATION_URGENT_HOURS : FOUNDER_ESCALATION_HOURS
+  if (ageHours < threshold) return false
+
+  const ageLabel = ageHours >= 24 ? `${Math.floor(ageHours / 24)}d` : `${Math.floor(ageHours)}h`
+
+  try {
+    await enqueueEscalationPings(
+      {
+        workspaceId: row.workspace_id,
+        escalationId: row.id,
+        conversationId: row.conversation_id,
+        contactName,
+        category: row.category,
+        routeTo: 'founder',
+        suggestedReply: row.customer_facing_message,
+        internalContext: row.internal_context,
+        pingSummary: `Operator hasn't acted in ${ageLabel} — ${pingSummary}`.slice(0, 200),
+        timestamp: new Date().toISOString(),
+      },
+      'escalation_followup'
+    )
+  } catch (err) {
+    console.error('[escalation-followup] founder escalation enqueue failed:', err)
+    return false
+  }
+
+  const supabase = createServiceClient()
+  await supabase
+    .from('caye_escalations')
+    .update({ founder_escalated_at: new Date().toISOString() })
+    .eq('id', row.id)
+
+  return true
 }
 
 async function operatorRepliedSince(conversationId: string, sinceISO: string): Promise<boolean> {

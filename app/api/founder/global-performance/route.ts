@@ -4,7 +4,7 @@
  *
  * Cross-workspace cost + usage table for the founder's "Global
  * Performance" rail tab — one row per workspace the founder is a member
- * of (same set as the Placements sidebar), with real 7-day LLM API cost
+ * of (same set as the Workspaces sidebar), with real 7-day LLM API cost
  * and call volume. Deliberately no revenue/margin column: customer.plan
  * and stripe_subscription_id aren't reliably populated per workspace
  * (e.g. Bimini's actual $79/mo only exists as a Stripe Payment Link +

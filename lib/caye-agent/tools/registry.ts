@@ -31,6 +31,7 @@ import { muteCaye } from './write-low/mute-caye'
 import { unmuteCaye } from './write-low/unmute-caye'
 import { archiveThread } from './write-low/archive-thread'
 import { addInternalNote } from './write-low/add-internal-note'
+import { sendPaymentConfirmation } from './write-low/send-payment-confirmation'
 import { sendReply } from './write-high/send-reply'
 import { confirmBooking } from './write-high/confirm-booking'
 import { rescheduleBooking } from './write-high/reschedule-booking'
@@ -40,7 +41,7 @@ import { cancelBooking } from './write-high/cancel-booking'
  * All tools available to the back-office agent.
  *
  * Read tools (10): #38 + #40 — autonomous execution
- * Low-risk write tools (6): #37 — autonomous execution
+ * Low-risk write tools (18): #37 — autonomous execution
  * High-risk write tools (6): #42/#43 — gated through confirmation flow
  */
 type AnyTool = Tool<never>
@@ -77,6 +78,7 @@ export const TOOL_REGISTRY: AnyTool[] = [
   unmuteCaye as AnyTool,
   archiveThread as AnyTool,
   addInternalNote as AnyTool,
+  sendPaymentConfirmation as AnyTool,
   // High-risk write (confirmation flow enforced via prompt)
   sendReply as AnyTool,
   confirmBooking as AnyTool,

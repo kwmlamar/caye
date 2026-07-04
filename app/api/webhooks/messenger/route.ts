@@ -169,6 +169,31 @@ async function processInboundMessenger(payload: Record<string, unknown>): Promis
       const sentAt = new Date(timestamp).toISOString()
       const customerName = senderName ?? senderId
 
+      // Upsert a contact row for this Messenger sender, keyed on
+      // (workspace, channel, PSID) — mirrors the email webhook's contact
+      // upsert (zoho-email/route.ts) so Caye's per-customer style learning
+      // also works for Messenger.
+      const { data: contactRow, error: contactErr } = await supabase
+        .from('contacts')
+        .upsert(
+          {
+            customer_id: workspaceId,
+            name: customerName,
+            channel_type: 'messenger',
+            channel_id: senderId,
+            first_message_at: sentAt,
+            last_message_at: sentAt,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'customer_id,channel_type,channel_id', ignoreDuplicates: false }
+        )
+        .select('id')
+        .single()
+
+      if (contactErr) {
+        console.warn('[messenger webhook] Contact upsert failed (continuing):', contactErr.message)
+      }
+
       const { data: conversation, error: convErr } = await supabase
         .from('unified_conversations')
         .upsert(
@@ -178,6 +203,7 @@ async function processInboundMessenger(payload: Record<string, unknown>): Promis
             channel_conversation_id: senderId,
             customer_name: customerName,
             customer_id: senderId,
+            contact_id: contactRow?.id,
             status: 'open',
             last_message_at: sentAt,
             last_message_preview: body.slice(0, 100),

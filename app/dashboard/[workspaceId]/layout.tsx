@@ -1,9 +1,10 @@
 "use client"
 
-import { useEffect, useState, use, Suspense } from "react"
+import { useEffect, useRef, useState, use, Suspense } from "react"
 import { useRouter } from "next/navigation"
 import Sidebar from "@/components/dashboard/Sidebar"
 import ViewportRedirect from "@/components/mobile/ViewportRedirect"
+import { CayeMark } from "@/components/brand/CayeMark"
 import { getSession, getSupabase } from "@/lib/supabase"
 import { WorkspaceProvider, type WorkspaceMembership } from "@/lib/workspace-context"
 import { DashboardProvider, useDashboard } from "@/lib/dashboard-context"
@@ -40,7 +41,7 @@ function DashboardShell({ children, workspace, workspaceId, workspaces, isOwner,
       <div className="tc-root">
         <div className="tc-frame">
           {/* Founder gets one full-page view (FounderHome) with its own
-              placements list built in — no shared Sidebar, no slide-out
+              workspaces list built in — no shared Sidebar, no slide-out
               CayePanel. Owners (e.g. Karenda) keep both, untouched. */}
           {!isFounder && <Sidebar workspaceId={workspaceId} />}
           <div className={`tc-main${panelOpen ? ' caye-open' : ''}${!isFounder && !sidebarExpanded ? ' sb-collapsed' : ''}`} style={{ position: 'relative' }}>
@@ -98,6 +99,17 @@ export default function WorkspaceLayout({
   const [isOwner, setIsOwner] = useState(false)
   const [isFounder, setIsFounder] = useState(false)
   const [loading, setLoading] = useState(true)
+  // Mirrors `workspaces` without the closure-staleness risk of reading
+  // state directly inside an effect keyed on a different dependency.
+  const workspacesRef = useRef<WorkspaceMembership[]>([])
+  // Founder's console is dark, the owner dashboard is light — a cold
+  // start (refresh/deep link) has to guess which one to paint before
+  // session/role resolve. Remembering the last resolved theme means the
+  // guess is right on every visit after the first.
+  const [themeHint] = useState<'dark' | 'light'>(() => {
+    if (typeof window === 'undefined') return 'dark'
+    return (localStorage.getItem('cayeDashboardTheme') as 'dark' | 'light') ?? 'dark'
+  })
 
   useEffect(() => {
     async function loadWorkspaceData() {
@@ -106,6 +118,23 @@ export default function WorkspaceLayout({
         if (!session) {
           router.push("/login")
           return
+        }
+
+        // Switching between workspaces the founder/owner has already been
+        // shown (the common case — clicking another row in the Workspaces
+        // list) needs zero network round trip: workspace_members was
+        // fetched with the customer row joined in, so the full record is
+        // already sitting in workspacesRef. Paint it immediately — no
+        // "Loading workspace…" flash — then let the fetch below silently
+        // revalidate in the background.
+        const cached = workspacesRef.current.find((m) => m.workspace_id === workspaceId)
+        if (cached) {
+          const founder = isFounderUserId(session.user.id)
+          setWorkspace(cached.customer)
+          setIsOwner(cached.role === 'owner')
+          setIsFounder(founder)
+          setLoading(false)
+          localStorage.setItem('cayeDashboardTheme', founder ? 'dark' : 'light')
         }
 
         const client = getSupabase()
@@ -132,6 +161,7 @@ export default function WorkspaceLayout({
         const validMemberships = (memberData || [])
           .filter((m: unknown) => (m as { customer: unknown }).customer !== null) as unknown as WorkspaceMembership[]
         setWorkspaces(validMemberships)
+        workspacesRef.current = validMemberships
 
         // Verify user is a member of this workspaceId
         let currentMembership = validMemberships.find(m => m.workspace_id === workspaceId)
@@ -168,10 +198,12 @@ export default function WorkspaceLayout({
           return
         }
 
+        const founder = isFounderUserId(session.user.id)
         setWorkspace(currentMembership.customer)
         setIsOwner(currentMembership.role === 'owner')
-        setIsFounder(isFounderUserId(session.user.id))
+        setIsFounder(founder)
         localStorage.setItem('lastActiveWorkspaceId', workspaceId)
+        localStorage.setItem('cayeDashboardTheme', founder ? 'dark' : 'light')
         setLoading(false)
       } catch (err) {
         console.error("[WorkspaceLayout] loadWorkspaceData failed:", err)
@@ -182,16 +214,37 @@ export default function WorkspaceLayout({
     loadWorkspaceData()
   }, [workspaceId, router])
 
-  if (loading) {
+  // Only the true cold start (no cached workspace to paint yet — first
+  // visit this session, or a hard refresh/deep link) ever reaches this.
+  // Ordinary placement-switching resolves `workspace` from cache above
+  // before this can render, so it never flashes mid-switch.
+  if (loading && !workspace) {
+    const dark = themeHint === 'dark'
     return (
       <div style={{
         minHeight: '100vh',
         display: 'flex',
+        flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
-        background: 'var(--tc-bg-app)',
+        gap: 14,
+        background: dark ? '#09090b' : 'var(--tc-bg-app)',
       }}>
-        <p style={{ color: 'var(--tc-ink-mute)', fontSize: 13 }}>Loading workspace…</p>
+        <style>{`
+          @keyframes caye-loading-pulse {
+            0%, 100% { opacity: 0.5; transform: scale(0.94); }
+            50% { opacity: 1; transform: scale(1); }
+          }
+        `}</style>
+        <div style={{ animation: 'caye-loading-pulse 1.4s ease-in-out infinite' }}>
+          <CayeMark size={36} />
+        </div>
+        <p style={{
+          color: dark ? '#71717a' : 'var(--tc-ink-mute)',
+          fontSize: 12.5, fontFamily: 'var(--font-mono)', letterSpacing: '0.06em', textTransform: 'uppercase',
+        }}>
+          Loading workspace…
+        </p>
       </div>
     )
   }
