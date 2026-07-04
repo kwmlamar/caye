@@ -517,7 +517,11 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
       }
     }
 
-    enqueueHoldPing({
+    // Awaited — a fire-and-forget promise here can get torn down by the
+    // serverless runtime the instant this handler returns, silently
+    // dropping the operator ping (confirmed live 2026-07-04: Bridgette
+    // Jones's hold never notified Karenda because of exactly this).
+    await enqueueHoldPing({
       workspaceId,
       conversationId: conversation.id,
       contactName: effectiveName || effectiveEmail,

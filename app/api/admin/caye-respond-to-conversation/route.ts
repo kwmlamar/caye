@@ -231,7 +231,9 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    enqueueHoldPing({
+    // Awaited — see zoho-email webhook for why (unawaited promises can be
+    // torn down mid-flight when the serverless handler returns).
+    await enqueueHoldPing({
       workspaceId,
       conversationId: conversationId,
       contactName: customerName,

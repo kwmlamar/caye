@@ -306,7 +306,9 @@ async function processInboundMessenger(payload: Record<string, unknown>): Promis
           },
         })
         console.log(`[messenger webhook] Held for human: ${senderId} — ${decision.reason}`)
-        enqueueHoldPing({
+        // Awaited — see zoho-email webhook for why (unawaited promises can
+        // be torn down mid-flight when the serverless handler returns).
+        await enqueueHoldPing({
           workspaceId,
           conversationId: conversation.id,
           contactName: customerName,

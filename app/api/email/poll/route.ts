@@ -1320,7 +1320,9 @@ async function processMessage(
       },
     })
     console.log(`[email/poll] Held for human: ${effectiveEmail} — ${decision.reason}`)
-    enqueueHoldPing({
+    // Awaited — see zoho-email webhook for why (unawaited promises can be
+    // torn down mid-flight when the serverless handler returns).
+    await enqueueHoldPing({
       workspaceId,
       conversationId: conversation.id,
       contactName: effectiveName || effectiveEmail,

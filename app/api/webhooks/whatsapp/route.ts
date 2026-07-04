@@ -344,9 +344,12 @@ async function processInboundWhatsApp(payload: Record<string, unknown>): Promise
         },
       })
       console.log(`[whatsapp webhook] Held for human: ${from} — ${decision.reason}`)
-      // Fire-and-forget WhatsApp ping to the operator. Internally no-ops if
-      // the workspace flag is off or the operator number isn't verified.
-      enqueueHoldPing({
+      // Awaited (was fire-and-forget) — an unawaited promise here can get
+      // torn down by the serverless runtime the instant this handler
+      // returns, silently dropping the operator ping. Internally still
+      // no-ops if the workspace flag is off or the operator number isn't
+      // verified.
+      await enqueueHoldPing({
         workspaceId,
         conversationId: conversation.id,
         contactName: customerName,

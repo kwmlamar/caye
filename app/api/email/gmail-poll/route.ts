@@ -460,7 +460,9 @@ async function processGmailMessage(
   })
 
   const urgency = decision.action === 'hold' ? decision.urgency : undefined
-  enqueueHoldPing({
+  // Awaited — see zoho-email webhook for why (unawaited promises can be
+  // torn down mid-flight when the serverless handler returns).
+  await enqueueHoldPing({
     workspaceId,
     conversationId,
     contactName: fromName || fromEmail,
