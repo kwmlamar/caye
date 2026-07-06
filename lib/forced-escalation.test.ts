@@ -71,4 +71,19 @@ describe('detectForcedEscalation', () => {
     )
     expect(result).toBeNull()
   })
+
+  it('pingSummary is plain-language, not internal classifier jargon', () => {
+    // Regression test: pingSummary is what ends up in the operator's WhatsApp
+    // ping. internalContext ("Forced escalation — b2b_partnership (inbound
+    // classifier — ...)") is dashboard-only debug text and must never leak
+    // into pingSummary or the customer/operator-facing channel.
+    const result = detectForcedEscalation(
+      'Reaching out from XYZ DMC about wholesale rates',
+      'b2b_partnership'
+    )
+    expect(result?.pingSummary).toBeTruthy()
+    expect(result?.pingSummary).not.toMatch(/forced escalation/i)
+    expect(result?.pingSummary).not.toMatch(/inbound classifier/i)
+    expect(result?.pingSummary).not.toContain(result?.trigger)
+  })
 })

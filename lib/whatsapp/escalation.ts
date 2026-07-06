@@ -129,6 +129,7 @@ export async function applyEscalation(
     routeTo: decision.routeTo,
     customerFacingMessage: decision.content,
     internalContext: decision.internalContext,
+    pingSummary: decision.pingSummary,
   })
 
   return { action: 'reply', content: decision.content }

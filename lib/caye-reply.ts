@@ -57,6 +57,10 @@ export type CayeAutoReply =
       /** Internal context for the operator ping — full thread summary,
        *  customer ask, Caye's reasoning, suggested response. */
       internalContext: string
+      /** Optional plain-language one-liner for the WhatsApp ping template.
+       *  Forced escalations always supply one; when absent, the ping falls
+       *  back to deriving from category + internalContext. */
+      pingSummary?: string
     }
   | {
       action: 'reply'
@@ -1674,6 +1678,7 @@ export async function generateCayeAutoReply(
       category: forced.category,
       routeTo: forced.routeTo,
       internalContext: forced.internalContext,
+      pingSummary: forced.pingSummary,
     }
   }
 
