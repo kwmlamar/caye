@@ -2,7 +2,7 @@ import 'server-only'
 import { createServiceClient } from '@/lib/supabase-server'
 import { resolveItemRef, type PendingHeldItem } from '../pending'
 import type { ActionContext, ActionResult } from './types'
-import { resolveOpenEscalations } from '@/lib/caye-agent/tools/write-low/_guards'
+import { resolveOpenEscalations } from '@/lib/caye-agent/tools/write-low/resolve-open-escalations'
 
 export async function actionSkip(
   _ctx: ActionContext,

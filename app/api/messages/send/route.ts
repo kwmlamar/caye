@@ -14,7 +14,7 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { sendMetaMessage } from '@/lib/meta-reply'
 import { sendWhatsAppMessage } from '@/lib/whatsapp'
 import { sendZohoReply } from '@/lib/email-ai'
-import { resolveOpenEscalations } from '@/lib/caye-agent/tools/write-low/_guards'
+import { resolveOpenEscalations } from '@/lib/caye-agent/tools/write-low/resolve-open-escalations'
 import { maybeRefreshOwnerVoiceProfile } from '@/lib/owner-voice-learning'
 import { maybeSuggestBusinessFacts } from '@/lib/business-fact-suggestions'
 

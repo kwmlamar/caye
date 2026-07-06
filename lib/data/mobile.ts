@@ -7,7 +7,7 @@
  */
 
 import { getSupabase } from '@/lib/supabase'
-import { resolveOpenEscalations } from '@/lib/caye-agent/tools/write-low/_guards'
+import { resolveOpenEscalations } from '@/lib/caye-agent/tools/write-low/resolve-open-escalations'
 
 // ── Channel mapping ──────────────────────────────────────────────────────────
 // DB stores 'whatsapp' | 'instagram' | 'messenger' | 'email' | 'sms'.
