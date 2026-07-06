@@ -18,11 +18,15 @@ export type ToolRisk = 'read' | 'low' | 'high'
  *   staff in conversation via the future add_team_member tool (#55).
  * - founder: TropiTech founder. Default-on every workspace; first-class
  *   support and observability, not a debug back door.
+ * - driver: guide/driver dispatched a specific booking (2026-07-05, driver
+ *   dispatch feature). Zero back-office tool grants — only tools tagged
+ *   modes: ['driver'] accept this role, and those are read-only + a
+ *   single escalate-to-owner tool. Never gets 'staff'-shaped access.
  *
  * Cron-driven system invocations (briefings, EOD summaries) use 'founder'
  * since they have no human caller and need access to every tool.
  */
-export type Role = 'owner' | 'staff' | 'founder'
+export type Role = 'owner' | 'staff' | 'founder' | 'driver'
 
 /**
  * Which Caye surface a tool is available on (#56).
@@ -32,18 +36,29 @@ export type Role = 'owner' | 'staff' | 'founder'
  * - front-desk: the customer-facing reply path in lib/caye-reply.ts.
  *   Front-desk tools currently live inline in caye-reply.ts and are
  *   NOT in TOOL_REGISTRY yet (cross-registry unification is #14).
+ * - driver: guide/driver-facing agent (2026-07-05). Narrow surface —
+ *   read-only booking/logistics lookups scoped to the caller's own
+ *   assignment, plus an escalate-to-owner tool. Never shares tools with
+ *   back-office.
  *
  * runToolLoop filters TOOL_REGISTRY by the request's mode so the API
  * call only ships the tool schemas relevant to the current surface,
  * dropping input tokens per request. Tools tagged with both modes are
  * cross-cutting (e.g. escalate_to_team eventually).
  */
-export type ToolMode = 'front-desk' | 'back-office'
+export type ToolMode = 'front-desk' | 'back-office' | 'driver'
 
 export interface ToolContext {
   workspaceId: string
   /** Caller role. Cron paths pass 'founder' (system invocation). */
   callerRole: Role
+  /**
+   * Caller's E.164 phone as seen by the webhook. Only meaningfully used
+   * by driver-mode tools (2026-07-05) to scope "my assigned booking" —
+   * back-office tools identify the caller via callerRole/operatorId
+   * instead and can ignore this field.
+   */
+  callerPhone?: string | null
 }
 
 /**

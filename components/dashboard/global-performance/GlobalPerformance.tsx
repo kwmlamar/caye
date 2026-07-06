@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { getSession } from '@/lib/supabase'
+import { CayeLoadingPulse } from '@/components/dashboard/founder-home/CayeLoadingPulse'
 import type { CustomerStatus } from '@/types/database'
 
 const CARD_BG = '#121214'
@@ -193,7 +194,7 @@ export default function GlobalPerformance() {
           {error ? (
             <div style={{ padding: 16, fontSize: 12.5, color: '#fb7185' }}>{error}</div>
           ) : rows === null ? (
-            <div style={{ padding: 16, fontSize: 12.5, color: '#52525b' }}>Loading…</div>
+            <div style={{ padding: 16 }}><CayeLoadingPulse size={16} /></div>
           ) : rows.length === 0 ? (
             <div style={{ padding: 16, fontSize: 12.5, color: '#52525b' }}>No workspaces.</div>
           ) : (
@@ -228,7 +229,7 @@ export default function GlobalPerformance() {
                   {isOpen && (
                     <div style={{ borderTop: `1px solid ${CARD_BORDER}`, background: 'rgba(255,255,255,0.02)' }}>
                       {detail === 'loading' || detail === undefined ? (
-                        <div style={{ padding: 16, fontSize: 12, color: '#52525b' }}>Loading trend…</div>
+                        <div style={{ padding: 16 }}><CayeLoadingPulse label="Loading trend…" size={14} /></div>
                       ) : detail === 'error' ? (
                         <div style={{ padding: 16, fontSize: 12, color: '#fb7185' }}>Failed to load trend.</div>
                       ) : (

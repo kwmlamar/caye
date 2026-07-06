@@ -36,6 +36,10 @@ import { sendReply } from './write-high/send-reply'
 import { confirmBooking } from './write-high/confirm-booking'
 import { rescheduleBooking } from './write-high/reschedule-booking'
 import { cancelBooking } from './write-high/cancel-booking'
+import { notifyDriver } from './write-low/notify-driver'
+import { getMyAssignments } from './read/get-my-assignments'
+import { getLogisticsFacts } from './read/get-logistics-facts'
+import { escalateDriverQuestion } from './write-low/escalate-driver-question'
 
 /**
  * All tools available to the back-office agent.
@@ -43,6 +47,8 @@ import { cancelBooking } from './write-high/cancel-booking'
  * Read tools (10): #38 + #40 — autonomous execution
  * Low-risk write tools (18): #37 — autonomous execution
  * High-risk write tools (6): #42/#43 — gated through confirmation flow
+ * Driver-mode tools (4, 2026-07-05): tagged modes: ['driver'] — never
+ * shipped to back-office/front-desk requests, see execute.ts mode filter.
  */
 type AnyTool = Tool<never>
 
@@ -79,6 +85,7 @@ export const TOOL_REGISTRY: AnyTool[] = [
   archiveThread as AnyTool,
   addInternalNote as AnyTool,
   sendPaymentConfirmation as AnyTool,
+  notifyDriver as AnyTool,
   // High-risk write (confirmation flow enforced via prompt)
   sendReply as AnyTool,
   confirmBooking as AnyTool,
@@ -87,6 +94,10 @@ export const TOOL_REGISTRY: AnyTool[] = [
   removeService as AnyTool,
   removeBlackoutDate as AnyTool,
   removeTeamMember as AnyTool,
+  // Driver mode
+  getMyAssignments as AnyTool,
+  getLogisticsFacts as AnyTool,
+  escalateDriverQuestion as AnyTool,
 ]
 
 export function findTool(name: string): AnyTool | undefined {

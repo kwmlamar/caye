@@ -4,7 +4,7 @@ import type { createServiceClient } from '@/lib/supabase-server'
 export interface OperatorIdentity {
   id: number
   name: string | null
-  role: 'owner' | 'staff' | 'founder'
+  role: 'owner' | 'staff' | 'founder' | 'driver'
 }
 
 /**

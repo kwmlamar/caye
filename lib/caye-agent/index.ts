@@ -4,13 +4,14 @@ import { createServiceClient } from '@/lib/supabase-server'
 import type { VoiceProfile } from '@/lib/voice-profile'
 import { loadOperatorContext } from './context'
 import { buildBackOfficeSystemPrompt } from './modes/back-office'
+import { buildDriverSystemPrompt } from './modes/driver'
 import { runToolLoop } from './execute'
 import type { Role } from './tools/types'
 
 const MODEL = 'claude-sonnet-4-6'
 const MAX_OUTPUT_TOKENS = 1024
 
-export type CayeAgentMode = 'front-desk' | 'back-office'
+export type CayeAgentMode = 'front-desk' | 'back-office' | 'driver'
 
 export interface CayeAgentInput {
   mode: CayeAgentMode
@@ -41,6 +42,12 @@ export interface CayeAgentInput {
    * Null only for pre-migration rows that couldn't be backfilled.
    */
   operatorId: number | null
+  /**
+   * Caller's E.164 phone as seen by the webhook. Only used by driver
+   * mode (2026-07-05) — driver tools scope "my assigned booking" off
+   * this rather than an operator identity concept.
+   */
+  callerPhone?: string | null
 }
 
 export interface CayeAgentResult {
@@ -60,8 +67,11 @@ export interface CayeAgentResult {
  * Entry point for the unified Caye agent (epic #35).
  *
  * Slice #38 scope (this file):
- *   - mode: 'back-office' only
- *   - Tool-use loop with the read tools registered in tools/registry.ts
+ *   - mode: 'back-office' — full operator identity/voice-profile prompt
+ *   - mode: 'driver' (2026-07-05) — narrow prompt, no operator identity
+ *     block, tiny tool surface (see modes/driver.ts + registry tools
+ *     tagged modes: ['driver'])
+ *   - Tool-use loop with the tools registered in tools/registry.ts
  *   - Sliding window context from caye_operator_messages
  *   - Returns every turn for the webhook to persist individually
  *
@@ -69,6 +79,9 @@ export interface CayeAgentResult {
  * is here to lock the API shape for later refactors.
  */
 export async function cayeAgent(input: CayeAgentInput): Promise<CayeAgentResult> {
+  if (input.mode === 'driver') {
+    return runDriverAgent(input)
+  }
   if (input.mode !== 'back-office') {
     throw new Error(
       `[caye-agent] mode '${input.mode}' is not yet routed through the unified agent (see epic #35).`
@@ -196,10 +209,54 @@ export async function cayeAgent(input: CayeAgentInput): Promise<CayeAgentResult>
     systemPrompt,
     initialMessages,
     ctx: { workspaceId: input.workspaceId, callerRole: input.callerRole },
+    mode: 'back-office',
   })
 
   return { replyText, newTurns }
 }
 
+/**
+ * Driver mode (2026-07-05). Deliberately skips everything back-office
+ * loads (voice profile, operator-personal fields, business_brief) — a
+ * driver never needs "what's my email" or Caye-voiced customer drafting.
+ * Just the business name (for the greeting) + the narrow driver prompt.
+ */
+async function runDriverAgent(input: CayeAgentInput): Promise<CayeAgentResult> {
+  const supabase = createServiceClient()
+  const { data: customer } = await supabase
+    .from('customers')
+    .select('business_name, full_name')
+    .eq('id', input.workspaceId)
+    .maybeSingle()
+
+  const systemPrompt = buildDriverSystemPrompt({
+    businessName: (customer?.business_name as string | null) ?? (customer?.full_name as string | null) ?? null,
+    driverName: input.callerName ?? null,
+  })
+
+  const history = await loadOperatorContext(input.workspaceId, input.operatorId)
+  const initialMessages: Anthropic.MessageParam[] = [
+    ...history,
+    { role: 'user', content: input.userMessage },
+  ]
+
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+
+  return runToolLoop({
+    client,
+    model: MODEL,
+    maxTokens: MAX_OUTPUT_TOKENS,
+    systemPrompt,
+    initialMessages,
+    ctx: {
+      workspaceId: input.workspaceId,
+      callerRole: 'driver',
+      callerPhone: input.callerPhone ?? null,
+    },
+    mode: 'driver',
+  })
+}
+
 export { loadOperatorContext } from './context'
 export { buildBackOfficeSystemPrompt } from './modes/back-office'
+export { buildDriverSystemPrompt } from './modes/driver'

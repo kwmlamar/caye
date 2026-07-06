@@ -7,6 +7,7 @@
  */
 
 import { getSupabase } from '@/lib/supabase'
+import { resolveOpenEscalations } from '@/lib/caye-agent/tools/write-low/_guards'
 
 // ── Channel mapping ──────────────────────────────────────────────────────────
 // DB stores 'whatsapp' | 'instagram' | 'messenger' | 'email' | 'sms'.
@@ -453,6 +454,11 @@ export async function resolveHeld(
       last_message_preview: replyText.trim() ? replyText.trim().slice(0, 100) : undefined,
     })
     .eq('id', conversationId)
+
+  // Also close out any open escalation row — otherwise it stays pending
+  // forever and the "Needs review" stat card keeps counting a thread the
+  // owner already replied to from mobile.
+  await resolveOpenEscalations(supabase, conversationId)
 
   return { error: convErr?.message ?? null }
 }

@@ -14,8 +14,10 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { generateCayeAutoReply } from '@/lib/caye-reply'
 import { enqueueHoldPing } from '@/lib/whatsapp/triggers'
 import { applyEscalation } from '@/lib/whatsapp/escalation'
+import { resolveOpenEscalations } from '@/lib/caye-agent/tools/write-low/_guards'
 import { htmlToPlainText } from '@/lib/email-text'
 import { maybeRefreshOwnerVoiceProfile } from '@/lib/owner-voice-learning'
+import { maybeSuggestBusinessFacts } from '@/lib/business-fact-suggestions'
 import { detectOwnerCorrection } from '@/lib/owner-correction'
 import { isNoReplySender, isCalendarInvite, isPaymentReceipt } from '@/lib/sender-classifier'
 import {
@@ -556,12 +558,23 @@ async function processSentMessage(
     })
     .eq('id', conversation.id)
 
+  // Also close out any open escalation row — otherwise it stays pending
+  // forever and the "Needs review" stat card keeps counting a thread the
+  // owner already replied to via email.
+  await resolveOpenEscalations(supabase, conversation.id)
+
   // Fire-and-forget owner voice learning. Identical to the in-app send path
   // — re-extracts the voice profile every REFRESH_EVERY trusted-channel
   // owner messages. Without this, Karenda's Zoho-direct replies never train
   // the voice profile because she rarely uses the app.
   maybeRefreshOwnerVoiceProfile(String(account.user_id), 'email').catch(err =>
     console.error('[email/poll] Owner voice refresh failed:', err)
+  )
+
+  // Fire-and-forget business-fact-candidate detection. Non-blocking — see
+  // lib/business-fact-suggestions.ts for why this exists.
+  maybeSuggestBusinessFacts(String(account.user_id), conversation.id, body).catch(err =>
+    console.error('[email/poll] Business fact suggestion failed:', err)
   )
 
   if (correction.is_correction) {

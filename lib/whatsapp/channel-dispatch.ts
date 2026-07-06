@@ -3,6 +3,7 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { sendMetaMessage } from '@/lib/meta-reply'
 import { sendWhatsAppMessage } from '@/lib/whatsapp'
 import { sendZohoReply } from '@/lib/email-ai'
+import { resolveOpenEscalations } from '@/lib/caye-agent/tools/write-low/_guards'
 
 /**
  * Send `text` to the guest on the conversation's native channel and persist
@@ -124,6 +125,11 @@ export async function dispatchOperatorReply(
       human_agent_reason: null,
     })
     .eq('id', conversationId)
+
+  // Also close out any open escalation row — otherwise it stays pending
+  // forever and the "Needs review" stat card keeps counting a thread the
+  // operator already replied to.
+  await resolveOpenEscalations(supabase, conversationId)
 
   return { success: true, channelType: conv.channel_type, messageId }
 }

@@ -242,7 +242,7 @@ async function resolveEscalationRecipients(
   return out
 }
 
-async function operatorPingsEnabled(workspaceId: string): Promise<boolean> {
+export async function operatorPingsEnabled(workspaceId: string): Promise<boolean> {
   const supabase = createServiceClient()
   const { data } = await supabase
     .from('workspace_ai_config')

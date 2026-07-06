@@ -2,6 +2,7 @@ import 'server-only'
 import { createServiceClient } from '@/lib/supabase-server'
 import { resolveItemRef, type PendingHeldItem } from '../pending'
 import type { ActionContext, ActionResult } from './types'
+import { resolveOpenEscalations } from '@/lib/caye-agent/tools/write-low/_guards'
 
 export async function actionSkip(
   _ctx: ActionContext,
@@ -32,6 +33,11 @@ export async function actionSkip(
       tag: { label: `skip ${item.contactName}`, status: 'failed' },
     }
   }
+
+  // Also close out any open escalation row — otherwise it stays pending
+  // forever and the "Needs review" stat card keeps counting a thread the
+  // operator already skipped via WhatsApp.
+  await resolveOpenEscalations(supabase, item.conversationId)
 
   return {
     ackBody: `Closed ${item.contactName}.`,

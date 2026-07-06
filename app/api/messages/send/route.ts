@@ -14,7 +14,9 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { sendMetaMessage } from '@/lib/meta-reply'
 import { sendWhatsAppMessage } from '@/lib/whatsapp'
 import { sendZohoReply } from '@/lib/email-ai'
+import { resolveOpenEscalations } from '@/lib/caye-agent/tools/write-low/_guards'
 import { maybeRefreshOwnerVoiceProfile } from '@/lib/owner-voice-learning'
+import { maybeSuggestBusinessFacts } from '@/lib/business-fact-suggestions'
 
 export async function POST(request: NextRequest) {
   // ── Auth ────────────────────────────────────────────────────────────────────
@@ -182,11 +184,22 @@ export async function POST(request: NextRequest) {
     })
     .eq('id', conversation_id)
 
+  // Also close out any open escalation row — otherwise it stays pending
+  // forever (see resolveOpenEscalations) and the "Needs review" stat card
+  // keeps counting a thread the owner already handled.
+  await resolveOpenEscalations(supabase, conversation_id)
+
   // Fire-and-forget owner voice learning. Re-extracts the voice profile
   // every 10 trusted-channel owner messages. Non-blocking — silently
   // logged on failure since voice learning is non-critical.
   maybeRefreshOwnerVoiceProfile(account.user_id, conv.channel_type).catch(err =>
     console.error('[messages/send] Owner voice refresh failed:', err)
+  )
+
+  // Fire-and-forget business-fact-candidate detection. Non-blocking — see
+  // lib/business-fact-suggestions.ts for why this exists.
+  maybeSuggestBusinessFacts(account.user_id, conversation_id, text).catch(err =>
+    console.error('[messages/send] Business fact suggestion failed:', err)
   )
 
   return NextResponse.json({ success: true, message })

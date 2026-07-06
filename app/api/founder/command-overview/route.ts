@@ -29,6 +29,11 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'workspaceId is required' }, { status: 400 })
   }
 
+  // Weeks away from the current one — CommandCalendar's prev/next nav.
+  // 0 = this week (the only value this route supported before).
+  const weekOffsetParam = req.nextUrl.searchParams.get('weekOffset')
+  const weekOffset = weekOffsetParam ? parseInt(weekOffsetParam, 10) || 0 : 0
+
   const authHeader = req.headers.get('authorization')
   const accessToken = authHeader?.replace('Bearer ', '')
   if (!accessToken) {
@@ -44,14 +49,14 @@ export async function GET(req: NextRequest) {
   const supabase = createServiceClient()
   const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
 
-  // This calendar week, Monday through Sunday (matches CommandCalendar's
-  // Mon–Sun grid).
+  // Monday–Sunday of the requested week (matches CommandCalendar's
+  // Mon–Sun grid). weekOffset shifts whole weeks earlier/later.
   const now = new Date()
   const dow = now.getDay() // 0 = Sunday
   const mondayOffset = dow === 0 ? -6 : 1 - dow
   const monday = new Date(now)
   monday.setHours(0, 0, 0, 0)
-  monday.setDate(now.getDate() + mondayOffset)
+  monday.setDate(now.getDate() + mondayOffset + weekOffset * 7)
   const nextMonday = new Date(monday)
   nextMonday.setDate(monday.getDate() + 7)
 
@@ -70,7 +75,7 @@ export async function GET(req: NextRequest) {
   ] = await Promise.all([
     supabase
       .from('caye_escalations')
-      .select('id, category, route_to, customer_facing_message, internal_context, created_at, owner_responded_at')
+      .select('id, conversation_id, category, route_to, customer_facing_message, internal_context, created_at, owner_responded_at')
       .eq('workspace_id', workspaceId)
       .order('created_at', { ascending: false })
       .limit(20),
@@ -82,7 +87,7 @@ export async function GET(req: NextRequest) {
       .limit(20000),
     supabase
       .from('bookings')
-      .select('id, customer_name, booking_date, booking_time, status, number_of_people')
+      .select('id, customer_name, booking_date, booking_time, status, number_of_people, payment_confirmed_at, conversation_id, service:booking_services(name)')
       .eq('user_id', workspaceId)
       .gte('booking_date', monday.toISOString().slice(0, 10))
       .lt('booking_date', nextMonday.toISOString().slice(0, 10))
@@ -138,14 +143,49 @@ export async function GET(req: NextRequest) {
 
   const pendingEscalations = (escalations ?? []).filter((e) => !e.owner_responded_at).length
 
+  // Conversation IDs with an escalation still waiting on the
+  // owner/founder — used to flag bookings whose customer has an open
+  // issue, so CommandCalendar can surface it without a second query.
+  const openEscalationConversationIds = new Set(
+    (escalations ?? [])
+      .filter((e) => !e.owner_responded_at && e.conversation_id)
+      .map((e) => e.conversation_id as string)
+  )
+
+  interface BookingRow {
+    id: string
+    customer_name: string
+    booking_date: string
+    booking_time: string
+    status: string
+    number_of_people: number
+    payment_confirmed_at: string | null
+    conversation_id: string | null
+    service: { name: string }[] | { name: string } | null
+  }
+
+  const bookings = ((bookingsRows ?? []) as unknown as BookingRow[]).map((b) => ({
+    id: b.id,
+    customer_name: b.customer_name,
+    booking_date: b.booking_date,
+    booking_time: b.booking_time,
+    status: b.status,
+    number_of_people: b.number_of_people,
+    payment_confirmed: !!b.payment_confirmed_at,
+    conversation_id: b.conversation_id,
+    service_name: Array.isArray(b.service) ? (b.service[0]?.name ?? null) : (b.service?.name ?? null),
+    has_open_escalation: !!b.conversation_id && openEscalationConversationIds.has(b.conversation_id),
+  }))
+
   return NextResponse.json({
     escalations: escalations ?? [],
     pending_escalation_count: pendingEscalations,
     daily_cost: dailyCost,
     total_cost_usd: Number(totalCost.toFixed(4)),
     llm_call_count: (llmRows ?? []).length,
-    bookings: bookingsRows ?? [],
+    bookings,
     week_start: monday.toISOString().slice(0, 10),
+    week_offset: weekOffset,
     conversations: conversationsRows ?? [],
     whatsapp_outbound_enabled: aiConfig?.whatsapp_outbound_enabled ?? false,
   })

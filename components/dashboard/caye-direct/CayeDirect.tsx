@@ -3,10 +3,12 @@
 import { useState, useEffect } from 'react'
 import { getSession } from '@/lib/supabase'
 import { CayeMark } from '@/components/brand/CayeMark'
+import { CayeLoadingPulse } from '@/components/dashboard/founder-home/CayeLoadingPulse'
 import CayeDirectThread from './CayeDirectThread'
 
 const CARD_BORDER = '#1f1f23'
 const GRADIENT = 'linear-gradient(90deg, #00778B, #7DC9CB, #FFD68F)'
+const GLASS = { backdropFilter: 'blur(20px) saturate(140%)', WebkitBackdropFilter: 'blur(20px) saturate(140%)' } as const
 
 interface Operator {
   id: number
@@ -69,6 +71,10 @@ function OperatorRow({ op, active, onClick }: { op: Operator; active: boolean; o
 // per the dashboard's locked scope in Products/Caye/CLAUDE.md. This is
 // purely a lens on operators who already exist, same as Command
 // Conversations is a lens on unified_conversations.
+function storageKey(workspaceId: string): string {
+  return `caye-direct-selected-operator:${workspaceId}`
+}
+
 export default function CayeDirect({ workspaceId }: { workspaceId: string }) {
   const [operators, setOperators] = useState<Operator[] | null>(null)
   const [selectedId, setSelectedId] = useState<number | null>(null)
@@ -88,7 +94,13 @@ export default function CayeDirect({ workspaceId }: { workspaceId: string }) {
       const ops: Operator[] = json.operators ?? []
       setOperators(ops)
       const founder = ops.find((o) => o.role === 'founder')
-      setSelectedId(founder?.id ?? ops[0]?.id ?? null)
+      let remembered: number | null = null
+      try {
+        const raw = window.localStorage.getItem(storageKey(workspaceId))
+        remembered = raw ? Number(raw) : null
+      } catch {}
+      const rememberedValid = remembered !== null && ops.some((o) => o.id === remembered)
+      setSelectedId(rememberedValid ? remembered : founder?.id ?? ops[0]?.id ?? null)
     }
     load()
     return () => { cancelled = true }
@@ -96,10 +108,17 @@ export default function CayeDirect({ workspaceId }: { workspaceId: string }) {
 
   const selected = operators?.find((o) => o.id === selectedId) ?? null
 
+  function selectOperator(id: number) {
+    setSelectedId(id)
+    try {
+      window.localStorage.setItem(storageKey(workspaceId), String(id))
+    } catch {}
+  }
+
   return (
     <div style={{ display: 'flex', height: '100%', color: '#f4f4f5' }}>
       <div style={{ width: 168, flexShrink: 0, borderRight: `1px solid ${CARD_BORDER}`, display: 'flex', flexDirection: 'column' }}>
-        <div style={{ position: 'relative', padding: '14px 14px 10px' }}>
+        <div style={{ position: 'relative', padding: '14px 14px 10px', background: 'rgba(255,255,255,0.02)', ...GLASS }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <CayeMark size={18} />
             <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 700, letterSpacing: '0.05em' }}>CAYE DIRECT</span>
@@ -108,12 +127,12 @@ export default function CayeDirect({ workspaceId }: { workspaceId: string }) {
         </div>
         <div style={{ padding: '8px 6px', flex: 1, overflowY: 'auto' }}>
           {operators === null ? (
-            <div style={{ fontSize: 11, color: '#52525b', padding: '6px 8px' }}>Loading…</div>
+            <div style={{ padding: '6px 8px' }}><CayeLoadingPulse size={13} /></div>
           ) : operators.length === 0 ? (
             <div style={{ fontSize: 11, color: '#52525b', padding: '6px 8px' }}>No operators yet.</div>
           ) : (
             operators.map((op) => (
-              <OperatorRow key={op.id} op={op} active={op.id === selectedId} onClick={() => setSelectedId(op.id)} />
+              <OperatorRow key={op.id} op={op} active={op.id === selectedId} onClick={() => selectOperator(op.id)} />
             ))
           )}
         </div>
@@ -129,7 +148,7 @@ export default function CayeDirect({ workspaceId }: { workspaceId: string }) {
         />
       ) : (
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#52525b', fontSize: 13 }}>
-          {operators === null ? 'Loading…' : 'Select an operator.'}
+          {operators === null ? <CayeLoadingPulse size={18} /> : 'Select an operator.'}
         </div>
       )}
     </div>

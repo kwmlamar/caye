@@ -116,6 +116,10 @@ interface WaInboundMessage {
   timestamp: string
   type: string
   text?: { body: string }
+  /** Present when type === 'button' — a tap on a template Quick Reply
+   *  button (2026-07-05, caye_driver_consent's "OK" button). Meta echoes
+   *  the button's label back as .text. */
+  button?: { text?: string; payload?: string }
   context?: { id: string; from?: string }
 }
 
@@ -241,8 +245,18 @@ async function handleOneInbound(
       console.warn(`[whatsapp-operator] expired pending OTP for from=${fromRaw}`)
       return
     }
-    const body = message.type === 'text' ? (message.text?.body ?? '').trim() : ''
-    if (body === allow.pending_otp_code) {
+    // Accept either a typed reply or a tap on the caye_driver_consent
+    // template's "OK" Quick Reply button — Meta delivers a button tap as
+    // type: 'button' with the button's label echoed back in .text.
+    const body =
+      message.type === 'text'
+        ? (message.text?.body ?? '').trim()
+        : message.type === 'button'
+          ? (message.button?.text ?? '').trim()
+          : ''
+    // Case-insensitive: drivers confirm with "OK" (any casing); owner/staff
+    // codes are numeric so case never matters for them.
+    if (body.toLowerCase() === (allow.pending_otp_code ?? '').toLowerCase()) {
       await supabase
         .from('operator_allowlist')
         .update({
@@ -254,9 +268,13 @@ async function handleOneInbound(
       // Free-form send (no template needed) — the user just messaged us
       // with their OTP, so the 24h window is open. Saves a Meta template.
       const { sendFreeFormWhatsApp } = await import('@/lib/whatsapp/outbound')
+      const welcomeBody =
+        allow.role === 'driver'
+          ? "You're set. I'll text you when there's a pickup for you, with the time and location. Ask me anything about a pickup and I'll do my best — I'll loop in the owner if I can't answer."
+          : "You're verified. Welcome aboard.\n\nAnything you need — check bookings, draft a reply, update prices, manage the schedule — just text me."
       await sendFreeFormWhatsApp(
         `+${normalized}`,
-        "You're verified. Welcome aboard.\n\nAnything you need — check bookings, draft a reply, update prices, manage the schedule — just text me.",
+        welcomeBody,
         `team-welcome-${allow.workspace_id}-${normalized}-${Date.now()}`
       )
       console.log(`[whatsapp-operator] verified team member from=${fromRaw}`)
@@ -267,10 +285,61 @@ async function handleOneInbound(
   }
 
   const workspaceId: string = allow.workspace_id
-  const callerRole = allow.role as 'owner' | 'staff' | 'founder'
+  const callerRole = allow.role as 'owner' | 'staff' | 'founder' | 'driver'
   const callerName = (allow as { name?: string | null }).name ?? null
   const operatorId: number = allow.id
   const operator = { id: operatorId, name: callerName, role: callerRole }
+
+  // ── Driver mode (2026-07-05) ─────────────────────────────────────────
+  // Drivers never go through discovery grill, held-item classification,
+  // or the back-office agent — they get their own narrow mode. Branches
+  // out here, before any of the owner/staff/founder-shaped logic below.
+  if (callerRole === 'driver') {
+    const driverReplyTo = `+${normalized}`
+    if (message.type !== 'text' || !message.text?.body) {
+      return // No media handling for drivers in v1.
+    }
+    const driverBody = message.text.body.trim()
+
+    await supabase.from('caye_operator_messages').insert({
+      workspace_id: workspaceId,
+      direction: 'inbound',
+      wa_message_id: message.id,
+      body: driverBody,
+      intent: null,
+      claude_format: { role: 'user', content: driverBody },
+      operator_allowlist_id: operator.id,
+      operator_name: operator.name,
+      operator_role: operator.role,
+    })
+
+    try {
+      const agentResult = await cayeAgent({
+        mode: 'driver',
+        workspaceId,
+        userMessage: driverBody,
+        callerRole: 'driver',
+        callerName,
+        operatorId,
+        callerPhone: driverReplyTo,
+      })
+
+      if (agentResult.replyText) {
+        const sendResult = await sendFreeFormWhatsApp(
+          driverReplyTo,
+          agentResult.replyText,
+          `driver-${message.id}`
+        )
+        if (sendResult.status === 'failed') {
+          console.error(`[whatsapp-operator] driver reply send failed for ${workspaceId}:`, sendResult.error)
+        }
+      }
+      await persistAgentTurns(supabase, workspaceId, agentResult.newTurns, operator)
+    } catch (err) {
+      console.error(`[whatsapp-operator] driver agent failed for ${workspaceId}:`, err)
+    }
+    return
+  }
 
   // Fetch the workspace's outbound config (flag + canonical operator
   // number). Separate query from the allowlist lookup so the allowlist

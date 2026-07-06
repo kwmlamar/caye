@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, type ReactNode } from 'react'
+import { useState, type ReactNode, type CSSProperties } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { CayeMark } from '@/components/brand/CayeMark'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -11,6 +11,7 @@ import CommandConversations from '@/components/dashboard/command-conversations/C
 import CayeDirect from '@/components/dashboard/caye-direct/CayeDirect'
 import GlobalPerformance from '@/components/dashboard/global-performance/GlobalPerformance'
 import ContactsPanel from '@/components/dashboard/founder-home/ContactsPanel'
+import { CayeLoadingPulse } from '@/components/dashboard/founder-home/CayeLoadingPulse'
 import type { CustomerStatus } from '@/types/database'
 
 // Tokens lifted directly from Sandbox/caye-command (the reference
@@ -25,6 +26,15 @@ const CARD_BG = '#121214'
 const CARD_BORDER = '#1f1f23'
 const LABEL_COLOR = '#71717a' // zinc-500
 const GRADIENT = 'linear-gradient(90deg, #00778B, #7DC9CB, #FFD68F)'
+
+// Glass treatment for chrome only (icon rail, top bar, floating buttons) —
+// not the data-dense surfaces (stat cards, lists, calendar), which stay
+// fully opaque so small mono text and escalation badges stay legible.
+// See the "add transparency" discussion: scoped to navigation/framing.
+const GLASS: CSSProperties = {
+  backdropFilter: 'blur(20px) saturate(140%)',
+  WebkitBackdropFilter: 'blur(20px) saturate(140%)',
+}
 
 const STATUS_LABEL: Record<CustomerStatus, string> = {
   active: 'Live',
@@ -70,11 +80,12 @@ function ExpandButton({ expanded, onClick }: { expanded: boolean; onClick: () =>
         position: 'absolute', top: 10, right: 10, zIndex: 1,
         width: 26, height: 26, borderRadius: 8,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        background: active ? 'rgba(125,201,203,0.12)' : 'rgba(255,255,255,0.06)',
+        background: active ? 'rgba(125,201,203,0.16)' : 'rgba(255,255,255,0.08)',
         border: `1px solid ${active ? 'rgba(125,201,203,0.45)' : CARD_BORDER}`,
         color: active ? '#7DC9CB' : '#a1a1aa', cursor: 'pointer',
         outline: 'none', boxShadow: focused ? '0 0 0 2px rgba(125,201,203,0.35)' : 'none',
         transition: 'background 0.15s ease, border-color 0.15s ease, color 0.15s ease',
+        ...GLASS,
       }}
     >
       {expanded ? (
@@ -95,9 +106,11 @@ function ExpandButton({ expanded, onClick }: { expanded: boolean; onClick: () =>
 function StatCard({ label, value, valueColor = '#f4f4f5' }: { label: string; value: string; valueColor?: string }) {
   return (
     <div style={{
+      position: 'relative', overflow: 'hidden',
       background: CARD_BG, border: `1px solid ${CARD_BORDER}`, borderRadius: 18, padding: '16px 18px',
       display: 'flex', flexDirection: 'column', justifyContent: 'space-between', minHeight: 96,
     }}>
+      <div aria-hidden style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 2, background: GRADIENT, opacity: 0.45 }} />
       <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', textTransform: 'uppercase', color: LABEL_COLOR, marginBottom: 8 }}>
         {label}
       </div>
@@ -166,10 +179,8 @@ function RailButton({ item, active, onClick }: { item: (typeof RAIL_ITEMS)[numbe
 function StubConsole({ label }: { label: string }) {
   return (
     <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div style={{ textAlign: 'center', maxWidth: 360 }}>
-        <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', letterSpacing: '0.1em', color: '#52525b', marginBottom: 8 }}>
-          {label.toUpperCase()} · OFFLINE
-        </div>
+      <div style={{ textAlign: 'center', maxWidth: 360, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
+        <CayeLoadingPulse label={`${label.toUpperCase()} · OFFLINE`} size={20} />
         <p style={{ fontSize: 13, color: '#71717a', lineHeight: 1.6 }}>
           Not built yet — placeholder rail destination. Use Caye Command for monitoring, source scheduling, and conversations for now.
         </p>
@@ -191,8 +202,13 @@ export default function FounderHome() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { workspace, workspaceId, workspaces } = useWorkspace()
-  const { data } = useCommandOverview(workspaceId)
+  const [weekOffset, setWeekOffset] = useState(0)
+  const { data } = useCommandOverview(workspaceId, weekOffset)
   const [expanded, setExpanded] = useState<'calendar' | 'conversations' | 'cayeDirect' | null>(null)
+  // Set by CommandCalendar on a booking click — jumps CommandConversations
+  // to that customer's thread. Lives here since the two panels are
+  // siblings with no coordination of their own.
+  const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null)
   // Read from the URL (?rail=), not local state — switching workspaces
   // navigates to a new /dashboard/[workspaceId] route, which remounts this
   // component (confirmed: even lifting this to a persistent layout-level
@@ -213,14 +229,27 @@ export default function FounderHome() {
   const activeRailItem = RAIL_ITEMS.find((r) => r.id === railView)!
 
   return (
-    <div style={{ display: 'flex', height: '100%', background: APP_BG, color: '#f4f4f5', overflow: 'hidden', fontFamily: 'var(--font-sans)' }}>
+    <div className="caye-founder" style={{ display: 'flex', height: '100%', background: APP_BG, color: '#f4f4f5', overflow: 'hidden', fontFamily: 'var(--font-sans)' }}>
+      {/* Thin dark scrollbars everywhere under the founder console — every
+          scrollable panel (calendar, conversations, contacts, global
+          performance, workspace list, Caye Direct) is a descendant of this
+          one root, so one rule covers all of them instead of restyling
+          each panel's overflow container individually. */}
+      <style>{`
+        .caye-founder * { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.15) transparent; }
+        .caye-founder *::-webkit-scrollbar { width: 6px; height: 6px; }
+        .caye-founder *::-webkit-scrollbar-track { background: transparent; }
+        .caye-founder *::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 3px; }
+        .caye-founder *::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.25); }
+      `}</style>
       {/* ── Icon rail — Caye Command / Contacts are real, the rest are
           stub destinations matching how the reference mockup itself
           left them (unbuilt), per explicit direction to add the rail
           now with temp pages rather than wait for all of it. ── */}
       <nav style={{
-        width: 64, flexShrink: 0, background: '#08080a', borderRight: `1px solid ${CARD_BORDER}`,
+        width: 64, flexShrink: 0, background: 'rgba(8,8,10,0.6)', borderRight: `1px solid ${CARD_BORDER}`,
         display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, padding: '16px 0',
+        ...GLASS,
       }}>
         <button
           onClick={() => setRailView('dashboard')}
@@ -261,7 +290,8 @@ export default function FounderHome() {
                   textAlign: 'left', border: `1px solid ${active ? '#2d2d34' : 'transparent'}`,
                   cursor: 'pointer', borderRadius: 12,
                   padding: '12px 14px 12px 17px',
-                  background: active ? 'rgba(24,24,27,0.9)' : 'transparent',
+                  background: active ? 'rgba(24,24,27,0.55)' : 'transparent',
+                  ...(active ? GLASS : {}),
                 }}
               >
                 {active && (
@@ -296,8 +326,12 @@ export default function FounderHome() {
             'radial-gradient(ellipse 900px 500px at 100% -10%, rgba(0,119,139,0.14), transparent 60%), ' +
             'radial-gradient(ellipse 700px 400px at -5% 110%, rgba(255,214,143,0.05), transparent 60%)',
         }} />
-        {/* Top status bar */}
-        <div style={{ padding: '16px 24px', borderBottom: `1px solid ${CARD_BORDER}`, display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+        {/* Top status bar — translucent so the atmosphere gradient behind
+            it (the radial-gradient div above) shows through faintly. */}
+        <div style={{
+          padding: '16px 24px', borderBottom: `1px solid ${CARD_BORDER}`, display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0,
+          background: 'rgba(9,9,11,0.55)', ...GLASS,
+        }}>
           {railView === 'performance' ? (
             <h1 style={{ fontSize: 16, fontWeight: 600, fontFamily: 'var(--font-display)', margin: 0 }}>Global Performance — All Workspaces</h1>
           ) : (
@@ -324,7 +358,7 @@ export default function FounderHome() {
                 value={data ? (data.whatsapp_outbound_enabled ? 'Active & Chatting' : 'Paused') : '—'}
                 valueColor={data?.whatsapp_outbound_enabled ? '#34d399' : '#71717a'}
               />
-              <StatCard label="Bookings this week" value={data ? String(data.bookings.length) : '—'} />
+              <StatCard label={weekOffset === 0 ? 'Bookings this week' : 'Bookings shown'} value={data ? String(data.bookings.length) : '—'} />
               <StatCard
                 label="Needs review"
                 value={data ? String(data.pending_escalation_count) : '—'}
@@ -354,7 +388,15 @@ export default function FounderHome() {
               }}>
                 <div aria-hidden style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 2, background: GRADIENT, opacity: 0.45, zIndex: 1 }} />
                 <ExpandButton expanded={expanded === 'calendar'} onClick={() => setExpanded(expanded === 'calendar' ? null : 'calendar')} />
-                {data && <CommandCalendar bookings={data.bookings} weekStart={data.week_start} />}
+                {data && (
+                  <CommandCalendar
+                    bookings={data.bookings}
+                    weekStart={data.week_start}
+                    weekOffset={weekOffset}
+                    onWeekOffsetChange={setWeekOffset}
+                    onSelectConversation={setSelectedConversationId}
+                  />
+                )}
               </div>
               <div style={{
                 display: expanded === 'calendar' ? 'none' : 'block',
@@ -363,7 +405,13 @@ export default function FounderHome() {
               }}>
                 <div aria-hidden style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 2, background: GRADIENT, opacity: 0.45, zIndex: 1 }} />
                 <ExpandButton expanded={expanded === 'conversations'} onClick={() => setExpanded(expanded === 'conversations' ? null : 'conversations')} />
-                {data && <CommandConversations workspaceId={workspaceId} conversations={data.conversations} />}
+                {data && (
+                  <CommandConversations
+                    workspaceId={workspaceId}
+                    conversations={data.conversations}
+                    selectedConversationId={selectedConversationId}
+                  />
+                )}
               </div>
             </div>
 

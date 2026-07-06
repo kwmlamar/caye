@@ -9,6 +9,7 @@ import { FormattedReplyText } from '@/components/ui/FormattedReplyText'
 const CARD_BORDER = '#1f1f23'
 const NEAR_BOTTOM_PX = 96
 const TEXTAREA_MAX_H = 120
+const GLASS = { backdropFilter: 'blur(20px) saturate(140%)', WebkitBackdropFilter: 'blur(20px) saturate(140%)' } as const
 
 interface OperatorMessage {
   id: string
@@ -308,7 +309,7 @@ export default function CayeDirectThread({ workspaceId, operatorId, operatorLabe
         .caye-direct-textarea::placeholder { color: rgba(244,244,245,0.32); }
       `}</style>
 
-      <div style={{ padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 8, borderBottom: `1px solid ${CARD_BORDER}` }}>
+      <div style={{ padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 8, borderBottom: `1px solid ${CARD_BORDER}`, background: 'rgba(255,255,255,0.02)', ...GLASS }}>
         <span style={{ fontSize: 12.5, fontWeight: 600 }}>{operatorLabel}</span>
         <span style={{ fontSize: 11, color: '#52525b' }}>↔ Caye</span>
         {readOnly && (
@@ -404,11 +405,11 @@ export default function CayeDirectThread({ workspaceId, operatorId, operatorLabe
       </div>
 
       {readOnly ? (
-        <div style={{ padding: '12px 16px', borderTop: `1px solid ${CARD_BORDER}`, fontSize: 11.5, color: '#52525b', textAlign: 'center' }}>
+        <div style={{ padding: '12px 16px', borderTop: `1px solid ${CARD_BORDER}`, fontSize: 11.5, color: '#52525b', textAlign: 'center', background: 'rgba(255,255,255,0.02)', ...GLASS }}>
           {operatorLabel} texts Caye directly from their own WhatsApp — you can watch here, not send as them.
         </div>
       ) : (
-        <div style={{ padding: 14, borderTop: `1px solid ${CARD_BORDER}` }}>
+        <div style={{ padding: 14, borderTop: `1px solid ${CARD_BORDER}`, background: 'rgba(255,255,255,0.02)', ...GLASS }}>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
             {QUICK_COMMANDS.map((cmd) => (
               <QuickCommandChip key={cmd} label={cmd} disabled={sending} onClick={() => send(cmd)} />

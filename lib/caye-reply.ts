@@ -479,7 +479,11 @@ const TOOLS: Anthropic.Tool[] = [
       '- Never promises an outcome ("we\'ll honor that", "the refund is on its way") — ' +
       'the owner decides, not you.\n' +
       '- Voice rules apply exactly as send_reply: no emoji, no tropical metaphors, match ' +
-      'the operator voice profile.\n\n' +
+      'the operator voice profile.\n' +
+      '- Still close with the standard sign-off, signature block, and tagline from ' +
+      'VERBATIM ELEMENTS, exactly as send_reply does — a short holding message is still ' +
+      'a complete email to the customer, not an internal note, and must end the same way ' +
+      'every other reply does.\n\n' +
       'INTERNAL CONTEXT rules — write it like a handoff. 2-5 sentences: what the customer ' +
       'actually wants, the specific gap you hit (which tool you tried, what came back), ' +
       'what you\'d suggest the operator do.',
@@ -630,7 +634,8 @@ function buildSystem(
     }
     if (voiceProfile.tagline) {
       verbatimLines.push(
-        `- Tagline (always include after the signature block): "${voiceProfile.tagline}"`
+        `- Tagline (always include as its own standalone line immediately after the ` +
+        `signature block — never woven into a sentence elsewhere in the message): "${voiceProfile.tagline}"`
       )
     }
 

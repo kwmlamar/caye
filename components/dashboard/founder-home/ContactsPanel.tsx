@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { formatDistanceToNow } from '@/lib/utils'
 import { useWorkspaceContacts } from '@/lib/useWorkspaceContacts'
+import { CayeLoadingPulse } from '@/components/dashboard/founder-home/CayeLoadingPulse'
 import type { Contact } from '@/types/database'
 
 // Same dark-console tokens as FounderHome.tsx — kept local rather than
@@ -192,7 +193,7 @@ export default function ContactsPanel({ workspaceId }: { workspaceId: string }) 
   return (
     <div style={{ flex: 1, position: 'relative', overflowY: 'auto', padding: 20 }}>
       {loading && (
-        <p style={{ fontSize: 13, color: LABEL_COLOR }}>Loading contacts…</p>
+        <CayeLoadingPulse label="Loading contacts…" size={16} />
       )}
       {error && (
         <p style={{ fontSize: 13, color: '#fb7185' }}>{error}</p>

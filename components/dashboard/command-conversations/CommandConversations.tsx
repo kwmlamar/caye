@@ -5,7 +5,10 @@ import { getSession } from '@/lib/supabase'
 import { formatDistanceToNow } from '@/lib/utils'
 import { CayeMark } from '@/components/brand/CayeMark'
 import { FormattedReplyText } from '@/components/ui/FormattedReplyText'
+import { CayeLoadingPulse } from '@/components/dashboard/founder-home/CayeLoadingPulse'
 import type { ConversationSummary } from '@/lib/useCommandOverview'
+
+const GLASS = { backdropFilter: 'blur(20px) saturate(140%)', WebkitBackdropFilter: 'blur(20px) saturate(140%)' } as const
 
 interface ThreadMessage {
   id: string
@@ -103,9 +106,13 @@ function ConversationRow({ c, active, onClick }: { c: ConversationSummary; activ
 interface Props {
   workspaceId: string
   conversations: ConversationSummary[]
+  /** Set by a sibling panel (CommandCalendar's booking click-through) to
+   *  jump this panel to a specific conversation without owning its
+   *  internal selection/search/tab state. */
+  selectedConversationId?: string | null
 }
 
-export default function CommandConversations({ workspaceId, conversations }: Props) {
+export default function CommandConversations({ workspaceId, conversations, selectedConversationId }: Props) {
   const [tab, setTab] = useState<'all' | 'review'>('all')
   const [query, setQuery] = useState('')
   const [activeId, setActiveId] = useState<string | null>(conversations[0]?.id ?? null)
@@ -113,6 +120,15 @@ export default function CommandConversations({ workspaceId, conversations }: Pro
   const [threadLoading, setThreadLoading] = useState(false)
   const [searchFocused, setSearchFocused] = useState(false)
   const threadContainerRef = useRef<HTMLDivElement | null>(null)
+
+  // A booking click in CommandCalendar routes here — jump straight to that
+  // customer's thread, clearing any tab/search filter that would hide it.
+  useEffect(() => {
+    if (!selectedConversationId) return
+    setActiveId(selectedConversationId)
+    setTab('all')
+    setQuery('')
+  }, [selectedConversationId])
 
   const reviewCount = conversations.filter((c) => c.human_agent_enabled).length
   const list = conversations
@@ -201,7 +217,7 @@ export default function CommandConversations({ workspaceId, conversations }: Pro
           <div style={{ padding: 16, fontSize: 13, color: 'rgba(245,245,244,0.35)' }}>Select a conversation.</div>
         ) : (
           <>
-            <div style={{ padding: '14px 16px', flexShrink: 0, borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+            <div style={{ padding: '14px 16px', flexShrink: 0, borderBottom: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.02)', ...GLASS }}>
               <div style={{ fontSize: 14, fontWeight: 700 }}>{activeSummary.customer_name || 'Unknown'}</div>
               <div style={{ fontSize: 11, color: 'rgba(245,245,244,0.35)', marginTop: 2 }}>
                 Channel: {CHANNEL_LABEL[activeSummary.channel_type] ?? activeSummary.channel_type}
@@ -209,7 +225,7 @@ export default function CommandConversations({ workspaceId, conversations }: Pro
             </div>
             <div ref={threadContainerRef} style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 16 }}>
             {threadLoading ? (
-              <div style={{ fontSize: 12.5, color: 'rgba(245,245,244,0.4)' }}>Loading…</div>
+              <CayeLoadingPulse size={16} />
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 {(thread?.messages ?? []).map((m) => {
