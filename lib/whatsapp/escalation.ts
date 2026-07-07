@@ -37,6 +37,23 @@ export async function recordEscalation(
 ): Promise<{ escalationId: string | null }> {
   const supabase = createServiceClient()
 
+  // Derive a fallback ping summary for LLM-driven escalations that didn't
+  // supply one. Uses internalContext (Caye's actual briefing + proposed
+  // action for the operator), not customerFacingMessage (what she told
+  // the customer) — the operator needs the substance of the ask, not an
+  // echo of her own reply. Format mirrors the forced-escalation shape so
+  // operator pings read consistently regardless of trigger path. Caps at
+  // 200 chars — enough room for "what's needed" + a proposed action.
+  //
+  // Persisted (not just used for the immediate ping) so the escalation-
+  // followup cron can re-ping days later with the same clean text instead
+  // of reconstructing one from internal_context, which is dashboard-only
+  // debug text (classifier trigger names, raw keyword reasons) that must
+  // never reach an owner's WhatsApp.
+  const pingSummary =
+    input.pingSummary ??
+    `${labelForCategory(input.category)} — ${input.internalContext.replace(/\s+/g, ' ').trim().slice(0, 200)}`
+
   const { data, error } = await supabase
     .from('caye_escalations')
     .insert({
@@ -46,6 +63,7 @@ export async function recordEscalation(
       route_to: input.routeTo,
       customer_facing_message: input.customerFacingMessage,
       internal_context: input.internalContext,
+      ping_summary: pingSummary,
     })
     .select('id')
     .single()
@@ -60,7 +78,7 @@ export async function recordEscalation(
       .from('unified_conversations')
       .update({
         human_agent_enabled: true,
-        human_agent_reason: `Escalation (${input.category}): ${input.internalContext.slice(0, 120)}`,
+        human_agent_reason: `Escalation (${input.category}): ${pingSummary.slice(0, 120)}`,
         human_agent_marked_at: new Date().toISOString(),
       })
       .eq('id', input.conversationId)
@@ -81,17 +99,6 @@ export async function recordEscalation(
       },
     })
   }
-
-  // Derive a fallback ping summary for LLM-driven escalations that didn't
-  // supply one. Uses internalContext (Caye's actual briefing + proposed
-  // action for the operator), not customerFacingMessage (what she told
-  // the customer) — the operator needs the substance of the ask, not an
-  // echo of her own reply. Format mirrors the forced-escalation shape so
-  // operator pings read consistently regardless of trigger path. Caps at
-  // 200 chars — enough room for "what's needed" + a proposed action.
-  const pingSummary =
-    input.pingSummary ??
-    `${labelForCategory(input.category)} — ${input.internalContext.replace(/\s+/g, ' ').trim().slice(0, 200)}`
 
   enqueueEscalationPings({
     workspaceId: input.workspaceId,

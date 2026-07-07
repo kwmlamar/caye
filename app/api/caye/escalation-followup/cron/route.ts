@@ -65,8 +65,24 @@ interface EscalationRow {
   route_to: 'owner' | 'founder' | 'both'
   customer_facing_message: string
   internal_context: string
+  ping_summary: string | null
   created_at: string
   founder_escalated_at: string | null
+}
+
+/**
+ * Plain-language "still waiting" summary for the follow-up ping. Reads
+ * row.ping_summary, the clean summary persisted at escalation-creation time
+ * (see lib/whatsapp/escalation.ts) — never internal_context, which is
+ * dashboard-only debug text (raw classifier trigger names, keyword-match
+ * reasons) that must not reach an owner's WhatsApp. Legacy rows created
+ * before this column existed just get the category label.
+ */
+export function composeFollowupPingSummary(
+  row: Pick<EscalationRow, 'ping_summary' | 'category'>
+): string {
+  const cleanSummary = row.ping_summary ?? labelForCategory(row.category as EscalationCategory)
+  return `Still waiting — ${cleanSummary}`.slice(0, 200)
 }
 
 interface ConversationRow {
@@ -102,7 +118,7 @@ export async function GET(request: NextRequest) {
   const { data: rows, error } = await supabase
     .from('caye_escalations')
     .select(
-      'id, workspace_id, conversation_id, category, route_to, customer_facing_message, internal_context, created_at, founder_escalated_at'
+      'id, workspace_id, conversation_id, category, route_to, customer_facing_message, internal_context, ping_summary, created_at, founder_escalated_at'
     )
     .is('owner_responded_at', null)
     .or(`follow_up_sent_at.is.null,follow_up_sent_at.lte.${repeatCutoff}`)
@@ -166,9 +182,7 @@ async function processEscalation(
       .maybeSingle()
     if (conv?.customer_name) contactName = conv.customer_name
   }
-  const pingSummary =
-    `Still waiting — ${labelForCategory(row.category as EscalationCategory)} — ` +
-    row.internal_context.replace(/\s+/g, ' ').trim().slice(0, 180)
+  const pingSummary = composeFollowupPingSummary(row)
 
   // Re-ping the operator(s) with escalation_followup framing. The customer
   // reassurance lives in the operator-side script ("send a softer line to
