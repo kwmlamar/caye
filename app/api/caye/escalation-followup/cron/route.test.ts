@@ -18,7 +18,7 @@ describe('composeFollowupPingSummary', () => {
 
   it('falls back to the category label for legacy rows with no ping_summary', () => {
     const result = composeFollowupPingSummary({ ping_summary: null, category: 'policy' })
-    expect(result).toBe('Still waiting — Policy call')
+    expect(result).toBe('Still waiting — A call I need you to make')
     expect(result).not.toMatch(/forced escalation/i)
     expect(result).not.toMatch(/inbound classifier/i)
   })

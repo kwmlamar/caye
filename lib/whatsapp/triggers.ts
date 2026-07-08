@@ -173,7 +173,15 @@ export async function enqueueEscalationPings(
   const recipients = await resolveEscalationRecipients(input.workspaceId, input.routeTo)
   if (recipients.length === 0) return
 
-  const ts = input.timestamp ?? new Date().toISOString()
+  // Bucketed to the hour, not the raw timestamp: keeps the idempotency key
+  // distinct across genuinely separate sends (the daily follow-up cron is
+  // ~24h apart) while collapsing retries/overlapping invocations of the
+  // *same* cron run (seconds apart) onto one key, so enqueueOutbound's
+  // unique constraint actually catches the duplicate instead of both firing.
+  const rawTs = input.timestamp ?? new Date().toISOString()
+  const ts = new Date(
+    Math.floor(new Date(rawTs).getTime() / (60 * 60 * 1000)) * 60 * 60 * 1000
+  ).toISOString()
 
   // One queue row per recipient phone. Each carries the destination phone in
   // payload so the dispatch doesn't need to re-resolve the route_to + override

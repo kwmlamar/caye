@@ -38,21 +38,18 @@ export async function recordEscalation(
   const supabase = createServiceClient()
 
   // Derive a fallback ping summary for LLM-driven escalations that didn't
-  // supply one. Uses internalContext (Caye's actual briefing + proposed
-  // action for the operator), not customerFacingMessage (what she told
-  // the customer) — the operator needs the substance of the ask, not an
-  // echo of her own reply. Format mirrors the forced-escalation shape so
-  // operator pings read consistently regardless of trigger path. Caps at
-  // 200 chars — enough room for "what's needed" + a proposed action.
+  // supply one. internalContext is already written as operator-ready prose
+  // by the escalate_to_team tool contract (a 2-5 sentence handoff note
+  // ending in a concrete yes/no proposal — see lib/caye-reply.ts) so it can
+  // be used as-is; no category-label prefix ("Policy call —", "Knowledge
+  // gap —") gets prepended, since that's internal taxonomy jargon, not
+  // something an operator needs to read at a glance. Caps at 200 chars.
   //
   // Persisted (not just used for the immediate ping) so the escalation-
   // followup cron can re-ping days later with the same clean text instead
-  // of reconstructing one from internal_context, which is dashboard-only
-  // debug text (classifier trigger names, raw keyword reasons) that must
-  // never reach an owner's WhatsApp.
+  // of reconstructing one from internal_context on every read.
   const pingSummary =
-    input.pingSummary ??
-    `${labelForCategory(input.category)} — ${input.internalContext.replace(/\s+/g, ' ').trim().slice(0, 200)}`
+    input.pingSummary ?? input.internalContext.replace(/\s+/g, ' ').trim().slice(0, 200)
 
   const { data, error } = await supabase
     .from('caye_escalations')
@@ -142,15 +139,18 @@ export async function applyEscalation(
   return { action: 'reply', content: decision.content }
 }
 
+// Last-resort fallback only, for legacy escalation rows with no persisted
+// ping_summary at all. Plain language on purpose — this can still reach an
+// operator's WhatsApp directly, not just an internal log.
 export function labelForCategory(category: EscalationCategory): string {
   switch (category) {
     case 'gap':
-      return 'Tool gap'
+      return "Something I couldn't do myself"
     case 'policy':
-      return 'Policy call'
+      return 'A call I need you to make'
     case 'knowledge':
-      return 'Knowledge gap'
+      return "A question I don't know the answer to"
     case 'sensitive':
-      return 'Sensitive / commercial'
+      return 'Something private or sensitive'
   }
 }
