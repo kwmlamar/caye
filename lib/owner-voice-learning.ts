@@ -77,11 +77,35 @@ export async function maybeRefreshOwnerVoiceProfile(
 
   try {
     const profile = await extractVoiceProfile(samples)
+
+    // Don't let a confirmed verbatim field (tagline, signature_block, etc.)
+    // get clobbered back to null just because this cycle's 30-message
+    // sample window didn't happen to contain 3+ matching occurrences —
+    // that's a property of the sample, not evidence the phrase stopped
+    // being used. Once something is confirmed once, keep it until a new
+    // extraction produces a different non-null value.
+    const { data: existingRow } = await supabase
+      .from('customers')
+      .select('ai_voice_profile')
+      .eq('id', workspaceId)
+      .maybeSingle()
+    const existing = (existingRow?.ai_voice_profile ?? null) as Partial<
+      import('@/lib/voice-profile').VoiceProfile
+    > | null
+
+    const mergedProfile = {
+      ...profile,
+      signature_block: profile.signature_block ?? existing?.signature_block ?? null,
+      tagline: profile.tagline ?? existing?.tagline ?? null,
+      standard_signoff: profile.standard_signoff ?? existing?.standard_signoff ?? null,
+      standard_opener: profile.standard_opener ?? existing?.standard_opener ?? null,
+    }
+
     const nowISO = new Date().toISOString()
     await supabase
       .from('customers')
       .update({
-        ai_voice_profile: profile,
+        ai_voice_profile: mergedProfile,
         voice_profile_updated_at: nowISO,
         owner_messages_since_profile_update: 0,
       })

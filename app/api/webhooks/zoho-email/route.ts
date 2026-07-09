@@ -24,6 +24,7 @@ import { enqueueHoldPing } from '@/lib/whatsapp/triggers'
 import { applyEscalation } from '@/lib/whatsapp/escalation'
 import { syncBookingToCalendar } from '@/lib/calendar-sync'
 import type { VoiceProfile } from '@/lib/voice-profile'
+import { ensureTagline } from '@/lib/voice-profile'
 import { maybeRefreshContactProfile } from '@/lib/contact-profile'
 import { htmlToPlainText } from '@/lib/email-text'
 import {
@@ -534,10 +535,13 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
   }
 
   // Send via Zoho — to the real customer (parsed for webforms), not the
-  // form service's notify+ address.
+  // form service's notify+ address. ensureTagline is a deterministic
+  // backstop for the tagline instruction in buildSystem (lib/caye-reply.ts)
+  // — that's a soft LLM instruction with no guarantee of compliance.
   const replySubject = subject.startsWith('Re:') ? subject : `Re: ${subject}`
+  const outboundBody = ensureTagline(decision.content, voiceProfile)
   try {
-    await sendZohoReply(effectiveEmail, replySubject, decision.content, threadId, workspaceId)
+    await sendZohoReply(effectiveEmail, replySubject, outboundBody, threadId, workspaceId)
   } catch (err) {
     console.error('[zoho-email webhook] Zoho send failed:', err)
     return
@@ -549,7 +553,7 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
     conversation_id: conversation.id,
     channel_message_id: `caye_auto_${Date.now()}`,
     sender_type: 'business',
-    content: decision.content,
+    content: outboundBody,
     message_type: 'text',
     sent_at: replySentAt,
     status: 'sent',
@@ -563,7 +567,7 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
   if (!outboundErr) {
     await supabase
       .from('unified_conversations')
-      .update({ last_sender_type: 'business', last_business_sender_kind: 'caye', last_message_at: replySentAt, last_message_preview: decision.content.slice(0, 100) })
+      .update({ last_sender_type: 'business', last_business_sender_kind: 'caye', last_message_at: replySentAt, last_message_preview: outboundBody.slice(0, 100) })
       .eq('id', conversation.id)
   }
 

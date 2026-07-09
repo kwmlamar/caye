@@ -1,6 +1,7 @@
 import 'server-only'
 import { createServiceClient } from '@/lib/supabase-server'
 import { enqueueEscalationPings } from './triggers'
+import { extractTargetDate } from './urgency'
 import type {
   CayeAutoReply,
   EscalationCategory,
@@ -51,6 +52,13 @@ export async function recordEscalation(
   const pingSummary =
     input.pingSummary ?? input.internalContext.replace(/\s+/g, ' ').trim().slice(0, 200)
 
+  // Best-effort target date, so the follow-up cron can stop nudging once
+  // the underlying window has passed (confirmed live: a "July 4th booking"
+  // escalation kept getting a daily "still waiting" ping days after July
+  // 4th was gone). Null when no concrete date is mentioned — the cron just
+  // keeps its existing behavior for those rows.
+  const targetDate = extractTargetDate(`${input.internalContext} ${input.customerFacingMessage}`)
+
   const { data, error } = await supabase
     .from('caye_escalations')
     .insert({
@@ -61,6 +69,7 @@ export async function recordEscalation(
       customer_facing_message: input.customerFacingMessage,
       internal_context: input.internalContext,
       ping_summary: pingSummary,
+      target_date: targetDate ? targetDate.toISOString().slice(0, 10) : null,
     })
     .select('id')
     .single()

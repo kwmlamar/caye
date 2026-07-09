@@ -68,6 +68,7 @@ interface EscalationRow {
   ping_summary: string | null
   created_at: string
   founder_escalated_at: string | null
+  target_date: string | null
 }
 
 /**
@@ -118,9 +119,10 @@ export async function GET(request: NextRequest) {
   const { data: rows, error } = await supabase
     .from('caye_escalations')
     .select(
-      'id, workspace_id, conversation_id, category, route_to, customer_facing_message, internal_context, ping_summary, created_at, founder_escalated_at'
+      'id, workspace_id, conversation_id, category, route_to, customer_facing_message, internal_context, ping_summary, created_at, founder_escalated_at, target_date'
     )
     .is('owner_responded_at', null)
+    .is('expired_at', null)
     .or(`follow_up_sent_at.is.null,follow_up_sent_at.lte.${repeatCutoff}`)
     .lte('created_at', cutoff)
     .gte('created_at', lookback)
@@ -138,6 +140,7 @@ export async function GET(request: NextRequest) {
     followed_up: 0,
     skipped: 0,
     founder_escalated: 0,
+    expired: 0,
   }
   if (!rows?.length) return NextResponse.json(summary)
 
@@ -150,7 +153,7 @@ export async function GET(request: NextRequest) {
   return NextResponse.json(summary)
 }
 
-type Outcome = 'resolved' | 'followed_up' | 'skipped'
+type Outcome = 'resolved' | 'followed_up' | 'skipped' | 'expired'
 
 async function processEscalation(
   row: EscalationRow
@@ -182,6 +185,20 @@ async function processEscalation(
       .maybeSingle()
     if (conv?.customer_name) contactName = conv.customer_name
   }
+
+  // The underlying window already passed (e.g. a specific booking date)
+  // with no operator response. Nudging about a dead date is just noise —
+  // send one final closing note instead of the usual "still waiting" ping,
+  // mark expired so the cron stops selecting this row, and clear the hold
+  // flag so it drops out of the inbox's needs-review view too. One-shot:
+  // never goes fully silent (that's the exact bug the daily-repeat design
+  // was originally built to avoid — see file header), it just stops asking
+  // for a decision that's no longer possible to act on.
+  const todayISO = new Date().toISOString().slice(0, 10)
+  if (row.target_date && row.target_date < todayISO) {
+    return expireEscalation(row, contactName)
+  }
+
   const pingSummary = composeFollowupPingSummary(row)
 
   // Re-ping the operator(s) with escalation_followup framing. The customer
@@ -218,6 +235,72 @@ async function processEscalation(
   const founderEscalated = await maybeEscalateToFounder(row, contactName, pingSummary)
 
   return { outcome: 'followed_up', founderEscalated }
+}
+
+/**
+ * One-shot closing ping + auto-resolve for an escalation whose target_date
+ * has passed with no operator response. Sends a single "letting this go"
+ * note via the existing ping pipeline (expired=true suppresses the "still
+ * waiting"/"say the word" framing in both the WhatsApp template and the
+ * Caye Direct log — see app/api/caye/outbound-worker/route.ts), sets
+ * expired_at so the select query at the top of this file never picks the
+ * row up again, and clears the conversation's hold flag so it also drops
+ * out of the inbox's needs-review view. A failed send still marks expired —
+ * the underlying date is dead either way, and nudging forever because a
+ * WhatsApp send failed once would be worse than a silent skip.
+ */
+async function expireEscalation(
+  row: EscalationRow,
+  contactName: string
+): Promise<{ outcome: Outcome; founderEscalated: boolean }> {
+  const supabase = createServiceClient()
+  const dateLabel = row.target_date
+    ? new Date(`${row.target_date}T00:00:00Z`).toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        timeZone: 'UTC',
+      })
+    : 'that window'
+  const closingSummary =
+    `Letting this go — ${contactName}'s ${dateLabel} date already passed with no word from you.`.slice(
+      0,
+      200
+    )
+
+  try {
+    await enqueueEscalationPings(
+      {
+        workspaceId: row.workspace_id,
+        escalationId: row.id,
+        conversationId: row.conversation_id,
+        contactName,
+        category: row.category,
+        routeTo: row.route_to,
+        suggestedReply: row.customer_facing_message,
+        internalContext: row.internal_context,
+        pingSummary: closingSummary,
+        timestamp: new Date().toISOString(),
+        expired: true,
+      },
+      'escalation_followup'
+    )
+  } catch (err) {
+    console.error('[escalation-followup] expiry ping failed:', err)
+  }
+
+  await supabase
+    .from('caye_escalations')
+    .update({ expired_at: new Date().toISOString() })
+    .eq('id', row.id)
+
+  if (row.conversation_id) {
+    await supabase
+      .from('unified_conversations')
+      .update({ human_agent_enabled: false })
+      .eq('id', row.conversation_id)
+  }
+
+  return { outcome: 'expired', founderEscalated: false }
 }
 
 /**

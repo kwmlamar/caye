@@ -20,6 +20,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase-server'
 import { generateCayeAutoReply } from '@/lib/caye-reply'
+import type { VoiceProfile } from '@/lib/voice-profile'
+import { ensureTagline } from '@/lib/voice-profile'
 import { enqueueHoldPing } from '@/lib/whatsapp/triggers'
 import { applyEscalation } from '@/lib/whatsapp/escalation'
 import { htmlToPlainText } from '@/lib/email-text'
@@ -340,29 +342,47 @@ async function processGmailMessage(
     return 'skipped'
   }
 
-  // Pull system prompt for Caye's reply
+  // Pull system prompt + voice profile for Caye's reply. The voice profile
+  // carries the learned tagline/signature/signoff verbatim strings (see
+  // lib/owner-voice-learning.ts) — without it, buildSystem in caye-reply.ts
+  // never emits those instructions, so replies on this channel would never
+  // include them regardless of how well the extraction worked. The Zoho
+  // email path (app/api/webhooks/zoho-email/route.ts) already fetches and
+  // passes this; Gmail was missing it entirely.
   let systemPrompt =
     'You are Caye, an AI receptionist for a Caribbean small business. Reply to customer emails warmly and professionally. When in doubt, hold for the business owner.'
-  const { data: aiConfig } = await supabase
-    .from('workspace_ai_config')
-    .select('system_prompt')
-    .eq('workspace_id', workspaceId)
-    .maybeSingle()
+  const [{ data: aiConfig }, { data: customer }] = await Promise.all([
+    supabase
+      .from('workspace_ai_config')
+      .select('system_prompt')
+      .eq('workspace_id', workspaceId)
+      .maybeSingle(),
+    supabase
+      .from('customers')
+      .select('ai_voice_profile')
+      .eq('id', workspaceId)
+      .maybeSingle(),
+  ])
   if (aiConfig?.system_prompt) systemPrompt = aiConfig.system_prompt as string
+  const voiceProfile = (customer?.ai_voice_profile ?? undefined) as VoiceProfile | undefined
 
   // Generate Caye's decision
   let decision
   try {
-    decision = await generateCayeAutoReply(systemPrompt, {
-      senderName: fromName || fromEmail,
-      body: body || subject,
-      channel: 'email',
-      subject,
-      workspaceId,
-      conversationId,
-      senderEmail: fromEmail,
-      currentChannelMessageId: messageId,
-    })
+    decision = await generateCayeAutoReply(
+      systemPrompt,
+      {
+        senderName: fromName || fromEmail,
+        body: body || subject,
+        channel: 'email',
+        subject,
+        workspaceId,
+        conversationId,
+        senderEmail: fromEmail,
+        currentChannelMessageId: messageId,
+      },
+      voiceProfile
+    )
   } catch (err) {
     console.error(`[gmail-poll] Caye decision failed for ${messageId}:`, err)
     return 'error'
@@ -382,7 +402,7 @@ async function processGmailMessage(
       const sent = await sendGmailReply({
         to: fromEmail,
         subject: replySubject,
-        body: decision.content,
+        body: ensureTagline(decision.content, voiceProfile),
         gmailThreadId: threadId,
         conversationId,
         workspaceId,

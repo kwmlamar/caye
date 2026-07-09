@@ -260,6 +260,9 @@ function operatorPingLogBody(kind: string, payload: Record<string, unknown>): st
     case 'escalation_followup': {
       const who = str('contactName', 'A guest')
       const summary = str('ping_summary') || `${str('category', 'policy')} escalation`
+      if (payload.expired === true) {
+        return `${summary} — letting it go, no reply needed.`
+      }
       return `Still sitting on this one — ${who} has been waiting a while now: ${summary}. Say the word and I'll send a holding reply, or let me know you've got it.`
     }
     case 'same_day_booking':
@@ -467,15 +470,16 @@ function templateForKind(
       }
     }
     case 'escalation_followup': {
-      // 6h+ unanswered — keep the original ping_summary so the operator sees
-      // the same customer-ask context they had on the first ping, with a
-      // "still waiting" suffix for urgency.
       const baseSummary =
         str('ping_summary', '') ||
         `${str('category', 'policy')} escalation`
+      // The one-shot closing ping (target date passed, nothing left to
+      // decide) already reads as closed — don't prepend "still waiting",
+      // that's exactly the framing this ping exists to avoid.
+      const reason = payload.expired === true ? baseSummary : `still waiting — ${baseSummary}`
       return {
         name: 'caye_urgent_hold',
-        placeholders: [str('contactName', 'A guest'), `still waiting — ${baseSummary}`],
+        placeholders: [str('contactName', 'A guest'), reason],
       }
     }
     default:

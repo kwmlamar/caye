@@ -106,3 +106,40 @@ function candidateDateForMonthDay(month: number, day: number, now: Date): Date |
   }
   return candidate
 }
+
+/**
+ * Best-effort extraction of a concrete calendar date mentioned in text, for
+ * escalation auto-expiry (caye_escalations.target_date) — distinct from
+ * mentionsDateWithinNextWeek above, which only needs a boolean for urgency
+ * classification. Deliberately narrower: only explicit month-name or
+ * numeric dates ("July 4th", "7/4") count, not day-of-week mentions
+ * ("Sunday"). A false positive here would wrongly auto-close a still-live
+ * escalation, whereas for urgency classification a false positive is
+ * harmless (worst case: treated as urgent when it wasn't).
+ */
+export function extractTargetDate(text: string): Date | null {
+  const now = new Date()
+
+  for (let m = 0; m < 12; m++) {
+    const re = new RegExp(`\\b(${MONTHS[m]}|${MONTHS[m].slice(0, 3)})\\b[^\\d]{0,8}(\\d{1,2})`, 'i')
+    const match = text.match(re)
+    if (match) {
+      const day = Number(match[2])
+      if (day >= 1 && day <= 31) {
+        const candidate = candidateDateForMonthDay(m, day, now)
+        if (candidate) return candidate
+      }
+    }
+  }
+
+  const numericMatch = text.match(/\b(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?\b/)
+  if (numericMatch) {
+    const month = Number(numericMatch[1]) - 1
+    const day = Number(numericMatch[2])
+    if (month >= 0 && month < 12 && day >= 1 && day <= 31) {
+      return candidateDateForMonthDay(month, day, now)
+    }
+  }
+
+  return null
+}

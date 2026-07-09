@@ -62,3 +62,19 @@ Rules:
   const text = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim()
   return JSON.parse(text) as VoiceProfile
 }
+
+/**
+ * Deterministic backstop for the tagline instruction in buildSystem
+ * (lib/caye-reply.ts) — that's a soft LLM instruction with no guarantee the
+ * model actually includes it. Confirmed live: Karenda (Bimini Island Tours)
+ * asked for "Where every tour tells a story" on every outbound email, and
+ * it kept going missing. Called right before the actual send so it's
+ * appended if the model didn't already include it (case-insensitive check —
+ * don't double it up if the model did comply).
+ */
+export function ensureTagline(body: string, voiceProfile: VoiceProfile | undefined): string {
+  const tagline = voiceProfile?.tagline?.trim()
+  if (!tagline) return body
+  if (body.toLowerCase().includes(tagline.toLowerCase())) return body
+  return `${body.trimEnd()}\n\n${tagline}`
+}
