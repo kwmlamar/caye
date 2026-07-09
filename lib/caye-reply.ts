@@ -562,6 +562,12 @@ interface BusinessLinks {
   website_url: string | null
 }
 
+interface BusinessContact {
+  email: string | null
+  phone: string | null
+  whatsapp: string | null
+}
+
 /**
  * Two-tier system prompt:
  *   - `stable`: workspace-stable content (operator voice, services catalog,
@@ -584,6 +590,7 @@ function buildSystem(
   contactProfile: ContactStyleProfile | undefined,
   contactFacts: CustomerFacts | undefined,
   businessLinks: BusinessLinks | undefined,
+  businessContact: BusinessContact | undefined,
   customerHistory: CustomerHistorySummary | undefined,
   inboundCategory: InboundCategory | null,
   channel: string,
@@ -671,6 +678,23 @@ function buildSystem(
       'or as a self-service option when you hold_for_human ("I\'ll have someone confirm — ' +
       'meanwhile you can browse at <link>"). Never paste them as a robotic footer on every reply ' +
       'and never invent URLs that aren\'t listed here.'
+  }
+
+  // The ONLY authoritative source for "the business's own contact info" in
+  // this prompt. Without this block, the sign-off instruction below had
+  // nothing concrete to point at — confirmed live: Caye signed an email to
+  // Joyce Davis with Joyce's OWN phone/email (copied from her inbound
+  // webform submission, which renders as generic "Email: ..." / "Phone:
+  // ..." lines with nothing marking them as customer-submitted) because
+  // that was the only phone/email visible anywhere in context.
+  if (businessContact && (businessContact.email || businessContact.phone || businessContact.whatsapp)) {
+    const lines: string[] = []
+    if (businessContact.email) lines.push(`- Email: ${businessContact.email}`)
+    if (businessContact.phone) lines.push(`- Phone: ${businessContact.phone}`)
+    if (businessContact.whatsapp) lines.push(`- WhatsApp: ${businessContact.whatsapp}`)
+    stable +=
+      '\n\nBUSINESS CONTACT INFO — this is the ONLY contact info that belongs to the business:\n' +
+      lines.join('\n')
   }
 
   stable += `\n\nAVAILABLE SERVICES:\n${formatServicesList(services)}`
@@ -846,7 +870,12 @@ function buildSystem(
   dynamic += isEmail
     ? '\n\nWrite only the reply body — no headers, no markdown, no subject line. Plain prose.' +
       '\n\nSIGN-OFF: Use the exact sign-off block specified earlier in this system prompt — verbatim, ' +
-      'including name, business, phone, and email if given. Do NOT invent your own signature. ' +
+      'including name and business. If (and only if) a phone or email appears in the ' +
+      'BUSINESS CONTACT INFO block above, you may include it — otherwise leave contact details out of ' +
+      'the sign-off entirely rather than improvising. NEVER use a phone number or email address you saw ' +
+      'anywhere else in this conversation (the inbound message body, a webform submission, "Email:"/' +
+      '"Phone:" fields, conversation history) — those belong to the CUSTOMER, not the business, even ' +
+      'when they\'re the only phone/email visible. Do NOT invent your own signature. ' +
       'Do NOT sign as "Caye" or any variant. Do NOT mention that you are an AI, assistant, ' +
       'receptionist, or automated system anywhere in the body or the sign-off. From the recipient\'s ' +
       'point of view, the email is from the business owner — write as them, not on their behalf.'
@@ -1545,11 +1574,14 @@ export async function generateCayeAutoReply(
   // for the cancel/reschedule policy gate so Caye doesn't misjudge the
   // 48h window for workspaces outside Nassau.
   let businessLinks: BusinessLinks | undefined
+  let businessContact: BusinessContact | undefined
   let workspaceTimezone = 'America/Nassau' // sane default
   let voiceRegisterOverrides: Record<string, string> | null = null
   const { data: workspaceRow } = await supabase
     .from('customers')
-    .select('booking_url, website_url, timezone, voice_register_overrides')
+    .select(
+      'booking_url, website_url, timezone, voice_register_overrides, contact_email, contact_phone, whatsapp_business_number'
+    )
     .eq('id', inbound.workspaceId)
     .maybeSingle()
   if (workspaceRow) {
@@ -1557,6 +1589,13 @@ export async function generateCayeAutoReply(
       businessLinks = {
         booking_url: workspaceRow.booking_url,
         website_url: workspaceRow.website_url,
+      }
+    }
+    if (workspaceRow.contact_email || workspaceRow.contact_phone || workspaceRow.whatsapp_business_number) {
+      businessContact = {
+        email: workspaceRow.contact_email,
+        phone: workspaceRow.contact_phone,
+        whatsapp: workspaceRow.whatsapp_business_number,
       }
     }
     if (workspaceRow.timezone) workspaceTimezone = workspaceRow.timezone
@@ -1712,6 +1751,7 @@ export async function generateCayeAutoReply(
     contactProfile,
     contactFacts,
     businessLinks,
+    businessContact,
     customerHistory,
     inboundCategory,
     inbound.channel,

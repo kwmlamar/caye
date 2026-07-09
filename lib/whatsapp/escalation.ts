@@ -38,6 +38,58 @@ export async function recordEscalation(
 ): Promise<{ escalationId: string | null }> {
   const supabase = createServiceClient()
 
+  // Guard against piling on: if this conversation already has an open
+  // escalation (not yet resolved, not expired), don't create a second row
+  // or fire a second ping. Confirmed live: a customer (Marissa McGourthy)
+  // followed up 3 times about one unresolved fishing-charter ask, and
+  // because generateCayeAutoReply has no visibility into prior
+  // escalations (fetchConversationHistory filters out the internal
+  // escalation marker message), the LLM re-escalated fresh each time —
+  // 3 separate caye_escalations rows, each spinning up its own daily
+  // "still waiting" nag, for what the operator experienced as one
+  // question. Still update the conversation's hold reason + drop an
+  // internal audit note so the dashboard reflects the latest ask, just
+  // without a second WhatsApp ping.
+  if (input.conversationId) {
+    const { data: existing } = await supabase
+      .from('caye_escalations')
+      .select('id')
+      .eq('conversation_id', input.conversationId)
+      .is('owner_responded_at', null)
+      .is('expired_at', null)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    if (existing) {
+      await supabase
+        .from('unified_conversations')
+        .update({
+          human_agent_reason: `Escalation (${input.category}): ${input.internalContext.replace(/\s+/g, ' ').trim().slice(0, 120)}`,
+          human_agent_marked_at: new Date().toISOString(),
+        })
+        .eq('id', input.conversationId)
+      await supabase.from('unified_messages').insert({
+        conversation_id: input.conversationId,
+        channel_message_id: null,
+        sender_type: 'business',
+        content: `[Caye escalation follow-up — already open, no new ping] ${input.internalContext}`,
+        message_type: 'text',
+        sent_at: new Date().toISOString(),
+        status: 'sent',
+        is_internal: true,
+        metadata: {
+          generated_by: 'caye',
+          escalation_id: existing.id,
+          category: input.category,
+          route_to: input.routeTo,
+          duplicate_of_open_escalation: true,
+        },
+      })
+      return { escalationId: existing.id }
+    }
+  }
+
   // Derive a fallback ping summary for LLM-driven escalations that didn't
   // supply one. internalContext is already written as operator-ready prose
   // by the escalate_to_team tool contract (a 2-5 sentence handoff note

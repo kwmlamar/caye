@@ -63,6 +63,7 @@ export const getHeldQueue: Tool<Record<string, never>> = {
         .select('conversation_id')
         .in('conversation_id', conversationIds)
         .is('owner_responded_at', null)
+        .is('expired_at', null)
       openEscalationConvIds = new Set(
         (escalations ?? []).map((e: { conversation_id: string | null }) => e.conversation_id).filter(Boolean) as string[]
       )

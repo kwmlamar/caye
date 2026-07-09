@@ -75,7 +75,7 @@ export async function GET(req: NextRequest) {
   ] = await Promise.all([
     supabase
       .from('caye_escalations')
-      .select('id, conversation_id, category, route_to, customer_facing_message, internal_context, created_at, owner_responded_at')
+      .select('id, conversation_id, category, route_to, customer_facing_message, internal_context, created_at, owner_responded_at, expired_at')
       .eq('workspace_id', workspaceId)
       .order('created_at', { ascending: false })
       .limit(20),
@@ -141,14 +141,18 @@ export async function GET(req: NextRequest) {
     cost_usd: Number(cost.toFixed(4)),
   }))
 
-  const pendingEscalations = (escalations ?? []).filter((e) => !e.owner_responded_at).length
+  const pendingEscalations = (escalations ?? []).filter(
+    (e) => !e.owner_responded_at && !e.expired_at
+  ).length
 
   // Conversation IDs with an escalation still waiting on the
   // owner/founder — used to flag bookings whose customer has an open
   // issue, so CommandCalendar can surface it without a second query.
+  // Excludes expired escalations (target date passed, one-shot closing
+  // note already sent) — those aren't "open" in any actionable sense.
   const openEscalationConversationIds = new Set(
     (escalations ?? [])
-      .filter((e) => !e.owner_responded_at && e.conversation_id)
+      .filter((e) => !e.owner_responded_at && !e.expired_at && e.conversation_id)
       .map((e) => e.conversation_id as string)
   )
 
