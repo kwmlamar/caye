@@ -20,6 +20,7 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { sendZohoReply } from '@/lib/email-ai'
 import { generateCayeNudge, defaultNudgeSubject, type NudgeKind } from '@/lib/caye-nudge'
 import type { VoiceProfile } from '@/lib/voice-profile'
+import { ensureTagline } from '@/lib/voice-profile'
 import type { ContactStyleProfile } from '@/types/database'
 import {
   shouldAutoCompleteBooking,
@@ -360,9 +361,13 @@ async function sendNudge(args: SendNudgeArgs): Promise<boolean> {
 
   const subject = defaultNudgeSubject(args.kind, args.reviewContext)
   const threadId = args.channelConversationId ?? `caye_nudge_${Date.now()}`
+  // ensureTagline is a deterministic backstop for the tagline instruction
+  // in buildSystem (lib/caye-reply.ts) / generateCayeNudge — same fix
+  // already applied to the other Caye-authored email send paths.
+  const outboundBody = ensureTagline(generated.content, args.voiceProfile)
 
   try {
-    await sendZohoReply(args.customerEmail, subject, generated.content, threadId, args.workspaceId)
+    await sendZohoReply(args.customerEmail, subject, outboundBody, threadId, args.workspaceId)
   } catch (err) {
     console.error(`[nudge-scan] Zoho send failed for ${args.customerEmail}:`, err)
     return false
@@ -376,7 +381,7 @@ async function sendNudge(args: SendNudgeArgs): Promise<boolean> {
       conversation_id: args.conversationId,
       channel_message_id: `caye_nudge_${Date.now()}`,
       sender_type: 'business',
-      content: generated.content,
+      content: outboundBody,
       message_type: 'text',
       sent_at: nowISO,
       status: 'sent',
@@ -393,7 +398,7 @@ async function sendNudge(args: SendNudgeArgs): Promise<boolean> {
         last_sender_type: 'business',
         last_business_sender_kind: 'caye',
         last_message_at: nowISO,
-        last_message_preview: generated.content.slice(0, 100),
+        last_message_preview: outboundBody.slice(0, 100),
       })
       .eq('id', args.conversationId)
   }

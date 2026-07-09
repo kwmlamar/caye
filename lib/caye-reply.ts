@@ -1,6 +1,7 @@
 import 'server-only'
 import Anthropic from '@anthropic-ai/sdk'
 import type { VoiceProfile } from '@/lib/voice-profile'
+import { stripWrappingQuotes } from '@/lib/voice-profile'
 import type { ContactStyleProfile } from '@/types/database'
 import { createServiceClient } from './supabase-server'
 import { detectIdentityLeak } from './caye-identity-guard'
@@ -620,26 +621,31 @@ function buildSystem(
         ? `\n- Register override (from update_voice_register${voiceProfile.register_scope ? `, scope=${voiceProfile.register_scope}` : ''}): ${voiceProfile.register_override} — bias your phrasing toward this register without abandoning the rest of the profile above.`
         : '')
 
+    // stripWrappingQuotes guards against already-corrupted stored data (a
+    // verbatim field saved with literal quote marks baked into the string,
+    // e.g. tagline = `"Where Every Tour Tells a Story"`) — without this, the
+    // quoted-instruction wrapper below produces doubled quotes (`""..."""`)
+    // that can confuse the model into skipping the field entirely.
+    const opener = stripWrappingQuotes(voiceProfile.standard_opener)
+    const signoff = stripWrappingQuotes(voiceProfile.standard_signoff)
+    const tagline = stripWrappingQuotes(voiceProfile.tagline)
+
     const verbatimLines: string[] = []
-    if (voiceProfile.standard_opener) {
-      verbatimLines.push(
-        `- Opener (use verbatim when starting a new thread): "${voiceProfile.standard_opener}"`
-      )
+    if (opener) {
+      verbatimLines.push(`- Opener (use verbatim when starting a new thread): "${opener}"`)
     }
-    if (voiceProfile.standard_signoff) {
-      verbatimLines.push(
-        `- Sign-off line (use verbatim before the signature): "${voiceProfile.standard_signoff}"`
-      )
+    if (signoff) {
+      verbatimLines.push(`- Sign-off line (use verbatim before the signature): "${signoff}"`)
     }
     if (voiceProfile.signature_block) {
       verbatimLines.push(
         `- Signature block (append verbatim, exactly as written, line breaks preserved):\n${voiceProfile.signature_block}`
       )
     }
-    if (voiceProfile.tagline) {
+    if (tagline) {
       verbatimLines.push(
         `- Tagline (always include as its own standalone line immediately after the ` +
-        `signature block — never woven into a sentence elsewhere in the message): "${voiceProfile.tagline}"`
+        `signature block — never woven into a sentence elsewhere in the message): "${tagline}"`
       )
     }
 

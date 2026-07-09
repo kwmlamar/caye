@@ -31,6 +31,7 @@ import { enqueueHoldPing } from '@/lib/whatsapp/triggers'
 import { applyEscalation } from '@/lib/whatsapp/escalation'
 import { syncBookingToCalendar } from '@/lib/calendar-sync'
 import type { VoiceProfile } from '@/lib/voice-profile'
+import { ensureTagline } from '@/lib/voice-profile'
 
 export async function POST(request: NextRequest) {
   // Two auth modes:
@@ -251,10 +252,14 @@ export async function POST(request: NextRequest) {
     })
   }
 
-  // Reply branch
+  // Reply branch. ensureTagline is a deterministic backstop for the
+  // tagline instruction in buildSystem (lib/caye-reply.ts) — that's a soft
+  // LLM instruction with no guarantee of compliance, same fix already
+  // applied to the zoho-email webhook and gmail-poll send paths.
   const replySubject = subject.startsWith('Re:') ? subject : `Re: ${subject}`
+  const outboundBody = ensureTagline(decision.content, voiceProfile)
   try {
-    await sendZohoReply(customerEmail, replySubject, decision.content, threadId, workspaceId)
+    await sendZohoReply(customerEmail, replySubject, outboundBody, threadId, workspaceId)
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     return NextResponse.json({ error: `Zoho send failed: ${msg}` }, { status: 500 })
@@ -273,7 +278,7 @@ export async function POST(request: NextRequest) {
     channel_message_id: `caye_admin_${Date.now()}`,
     sender_type: 'business',
     sender_attribution: 'caye_autopilot',
-    content: decision.content,
+    content: outboundBody,
     message_type: 'text',
     sent_at: replySentAt,
     status: 'sent',
@@ -292,7 +297,7 @@ export async function POST(request: NextRequest) {
       last_sender_type: 'business',
       last_business_sender_kind: 'caye',
       last_message_at: replySentAt,
-      last_message_preview: decision.content.slice(0, 100),
+      last_message_preview: outboundBody.slice(0, 100),
     })
     .eq('id', conversationId)
 
@@ -304,7 +309,7 @@ export async function POST(request: NextRequest) {
 
   return NextResponse.json({
     action: 'reply',
-    content: decision.content,
+    content: outboundBody,
     booking_id: decision.bookingId ?? null,
     needs_owner_followup: decision.needsOwnerFollowup ?? false,
   })
