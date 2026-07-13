@@ -203,13 +203,14 @@ export default function WhatsAppMockup() {
                   </div>
                 </div>
 
-                {/* WhatsApp header */}
+                {/* WhatsApp header — dark theme uses a dark slate bar,
+                    not the light theme's teal. */}
                 <div
                   className="relative px-3 pt-2 pb-3 flex items-center gap-3 z-10"
                   style={{
                     background:
-                      'linear-gradient(180deg, #075E54 0%, #064f47 100%)',
-                    boxShadow: '0 1px 0 rgba(0,0,0,0.15)',
+                      'linear-gradient(180deg, #1F2C34 0%, #182229 100%)',
+                    boxShadow: '0 1px 0 rgba(0,0,0,0.25)',
                   }}
                 >
                   <ChevronLeftIcon />
@@ -281,10 +282,10 @@ export default function WhatsAppMockup() {
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ duration: 0.4, ease: [0.25, 0.1, 0.25, 1] }}
-                      className="border-t border-near-black/10 px-3 py-2.5 space-y-1.5"
-                      style={{ background: 'rgba(241,236,225,0.92)' }}
+                      className="border-t border-white/10 px-3 py-2.5 space-y-1.5"
+                      style={{ background: 'rgba(17,27,33,0.95)' }}
                     >
-                      <div className="text-center font-mono text-[8.5px] uppercase tracking-[0.18em] text-near-black/40 mb-1.5">
+                      <div className="text-center font-mono text-[8.5px] uppercase tracking-[0.18em] text-white/35 mb-1.5">
                         Tap to reply
                       </div>
                       {availableOptions.map((opt, idx) => (
@@ -301,15 +302,15 @@ export default function WhatsAppMockup() {
                           }}
                           whileHover={{ y: -1 }}
                           whileTap={{ scale: 0.985 }}
-                          className={`block w-full text-left text-near-black/85 text-[12px] px-3 py-1.5 rounded-full disabled:opacity-50 disabled:cursor-not-allowed transition-shadow ${
+                          className={`block w-full text-left text-white/85 text-[12px] px-3 py-1.5 rounded-full disabled:opacity-50 disabled:cursor-not-allowed transition-shadow ${
                             firstTapNotYet && idx === 0
                               ? 'animate-[bubble-invite_2.4s_ease-in-out_infinite]'
                               : ''
                           }`}
                           style={{
-                            background: 'rgba(220,248,198,0.78)',
+                            background: 'rgba(0,92,75,0.4)',
                             boxShadow:
-                              '0 1px 0 rgba(255,255,255,0.55) inset, 0 1px 1.5px rgba(14,26,26,0.06)',
+                              '0 1px 0 rgba(255,255,255,0.06) inset, 0 1px 1.5px rgba(0,0,0,0.2)',
                           }}
                         >
                           <div className="flex items-center justify-between gap-2">
@@ -328,7 +329,7 @@ export default function WhatsAppMockup() {
                       className="block text-white text-center py-4 px-4 font-medium text-[14px] transition-colors flex items-center justify-center gap-2"
                       style={{
                         background:
-                          'linear-gradient(180deg, #0a8475 0%, #075E54 100%)',
+                          'linear-gradient(180deg, #06705f 0%, #005C4B 100%)',
                       }}
                     >
                       Try Caye yourself
@@ -416,7 +417,7 @@ function PhoneFrame({ children }: { children: React.ReactNode }) {
         {/* Screen */}
         <div
           className="relative rounded-[36px] overflow-hidden h-[680px] flex flex-col"
-          style={{ background: '#ECE5DD' }}
+          style={{ background: '#0B141A' }}
         >
           {/* Dynamic Island */}
           <div
@@ -437,10 +438,10 @@ function DoodleWallpaper() {
   return (
     <div
       aria-hidden
-      className="absolute inset-0 pointer-events-none opacity-[0.28]"
+      className="absolute inset-0 pointer-events-none opacity-[0.35]"
       style={{
         backgroundImage:
-          "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='84' height='84' viewBox='0 0 84 84'><g fill='none' stroke='%23a89882' stroke-width='1' stroke-linecap='round' opacity='0.5'><circle cx='12' cy='14' r='2'/><path d='M30 22 q4 -3 8 0 t8 0' /><path d='M58 12 l3 3 l3 -3 l-3 -3 z' /><circle cx='72' cy='28' r='1.5'/><path d='M14 44 q3 -4 6 0' /><path d='M40 50 c2 -2 4 -2 6 0' /><circle cx='66' cy='52' r='2'/><path d='M22 72 l4 -2 l-2 4 z' /><path d='M48 76 q3 -3 6 0' /><circle cx='78' cy='70' r='1.5'/></g></svg>\")",
+          "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='84' height='84' viewBox='0 0 84 84'><g fill='none' stroke='%232A3942' stroke-width='1' stroke-linecap='round' opacity='0.6'><circle cx='12' cy='14' r='2'/><path d='M30 22 q4 -3 8 0 t8 0' /><path d='M58 12 l3 3 l3 -3 l-3 -3 z' /><circle cx='72' cy='28' r='1.5'/><path d='M14 44 q3 -4 6 0' /><path d='M40 50 c2 -2 4 -2 6 0' /><circle cx='66' cy='52' r='2'/><path d='M22 72 l4 -2 l-2 4 z' /><path d='M48 76 q3 -3 6 0' /><circle cx='78' cy='70' r='1.5'/></g></svg>\")",
         backgroundSize: '84px 84px',
       }}
     />
@@ -453,10 +454,10 @@ function DateChip({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex justify-center my-2">
       <span
-        className="text-[10.5px] font-medium text-near-black/55 px-2.5 py-1 rounded-md uppercase tracking-wider"
+        className="text-[10.5px] font-medium text-white/60 px-2.5 py-1 rounded-md uppercase tracking-wider"
         style={{
-          background: 'rgba(225,217,201,0.85)',
-          boxShadow: '0 1px 1px rgba(14,26,26,0.06)',
+          background: 'rgba(31,44,52,0.85)',
+          boxShadow: '0 1px 1px rgba(0,0,0,0.2)',
         }}
       >
         {children}
@@ -477,10 +478,10 @@ function MessageBubble({ message }: { message: Message }) {
         }`}
         style={{
           background: isUser
-            ? 'linear-gradient(180deg, #E2FAC9 0%, #DCF8C6 100%)'
-            : 'linear-gradient(180deg, #FFFFFF 0%, #FAFAF8 100%)',
+            ? 'linear-gradient(180deg, #075E54 0%, #005C4B 100%)'
+            : 'linear-gradient(180deg, #202C33 0%, #1C262D 100%)',
           boxShadow:
-            '0 1px 0.5px rgba(14,26,26,0.13), 0 1px 0 rgba(255,255,255,0.6) inset',
+            '0 1px 0.5px rgba(0,0,0,0.35), 0 1px 0 rgba(255,255,255,0.03) inset',
         }}
       >
         {/* Bubble tail */}
@@ -489,17 +490,17 @@ function MessageBubble({ message }: { message: Message }) {
           className="absolute bottom-0 w-3 h-3"
           style={{
             [isUser ? 'right' : 'left']: '-4px',
-            background: isUser ? '#DCF8C6' : '#FAFAF8',
+            background: isUser ? '#005C4B' : '#1C262D',
             clipPath: isUser
               ? 'polygon(0 0, 100% 100%, 0 100%)'
               : 'polygon(100% 0, 100% 100%, 0 100%)',
           }}
         />
-        <p className="text-[13.5px] text-near-black leading-snug whitespace-pre-wrap relative">
+        <p className="text-[13.5px] text-[#E9EDEF] leading-snug whitespace-pre-wrap relative">
           {message.text}
         </p>
         <div className="flex items-center justify-end gap-1 mt-0.5 relative">
-          <span className="text-[9.5px] text-near-black/50">{message.time}</span>
+          <span className="text-[9.5px] text-white/45">{message.time}</span>
           {isUser && <DoubleCheckIcon />}
         </div>
       </div>
@@ -552,19 +553,19 @@ function TypingBubble() {
       <div
         className="rounded-2xl rounded-bl-md px-4 py-2.5 relative"
         style={{
-          background: 'linear-gradient(180deg, #FFFFFF 0%, #FAFAF8 100%)',
+          background: 'linear-gradient(180deg, #202C33 0%, #1C262D 100%)',
           boxShadow:
-            '0 1px 0.5px rgba(14,26,26,0.13), 0 1px 0 rgba(255,255,255,0.6) inset',
+            '0 1px 0.5px rgba(0,0,0,0.35), 0 1px 0 rgba(255,255,255,0.03) inset',
         }}
       >
         <div className="flex items-center gap-1">
-          <span className="w-1.5 h-1.5 rounded-full bg-near-black/45 animate-[typing-dot_1.2s_ease-in-out_infinite]" />
+          <span className="w-1.5 h-1.5 rounded-full bg-white/45 animate-[typing-dot_1.2s_ease-in-out_infinite]" />
           <span
-            className="w-1.5 h-1.5 rounded-full bg-near-black/45 animate-[typing-dot_1.2s_ease-in-out_infinite]"
+            className="w-1.5 h-1.5 rounded-full bg-white/45 animate-[typing-dot_1.2s_ease-in-out_infinite]"
             style={{ animationDelay: '0.18s' }}
           />
           <span
-            className="w-1.5 h-1.5 rounded-full bg-near-black/45 animate-[typing-dot_1.2s_ease-in-out_infinite]"
+            className="w-1.5 h-1.5 rounded-full bg-white/45 animate-[typing-dot_1.2s_ease-in-out_infinite]"
             style={{ animationDelay: '0.36s' }}
           />
         </div>
@@ -585,7 +586,7 @@ function CayeAvatar({ size }: { size: number }) {
         background:
           'radial-gradient(circle at 22% 22%, rgba(255,255,255,0.6), transparent 38%), radial-gradient(circle at 18% 20%, #7DC9CB 0%, transparent 48%), radial-gradient(circle at 88% 15%, #FFD68F 0%, transparent 52%), radial-gradient(circle at 82% 88%, #00778B 0%, transparent 58%), radial-gradient(circle at 12% 85%, #A8DCC0 0%, transparent 52%), #F5E8D0',
         boxShadow:
-          '0 1px 2px rgba(14,26,26,0.18), inset 0 0 0 1px rgba(14,26,26,0.06)',
+          '0 1px 2px rgba(0,0,0,0.35), inset 0 0 0 1px rgba(255,255,255,0.08)',
       }}
     />
   )
@@ -712,7 +713,7 @@ function SendIcon() {
       strokeWidth="1.8"
       strokeLinecap="round"
       strokeLinejoin="round"
-      className="text-[#075E54]/45 flex-shrink-0"
+      className="text-white/55 flex-shrink-0"
     >
       <line x1="22" y1="2" x2="11" y2="13" />
       <polygon points="22 2 15 22 11 13 2 9 22 2" />
