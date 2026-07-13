@@ -1,4 +1,5 @@
 import 'server-only'
+import { randomUUID } from 'crypto'
 import Anthropic from '@anthropic-ai/sdk'
 import { createServiceClient } from '@/lib/supabase-server'
 import { runToolLoop } from './execute'
@@ -73,7 +74,7 @@ export async function composeEodSummary(args: {
     // Cron-driven system invocation — no human caller. 'founder' role
     // grants access to every tool, matching the existing trusted-internal
     // semantics. Locked 2026-06-24 (#48).
-    ctx: { workspaceId: args.workspaceId, callerRole: 'founder' },
+    ctx: { workspaceId: args.workspaceId, callerRole: 'founder', requestId: randomUUID() },
   })
 
   return replyText
@@ -147,7 +148,7 @@ export async function composeMorningBriefing(args: {
     // Cron-driven system invocation — no human caller. 'founder' role
     // grants access to every tool, matching the existing trusted-internal
     // semantics. Locked 2026-06-24 (#48).
-    ctx: { workspaceId: args.workspaceId, callerRole: 'founder' },
+    ctx: { workspaceId: args.workspaceId, callerRole: 'founder', requestId: randomUUID() },
   })
 
   return replyText

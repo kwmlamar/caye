@@ -13,15 +13,9 @@ export const sendReply: Tool<SendReplyInput> = {
   name: 'send_reply',
   description: `Send a reply to a customer on their thread. HIGH-RISK — this message goes to a real customer in your business's voice.
 
-CRITICAL — confirmation flow:
-1. Before calling this tool, draft the message text in plain conversation with the operator.
-2. Show the draft and ask "Want me to send it?" (or equivalent).
-3. Wait for explicit confirmation: "yes", "send", "go", "looks good", etc.
-4. ONLY then call send_reply with the agreed body.
+CONFIRMATION IS ENFORCED IN CODE, not just by this text — the first call with a given conversation_id + body only stages the send and returns it un-executed, it does NOT reach the customer. Call it as soon as you've composed the body (using the VOICE PROFILE — write as the operator would, never as Caye). Relay the returned summary to the operator as the draft and ask them to confirm. Once they reply affirmatively in a NEW message, call send_reply again with the EXACT SAME conversation_id + body to actually send it. If the operator wants changes, call again with the corrected body — that stages a fresh draft.
 
-Never call this tool on the first turn for a customer-facing intent. The operator MUST see and approve the draft first.
-
-Use the VOICE PROFILE in the system prompt to draft customer-facing copy — write as the operator would, never as Caye. Customer never knows the operator delegated to you.`,
+Customer never knows the operator delegated to you.`,
   risk: 'high',
   roles: ['owner', 'founder'],
   modes: ['back-office'],

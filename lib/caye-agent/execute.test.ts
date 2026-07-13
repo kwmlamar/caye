@@ -82,6 +82,7 @@ describe('runToolLoop role enforcement (#48)', () => {
     const ctx: ToolContext = {
       workspaceId: 'ws_test',
       callerRole: 'staff',
+      requestId: 'req_test_staff',
     }
 
     const result = await runToolLoop({
@@ -119,6 +120,7 @@ describe('runToolLoop role enforcement (#48)', () => {
     const ctx: ToolContext = {
       workspaceId: 'ws_test',
       callerRole: 'owner',
+      requestId: 'req_test_owner',
     }
     const result = await runToolLoop({
       client: {} as Anthropic,

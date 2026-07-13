@@ -74,9 +74,19 @@ export async function maybeNotifyCustomer(args: {
  * Shared confirmation-flow boilerplate for the high-risk tool prompts.
  * Each booking-mutating tool's description starts with this so the
  * model treats them all the same way.
+ *
+ * The gate is enforced in code (gateHighRisk, #64), not just by this
+ * text: the FIRST call with a given set of args always only stages the
+ * action and returns it un-executed. Call it as soon as you have the
+ * real args resolved — don't wait to "decide" whether to call it. Relay
+ * the returned summary to the operator and ask them to confirm. Once
+ * they reply affirmatively in a NEW message, call this same tool again
+ * with the SAME arguments to actually run it. If the operator changes
+ * any detail, call again with the corrected arguments — that starts a
+ * fresh confirmation.
  */
 export const HIGH_RISK_CONFIRMATION_PREAMBLE =
-  'HIGH-RISK. Confirm with the operator before calling — draft the customer notification in plain chat, show the operator, wait for "yes" / "send" / "go" before calling this tool. Never call on first turn for the intent.'
+  'HIGH-RISK — staged, not immediate. The first call with a given set of arguments only stages the action (nothing happens yet); it returns a summary for you to relay to the operator. Call it again with the SAME arguments after the operator confirms in their next message to actually run it.'
 
 export const NOTIFY_BODY_DESCRIPTION =
   "The exact customer-facing notification text. Sent as-is to the customer's thread via their native channel. Compose in the operator's voice using the VOICE PROFILE; this text has already been approved by the operator in the prior turn. Leave empty + set notify_customer=false to make the booking change silently without notifying the customer."

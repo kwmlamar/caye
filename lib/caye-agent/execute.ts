@@ -45,11 +45,12 @@ export interface ToolLoopResult {
  *      a user turn of tool_result blocks, push, and continue.
  *   3. If Claude responds with text only (no tool_use), we're done.
  *
- * Risk gating note (slice #38): all tools currently registered are
- * `risk: 'read'`. Low-risk and high-risk tools are sliced in #37 and
- * #42; the confirmation flow for high-risk lives in #42's execute path.
- * For now every tool just executes — the risk field is data we'll use
- * later, not behavior here.
+ * Risk gating: read/low-risk tools execute immediately. High-risk tools
+ * are wrapped in registry.ts with gateHighRisk (#64), which stages the
+ * first call and only executes on a confirming call from a later,
+ * separate request — see lib/caye-agent/tools/high-risk-gate.ts. That
+ * gate is structural, not prompt-based: it holds even if the model tries
+ * to call a high-risk tool without the operator having agreed to anything.
  */
 export async function runToolLoop(args: ToolLoopArgs): Promise<ToolLoopResult> {
   // Cache breakpoint on the last tool caches the entire tools array.
@@ -171,7 +172,15 @@ export async function runToolLoop(args: ToolLoopArgs): Promise<ToolLoopResult> {
     newTurns.push(toolResultTurn)
   }
 
-  throw new Error(
-    `[caye-agent/execute] tool loop exceeded ${MAX_TOOL_ITERATIONS} iterations`
+  // Degrade instead of throwing — a thrown error here previously left the
+  // operator with silence (the webhook's catch only logs, see
+  // app/api/webhooks/whatsapp-operator/route.ts). Losing the in-progress
+  // tool calls is fine; going dark on a paying customer's operator is not.
+  console.error(
+    `[caye-agent/execute] tool loop exceeded ${MAX_TOOL_ITERATIONS} iterations for workspace ${args.ctx.workspaceId}`
   )
+  return {
+    replyText: "Sorry, that one's taking longer than it should — give me a moment and try again.",
+    newTurns,
+  }
 }

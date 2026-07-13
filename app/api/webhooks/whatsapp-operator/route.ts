@@ -337,6 +337,15 @@ async function handleOneInbound(
       await persistAgentTurns(supabase, workspaceId, agentResult.newTurns, operator)
     } catch (err) {
       console.error(`[whatsapp-operator] driver agent failed for ${workspaceId}:`, err)
+      // Don't leave the driver's message unanswered — a thrown error here
+      // previously meant total silence with no signal anything went wrong.
+      await sendFreeFormWhatsApp(
+        driverReplyTo,
+        "Sorry, I hit a snag with that — give me a minute and try again.",
+        `driver-error-${message.id}`
+      ).catch((sendErr) =>
+        console.error(`[whatsapp-operator] driver error-fallback send failed for ${workspaceId}:`, sendErr)
+      )
     }
     return
   }
@@ -620,5 +629,17 @@ async function handleOneInbound(
       `[whatsapp-operator] back-office agent failed for ${workspaceId}:`,
       err
     )
+    // A thrown error here previously left the operator with silence — no
+    // way to tell "Caye is thinking" from "Caye is broken" from "Caye
+    // ignored me." Always surface something, even on hard failure.
+    if (replyTo) {
+      await sendFreeFormWhatsApp(
+        replyTo,
+        "Sorry, I hit a snag with that — give me a minute and try again.",
+        `back-office-error-${message.id}`
+      ).catch((sendErr) =>
+        console.error(`[whatsapp-operator] error-fallback send failed for ${workspaceId}:`, sendErr)
+      )
+    }
   }
 }

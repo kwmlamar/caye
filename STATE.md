@@ -9,7 +9,7 @@ last_updated: 2026-06-01
 Caye is TropiTech's AI employee for Caribbean SMBs. **Caye is the brand and the agent** — one name, two internal modes:
 
 - **Front desk** — client-facing. Answers inbound (email now; WhatsApp/IG/Messenger wired), books customers, replies in the owner's voice, never reveals she's AI. Auth: public. *This is the wedge — every SMB has inbound.*
-- **Back office** — crew/owner-facing ops assistant. Sees job files, costs, blockers, decisions queue. Knows she's AI. Auth: per-workspace phone allowlist. *This is the expansion — not built yet; ODS is the first customer who'll need it.*
+- **Back office** — crew/owner-facing ops assistant. Sees job files, costs, blockers, decisions queue. Knows she's AI. Auth: per-workspace phone allowlist. *This is the expansion — built and live on WhatsApp for Bimini (owner/founder + driver dispatch mode), ~40 tools across read/low-risk/high-risk tiers, high-risk actions gated by a code-enforced confirmation step (2026-07-12). ODS still needs its own allowlist wired before it can use this mode.*
 
 Both modes live on one WhatsApp number per customer, routed by sender identity. Positioning: **"managed AI staff placed by a local operator,"** not a SaaS app. See [decisions-log 2026-05-10](../../_Ops/Brain/decisions-log.md), [2026-05-30](../../_Ops/Brain/decisions-log.md), [2026-05-31](../../_Ops/Brain/decisions-log.md).
 
@@ -57,7 +57,7 @@ Both modes live on one WhatsApp number per customer, routed by sender identity. 
 
 **Tier 2 — improves existing customers / unblocks expansion:**
 - Full pricing catalog load (`service_pricing_tiers`)
-- Back-office mode wired on WhatsApp (ODS allowlist)
+- Back-office mode is live on WhatsApp (Bimini) — ODS still needs its allowlist wired to get the same access
 - Context Sources read integration (GitHub → Caye)
 - Zoho-canonical calendar migration (retire `bookings` table)
 - WeTravel receipt → auto post-payment confirmation (Bimini)

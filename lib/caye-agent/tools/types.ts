@@ -59,6 +59,25 @@ export interface ToolContext {
    * instead and can ignore this field.
    */
   callerPhone?: string | null
+  /**
+   * The operator_allowlist.id of the human on the other end, when known.
+   * Null for cron-driven system invocations (briefings, EOD summaries)
+   * and legacy pre-migration rows. Used by the high-risk confirmation
+   * gate (gateHighRisk) to scope staged actions per-operator so two
+   * operators sharing a workspace's back-office channel can't confirm
+   * or collide on each other's pending actions.
+   */
+  operatorId?: number | null
+  /**
+   * Unique id for this top-level cayeAgent()/runToolLoop invocation —
+   * one per inbound WhatsApp message (or briefing/EOD cron run). Load-
+   * bearing for the high-risk confirmation gate: a staged action can
+   * only execute when confirmed from a DIFFERENT requestId than the one
+   * that staged it, which structurally forces a real human turn (a new
+   * inbound message) between staging and execution — see
+   * lib/caye-agent/tools/high-risk-gate.ts.
+   */
+  requestId: string
 }
 
 /**

@@ -1,4 +1,5 @@
 import 'server-only'
+import { randomUUID } from 'crypto'
 import Anthropic from '@anthropic-ai/sdk'
 import { createServiceClient } from '@/lib/supabase-server'
 import type { VoiceProfile } from '@/lib/voice-profile'
@@ -208,7 +209,12 @@ export async function cayeAgent(input: CayeAgentInput): Promise<CayeAgentResult>
     maxTokens: MAX_OUTPUT_TOKENS,
     systemPrompt,
     initialMessages,
-    ctx: { workspaceId: input.workspaceId, callerRole: input.callerRole },
+    ctx: {
+      workspaceId: input.workspaceId,
+      callerRole: input.callerRole,
+      operatorId: input.operatorId,
+      requestId: randomUUID(),
+    },
     mode: 'back-office',
   })
 
@@ -252,6 +258,8 @@ async function runDriverAgent(input: CayeAgentInput): Promise<CayeAgentResult> {
       workspaceId: input.workspaceId,
       callerRole: 'driver',
       callerPhone: input.callerPhone ?? null,
+      operatorId: input.operatorId,
+      requestId: randomUUID(),
     },
     mode: 'driver',
   })

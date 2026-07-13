@@ -1,4 +1,5 @@
 import type { Tool } from './types'
+import { gateHighRisk } from './high-risk-gate'
 import { getCalendar } from './read/get-calendar'
 import { getHeldQueue } from './read/get-held-queue'
 import { getTodaySummary } from './read/get-today-summary'
@@ -86,14 +87,15 @@ export const TOOL_REGISTRY: AnyTool[] = [
   addInternalNote as AnyTool,
   sendPaymentConfirmation as AnyTool,
   notifyDriver as AnyTool,
-  // High-risk write (confirmation flow enforced via prompt)
-  sendReply as AnyTool,
-  confirmBooking as AnyTool,
-  rescheduleBooking as AnyTool,
-  cancelBooking as AnyTool,
-  removeService as AnyTool,
-  removeBlackoutDate as AnyTool,
-  removeTeamMember as AnyTool,
+  // High-risk write — confirmation flow enforced in code (gateHighRisk,
+  // #64), not just the prompt. See lib/caye-agent/tools/high-risk-gate.ts.
+  gateHighRisk(sendReply) as AnyTool,
+  gateHighRisk(confirmBooking) as AnyTool,
+  gateHighRisk(rescheduleBooking) as AnyTool,
+  gateHighRisk(cancelBooking) as AnyTool,
+  gateHighRisk(removeService) as AnyTool,
+  gateHighRisk(removeBlackoutDate) as AnyTool,
+  gateHighRisk(removeTeamMember) as AnyTool,
   // Driver mode
   getMyAssignments as AnyTool,
   getLogisticsFacts as AnyTool,
