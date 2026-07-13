@@ -60,6 +60,22 @@ export default function LandingPage() {
   const [dimensions, setDimensions] = useState({ width: 1920, height: 1080 })
   const [mounted, setMounted] = useState(false)
 
+  // Phone dock's top offset — floor keeps it clear of the CTA block
+  // (fixed ~590px tall regardless of viewport height) on short viewports;
+  // the 0.6 factor pulls it toward the fold on taller ones so more of the
+  // conversation is visible instead of just the header.
+  const phoneTopOffset = Math.max(630, dimensions.height * 0.6)
+
+  // Desktop phone size reacts to the vertical room actually left below the
+  // CTA (not just viewport width) — bigger on spacious screens (tall
+  // monitors), smaller on wide-but-short ones (e.g. 1366×768 laptops) so
+  // going bigger never means cropping more of the conversation than today.
+  const desktopPhoneScale = Math.min(
+    1.1,
+    Math.max(0.82, (dimensions.height - phoneTopOffset) / 235)
+  )
+  const isDesktopWidth = mounted && dimensions.width >= 768
+
   useEffect(() => {
     setMounted(true)
     const update = () =>
@@ -81,7 +97,7 @@ export default function LandingPage() {
   return (
     <div className="min-h-screen bg-cream text-near-black font-sans selection:bg-caribbean-teal selection:text-white">
       {/* ── Hero ─────────────────────────────────────────────────── */}
-      <section className="relative min-h-screen overflow-hidden flex flex-col">
+      <section className="relative min-h-screen md:min-h-[112vh] overflow-hidden flex flex-col">
         {/* Mesh gradient background */}
         <div className="absolute inset-0 w-full h-full">
           {mounted && (
@@ -219,22 +235,28 @@ export default function LandingPage() {
           initial={{ opacity: 0, y: 46 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.9, ease: heroEase, delay: 0.62 }}
-          className="absolute left-1/2 -translate-x-1/2 top-[80%] sm:top-[78%] md:top-[76%] z-10"
+          className="absolute left-1/2 -translate-x-1/2 z-10"
+          style={{ top: phoneTopOffset }}
         >
-          <div className="scale-[0.75] sm:scale-[0.85] md:scale-100 origin-top">
+          <div
+            className="scale-[0.75] sm:scale-[0.85] origin-top"
+            style={isDesktopWidth ? { transform: `scale(${desktopPhoneScale})` } : undefined}
+          >
             <WhatsAppMockup />
           </div>
         </motion.div>
 
         {/* Dissolve fade — sits above the phone (z-20) so its cropped
             edge melts into the cream below instead of getting hard-cut
-            against the mesh/cream seam. */}
+            against the mesh/cream seam. Kept short and back-loaded so it
+            only eats the last sliver of the phone instead of washing out
+            the conversation that's supposed to be readable above the fold. */}
         <div
           aria-hidden
-          className="absolute inset-x-0 bottom-0 h-[18vh] md:h-[22vh] pointer-events-none z-20"
+          className="absolute inset-x-0 bottom-0 h-[9vh] md:h-[11vh] pointer-events-none z-20"
           style={{
             background:
-              'linear-gradient(to bottom, rgba(250,247,242,0) 0%, rgba(250,247,242,0.4) 45%, rgba(250,247,242,0.82) 75%, rgba(250,247,242,1) 100%)',
+              'linear-gradient(to bottom, rgba(250,247,242,0) 0%, rgba(250,247,242,0.25) 55%, rgba(250,247,242,0.75) 80%, rgba(250,247,242,1) 100%)',
           }}
         />
       </section>
