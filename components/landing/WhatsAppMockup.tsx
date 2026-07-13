@@ -434,15 +434,32 @@ function PhoneFrame({ children }: { children: React.ReactNode }) {
 
 // ─── Doodle wallpaper (inspired by WhatsApp's iconic background) ────
 
+// Loose approximation of WhatsApp's iconic doodle wallpaper — a scatter
+// of small varied icons (sparkle, camera, smiley, envelope, note, heart,
+// ball, speech bubble, flower, confetti, pin) rather than plain abstract
+// shapes, so it reads as the real chat background instead of noise.
 function DoodleWallpaper() {
   return (
     <div
       aria-hidden
-      className="absolute inset-0 pointer-events-none opacity-[0.35]"
+      className="absolute inset-0 pointer-events-none opacity-[0.4]"
       style={{
         backgroundImage:
-          "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='84' height='84' viewBox='0 0 84 84'><g fill='none' stroke='%232A3942' stroke-width='1' stroke-linecap='round' opacity='0.6'><circle cx='12' cy='14' r='2'/><path d='M30 22 q4 -3 8 0 t8 0' /><path d='M58 12 l3 3 l3 -3 l-3 -3 z' /><circle cx='72' cy='28' r='1.5'/><path d='M14 44 q3 -4 6 0' /><path d='M40 50 c2 -2 4 -2 6 0' /><circle cx='66' cy='52' r='2'/><path d='M22 72 l4 -2 l-2 4 z' /><path d='M48 76 q3 -3 6 0' /><circle cx='78' cy='70' r='1.5'/></g></svg>\")",
-        backgroundSize: '84px 84px',
+          "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160' viewBox='0 0 160 160'><g fill='none' stroke='%232A3942' stroke-width='1' stroke-linecap='round' stroke-linejoin='round' opacity='0.6'>" +
+          "<g transform='translate(16,18)'><path d='M0 -6 L1.2 -1.2 L6 0 L1.2 1.2 L0 6 L-1.2 1.2 L-6 0 L-1.2 -1.2 Z'/><line x1='6' y1='-6' x2='10' y2='-10'/><circle cx='12' cy='-12' r='0.8' fill='%232A3942' stroke='none'/></g>" +
+          "<g transform='translate(120,20)'><rect x='-8' y='-5' width='16' height='11' rx='2'/><rect x='-3' y='-8' width='6' height='3' rx='1'/><circle cx='0' cy='0.5' r='3'/></g>" +
+          "<g transform='translate(72,50)'><circle r='7'/><circle cx='-2.5' cy='-2' r='0.7' fill='%232A3942' stroke='none'/><circle cx='2.5' cy='-2' r='0.7' fill='%232A3942' stroke='none'/><path d='M-3 2.5 Q0 5 3 2.5'/></g>" +
+          "<g transform='translate(140,65)'><rect x='-8' y='-5.5' width='16' height='11' rx='1.5'/><path d='M-8 -5 L0 1 L8 -5'/></g>" +
+          "<g transform='translate(26,82) rotate(-12)'><line x1='4' y1='-10' x2='4' y2='6'/><path d='M4 -10 Q9 -9 9 -5'/><ellipse cx='1.5' cy='7' rx='2.4' ry='1.8'/></g>" +
+          "<g transform='translate(100,92)'><path d='M0 5 C-6 0 -6 -5 -2 -5 C0 -5 0 -3 0 -3 C0 -3 0 -5 2 -5 C6 -5 6 0 0 5 Z'/></g>" +
+          "<g transform='translate(145,118)'><circle r='6'/><path d='M0 -6 L1.9 -2.8 L5.7 -1.9 L3.5 1.1 L4.4 5.7 L0 3.5 L-4.4 5.7 L-3.5 1.1 L-5.7 -1.9 L-1.9 -2.8 Z' stroke-width='0.7'/></g>" +
+          "<g transform='translate(15,128)'><rect x='-8' y='-6' width='16' height='10' rx='4'/><path d='M-3 4 L-5 8 L-1 4'/></g>" +
+          "<g transform='translate(66,138)'><circle r='1.6' fill='%232A3942' stroke='none'/><circle cx='0' cy='-4' r='2'/><circle cx='3.4' cy='-2' r='2'/><circle cx='3.4' cy='2' r='2'/><circle cx='0' cy='4' r='2'/><circle cx='-3.4' cy='2' r='2'/><circle cx='-3.4' cy='-2' r='2'/></g>" +
+          "<g transform='translate(116,148)'><circle r='0.9' fill='%232A3942' stroke='none'/><line x1='0' y1='0' x2='6' y2='-3'/><line x1='0' y1='0' x2='7' y2='1'/><line x1='0' y1='0' x2='5' y2='5'/><line x1='0' y1='0' x2='-1' y2='7'/><circle cx='7' cy='-4' r='0.7' fill='%232A3942' stroke='none'/><circle cx='8' cy='2' r='0.6' fill='%232A3942' stroke='none'/></g>" +
+          "<g transform='translate(155,46)'><path d='M0 -6 C3 -6 5 -4 5 -1 C5 3 0 8 0 8 C0 8 -5 3 -5 -1 C-5 -4 -3 -6 0 -6 Z'/><circle r='1.6'/></g>" +
+          "<g transform='translate(92,20)'><path d='M0 -4 L0.8 -0.8 L4 0 L0.8 0.8 L0 4 L-0.8 0.8 L-4 0 L-0.8 -0.8 Z'/></g>" +
+          "</g></svg>\")",
+        backgroundSize: '160px 160px',
       }}
     />
   )
