@@ -62,19 +62,34 @@ export default function LandingPage() {
 
   // Phone dock's top offset — floor keeps it clear of the CTA block
   // (fixed ~590px tall regardless of viewport height) on short viewports;
-  // the 0.6 factor pulls it toward the fold on taller ones so more of the
-  // conversation is visible instead of just the header.
+  // the 0.6 factor pulls it toward the fold on taller ones so it doesn't
+  // sit awkwardly high with empty space beneath it.
   const phoneTopOffset = Math.max(630, dimensions.height * 0.6)
 
-  // Desktop phone size reacts to the vertical room actually left below the
-  // CTA (not just viewport width) — bigger on spacious screens (tall
-  // monitors), smaller on wide-but-short ones (e.g. 1366×768 laptops) so
-  // going bigger never means cropping more of the conversation than today.
-  const desktopPhoneScale = Math.min(
-    1.1,
-    Math.max(0.82, (dimensions.height - phoneTopOffset) / 235)
+  // Phone grows a bit on wider screens — purely a size choice now, not
+  // constrained by a crop budget (see heroMinHeight below).
+  const phoneScale =
+    dimensions.width >= 1024
+      ? 1.05
+      : dimensions.width >= 768
+        ? 0.95
+        : dimensions.width >= 640
+          ? 0.85
+          : 0.75
+
+  // Full rendered height of the phone frame (bezel + screen) at this scale.
+  const estimatedPhoneHeight = 700 * phoneScale
+
+  // The hero used to be exactly one viewport tall and rely on
+  // overflow-hidden to crop the phone for a stylized "below the fold"
+  // look — but that meant the crop line could land mid-message or hide
+  // the phone's bottom half entirely depending on viewport height. Instead
+  // size the section to always fully contain the phone (never shorter
+  // than one viewport, so the hero still reads as a hero on tall screens).
+  const heroMinHeight = Math.max(
+    dimensions.height,
+    phoneTopOffset + estimatedPhoneHeight + 140
   )
-  const isDesktopWidth = mounted && dimensions.width >= 768
 
   useEffect(() => {
     setMounted(true)
@@ -97,14 +112,17 @@ export default function LandingPage() {
   return (
     <div className="min-h-screen bg-cream text-near-black font-sans selection:bg-caribbean-teal selection:text-white">
       {/* ── Hero ─────────────────────────────────────────────────── */}
-      <section className="relative min-h-screen md:min-h-[112vh] overflow-hidden flex flex-col">
+      <section
+        className="relative overflow-hidden flex flex-col"
+        style={{ minHeight: heroMinHeight }}
+      >
         {/* Mesh gradient background */}
         <div className="absolute inset-0 w-full h-full">
           {mounted && (
             <>
               <MeshGradient
                 width={dimensions.width}
-                height={dimensions.height}
+                height={heroMinHeight}
                 colors={HERO_COLORS}
                 distortion={0.8}
                 swirl={0.6}
@@ -224,13 +242,12 @@ export default function LandingPage() {
 
         </div>
 
-        {/* Phone dock — the real product surface, live in the hero and
-            cropped by the fold (same move Viktor makes with their Slack
-            window, Tomo with iMessage). WhatsApp is where Caye actually
-            lives, so we lead with it instead of a screenshot further
-            down the page. Absolutely positioned so it's clipped by the
-            section's overflow-hidden rather than stretching the section
-            to fit it. */}
+        {/* Phone dock — the real product surface, live in the hero. The
+            section is sized (see heroMinHeight) to always fully contain
+            it, so it's never clipped mid-conversation — it just sits
+            below the initial fold on shorter viewports, inviting a
+            scroll, and its ground shadow dissolves into the next
+            section's cream via the fade below. */}
         <motion.div
           initial={{ opacity: 0, y: 46 }}
           animate={{ opacity: 1, y: 0 }}
@@ -238,25 +255,21 @@ export default function LandingPage() {
           className="absolute left-1/2 -translate-x-1/2 z-10"
           style={{ top: phoneTopOffset }}
         >
-          <div
-            className="scale-[0.75] sm:scale-[0.85] origin-top"
-            style={isDesktopWidth ? { transform: `scale(${desktopPhoneScale})` } : undefined}
-          >
+          <div className="origin-top" style={{ transform: `scale(${phoneScale})` }}>
             <WhatsAppMockup />
           </div>
         </motion.div>
 
-        {/* Dissolve fade — sits above the phone (z-20) so its cropped
-            edge melts into the cream below instead of getting hard-cut
-            against the mesh/cream seam. Kept short and back-loaded so it
-            only eats the last sliver of the phone instead of washing out
-            the conversation that's supposed to be readable above the fold. */}
+        {/* Dissolve fade — sits above the phone's ground shadow (z-20) so
+            the bottom of the section melts into the next section's cream
+            instead of a hard seam. Generous height since it only needs to
+            cover the phone's shadow/margin now, not any real content. */}
         <div
           aria-hidden
-          className="absolute inset-x-0 bottom-0 h-[9vh] md:h-[11vh] pointer-events-none z-20"
+          className="absolute inset-x-0 bottom-0 h-[16vh] md:h-[18vh] pointer-events-none z-20"
           style={{
             background:
-              'linear-gradient(to bottom, rgba(250,247,242,0) 0%, rgba(250,247,242,0.25) 55%, rgba(250,247,242,0.75) 80%, rgba(250,247,242,1) 100%)',
+              'linear-gradient(to bottom, rgba(250,247,242,0) 0%, rgba(250,247,242,0.3) 45%, rgba(250,247,242,0.8) 75%, rgba(250,247,242,1) 100%)',
           }}
         />
       </section>
