@@ -4,11 +4,9 @@ import { createServiceClient } from '@/lib/supabase-server'
 import type { VoiceProfile } from '@/lib/voice-profile'
 import { loggedMessagesCreate } from '@/lib/llm-telemetry'
 
-export interface OnboardingQuestion {
-  id: string
-  field: string
+export interface DiscoveryTurn {
   question: string
-  suggestedAnswer: string
+  answer: string
 }
 
 export interface BusinessProfile {
@@ -22,74 +20,74 @@ export interface BusinessProfile {
   voice_profile?: VoiceProfile
 }
 
-export const SERVICE_BUSINESS_QUESTIONS: OnboardingQuestion[] = [
-  {
-    id: 'identity',
-    field: 'business_identity',
-    question: 'What does your business do and where do you operate?',
-    suggestedAnswer:
-      "We're a service business offering [what you do] in [location]. Our jobs typically take [X hours/days] and we work with [X] clients at a time.",
-  },
-  {
-    id: 'offerings',
-    field: 'offerings',
-    question: 'What are your main services or offerings?',
-    suggestedAnswer:
-      'Our most popular services are [list them]. We offer them [daily/on-demand/by quote].',
-  },
-  {
-    id: 'pricing',
-    field: 'pricing_booking',
-    question: 'How do clients inquire or book, and what does it cost?',
-    suggestedAnswer:
-      'Services start at $[X] per client. Clients can reach us by replying to this message, WhatsApp, or visiting [link]. We require [deposit/full payment] to confirm.',
-  },
-  {
-    id: 'faq',
-    field: 'common_questions',
-    question: 'What do clients ask most before starting a job or booking?',
-    suggestedAnswer:
-      "Most clients ask about what's included, how long it takes, what they need to prepare, and what happens if they need to reschedule.",
-  },
-  {
-    id: 'tone',
-    field: 'tone',
-    question: 'How should Caye sound when talking to your clients?',
-    suggestedAnswer:
-      "Warm, friendly, and professional — like someone who genuinely cares about the client's experience. Not too stiff.",
-  },
-  {
-    id: 'never_say',
-    field: 'never_say',
-    question: "Is there anything Caye should never promise or mention?",
-    suggestedAnswer:
-      "Never guarantee specific outcomes, never quote prices without checking current rates, never confirm availability without checking the schedule.",
-  },
-  {
-    id: 'cancellations',
-    field: 'cancellation_policy',
-    question: "What's your cancellation or change policy, and what should Caye say when something goes wrong?",
-    suggestedAnswer:
-      'Full refund if cancelled 48 hours before. Caye should apologize sincerely and offer to reschedule or find a solution immediately.',
-  },
-  {
-    id: 'escalation',
-    field: 'escalation_rules',
-    question: 'When should Caye hand off to a real person?',
-    suggestedAnswer:
-      "If a client is upset, if someone is asking about a large custom request over $[X], or if Caye isn't confident in the answer.",
-  },
-]
+// Always the first thing Caye asks — deterministic, no LLM call needed to
+// decide it. Everything after this is adaptive (see decideNextDiscoveryStep).
+export const FIRST_DISCOVERY_QUESTION = "What's your business called?"
+
+// Grill-me-style ceiling: never ask more than this many questions total
+// (including the fixed business-name one), no matter how thin the
+// signal — wrap up with what's there rather than exhaust the owner.
+export const MAX_DISCOVERY_QUESTIONS = 10
+
+export type DiscoveryStep =
+  | { done: true }
+  | { done: false; question: string; suggestedAnswer: string }
+
+/**
+ * Decides whether Caye has enough to build a solid profile yet, and if
+ * not, what the single highest-value next question is. Mirrors the
+ * grill-me skill's approach: ask one thing at a time, skip anything
+ * already answered or reasonably inferable, stop as soon as there's
+ * enough rather than working through a fixed script.
+ */
+export async function decideNextDiscoveryStep(
+  businessName: string,
+  turns: DiscoveryTurn[]
+): Promise<DiscoveryStep> {
+  try {
+    const client = new Anthropic()
+    const transcript = turns.map((t) => `${t.question}\nAnswer: ${t.answer}`).join('\n\n')
+
+    const message = await loggedMessagesCreate(client, {
+      model: 'claude-sonnet-4-6',
+      max_tokens: 512,
+      system: `You are Caye, an AI receptionist, interviewing a small-business owner over WhatsApp to learn how to represent their business. You need enough to: know what the business does and its tone, answer common customer questions, explain pricing/booking, know the cancellation policy, and know when to hand off to a human.
+
+Ask ONE thing at a time. Prefer the fewest, highest-value questions — if an earlier answer already covers a topic (even partially), don't ask a dedicated question for it, infer it instead. Never ask something you could reasonably infer. The owner is busy and likely on their phone, so keep questions short and give a brief example answer to lower their effort.
+
+They've answered ${turns.length} question(s) so far (including their business name). Keep the total under ${MAX_DISCOVERY_QUESTIONS} — wrap up ("done": true) once you have enough for a solid profile, even if some minor detail is still unknown.
+
+Return ONLY valid JSON, no markdown, no explanation:
+{"done": boolean, "question": "string or null — the single next question, only if done is false", "suggested_answer": "string or null — a short example answer, only if done is false"}`,
+      messages: [
+        {
+          role: 'user',
+          content: `Business name: ${businessName}\n\nConversation so far:\n\n${transcript}`,
+        },
+      ],
+    }, { source: 'lib/onboarding.ts:decideNextDiscoveryStep' })
+
+    const raw = message.content[0].type === 'text' ? message.content[0].text : ''
+    const text = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim()
+    const parsed = JSON.parse(text) as { done: boolean; question: string | null; suggested_answer: string | null }
+
+    if (parsed.done || !parsed.question) return { done: true }
+    return { done: false, question: parsed.question, suggestedAnswer: parsed.suggested_answer ?? '' }
+  } catch (err) {
+    // Finish rather than get stuck — an unanswerable turn should never
+    // mean the owner's message just vanishes with no reply.
+    console.error('[onboarding] decideNextDiscoveryStep failed, finalizing early:', err)
+    return { done: true }
+  }
+}
 
 export async function buildBusinessProfile(
-  answers: Record<string, string>,
+  turns: DiscoveryTurn[],
   businessName: string
 ): Promise<BusinessProfile> {
   const client = new Anthropic()
 
-  const answersText = SERVICE_BUSINESS_QUESTIONS.map(
-    (q) => `${q.question}\nAnswer: ${answers[q.id] || answers[q.field] || '(not provided)'}`
-  ).join('\n\n')
+  const answersText = turns.map((t) => `${t.question}\nAnswer: ${t.answer}`).join('\n\n')
 
   const message = await loggedMessagesCreate(client, {
     model: 'claude-sonnet-4-6',
@@ -122,7 +120,7 @@ Return ONLY valid JSON matching this exact shape — no markdown, no explanation
 export async function saveBusinessProfile(
   workspaceId: string,
   profile: BusinessProfile,
-  rawAnswers: Record<string, string>
+  rawAnswers: DiscoveryTurn[]
 ): Promise<{ error: string | null }> {
   const supabase = createServiceClient()
 

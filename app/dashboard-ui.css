@@ -3464,3 +3464,117 @@
   background: rgba(15, 181, 161, 0.06) !important;
 }
 
+/* ====================================================== CONNECT — onboarding channels (dark, flat)
+   Standalone /connect handoff page. Sits on .login-root.login-dark; unlike
+   the settings variant of ChannelsPanel this never scrolls internally —
+   the whole page scrolls as one unit, which is friendlier on a phone
+   browser opened from a WhatsApp link. */
+.login-root.cx-root {
+  align-items: flex-start;
+  height: 100vh;
+  height: 100dvh;
+  overflow-y: auto;
+  padding: 9vh 24px 64px;
+}
+.cx-shell {
+  width: 100%;
+  max-width: 520px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 36px;
+  position: relative;
+  z-index: 1;
+}
+.cx-head {
+  display: flex; flex-direction: column; align-items: center;
+  align-self: center;
+  width: 100%;
+}
+.cx-head .login-brand { margin-bottom: 18px; }
+.cx-head .login-sub { max-width: 40ch; margin-bottom: 0; }
+
+.cx-list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid rgba(245, 243, 238, 0.1);
+  border-radius: 16px;
+  overflow: hidden;
+  background: rgba(245, 243, 238, 0.02);
+}
+.cx-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 18px;
+  border-bottom: 1px solid rgba(245, 243, 238, 0.07);
+  transition: background 0.15s;
+}
+.cx-row:last-child { border-bottom: none; }
+.cx-row:hover { background: rgba(245, 243, 238, 0.025); }
+.cx-mark {
+  width: 40px; height: 40px;
+  border-radius: 11px;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: #fff; font-weight: 700; font-size: 14px;
+  flex-shrink: 0;
+  box-shadow: 0 4px 12px -4px rgba(0, 0, 0, 0.5);
+}
+.cx-info { flex: 1; min-width: 0; }
+.cx-name { font-size: 14px; font-weight: 600; color: #f5f5f4; letter-spacing: -0.005em; }
+.cx-meta {
+  font-size: 12px; color: rgba(245, 245, 244, 0.4);
+  margin-top: 2px;
+  font-family: var(--font-mono), ui-monospace, monospace; letter-spacing: 0.02em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cx-action { flex-shrink: 0; }
+.cx-action-stack { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+
+.cx-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 8px 16px;
+  border-radius: 999px;
+  font-size: 12.5px; font-weight: 600;
+  border: 1px solid rgba(245, 243, 238, 0.16);
+  color: #f5f5f4;
+  background: transparent;
+  transition: background 0.15s, color 0.15s, border-color 0.15s, transform 0.1s;
+  white-space: nowrap;
+}
+.cx-btn:hover { background: #f5f5f4; color: #0a0a0b; border-color: #f5f5f4; transform: translateY(-1px); }
+.cx-btn:disabled { opacity: 0.4; cursor: default; transform: none; }
+.cx-btn:disabled:hover { background: transparent; color: #f5f5f4; }
+
+.cx-tag {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
+  font-family: var(--font-mono), ui-monospace, monospace;
+  padding: 5px 10px; border-radius: 999px;
+}
+.cx-tag .pip { width: 5px; height: 5px; border-radius: 50%; }
+.cx-tag.on { background: rgba(94, 234, 212, 0.12); color: #5eead4; }
+.cx-tag.on .pip { background: #5eead4; box-shadow: 0 0 0 2px rgba(94, 234, 212, 0.18); }
+
+.cx-disconnect {
+  font-size: 11px; color: rgba(245, 245, 244, 0.32);
+  text-decoration: underline; text-underline-offset: 2px;
+  text-decoration-color: rgba(245, 245, 244, 0.2);
+}
+.cx-disconnect:hover { color: #ff9b85; text-decoration-color: #ff9b85; }
+
+.cx-foot { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+.cx-cta .arrow { display: inline-block; transition: transform 0.15s ease; }
+.cx-cta:hover .arrow { transform: translateX(3px); }
+.cx-skip { font-size: 12px; color: rgba(245, 245, 244, 0.35); text-align: center; line-height: 1.5; max-width: 34ch; }
+
+@media (max-width: 560px) {
+  .login-root.cx-root { padding: 48px 16px 56px; }
+  .cx-shell { gap: 28px; }
+  .cx-row { padding: 13px 14px; gap: 11px; }
+  .cx-mark { width: 34px; height: 34px; font-size: 12.5px; border-radius: 10px; }
+  .cx-name { font-size: 13.5px; }
+  .cx-meta { font-size: 11px; }
+  .cx-btn { padding: 7px 13px; font-size: 12px; }
+}
+

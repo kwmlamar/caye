@@ -322,7 +322,13 @@ export default function WhatsAppMockup() {
                     </motion.div>
                   ) : (
                     <motion.a
-                      href="/signup"
+                      href={
+                        process.env.NEXT_PUBLIC_CAYE_WHATSAPP_NUMBER
+                          ? `https://wa.me/${process.env.NEXT_PUBLIC_CAYE_WHATSAPP_NUMBER}?text=${encodeURIComponent("Hi Caye! I'd like to sign up.")}`
+                          : '/signup'
+                      }
+                      target="_blank"
+                      rel="noopener noreferrer"
                       initial={{ opacity: 0 }}
                       animate={{ opacity: 1 }}
                       transition={{ duration: 0.4 }}

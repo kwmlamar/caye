@@ -3,6 +3,7 @@
 import { useState, type ReactNode, type CSSProperties } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { CayeMark } from '@/components/brand/CayeMark'
+import { getSession } from '@/lib/supabase'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useCommandOverview } from '@/lib/useCommandOverview'
 import type { FounderRailId } from '@/lib/types'
@@ -103,7 +104,7 @@ function ExpandButton({ expanded, onClick }: { expanded: boolean; onClick: () =>
   )
 }
 
-function StatCard({ label, value, valueColor = '#f4f4f5' }: { label: string; value: string; valueColor?: string }) {
+function StatCard({ label, value, valueColor = '#f4f4f5', action }: { label: string; value: string; valueColor?: string; action?: ReactNode }) {
   return (
     <div style={{
       position: 'relative', overflow: 'hidden',
@@ -114,10 +115,67 @@ function StatCard({ label, value, valueColor = '#f4f4f5' }: { label: string; val
       <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', textTransform: 'uppercase', color: LABEL_COLOR, marginBottom: 8 }}>
         {label}
       </div>
-      <div style={{ fontSize: 20, fontFamily: 'var(--font-display)', fontWeight: 600, color: valueColor, fontVariantNumeric: 'tabular-nums' }}>
-        {value}
+      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 8 }}>
+        <div style={{ fontSize: 20, fontFamily: 'var(--font-display)', fontWeight: 600, color: valueColor, fontVariantNumeric: 'tabular-nums' }}>
+          {value}
+        </div>
+        {action}
       </div>
     </div>
+  )
+}
+
+// Founder-only pause/resume for a workspace's Caye deployment. Writes the
+// same workspace_ai_config fields the back-office mute_caye/unmute_caye
+// WhatsApp tools write (see app/api/founder/caye-toggle/route.ts) — a
+// second entry point onto the same switch, added at explicit founder
+// request even though the operating model otherwise routes controls like
+// this through Caye-on-WhatsApp. Scoped to founders only, never shown to
+// workspace owners.
+function DeploymentToggle({ workspaceId, active, onToggled }: { workspaceId: string; active: boolean; onToggled: () => void }) {
+  const [busy, setBusy] = useState(false)
+  const [hover, setHover] = useState(false)
+
+  async function handleClick() {
+    if (busy) return
+    setBusy(true)
+    try {
+      const { session } = await getSession()
+      if (!session) return
+      const res = await fetch('/api/founder/caye-toggle', {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ workspaceId, active: !active }),
+      })
+      if (res.ok) onToggled()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <button
+      onClick={handleClick}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      disabled={busy}
+      title={active ? 'Pause Caye for this workspace' : 'Resume Caye for this workspace'}
+      style={{
+        fontSize: 10, fontWeight: 600, fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.04em',
+        padding: '4px 9px', borderRadius: 7, cursor: busy ? 'default' : 'pointer',
+        color: active ? '#fca5a5' : '#34d399',
+        background: hover && !busy ? (active ? 'rgba(251,113,133,0.14)' : 'rgba(52,211,153,0.14)') : 'transparent',
+        border: `1px solid ${active ? 'rgba(251,113,133,0.35)' : 'rgba(52,211,153,0.35)'}`,
+        opacity: busy ? 0.5 : 1,
+        transition: 'background 0.15s ease',
+        flexShrink: 0,
+      }}
+    >
+      {busy ? '···' : active ? 'Pause' : 'Resume'}
+    </button>
   )
 }
 
@@ -203,7 +261,7 @@ export default function FounderHome() {
   const searchParams = useSearchParams()
   const { workspace, workspaceId, workspaces } = useWorkspace()
   const [weekOffset, setWeekOffset] = useState(0)
-  const { data } = useCommandOverview(workspaceId, weekOffset)
+  const { data, refetch } = useCommandOverview(workspaceId, weekOffset)
   const [expanded, setExpanded] = useState<'calendar' | 'conversations' | 'cayeDirect' | null>(null)
   // Set by CommandCalendar on a booking click — jumps CommandConversations
   // to that customer's thread. Lives here since the two panels are
@@ -355,8 +413,11 @@ export default function FounderHome() {
             <div style={{ flexShrink: 0, display: expanded ? 'none' : 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
               <StatCard
                 label="Deployment"
-                value={data ? (data.whatsapp_outbound_enabled ? 'Active & Chatting' : 'Paused') : '—'}
-                valueColor={data?.whatsapp_outbound_enabled ? '#34d399' : '#71717a'}
+                value={data ? (data.caye_active ? 'Active & Chatting' : 'Paused') : '—'}
+                valueColor={data?.caye_active ? '#34d399' : '#71717a'}
+                action={data && (
+                  <DeploymentToggle workspaceId={workspaceId} active={data.caye_active} onToggled={refetch} />
+                )}
               />
               <StatCard label={weekOffset === 0 ? 'Bookings this week' : 'Bookings shown'} value={data ? String(data.bookings.length) : '—'} />
               <StatCard

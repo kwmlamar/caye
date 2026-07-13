@@ -30,6 +30,7 @@ import { persistAgentTurns } from '@/lib/caye-operator-messages'
 import {
   extractSignupCode,
   tryAutoProvisionOwner,
+  tryColdStartWorkspace,
   firstDiscoveryMessage,
   handleDiscoveryAnswer,
   normalizeE164,
@@ -170,30 +171,44 @@ async function handleOneInbound(
     .maybeSingle()).data
 
   if (!allow) {
-    // First contact from an unrecognized phone — fallback path in case
-    // they messaged from a phone that wasn't pre-registered via the
-    // /onboarding phone step (e.g. an old shared link). Check for a
-    // signup deep-link code before giving up.
+    // First contact from an unrecognized phone. Could be an OAuth-created
+    // workspace's handoff (carries an invisible signup code — see
+    // /onboarding) or a genuinely new WhatsApp-first signup (no code at
+    // all, texting Caye directly *is* signing up — see tryColdStartWorkspace).
     const bodyText = message.type === 'text' ? message.text?.body ?? '' : ''
     const signupWorkspaceId = extractSignupCode(bodyText)
-    if (signupWorkspaceId) {
-      const provisioned = await tryAutoProvisionOwner(supabase, signupWorkspaceId, normalized)
-      if (provisioned) {
-        allow = {
-          id: provisioned.id,
-          workspace_id: provisioned.workspace_id,
-          role: provisioned.role,
-          name: provisioned.name,
-          verified_at: provisioned.verified_at,
-          pending_otp_code: null,
-          pending_otp_expires_at: null,
-        }
+    const provisioned = signupWorkspaceId
+      ? await tryAutoProvisionOwner(supabase, signupWorkspaceId, normalized)
+      : await tryColdStartWorkspace(supabase, normalized)
+
+    if (provisioned) {
+      allow = {
+        id: provisioned.id,
+        workspace_id: provisioned.workspace_id,
+        role: provisioned.role,
+        name: provisioned.name,
+        verified_at: provisioned.verified_at,
+        pending_otp_code: null,
+        pending_otp_expires_at: null,
       }
     }
   }
 
   if (!allow) {
+    // Only reachable if a signup-code handoff was present but invalid/inert
+    // (already claimed, already onboarded) — cold-start above always
+    // succeeds unless the DB insert itself fails. Reply rather than drop
+    // silently; this is the sender's first inbound message, which opens
+    // the 24h customer-service window regardless of enrollment.
     console.warn(`[whatsapp-operator] no allowlist entry for from=${fromRaw}`)
+    const sendResult = await sendFreeFormWhatsApp(
+      `+${normalized}`,
+      "Hey, I'm Caye — I couldn't find your account. If you just signed up on the web, head back to that page and tap \"Message Caye on WhatsApp\" again, or just tell me you'd like to sign up and I'll get you started.",
+      `unrecognized-${message.id}`
+    )
+    if (sendResult.status === 'failed') {
+      console.error(`[whatsapp-operator] unrecognized-sender reply failed for from=${fromRaw}:`, sendResult.error)
+    }
     return
   }
 
@@ -376,17 +391,20 @@ async function handleOneInbound(
 
   // ── WhatsApp-native discovery grill ─────────────────────────────────
   // system_prompt is only ever set once (by handleDiscoveryAnswer /
-  // saveBusinessProfile) at the end of the 8-question interview, so its
+  // saveBusinessProfile) at the end of the adaptive discovery interview
+  // (see lib/onboarding.ts:decideNextDiscoveryStep — grill-me-style, one
+  // question at a time, stops as soon as there's enough, capped), so its
   // absence means this workspace hasn't finished onboarding yet. This
   // branch runs even though whatsapp_outbound_enabled is still false —
   // that flag flips true only once discovery completes.
   const replyTo = `+${normalized}`
   if (!cfg.system_prompt) {
-    // Question index still at 0 with no answers recorded means discovery
-    // hasn't actually started yet — whatever this first message says
-    // (however the phone got recognized: pre-registered via /onboarding's
-    // phone step, or the [ws:...] code fallback), treat it as "hello,"
-    // not as an answer to question 1.
+    // No turns recorded yet means discovery hasn't actually started —
+    // whatever this first message says (however the phone got recognized:
+    // cold-start signup, OAuth handoff code, etc.), treat it as "hello,"
+    // not as an answer to the first question. onboarding_wa_answers is now
+    // an ordered turns array, not a fixed-key map, but Object.keys(...)
+    // .length === 0 is equally true for an empty array.
     const discoveryNotStarted =
       (cfg.onboarding_wa_question_index ?? 0) === 0 &&
       Object.keys(cfg.onboarding_wa_answers ?? {}).length === 0

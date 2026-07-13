@@ -190,6 +190,21 @@ export async function signInWithOAuth(provider: OAuthProvider, options?: { redir
   return { data, error: error?.message || null }
 }
 
+/**
+ * Attaches a signed-in dashboard user as owner of a workspace that was
+ * created via WhatsApp-first signup (no auth user of its own yet).
+ * workspace_members is a genuine many-to-many join — this deliberately
+ * does not assume workspaceId === userId, unlike the default OAuth
+ * signup path (see app/auth/callback/page.tsx).
+ */
+export async function claimWorkspace(workspaceId: string, userId: string) {
+  const client = getSupabase()
+  const { error } = await client
+    .from('workspace_members')
+    .upsert({ workspace_id: workspaceId, user_id: userId, role: 'owner' }, { onConflict: 'workspace_id,user_id' })
+  return { error: error?.message || null }
+}
+
 export async function resetPassword(email: string) {
   const client = getSupabase()
   const { error } = await client.auth.resetPasswordForEmail(email, {

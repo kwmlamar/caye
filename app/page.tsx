@@ -31,6 +31,12 @@ const PALETTE_REEF = ['#2E7A8C', '#6DC4C9', '#FFD580', '#F5E8D0', '#A8DCC0', '#F
 
 const HERO_COLORS = PALETTE_DEEP
 
+// Signup is WhatsApp-first — no web form. Same wa.me pattern as
+// app/onboarding/OnboardingClient.tsx and app/signup/page.tsx.
+const CAYE_SIGNUP_WA_HREF = process.env.NEXT_PUBLIC_CAYE_WHATSAPP_NUMBER
+  ? `https://wa.me/${process.env.NEXT_PUBLIC_CAYE_WHATSAPP_NUMBER}?text=${encodeURIComponent("Hi Caye! I'd like to sign up.")}`
+  : '/signup'
+
 // Hero load choreography — one staggered settle on page load (eyebrow →
 // headline → subhead → CTA), then the page goes quiet. Scroll reveals
 // below the fold use whileInView with the same easing family.
@@ -207,8 +213,10 @@ export default function LandingPage() {
               {...heroItem(0.5)}
               className="mt-10 flex flex-col items-center gap-3"
             >
-              <Link
-                href="/signup"
+              <a
+                href={CAYE_SIGNUP_WA_HREF}
+                target="_blank"
+                rel="noopener noreferrer"
                 className="group relative inline-flex items-center gap-2.5 bg-near-black text-cream font-medium px-9 py-4 rounded-full text-[15px] hover:bg-near-black/90 transition-all shadow-[0_4px_20px_-6px_rgba(14,26,26,0.25)] hover:shadow-[0_8px_28px_-8px_rgba(14,26,26,0.35)] hover:-translate-y-[1px] active:translate-y-0"
               >
                 <span>Try Caye free</span>
@@ -227,7 +235,7 @@ export default function LandingPage() {
                     strokeLinejoin="round"
                   />
                 </svg>
-              </Link>
+              </a>
               <p className="font-mono text-[10.5px] uppercase tracking-[0.16em] text-near-black/55">
                 Free for 7 days · No credit card
               </p>
@@ -404,9 +412,14 @@ export default function LandingPage() {
             >
               Contact
             </a>
-            <Link href="/signup" className="hover:text-near-black transition-colors">
+            <a
+              href={CAYE_SIGNUP_WA_HREF}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hover:text-near-black transition-colors"
+            >
               Sign up
-            </Link>
+            </a>
             <Link href="/login" className="hover:text-near-black transition-colors">
               Log in
             </Link>

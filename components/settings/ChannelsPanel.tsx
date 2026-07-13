@@ -77,6 +77,7 @@ const CHANNEL_META: Record<string, { name: string; label: string; bg: string; no
 }
 
 const CHANNEL_ORDER = ['whatsapp', 'instagram', 'messenger', 'email', 'gmail', 'sms']
+const SUPPORTED_TYPES = new Set(['email', 'gmail', 'whatsapp', 'messenger', 'instagram'])
 
 // When a channel type has multiple rows, prefer the active one; break ties by newest created_at
 function pickBest(rows: ConnectedAccount[]): ConnectedAccount {
@@ -85,7 +86,7 @@ function pickBest(rows: ConnectedAccount[]): ConnectedAccount {
   return pool.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0]
 }
 
-export default function ChannelsPanel({ workspaceId: propWorkspaceId }: { workspaceId?: string } = {}) {
+export default function ChannelsPanel({ workspaceId: propWorkspaceId, variant = 'settings' }: { workspaceId?: string; variant?: 'settings' | 'onboarding' } = {}) {
   const params = useParams()
   const urlWorkspaceId = params?.workspaceId as string | undefined
   const ctxWorkspaceId = useWorkspaceOptional()?.workspaceId
@@ -332,6 +333,96 @@ export default function ChannelsPanel({ workspaceId: propWorkspaceId }: { worksp
     fetchAccounts()
   }
 
+  const handleConnectClick = (type: string) => {
+    if (type === 'email') {
+      window.location.href = `/api/auth/zoho?workspaceId=${workspaceId}`
+    } else if (type === 'gmail') {
+      window.location.href = `/api/auth/gmail?workspaceId=${workspaceId}`
+    } else if (type === 'whatsapp') {
+      launchWhatsAppSignup()
+    } else if (type === 'messenger') {
+      window.location.href = `/api/auth/meta?workspaceId=${workspaceId}&channel=messenger`
+    } else if (type === 'instagram') {
+      window.location.href = `/api/auth/meta?workspaceId=${workspaceId}&channel=instagram`
+    }
+  }
+
+  if (variant === 'onboarding') {
+    return (
+      <>
+        <div className="cx-list">
+          {CHANNEL_ORDER.map((type) => {
+            const meta = CHANNEL_META[type]
+            const account = byType[type] ?? null
+            const isConnected = account?.is_active === true
+            const needsReauth = account?.needs_reauth === true
+            const supported = SUPPORTED_TYPES.has(type)
+            const handle = account
+              ? (account.channel_username || account.channel_account_name || account.channel_account_id || '—')
+              : 'Not connected'
+            // Zoho's chip uses var(--tc-ink), which is near-invisible on this
+            // page's near-black background — swap in Zoho's own brand red.
+            const markBg = type === 'email' ? '#c8402c' : meta.bg
+
+            return (
+              <div key={type} className="cx-row">
+                <span className="cx-mark" style={{ background: markBg }}>{meta.label}</span>
+                <div className="cx-info">
+                  <div className="cx-name">{meta.name}</div>
+                  <div className="cx-meta">{loading ? '—' : handle}</div>
+                </div>
+                <div className="cx-action">
+                  {isConnected && !needsReauth ? (
+                    <div className="cx-action-stack">
+                      <span className="cx-tag on"><span className="pip" />Connected</span>
+                      <button className="cx-disconnect" onClick={() => account && handleDisconnect(account)}>
+                        Disconnect
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      className="cx-btn"
+                      onClick={() => handleConnectClick(type)}
+                      disabled={!supported || (type === 'whatsapp' && whatsappConnecting)}
+                      title={!supported ? 'Coming soon' : undefined}
+                    >
+                      {type === 'whatsapp' && whatsappConnecting ? 'Connecting…' : needsReauth ? 'Reconnect' : 'Connect'}
+                    </button>
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+
+        {whatsappPages && workspaceId && (
+          <WhatsAppPagePicker
+            pages={whatsappPages}
+            workspaceId={workspaceId}
+            onSuccess={() => { setWhatsappPages(null); fetchAccounts() }}
+            onClose={() => setWhatsappPages(null)}
+          />
+        )}
+        {messengerPages && workspaceId && (
+          <MessengerPagePicker
+            pages={messengerPages}
+            workspaceId={workspaceId}
+            onSuccess={() => { setMessengerPages(null); fetchAccounts() }}
+            onClose={() => setMessengerPages(null)}
+          />
+        )}
+        {instagramPages && workspaceId && (
+          <InstagramPagePicker
+            pages={instagramPages}
+            workspaceId={workspaceId}
+            onSuccess={() => { setInstagramPages(null); fetchAccounts() }}
+            onClose={() => setInstagramPages(null)}
+          />
+        )}
+      </>
+    )
+  }
+
   return (
     <div className="set-page">
       <header className="set-page-head">
@@ -428,21 +519,9 @@ export default function ChannelsPanel({ workspaceId: propWorkspaceId }: { worksp
                 ) : (
                   <button
                     className="btn-solid sm"
-                    onClick={() => {
-                      if (type === 'email') {
-                        window.location.href = `/api/auth/zoho?workspaceId=${workspaceId}`
-                      } else if (type === 'gmail') {
-                        window.location.href = `/api/auth/gmail?workspaceId=${workspaceId}`
-                      } else if (type === 'whatsapp') {
-                        launchWhatsAppSignup()
-                      } else if (type === 'messenger') {
-                        window.location.href = `/api/auth/meta?workspaceId=${workspaceId}&channel=messenger`
-                      } else if (type === 'instagram') {
-                        window.location.href = `/api/auth/meta?workspaceId=${workspaceId}&channel=instagram`
-                      }
-                    }}
-                    disabled={(type !== 'email' && type !== 'gmail' && type !== 'whatsapp' && type !== 'messenger' && type !== 'instagram') || (type === 'whatsapp' && whatsappConnecting)}
-                    title={type !== 'email' && type !== 'gmail' && type !== 'whatsapp' && type !== 'messenger' && type !== 'instagram' ? 'Coming soon' : undefined}
+                    onClick={() => handleConnectClick(type)}
+                    disabled={!SUPPORTED_TYPES.has(type) || (type === 'whatsapp' && whatsappConnecting)}
+                    title={!SUPPORTED_TYPES.has(type) ? 'Coming soon' : undefined}
                   >
                     <SIcon name="plus" size={12} />
                     {type === 'whatsapp' && whatsappConnecting ? 'Connecting…' : needsReauth ? 'Reconnect' : 'Connect'}

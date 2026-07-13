@@ -398,11 +398,16 @@ async function processGmailMessage(
   // on any send failure so the owner can still recover the conversation.
   if (decision.action === 'reply') {
     const replySubject = subject.startsWith('Re:') ? subject : `Re: ${subject}`
+    // Computed once and reused for send + store + preview so the dashboard
+    // copy matches what the customer actually received — storing the raw
+    // decision.content made replies look tagline-less in the inbox even
+    // when the delivered email was correct.
+    const outboundBody = ensureTagline(decision.content, voiceProfile)
     try {
       const sent = await sendGmailReply({
         to: fromEmail,
         subject: replySubject,
-        body: ensureTagline(decision.content, voiceProfile),
+        body: outboundBody,
         gmailThreadId: threadId,
         conversationId,
         workspaceId,
@@ -412,7 +417,7 @@ async function processGmailMessage(
         conversation_id: conversationId,
         channel_message_id: sent.gmailMessageId,
         sender_type: 'business',
-        content: decision.content,
+        content: outboundBody,
         message_type: 'text',
         sent_at: nowISO,
         status: 'sent',
@@ -432,7 +437,7 @@ async function processGmailMessage(
         last_sender_type: 'business',
         last_business_sender_kind: 'caye',
         last_message_at: nowISO,
-        last_message_preview: decision.content.slice(0, 100),
+        last_message_preview: outboundBody.slice(0, 100),
       }
       if (decision.needsOwnerFollowup) {
         convoUpdate.human_agent_enabled = true

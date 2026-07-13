@@ -1,6 +1,13 @@
 import 'server-only'
 import { createServiceClient } from '@/lib/supabase-server'
-import { SERVICE_BUSINESS_QUESTIONS, buildBusinessProfile, saveBusinessProfile } from '@/lib/onboarding'
+import {
+  FIRST_DISCOVERY_QUESTION,
+  MAX_DISCOVERY_QUESTIONS,
+  decideNextDiscoveryStep,
+  buildBusinessProfile,
+  saveBusinessProfile,
+  type DiscoveryTurn,
+} from '@/lib/onboarding'
 
 type SupabaseClient = ReturnType<typeof createServiceClient>
 
@@ -126,18 +133,73 @@ export async function tryAutoProvisionOwner(
   return inserted as ProvisionedOwner
 }
 
+/**
+ * Creates a brand-new workspace from a WhatsApp-first signup: a phone
+ * number Caye has never seen before, with no signup code (not an OAuth
+ * handoff), just messaged her directly. No web form, no OAuth — texting
+ * Caye first *is* signing up. Verified immediately since they just
+ * proved phone ownership by sending the message.
+ */
+export async function tryColdStartWorkspace(
+  supabase: SupabaseClient,
+  normalizedPhone: string
+): Promise<ProvisionedOwner | null> {
+  const workspaceId = crypto.randomUUID()
+  const now = new Date().toISOString()
+
+  const { error: customerError } = await supabase.from('customers').insert({
+    id: workspaceId,
+    business_name: null,
+    contact_email: null,
+    full_name: null,
+    plan: 'free',
+    status: 'trial',
+  })
+
+  if (customerError) {
+    console.error('[onboarding-whatsapp] cold-start customer insert failed:', customerError)
+    return null
+  }
+
+  const { data: inserted, error: allowlistError } = await supabase
+    .from('operator_allowlist')
+    .insert({
+      workspace_id: workspaceId,
+      phone: `+${normalizedPhone}`,
+      role: 'owner',
+      name: null,
+      verified_at: now,
+    })
+    .select('id, workspace_id, role, name, verified_at')
+    .single()
+
+  if (allowlistError || !inserted) {
+    console.error('[onboarding-whatsapp] cold-start allowlist insert failed:', allowlistError)
+    return null
+  }
+
+  await supabase
+    .from('workspace_ai_config')
+    .upsert({ workspace_id: workspaceId }, { onConflict: 'workspace_id', ignoreDuplicates: true })
+
+  return inserted as ProvisionedOwner
+}
+
 const GREETING =
-  "Hey! I'm Caye — your AI receptionist. I'll ask you 8 quick questions so I know exactly how to represent your business. Takes about 3 minutes. 🌴"
+  "Hey! I'm Caye — your AI receptionist. I'll ask a few quick questions about your business — I'll keep it as short as I can. 🌴"
 
 export function firstDiscoveryMessage(): string {
-  return `${GREETING}\n\n${SERVICE_BUSINESS_QUESTIONS[0].question}`
+  return `${GREETING}\n\n${FIRST_DISCOVERY_QUESTION}`
 }
 
 /**
  * Advances the WhatsApp discovery grill by one turn: records `answerText`
- * against the current question, then either asks the next question or —
- * on the last question — synthesizes the business profile and flips the
- * workspace live.
+ * against the question Caye last asked, then either asks the next
+ * adaptively-chosen question or — once there's enough, or the question
+ * cap is hit — synthesizes the business profile and flips the workspace
+ * live. See lib/onboarding.ts:decideNextDiscoveryStep for how "enough" is
+ * decided; this is grill-me-style (one question at a time, stop as soon
+ * as there's enough), not a fixed script.
  */
 export async function handleDiscoveryAnswer(
   supabase: SupabaseClient,
@@ -146,45 +208,68 @@ export async function handleDiscoveryAnswer(
 ): Promise<{ replyText: string; completed: boolean }> {
   const { data: config } = await supabase
     .from('workspace_ai_config')
-    .select('onboarding_wa_question_index, onboarding_wa_answers')
+    .select('onboarding_wa_answers, onboarding_wa_last_question')
     .eq('workspace_id', workspaceId)
     .maybeSingle()
 
-  const index = config?.onboarding_wa_question_index ?? 0
-  const answers: Record<string, string> = { ...(config?.onboarding_wa_answers ?? {}) }
+  const turns: DiscoveryTurn[] = config?.onboarding_wa_answers ?? []
 
-  const question = SERVICE_BUSINESS_QUESTIONS[index]
-  if (!question) {
-    // Shouldn't happen (would mean discovery already completed elsewhere),
-    // but fail safe rather than throw on a live webhook.
-    return {
-      replyText: "Looks like we've already finished setup — text me anything and I'll help.",
-      completed: true,
-    }
+  let newTurns: DiscoveryTurn[]
+  if (turns.length === 0) {
+    // No prior turns means this answer is necessarily the reply to the
+    // fixed business-name question — always asked first, deterministically.
+    newTurns = [{ question: FIRST_DISCOVERY_QUESTION, answer: answerText }]
+    // Persisted immediately (rather than waiting for saveBusinessProfile
+    // at the end) so it's available right away — operator_allowlist.name,
+    // the founder dashboard, and buildBusinessProfile's businessName arg
+    // all read customers.business_name directly.
+    await supabase.from('customers').update({ business_name: answerText }).eq('id', workspaceId)
+  } else {
+    const lastQuestion = config?.onboarding_wa_last_question ?? FIRST_DISCOVERY_QUESTION
+    newTurns = [...turns, { question: lastQuestion, answer: answerText }]
   }
 
-  answers[question.id] = answerText
-  const nextIndex = index + 1
-  const nextQuestion = SERVICE_BUSINESS_QUESTIONS[nextIndex]
-
-  if (nextQuestion) {
-    await supabase
-      .from('workspace_ai_config')
-      .update({ onboarding_wa_question_index: nextIndex, onboarding_wa_answers: answers })
-      .eq('workspace_id', workspaceId)
-
-    return { replyText: nextQuestion.question, completed: false }
-  }
-
-  // Last question answered — synthesize and go live.
   const { data: customer } = await supabase
     .from('customers')
     .select('business_name')
     .eq('id', workspaceId)
     .maybeSingle()
+  const businessName = customer?.business_name || 'your business'
 
-  const profile = await buildBusinessProfile(answers, customer?.business_name || 'your business')
-  const { error: saveErr } = await saveBusinessProfile(workspaceId, profile, answers)
+  const atCap = newTurns.length >= MAX_DISCOVERY_QUESTIONS
+  const step = atCap ? { done: true as const } : await decideNextDiscoveryStep(businessName, newTurns)
+
+  if (!step.done) {
+    await supabase
+      .from('workspace_ai_config')
+      .update({
+        onboarding_wa_question_index: newTurns.length,
+        onboarding_wa_answers: newTurns,
+        onboarding_wa_last_question: step.question,
+      })
+      .eq('workspace_id', workspaceId)
+
+    const replyText = step.suggestedAnswer
+      ? `${step.question}\n\n(e.g. "${step.suggestedAnswer}")`
+      : step.question
+
+    return { replyText, completed: false }
+  }
+
+  // Enough to go on (or hit the cap) — synthesize and go live.
+  let profile
+  try {
+    profile = await buildBusinessProfile(newTurns, businessName)
+  } catch (err) {
+    console.error('[onboarding-whatsapp] buildBusinessProfile failed:', err)
+    return {
+      replyText:
+        "I hit a snag putting your profile together — mind sending your last answer again in a moment? If it keeps happening, tell me and I'll flag it.",
+      completed: false,
+    }
+  }
+
+  const { error: saveErr } = await saveBusinessProfile(workspaceId, profile, newTurns)
 
   if (saveErr) {
     console.error('[onboarding-whatsapp] saveBusinessProfile failed:', saveErr)
@@ -201,11 +286,13 @@ export async function handleDiscoveryAnswer(
     .eq('workspace_id', workspaceId)
 
   const connectUrl = `${process.env.NEXT_PUBLIC_APP_URL || ''}/connect?ws=${workspaceId}`
+  const claimUrl = `${process.env.NEXT_PUBLIC_APP_URL || ''}/login?ws=${workspaceId}`
 
   return {
     replyText:
       "That's everything I need — I'm live and ready to represent your business. 🎉\n\n" +
       `One more step: connect the channels your customers message you on (WhatsApp, email, Instagram) here: ${connectUrl}\n\n` +
+      `Want a dashboard too, for billing and settings? Sign in here anytime: ${claimUrl}\n\n` +
       "You can always come back and talk to me directly, anytime.",
     completed: true,
   }

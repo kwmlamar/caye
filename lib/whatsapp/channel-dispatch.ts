@@ -3,6 +3,8 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { sendMetaMessage } from '@/lib/meta-reply'
 import { sendWhatsAppMessage } from '@/lib/whatsapp'
 import { sendZohoReply } from '@/lib/email-ai'
+import type { VoiceProfile } from '@/lib/voice-profile'
+import { ensureTagline } from '@/lib/voice-profile'
 import { resolveOpenEscalations } from '@/lib/caye-agent/tools/write-low/resolve-open-escalations'
 
 /**
@@ -53,6 +55,7 @@ export async function dispatchOperatorReply(
 
   const trimmed = text.trim()
   if (!trimmed) throw new Error('empty reply')
+  let outboundBody = trimmed
 
   switch (conv.channel_type) {
     case 'messenger':
@@ -71,10 +74,23 @@ export async function dispatchOperatorReply(
       const meta = (conv.metadata ?? {}) as Record<string, string>
       const subj = meta.subject || '(no subject)'
       const replySubject = subj.startsWith('Re:') ? subj : `Re: ${subj}`
+      // The body here is Caye-composed (operator approved/revised the draft),
+      // so the outbound-email tagline guarantee applies just like the
+      // auto-reply paths — the draft usually predates ensureTagline and the
+      // operator shouldn't have to remember to re-add the tagline when editing.
+      const { data: workspaceRow } = await supabase
+        .from('customers')
+        .select('ai_voice_profile')
+        .eq('id', account.user_id)
+        .maybeSingle()
+      outboundBody = ensureTagline(
+        trimmed,
+        (workspaceRow?.ai_voice_profile ?? undefined) as VoiceProfile | undefined
+      )
       await sendZohoReply(
         conv.customer_id,
         replySubject,
-        trimmed,
+        outboundBody,
         conv.channel_conversation_id,
         account.user_id
       )
@@ -91,7 +107,7 @@ export async function dispatchOperatorReply(
     conversation_id: conversationId,
     channel_message_id: messageId,
     sender_type: 'business',
-    content: trimmed,
+    content: outboundBody,
     message_type: 'text',
     sent_at: now,
     status: 'sent',
@@ -113,7 +129,7 @@ export async function dispatchOperatorReply(
     .from('unified_conversations')
     .update({
       last_message_at: now,
-      last_message_preview: trimmed.slice(0, 100),
+      last_message_preview: outboundBody.slice(0, 100),
       last_sender_type: 'business',
       // 'caye' not 'human' — Caye composed the body, even though the operator
       // authorized the send. Honest rendering: chat bubble should match other

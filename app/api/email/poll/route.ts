@@ -12,6 +12,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase-server'
 import { generateCayeAutoReply } from '@/lib/caye-reply'
+import type { VoiceProfile } from '@/lib/voice-profile'
+import { ensureTagline } from '@/lib/voice-profile'
 import { enqueueHoldPing } from '@/lib/whatsapp/triggers'
 import { applyEscalation } from '@/lib/whatsapp/escalation'
 import { resolveOpenEscalations } from '@/lib/caye-agent/tools/write-low/resolve-open-escalations'
@@ -809,6 +811,16 @@ async function processMessage(
           let thankYou: string = buildReceiptThankYou(receipt)
           let proposedReplyForHold: string | undefined
           let shouldSend = true
+          // Fetched unconditionally (not just when conversationMatched): the
+          // ensureTagline backstop at the send below applies to the template
+          // fallback too — the tagline belongs on every outbound email.
+          const { data: receiptCustomerRow } = await supabase
+            .from('customers')
+            .select('ai_voice_profile')
+            .eq('id', workspaceId)
+            .maybeSingle()
+          const receiptVoiceProfile =
+            (receiptCustomerRow?.ai_voice_profile ?? undefined) as VoiceProfile | undefined
 
           if (conversationMatched) {
             // Load workspace AI prompt for the Caye-voiced confirmation.
@@ -841,7 +853,8 @@ async function processMessage(
                     workspaceId,
                     conversationId,
                     senderEmail: customerEmail,
-                  }
+                  },
+                  receiptVoiceProfile
                 )
                 decision = await applyEscalation(decision, {
                   workspaceId,
@@ -871,6 +884,10 @@ async function processMessage(
           }
 
           const replySubject = `Payment received — ${receipt.description}`
+          // Deterministic tagline backstop — same rationale as the main
+          // reply flow below. Applies to both the Caye-generated body and
+          // the template fallback.
+          thankYou = ensureTagline(thankYou, receiptVoiceProfile)
 
           if (shouldSend) {
             const sendRes = await fetch(`${base}/api/accounts/${accountId}/messages`, {
@@ -1028,18 +1045,33 @@ async function processMessage(
     return 'skipped'
   }
 
-  // Fetch workspace AI prompt
-  let systemPrompt =
-    'You are Caye, an AI receptionist for a Caribbean small business. Reply to customer emails warmly and professionally. When in doubt, hold for the business owner.'
+  // Fetch workspace AI prompt + voice profile. The voice profile carries the
+  // learned tagline/signature/signoff verbatim strings — without it,
+  // buildSystem in caye-reply.ts never emits those instructions, so replies
+  // on this path would never include them. This poller was the path that
+  // kept dropping Karenda's "Where Every Tour Tells a Story" tagline: the
+  // 2026-07-08 fix covered the Gmail poller and the Zoho *webhook* but
+  // missed this Zoho *poll* cron, which is what actually serves
+  // info@tourbimini.com.
   // whatsapp_muted_until: column name is legacy from when mute_caye only gated
   // WhatsApp. Now gates email too (the customer's "pause yuhself" expectation
   // is a Caye-wide pause). Rename to caye_muted_until is queued for v1.1.
-  const { data: aiConfig } = await supabase
-    .from('workspace_ai_config')
-    .select('system_prompt, ai_enabled, whatsapp_muted_until')
-    .eq('workspace_id', workspaceId)
-    .maybeSingle()
+  let systemPrompt =
+    'You are Caye, an AI receptionist for a Caribbean small business. Reply to customer emails warmly and professionally. When in doubt, hold for the business owner.'
+  const [{ data: aiConfig }, { data: customerRow }] = await Promise.all([
+    supabase
+      .from('workspace_ai_config')
+      .select('system_prompt, ai_enabled, whatsapp_muted_until')
+      .eq('workspace_id', workspaceId)
+      .maybeSingle(),
+    supabase
+      .from('customers')
+      .select('ai_voice_profile')
+      .eq('id', workspaceId)
+      .maybeSingle(),
+  ])
   if (aiConfig?.system_prompt) systemPrompt = aiConfig.system_prompt
+  const voiceProfile = (customerRow?.ai_voice_profile ?? undefined) as VoiceProfile | undefined
 
   // Find-or-create conversation by customer email (NOT by threadId).
   //
@@ -1299,7 +1331,8 @@ async function processMessage(
         workspaceId,
         conversationId: conversation.id,
         senderEmail: effectiveEmail,
-      }
+      },
+      voiceProfile
     )
   } catch (err) {
     console.error('[email/poll] AI reply generation failed:', err)
@@ -1347,8 +1380,11 @@ async function processMessage(
     return 'held'
   }
 
-  // Send reply via Zoho Mail API
+  // Send reply via Zoho Mail API. ensureTagline is the deterministic
+  // backstop for the tagline instruction in buildSystem (lib/caye-reply.ts)
+  // — that's a soft LLM instruction with no guarantee of compliance.
   const replySubject = subject.startsWith('Re:') ? subject : `Re: ${subject}`
+  const outboundBody = ensureTagline(decision.content, voiceProfile)
   const sendRes = await fetch(`${base}/api/accounts/${accountId}/messages`, {
     method: 'POST',
     headers: {
@@ -1359,7 +1395,7 @@ async function processMessage(
       fromAddress: ownEmail,
       toAddress: effectiveEmail,
       subject: replySubject,
-      content: decision.content,
+      content: outboundBody,
       mailFormat: 'plaintext',
     }),
   })
@@ -1370,13 +1406,14 @@ async function processMessage(
     return 'error'
   }
 
-  // Store outbound message
+  // Store outbound message — the ensured body, not decision.content, so the
+  // dashboard copy matches what the customer actually received.
   const replySentAt = new Date().toISOString()
   const { error: outboundErr } = await supabase.from('unified_messages').insert({
     conversation_id: conversation.id,
     channel_message_id: `caye_auto_${Date.now()}`,
     sender_type: 'business',
-    content: decision.content,
+    content: outboundBody,
     message_type: 'text',
     sent_at: replySentAt,
     status: 'sent',
@@ -1386,7 +1423,7 @@ async function processMessage(
   if (!outboundErr) {
     await supabase
       .from('unified_conversations')
-      .update({ last_sender_type: 'business', last_business_sender_kind: 'caye', last_message_at: replySentAt, last_message_preview: decision.content.slice(0, 100) })
+      .update({ last_sender_type: 'business', last_business_sender_kind: 'caye', last_message_at: replySentAt, last_message_preview: outboundBody.slice(0, 100) })
       .eq('id', conversation.id)
   }
 

@@ -1,9 +1,9 @@
 "use client"
 
-import { useEffect, useState } from "react"
-import { useRouter } from "next/navigation"
+import { Suspense, useEffect, useState } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
-import { signInWithOAuth, getSession } from "@/lib/supabase"
+import { signInWithOAuth, getSession, claimWorkspace } from "@/lib/supabase"
 import { CayeMark } from "@/components/brand/CayeMark"
 
 function isMobileViewport() {
@@ -34,22 +34,49 @@ function FacebookIcon() {
 }
 
 export default function LoginPage() {
+  return (
+    <Suspense fallback={
+      <div className="login-root login-dark">
+        <div className="login-card" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 240 }}>
+          <CayeMark size={48} className="opacity-60" />
+        </div>
+      </div>
+    }>
+      <LoginPageInner />
+    </Suspense>
+  )
+}
+
+function LoginPageInner() {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  // Present when this login is a "claim my dashboard" link Caye sent
+  // after a WhatsApp-first signup (see lib/onboarding-whatsapp.ts) — the
+  // workspace already exists and already finished discovery, it just has
+  // no dashboard login yet.
+  const claimWorkspaceId = searchParams.get('ws')
   const [checking, setChecking] = useState(true) // true while checking existing session
 
   useEffect(() => {
-    getSession().then(({ session }) => {
+    getSession().then(async ({ session }) => {
       if (session?.user) {
-        router.replace(appRoute(session.user.id))
+        if (claimWorkspaceId) {
+          await claimWorkspace(claimWorkspaceId, session.user.id)
+          router.replace(appRoute(claimWorkspaceId))
+        } else {
+          router.replace(appRoute(session.user.id))
+        }
       } else {
         setChecking(false)
       }
     })
-  }, [router])
+  }, [router, claimWorkspaceId])
 
   const handleOAuth = (provider: 'google' | 'facebook') => {
     signInWithOAuth(provider, {
-      redirectTo: `${window.location.origin}/auth/callback`
+      redirectTo: claimWorkspaceId
+        ? `${window.location.origin}/auth/callback?ws=${claimWorkspaceId}`
+        : `${window.location.origin}/auth/callback`
     })
   }
 
@@ -70,9 +97,13 @@ export default function LoginPage() {
           <CayeMark size={36} />
         </div>
 
-        <span className="login-eyebrow">Welcome back</span>
-        <h1 className="login-heading">Sign in to Caye</h1>
-        <p className="login-sub">Pick up where you left off.</p>
+        <span className="login-eyebrow">{claimWorkspaceId ? "Dashboard access" : "Welcome back"}</span>
+        <h1 className="login-heading">{claimWorkspaceId ? "Connect a login to your workspace" : "Sign in to Caye"}</h1>
+        <p className="login-sub">
+          {claimWorkspaceId
+            ? "Sign in once so you can come back to billing and settings anytime."
+            : "Pick up where you left off."}
+        </p>
 
         <div className="login-oauth-stack">
           <button className="login-oauth" onClick={() => handleOAuth('google')} type="button">

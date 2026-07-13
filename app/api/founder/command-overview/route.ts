@@ -103,7 +103,7 @@ export async function GET(req: NextRequest) {
       : Promise.resolve({ data: [], error: null }),
     supabase
       .from('workspace_ai_config')
-      .select('whatsapp_outbound_enabled')
+      .select('whatsapp_muted_until')
       .eq('workspace_id', workspaceId)
       .maybeSingle(),
   ])
@@ -181,6 +181,25 @@ export async function GET(req: NextRequest) {
     has_open_escalation: !!b.conversation_id && openEscalationConversationIds.has(b.conversation_id),
   }))
 
+  // "Active" mirrors the mute gate the reply pipeline itself checks (see
+  // app/api/email/poll/route.ts's "Caye-wide mute gate" comment). The old
+  // whatsapp_outbound_enabled field this replaced is a one-way "onboarding
+  // finished" flag, never re-toggled, so it couldn't reflect a back-office
+  // mute/unmute no matter what the UI did.
+  //
+  // Deliberately NOT also checking workspace_ai_config.ai_enabled here:
+  // verified directly against production (2026-07-12) that the column
+  // doesn't exist there — the 2026-05-24 migration adding it was never
+  // applied — so selecting it errors the whole query. Every ai_enabled
+  // read across the app (webhooks, nudge-scan, email poll, CayeAIPanel
+  // settings) is silently failing the same way and failing open. That's a
+  // separate, wider bug flagged to the user; whatsapp_muted_until is the
+  // one column confirmed to exist and to be the thing mute_caye/unmute_caye
+  // actually write.
+  const mutedUntil = aiConfig?.whatsapp_muted_until ?? null
+  const isMuted = !!mutedUntil && new Date(mutedUntil).getTime() > Date.now()
+  const cayeActive = !isMuted
+
   return NextResponse.json({
     escalations: escalations ?? [],
     pending_escalation_count: pendingEscalations,
@@ -191,6 +210,7 @@ export async function GET(req: NextRequest) {
     week_start: monday.toISOString().slice(0, 10),
     week_offset: weekOffset,
     conversations: conversationsRows ?? [],
-    whatsapp_outbound_enabled: aiConfig?.whatsapp_outbound_enabled ?? false,
+    caye_active: cayeActive,
+    caye_muted_until: isMuted ? mutedUntil : null,
   })
 }

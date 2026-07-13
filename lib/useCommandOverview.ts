@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { getSession } from '@/lib/supabase'
 
 export interface Escalation {
@@ -47,7 +47,8 @@ export interface CommandOverview {
   week_start: string
   week_offset: number
   conversations: ConversationSummary[]
-  whatsapp_outbound_enabled: boolean
+  caye_active: boolean
+  caye_muted_until: string | null
 }
 
 // Shared by CommandScreen (the panel tab) and FounderHome (the founder's
@@ -61,35 +62,33 @@ export function useCommandOverview(workspaceId: string | null, weekOffset = 0) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => {
+  const load = useCallback(async () => {
     if (!workspaceId) return
-    let cancelled = false
-
-    async function load() {
-      setLoading(true)
-      setError(null)
-      const { session } = await getSession()
-      if (!session) {
-        if (!cancelled) { setError('Not signed in'); setLoading(false) }
-        return
-      }
-      try {
-        const res = await fetch(`/api/founder/command-overview?workspaceId=${workspaceId}&weekOffset=${weekOffset}`, {
-          headers: { Authorization: `Bearer ${session.access_token}` },
-        })
-        const json = await res.json()
-        if (!res.ok) throw new Error(json.error || 'Failed to load')
-        if (!cancelled) setData(json)
-      } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load')
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
+    setLoading(true)
+    setError(null)
+    const { session } = await getSession()
+    if (!session) {
+      setError('Not signed in')
+      setLoading(false)
+      return
     }
-
-    load()
-    return () => { cancelled = true }
+    try {
+      const res = await fetch(`/api/founder/command-overview?workspaceId=${workspaceId}&weekOffset=${weekOffset}`, {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error || 'Failed to load')
+      setData(json)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load')
+    } finally {
+      setLoading(false)
+    }
   }, [workspaceId, weekOffset])
 
-  return { data, loading, error }
+  useEffect(() => {
+    load()
+  }, [load])
+
+  return { data, loading, error, refetch: load }
 }
