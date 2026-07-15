@@ -269,12 +269,6 @@ export default function LandingPage() {
               <p className="font-mono text-[10.5px] uppercase tracking-[0.16em] text-near-black/55">
                 Free for 7 days · No credit card
               </p>
-              <a
-                href="mailto:lamar@tropitech.org?subject=Caye%20walkthrough"
-                className="font-newsreader italic text-[14px] text-near-black/55 hover:text-near-black/80 transition-colors mt-1"
-              >
-                Prefer a walkthrough? Email Lamar →
-              </a>
             </motion.div>
           </div>
 
@@ -420,20 +414,35 @@ export default function LandingPage() {
         <div className="max-w-7xl mx-auto px-6 md:px-12 pt-16 md:pt-20 pb-10">
           <div className="grid grid-cols-2 md:grid-cols-5 gap-x-8 gap-y-12">
             {/* Brand column */}
-            <div className="col-span-2">
-              <span className="font-logo font-semibold tracking-tight text-[#0E1A1A] text-[22px]">
-                caye
-              </span>
+            <div className="col-span-2 pr-4">
+              <div className="flex items-center gap-2.5">
+                <img src="/brand/caye-orb.svg" alt="" aria-hidden className="w-5 h-5" />
+                <span className="font-logo font-semibold tracking-tight text-near-black text-[22px]">
+                  caye
+                </span>
+              </div>
               <p className="mt-4 font-newsreader text-[15px] leading-relaxed text-near-black/60 max-w-[240px]">
                 Not a tool. A hire. The AI staff member that lives in your
                 WhatsApp.
               </p>
+              <div className="mt-5 flex items-center gap-2">
+                <span className="relative flex h-[7px] w-[7px]">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-caribbean-teal opacity-60" />
+                  <span className="relative inline-flex h-[7px] w-[7px] rounded-full bg-caribbean-teal" />
+                </span>
+                <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-near-black/45 font-medium">
+                  She&rsquo;s online
+                </span>
+              </div>
             </div>
 
             {FOOTER_COLUMNS.map((col) => (
               <div key={col.title}>
-                <div className="font-mono text-[10.5px] uppercase tracking-[0.16em] text-near-black/45 font-medium mb-4">
-                  {col.title}
+                <div className="flex items-center gap-2 mb-4">
+                  <span className="h-px w-4 bg-caribbean-teal/50" />
+                  <span className="font-mono text-[10.5px] uppercase tracking-[0.16em] text-near-black/45 font-medium">
+                    {col.title}
+                  </span>
                 </div>
                 <ul className="space-y-3">
                   {col.links.map((link) => (
@@ -441,7 +450,7 @@ export default function LandingPage() {
                       {link.href.startsWith('/') ? (
                         <Link
                           href={link.href}
-                          className="text-[14px] text-near-black/65 hover:text-near-black transition-colors"
+                          className="text-[14px] text-near-black/65 underline decoration-caribbean-teal/30 decoration-[1.5px] underline-offset-4 hover:text-near-black hover:decoration-near-black/40 transition-colors"
                         >
                           {link.label}
                         </Link>
@@ -451,7 +460,7 @@ export default function LandingPage() {
                           {...(link.external
                             ? { target: '_blank', rel: 'noopener noreferrer' }
                             : {})}
-                          className="text-[14px] text-near-black/65 hover:text-near-black transition-colors"
+                          className="text-[14px] text-near-black/65 underline decoration-caribbean-teal/30 decoration-[1.5px] underline-offset-4 hover:text-near-black hover:decoration-near-black/40 transition-colors"
                         >
                           {link.label}
                         </a>
@@ -471,15 +480,21 @@ export default function LandingPage() {
         </div>
 
         {/* Ghost wordmark — echoes the nav logo at giant scale, same move
-            as viktor.com's footer. Sized to sit fully in view (not
-            cropped mid-letter) so it actually reads as "caye". */}
+            as viktor.com's footer, reinterpreted in Caye's own language:
+            outlined (not filled) like the hero headline's text-stroke
+            treatment, with a soft teal glow standing in for Viktor's
+            gradient. Sized to sit fully in view, not cropped mid-letter. */}
         <div
           aria-hidden
-          className="select-none pointer-events-none pt-2 md:pt-4 pb-6 md:pb-10 overflow-hidden"
+          className="relative select-none pointer-events-none pt-2 md:pt-4 pb-6 md:pb-10 overflow-hidden"
         >
+          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[60vw] max-w-[640px] aspect-square rounded-full bg-caribbean-teal/[0.07] blur-[90px]" />
           <span
-            className="block text-center font-logo font-semibold leading-[0.82] whitespace-nowrap text-near-black/[0.12]"
-            style={{ fontSize: 'clamp(4.5rem, 15vw, 11rem)' }}
+            className="relative block text-center font-logo font-semibold leading-[0.82] whitespace-nowrap text-transparent"
+            style={{
+              fontSize: 'clamp(4.5rem, 15vw, 11rem)',
+              WebkitTextStroke: '1px rgba(14,26,26,0.16)',
+            }}
           >
             caye
           </span>
