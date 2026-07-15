@@ -480,33 +480,36 @@ export default function LandingPage() {
         </div>
 
         {/* Sign-painted wordmark — the family-island welcome-sign move
-            (ELEUTHERA-style hand-lettered block signage: bold letterforms,
-            a vivid vertical paint gradient) reinterpreted in the hero's
-            own sunset-over-sea palette, so the page opens and closes on
-            the same colors. Solid fill (not outline) — this is the one
-            spot on the page where the brand gets to be loud. */}
+            (ELEUTHERA-style hand-lettered block signage: a vivid paint
+            gradient) reinterpreted in the hero's own sunset-over-sea
+            palette. Contained in its own tinted band — sand giving way
+            to sea — rather than bleeding off the page, so it reads as a
+            deliberate closing mark instead of a stray watermark. */}
         <div
           aria-hidden
-          className="relative select-none pointer-events-none pt-4 md:pt-6 pb-8 md:pb-12"
+          className="select-none pointer-events-none"
           style={{
-            backgroundImage:
-              'radial-gradient(ellipse 55% 100% at 50% 50%, rgba(15,181,161,0.09), transparent 72%)',
+            background:
+              'linear-gradient(180deg, transparent 0%, rgba(168,220,192,0.16) 100%)',
           }}
         >
-          <span
-            className="relative block text-center font-logo font-bold leading-[0.82] whitespace-nowrap"
-            style={{
-              fontSize: 'clamp(4.5rem, 15vw, 11rem)',
-              backgroundImage:
-                'linear-gradient(180deg, #FFD68F 0%, #F4E3A0 24%, #A8DCC0 52%, #7DC9CB 76%, #00778B 100%)',
-              WebkitBackgroundClip: 'text',
-              backgroundClip: 'text',
-              color: 'transparent',
-              WebkitTextStroke: '1px rgba(250,247,242,0.6)',
-            }}
-          >
-            caye
-          </span>
+          <div className="flex items-center justify-center gap-4 px-6 pt-14 pb-16 md:pt-16 md:pb-20">
+            <span className="h-px w-10 md:w-16 bg-near-black/15 flex-shrink-0" />
+            <span
+              className="text-center font-logo font-bold leading-none whitespace-nowrap"
+              style={{
+                fontSize: 'clamp(3.25rem, 9vw, 6.5rem)',
+                backgroundImage:
+                  'linear-gradient(180deg, #FFD68F 0%, #F4E3A0 24%, #A8DCC0 52%, #7DC9CB 76%, #00778B 100%)',
+                WebkitBackgroundClip: 'text',
+                backgroundClip: 'text',
+                color: 'transparent',
+              }}
+            >
+              caye
+            </span>
+            <span className="h-px w-10 md:w-16 bg-near-black/15 flex-shrink-0" />
+          </div>
         </div>
       </footer>
     </div>
