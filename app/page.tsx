@@ -39,7 +39,7 @@ const CAYE_SIGNUP_WA_HREF = process.env.NEXT_PUBLIC_CAYE_WHATSAPP_NUMBER
 
 // Footer link columns — only real destinations (no fabricated Blog/
 // Careers/Pricing pages the way Viktor's footer has; Caye doesn't have
-// those yet). #channels and #story are in-page anchors on this file.
+// those yet). #channels is an in-page anchor on this file.
 const FOOTER_COLUMNS: {
   title: string
   links: { label: string; href: string; external?: boolean }[]
@@ -56,7 +56,6 @@ const FOOTER_COLUMNS: {
     title: 'Company',
     links: [
       { label: 'Contact', href: 'mailto:lamar@tropitech.org?subject=Caye' },
-      { label: 'Our story', href: '#story' },
     ],
   },
   {
@@ -235,9 +234,8 @@ export default function LandingPage() {
               className="mt-8 font-newsreader text-[1.2rem] md:text-[1.35rem] leading-[1.45] text-near-black/75 max-w-2xl mx-auto font-light"
               style={{ fontStyle: 'normal' }}
             >
-              Caye answers customers, quotes prices, and books — right inside
-              the WhatsApp you already run your business from. No app to
-              learn. No dashboard to babysit. Just text her like an employee.
+              Caye answers, quotes, and books. The AI staff member that lives
+              in your WhatsApp.
             </motion.p>
 
             {/* Primary CTA */}
@@ -417,50 +415,6 @@ export default function LandingPage() {
         </section>
       )}
 
-      {/* ── From-the-islands credibility — watercolor band ────────── */}
-      <section id="story" className="relative overflow-hidden">
-        <motion.img
-          src="/island-watercolor.jpg"
-          alt=""
-          aria-hidden
-          loading="lazy"
-          initial={{ scale: 1.06 }}
-          whileInView={{ scale: 1 }}
-          viewport={{ once: true, margin: '-60px' }}
-          transition={{ duration: 1.6, ease: heroEase }}
-          className="w-full h-[300px] md:h-[400px] object-cover"
-        />
-        {/* Cream fades so the band sits in the page instead of on it */}
-        <div
-          aria-hidden
-          className="absolute inset-x-0 top-0 h-20 pointer-events-none"
-          style={{
-            background:
-              'linear-gradient(to bottom, rgba(250,247,242,1) 0%, rgba(250,247,242,0) 100%)',
-          }}
-        />
-        <div
-          aria-hidden
-          className="absolute inset-x-0 bottom-0 h-20 pointer-events-none"
-          style={{
-            background:
-              'linear-gradient(to top, rgba(250,247,242,1) 0%, rgba(250,247,242,0) 100%)',
-          }}
-        />
-        <div className="absolute inset-0 flex items-center justify-center px-6">
-          <motion.p
-            initial={{ opacity: 0, y: 12 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true, margin: '-100px' }}
-            transition={{ duration: 0.7, ease: heroEase, delay: 0.2 }}
-            className="font-newsreader italic text-[18px] md:text-[20px] text-near-black/80 max-w-lg text-center leading-relaxed rounded-2xl px-7 py-5 bg-cream/70 backdrop-blur-[6px] shadow-[0_8px_30px_-12px_rgba(14,26,26,0.18)]"
-          >
-            By a founder from Eleuthera. Built for the operators he grew up
-            next to.
-          </motion.p>
-        </div>
-      </section>
-
       {/* ── Footer ────────────────────────────────────────────────── */}
       <footer className="relative z-10 border-t border-near-black/[0.08] bg-cream overflow-hidden">
         <div className="max-w-7xl mx-auto px-6 md:px-12 pt-16 md:pt-20 pb-10">
@@ -516,16 +470,16 @@ export default function LandingPage() {
           </div>
         </div>
 
-        {/* Ghost wordmark — echoes the nav logo at giant scale, cropped by
-            the footer's own bottom edge so only the top of the letterforms
-            shows, same bleed-off-the-page move as viktor.com's footer. */}
+        {/* Ghost wordmark — echoes the nav logo at giant scale, same move
+            as viktor.com's footer. Sized to sit fully in view (not
+            cropped mid-letter) so it actually reads as "caye". */}
         <div
           aria-hidden
-          className="relative h-[64px] md:h-[120px] overflow-hidden select-none pointer-events-none"
+          className="select-none pointer-events-none pt-2 md:pt-4 pb-6 md:pb-10 overflow-hidden"
         >
           <span
-            className="absolute left-1/2 -translate-x-1/2 top-0 font-logo font-semibold leading-none whitespace-nowrap text-near-black/[0.06]"
-            style={{ fontSize: 'clamp(5.5rem, 19vw, 14rem)' }}
+            className="block text-center font-logo font-semibold leading-[0.82] whitespace-nowrap text-near-black/[0.12]"
+            style={{ fontSize: 'clamp(4.5rem, 15vw, 11rem)' }}
           >
             caye
           </span>
