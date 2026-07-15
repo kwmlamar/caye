@@ -487,9 +487,12 @@ export default function LandingPage() {
             spot on the page where the brand gets to be loud. */}
         <div
           aria-hidden
-          className="relative select-none pointer-events-none pt-4 md:pt-6 pb-8 md:pb-12 overflow-hidden"
+          className="relative select-none pointer-events-none pt-4 md:pt-6 pb-8 md:pb-12"
+          style={{
+            backgroundImage:
+              'radial-gradient(ellipse 55% 100% at 50% 50%, rgba(15,181,161,0.09), transparent 72%)',
+          }}
         >
-          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[65vw] max-w-[680px] aspect-square rounded-full bg-caribbean-teal/[0.10] blur-[100px]" />
           <span
             className="relative block text-center font-logo font-bold leading-[0.82] whitespace-nowrap"
             style={{
@@ -500,7 +503,6 @@ export default function LandingPage() {
               backgroundClip: 'text',
               color: 'transparent',
               WebkitTextStroke: '1px rgba(250,247,242,0.6)',
-              filter: 'drop-shadow(0 6px 18px rgba(0,119,139,0.16))',
             }}
           >
             caye
