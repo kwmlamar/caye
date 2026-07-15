@@ -37,6 +37,38 @@ const CAYE_SIGNUP_WA_HREF = process.env.NEXT_PUBLIC_CAYE_WHATSAPP_NUMBER
   ? `https://wa.me/${process.env.NEXT_PUBLIC_CAYE_WHATSAPP_NUMBER}?text=${encodeURIComponent("Hi Caye! I'd like to sign up.")}`
   : '/signup'
 
+// Footer link columns — only real destinations (no fabricated Blog/
+// Careers/Pricing pages the way Viktor's footer has; Caye doesn't have
+// those yet). #channels and #story are in-page anchors on this file.
+const FOOTER_COLUMNS: {
+  title: string
+  links: { label: string; href: string; external?: boolean }[]
+}[] = [
+  {
+    title: 'Product',
+    links: [
+      { label: 'Try Caye free', href: CAYE_SIGNUP_WA_HREF, external: true },
+      { label: 'Log in', href: '/login' },
+      { label: 'How she works', href: '#channels' },
+    ],
+  },
+  {
+    title: 'Company',
+    links: [
+      { label: 'Contact', href: 'mailto:lamar@tropitech.org?subject=Caye' },
+      { label: 'Our story', href: '#story' },
+    ],
+  },
+  {
+    title: 'Legal',
+    links: [
+      { label: 'Terms', href: '/terms' },
+      { label: 'Privacy', href: '/privacy' },
+      { label: 'Data deletion', href: '/data-deletion' },
+    ],
+  },
+]
+
 // Hero load choreography — one staggered settle on page load (eyebrow →
 // headline → subhead → CTA), then the page goes quiet. Scroll reveals
 // below the fold use whileInView with the same easing family.
@@ -179,7 +211,7 @@ export default function LandingPage() {
             >
               <span className="h-px w-8 bg-near-black/30" />
               <span className="font-mono text-[10.5px] uppercase tracking-[0.22em] text-near-black/60 font-medium">
-                Meet Caye
+                Not a tool. A hire.
               </span>
               <span className="h-px w-8 bg-near-black/30" />
             </motion.div>
@@ -203,9 +235,9 @@ export default function LandingPage() {
               className="mt-8 font-newsreader text-[1.2rem] md:text-[1.35rem] leading-[1.45] text-near-black/75 max-w-2xl mx-auto font-light"
               style={{ fontStyle: 'normal' }}
             >
-              Caye answers customers, quotes prices, and books in your voice. No
-              app to learn. No workflows to build. Just text her like an
-              employee.
+              Caye answers customers, quotes prices, and books — right inside
+              the WhatsApp you already run your business from. No app to
+              learn. No dashboard to babysit. Just text her like an employee.
             </motion.p>
 
             {/* Primary CTA */}
@@ -250,6 +282,36 @@ export default function LandingPage() {
 
         </div>
 
+        {/* Channel badge — sits just above the phone dock, the same beat
+            Viktor uses for its Slack/Teams toggle right above its chat
+            screenshot: name the surface she actually lives in, right
+            before you show it. WhatsApp only (not the full integration
+            list from the strip below) because this is about where she
+            lives, not everywhere she's plugged in. */}
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.7, ease: heroEase, delay: 0.56 }}
+          className="absolute left-1/2 -translate-x-1/2 z-10 flex items-center gap-2 rounded-full border border-near-black/15 bg-white/60 backdrop-blur-sm px-4 py-2 shadow-[0_4px_16px_-8px_rgba(14,26,26,0.15)]"
+          style={{ top: phoneTopOffset - 44 }}
+        >
+          <span
+            className="flex items-center justify-center w-[18px] h-[18px] rounded-full flex-shrink-0"
+            style={{ background: '#25D366' }}
+            aria-hidden
+          >
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none">
+              <path
+                d="M12 2C6.48 2 2 6.48 2 12c0 1.85.5 3.58 1.36 5.07L2 22l5.1-1.33A9.94 9.94 0 0 0 12 22c5.52 0 10-4.48 10-10S17.52 2 12 2Zm5.2 14.13c-.22.62-1.29 1.19-1.78 1.24-.46.06-1.02.08-1.65-.1a13.6 13.6 0 0 1-5.8-4.09 6.6 6.6 0 0 1-1.4-3.36c0-.9.47-1.34.64-1.52.17-.18.37-.22.5-.22h.36c.12 0 .28-.02.43.34.16.4.55 1.4.6 1.5.05.1.08.22.02.36-.06.13-.09.22-.19.34l-.28.33c-.09.1-.19.2-.08.4.11.2.5.86 1.09 1.4.75.68 1.4.9 1.6 1 .2.1.32.09.44-.05.13-.14.51-.6.65-.8.14-.2.27-.17.46-.1.19.07 1.2.58 1.4.68.2.1.34.15.39.24.05.09.05.5-.17 1.11Z"
+                fill="#fff"
+              />
+            </svg>
+          </span>
+          <span className="font-mono text-[10.5px] uppercase tracking-[0.14em] text-near-black/70 font-medium">
+            Live, right now, in WhatsApp
+          </span>
+        </motion.div>
+
         {/* Phone dock — the real product surface, live in the hero. The
             section is sized (see heroMinHeight) to always fully contain
             it, so it's never clipped mid-conversation — it just sits
@@ -283,7 +345,7 @@ export default function LandingPage() {
       </section>
 
       {/* ── Channel strip — install-and-go proof ─────────────────── */}
-      <section className="relative py-14 px-6 bg-cream border-y border-near-black/[0.06]">
+      <section id="channels" className="relative py-14 px-6 bg-cream border-y border-near-black/[0.06]">
         <div className="max-w-4xl mx-auto text-center">
           <motion.div
             initial={{ opacity: 0, y: 10 }}
@@ -356,7 +418,7 @@ export default function LandingPage() {
       )}
 
       {/* ── From-the-islands credibility — watercolor band ────────── */}
-      <section className="relative overflow-hidden">
+      <section id="story" className="relative overflow-hidden">
         <motion.img
           src="/island-watercolor.jpg"
           alt=""
@@ -400,36 +462,73 @@ export default function LandingPage() {
       </section>
 
       {/* ── Footer ────────────────────────────────────────────────── */}
-      <footer className="relative z-10 border-t border-near-black/[0.08] bg-cream/80 backdrop-blur-sm">
-        <div className="max-w-7xl mx-auto px-6 md:px-12 py-7 flex flex-col md:flex-row items-center justify-between gap-4">
-          <span className="font-mono text-[10.5px] uppercase tracking-[0.16em] text-near-black/50 font-medium">
-            © 2026 Caye by TropiTech · Built in Nassau, Bahamas
+      <footer className="relative z-10 border-t border-near-black/[0.08] bg-cream overflow-hidden">
+        <div className="max-w-7xl mx-auto px-6 md:px-12 pt-16 md:pt-20 pb-10">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-x-8 gap-y-12">
+            {/* Brand column */}
+            <div className="col-span-2">
+              <span className="font-logo font-semibold tracking-tight text-[#0E1A1A] text-[22px]">
+                caye
+              </span>
+              <p className="mt-4 font-newsreader text-[15px] leading-relaxed text-near-black/60 max-w-[240px]">
+                Not a tool. A hire. The AI staff member that lives in your
+                WhatsApp.
+              </p>
+            </div>
+
+            {FOOTER_COLUMNS.map((col) => (
+              <div key={col.title}>
+                <div className="font-mono text-[10.5px] uppercase tracking-[0.16em] text-near-black/45 font-medium mb-4">
+                  {col.title}
+                </div>
+                <ul className="space-y-3">
+                  {col.links.map((link) => (
+                    <li key={link.label}>
+                      {link.href.startsWith('/') ? (
+                        <Link
+                          href={link.href}
+                          className="text-[14px] text-near-black/65 hover:text-near-black transition-colors"
+                        >
+                          {link.label}
+                        </Link>
+                      ) : (
+                        <a
+                          href={link.href}
+                          {...(link.external
+                            ? { target: '_blank', rel: 'noopener noreferrer' }
+                            : {})}
+                          className="text-[14px] text-near-black/65 hover:text-near-black transition-colors"
+                        >
+                          {link.label}
+                        </a>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-14 pt-6 border-t border-near-black/[0.07]">
+            <span className="font-mono text-[10.5px] uppercase tracking-[0.16em] text-near-black/45 font-medium">
+              © 2026 Caye by TropiTech · Built in Nassau, Bahamas
+            </span>
+          </div>
+        </div>
+
+        {/* Ghost wordmark — echoes the nav logo at giant scale, cropped by
+            the footer's own bottom edge so only the top of the letterforms
+            shows, same bleed-off-the-page move as viktor.com's footer. */}
+        <div
+          aria-hidden
+          className="relative h-[64px] md:h-[120px] overflow-hidden select-none pointer-events-none"
+        >
+          <span
+            className="absolute left-1/2 -translate-x-1/2 top-0 font-logo font-semibold leading-none whitespace-nowrap text-near-black/[0.06]"
+            style={{ fontSize: 'clamp(5.5rem, 19vw, 14rem)' }}
+          >
+            caye
           </span>
-          <nav className="flex items-center gap-6 text-[13px] text-near-black/55">
-            <a
-              href="mailto:lamar@tropitech.org?subject=Caye"
-              className="hover:text-near-black transition-colors"
-            >
-              Contact
-            </a>
-            <a
-              href={CAYE_SIGNUP_WA_HREF}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="hover:text-near-black transition-colors"
-            >
-              Sign up
-            </a>
-            <Link href="/login" className="hover:text-near-black transition-colors">
-              Log in
-            </Link>
-            <Link href="/terms" className="hover:text-near-black transition-colors">
-              Terms
-            </Link>
-            <Link href="/privacy" className="hover:text-near-black transition-colors">
-              Privacy
-            </Link>
-          </nav>
         </div>
       </footer>
     </div>
