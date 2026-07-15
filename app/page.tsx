@@ -472,33 +472,27 @@ export default function LandingPage() {
             ))}
           </div>
 
-          <div className="mt-14 pt-6 border-t border-near-black/[0.07]">
+          <div className="mt-10 pt-5 border-t border-near-black/[0.07]">
             <span className="font-mono text-[10.5px] uppercase tracking-[0.16em] text-near-black/45 font-medium">
               © 2026 Caye by TropiTech · Built in Nassau, Bahamas
             </span>
           </div>
-        </div>
 
-        {/* Sign-painted wordmark — the family-island welcome-sign move
-            (ELEUTHERA-style hand-lettered block signage: a vivid paint
-            gradient) reinterpreted in the hero's own sunset-over-sea
-            palette. Contained in its own tinted band — sand giving way
-            to sea — rather than bleeding off the page, so it reads as a
-            deliberate closing mark instead of a stray watermark. */}
-        <div
-          aria-hidden
-          className="select-none pointer-events-none"
-          style={{
-            background:
-              'linear-gradient(180deg, transparent 0%, rgba(168,220,192,0.16) 100%)',
-          }}
-        >
-          <div className="flex items-center justify-center gap-4 px-6 pt-14 pb-16 md:pt-16 md:pb-20">
-            <span className="h-px w-10 md:w-16 bg-near-black/15 flex-shrink-0" />
+          {/* Sign-painted wordmark — the family-island welcome-sign move
+              (ELEUTHERA-style hand-lettered block signage: a vivid paint
+              gradient) reinterpreted in the hero's own sunset-over-sea
+              palette. Sits right up against the copyright line above —
+              one continuous close, not a separate band down below — and
+              goes big enough to anchor the whole footer. */}
+          <div
+            aria-hidden
+            className="select-none pointer-events-none flex items-center justify-center gap-3 md:gap-8 pt-6 md:pt-8"
+          >
+            <span className="h-px w-6 md:w-24 bg-near-black/15 flex-shrink-0" />
             <span
               className="text-center font-logo font-bold leading-none whitespace-nowrap"
               style={{
-                fontSize: 'clamp(3.25rem, 9vw, 6.5rem)',
+                fontSize: 'clamp(5rem, 16vw, 13rem)',
                 backgroundImage:
                   'linear-gradient(180deg, #FFD68F 0%, #F4E3A0 24%, #A8DCC0 52%, #7DC9CB 76%, #00778B 100%)',
                 WebkitBackgroundClip: 'text',
@@ -508,9 +502,19 @@ export default function LandingPage() {
             >
               caye
             </span>
-            <span className="h-px w-10 md:w-16 bg-near-black/15 flex-shrink-0" />
+            <span className="h-px w-6 md:w-24 bg-near-black/15 flex-shrink-0" />
           </div>
         </div>
+
+        {/* Tinted close — sand giving way to sea, under the wordmark only. */}
+        <div
+          aria-hidden
+          className="h-10 md:h-16 pointer-events-none"
+          style={{
+            background:
+              'linear-gradient(180deg, transparent 0%, rgba(168,220,192,0.16) 100%)',
+          }}
+        />
       </footer>
     </div>
   )
