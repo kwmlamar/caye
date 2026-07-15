@@ -483,16 +483,21 @@ export default function LandingPage() {
             (ELEUTHERA-style hand-lettered block signage: a vivid paint
             gradient) reinterpreted in the hero's own sunset-over-sea
             palette. Full-bleed (outside the 7xl container) so it has the
-            whole viewport to scale into at this size instead of being
-            capped by the column grid's width. Explicit line-height (not
-            leading-none) and generous bottom padding so the "y"
-            descender has room and isn't clipped by the footer's own
-            overflow-hidden. */}
+            whole viewport to scale into. Deliberately cropped to the
+            page's own bottom edge (viktor.com's move) — the crop height
+            is tied to the same clamp() driving the font-size via calc(),
+            so the ratio holds at every breakpoint instead of clipping
+            unpredictably. */}
         <div
           aria-hidden
-          className="select-none pointer-events-none flex items-center justify-center gap-3 md:gap-5 px-4 pt-4 pb-10 md:pb-16"
+          className="select-none pointer-events-none overflow-hidden flex items-start justify-center gap-3 md:gap-5 px-4 pt-6"
+          style={{
+            maxHeight: 'calc(clamp(6rem, 30vw, 26rem) * 0.62)',
+            background:
+              'linear-gradient(180deg, transparent 0%, rgba(168,220,192,0.14) 100%)',
+          }}
         >
-          <span className="h-px w-6 md:w-12 bg-near-black/15 flex-shrink-0" />
+          <span className="h-px w-6 md:w-12 bg-near-black/15 flex-shrink-0 mt-[0.55em]" />
           <span
             className="text-center font-logo font-bold whitespace-nowrap"
             style={{
@@ -507,18 +512,8 @@ export default function LandingPage() {
           >
             caye
           </span>
-          <span className="h-px w-6 md:w-12 bg-near-black/15 flex-shrink-0" />
+          <span className="h-px w-6 md:w-12 bg-near-black/15 flex-shrink-0 mt-[0.55em]" />
         </div>
-
-        {/* Tinted close — sand giving way to sea, under the wordmark only. */}
-        <div
-          aria-hidden
-          className="h-10 md:h-16 pointer-events-none"
-          style={{
-            background:
-              'linear-gradient(180deg, transparent 0%, rgba(168,220,192,0.16) 100%)',
-          }}
-        />
       </footer>
     </div>
   )
