@@ -479,21 +479,28 @@ export default function LandingPage() {
           </div>
         </div>
 
-        {/* Ghost wordmark — echoes the nav logo at giant scale, same move
-            as viktor.com's footer, reinterpreted in Caye's own language:
-            outlined (not filled) like the hero headline's text-stroke
-            treatment, with a soft teal glow standing in for Viktor's
-            gradient. Sized to sit fully in view, not cropped mid-letter. */}
+        {/* Sign-painted wordmark — the family-island welcome-sign move
+            (ELEUTHERA-style hand-lettered block signage: bold letterforms,
+            a vivid vertical paint gradient) reinterpreted in the hero's
+            own sunset-over-sea palette, so the page opens and closes on
+            the same colors. Solid fill (not outline) — this is the one
+            spot on the page where the brand gets to be loud. */}
         <div
           aria-hidden
-          className="relative select-none pointer-events-none pt-2 md:pt-4 pb-6 md:pb-10 overflow-hidden"
+          className="relative select-none pointer-events-none pt-4 md:pt-6 pb-8 md:pb-12 overflow-hidden"
         >
-          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[60vw] max-w-[640px] aspect-square rounded-full bg-caribbean-teal/[0.07] blur-[90px]" />
+          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[65vw] max-w-[680px] aspect-square rounded-full bg-caribbean-teal/[0.10] blur-[100px]" />
           <span
-            className="relative block text-center font-logo font-semibold leading-[0.82] whitespace-nowrap text-transparent"
+            className="relative block text-center font-logo font-bold leading-[0.82] whitespace-nowrap"
             style={{
               fontSize: 'clamp(4.5rem, 15vw, 11rem)',
-              WebkitTextStroke: '1px rgba(14,26,26,0.16)',
+              backgroundImage:
+                'linear-gradient(180deg, #FFD68F 0%, #F4E3A0 24%, #A8DCC0 52%, #7DC9CB 76%, #00778B 100%)',
+              WebkitBackgroundClip: 'text',
+              backgroundClip: 'text',
+              color: 'transparent',
+              WebkitTextStroke: '1px rgba(250,247,242,0.6)',
+              filter: 'drop-shadow(0 6px 18px rgba(0,119,139,0.16))',
             }}
           >
             caye
