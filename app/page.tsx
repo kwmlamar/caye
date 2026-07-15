@@ -484,25 +484,26 @@ export default function LandingPage() {
             gradient) reinterpreted in the hero's own sunset-over-sea
             palette. Full-bleed (outside the 7xl container) so it has the
             whole viewport to scale into. Deliberately cropped to the
-            page's own bottom edge (viktor.com's move) — the crop height
-            is tied to the same clamp() driving the font-size via calc(),
-            so the ratio holds at every breakpoint instead of clipping
-            unpredictably. */}
+            page's own bottom edge (viktor.com's move) — the wrapper's own
+            fontSize is set to the same clamp() and the crop height is a
+            plain em value off that, so it's one predictable number
+            instead of compounding padding/line-height math. */}
         <div
           aria-hidden
-          className="select-none pointer-events-none overflow-hidden flex items-start justify-center gap-3 md:gap-5 px-4 pt-6"
+          className="select-none pointer-events-none overflow-hidden flex items-start justify-center gap-3 md:gap-5 px-4"
           style={{
-            maxHeight: 'calc(clamp(6rem, 30vw, 26rem) * 0.62)',
+            fontSize: 'clamp(6rem, 30vw, 26rem)',
+            height: '0.78em',
             background:
               'linear-gradient(180deg, transparent 0%, rgba(168,220,192,0.14) 100%)',
           }}
         >
-          <span className="h-px w-6 md:w-12 bg-near-black/15 flex-shrink-0 mt-[0.55em]" />
+          <span className="self-center h-px w-6 md:w-12 bg-near-black/15 flex-shrink-0" />
           <span
             className="text-center font-logo font-bold whitespace-nowrap"
             style={{
-              fontSize: 'clamp(6rem, 30vw, 26rem)',
-              lineHeight: 1.15,
+              fontSize: '1em',
+              lineHeight: 1,
               backgroundImage:
                 'linear-gradient(180deg, #FFD68F 0%, #F4E3A0 24%, #A8DCC0 52%, #7DC9CB 76%, #00778B 100%)',
               WebkitBackgroundClip: 'text',
@@ -512,7 +513,7 @@ export default function LandingPage() {
           >
             caye
           </span>
-          <span className="h-px w-6 md:w-12 bg-near-black/15 flex-shrink-0 mt-[0.55em]" />
+          <span className="self-center h-px w-6 md:w-12 bg-near-black/15 flex-shrink-0" />
         </div>
       </footer>
     </div>
