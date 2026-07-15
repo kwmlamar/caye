@@ -477,33 +477,37 @@ export default function LandingPage() {
               © 2026 Caye by TropiTech · Built in Nassau, Bahamas
             </span>
           </div>
+        </div>
 
-          {/* Sign-painted wordmark — the family-island welcome-sign move
-              (ELEUTHERA-style hand-lettered block signage: a vivid paint
-              gradient) reinterpreted in the hero's own sunset-over-sea
-              palette. Sits right up against the copyright line above —
-              one continuous close, not a separate band down below — and
-              goes big enough to anchor the whole footer. */}
-          <div
-            aria-hidden
-            className="select-none pointer-events-none flex items-center justify-center gap-3 md:gap-8 pt-6 md:pt-8"
+        {/* Sign-painted wordmark — the family-island welcome-sign move
+            (ELEUTHERA-style hand-lettered block signage: a vivid paint
+            gradient) reinterpreted in the hero's own sunset-over-sea
+            palette. Full-bleed (outside the 7xl container) so it has the
+            whole viewport to scale into at this size instead of being
+            capped by the column grid's width. Explicit line-height (not
+            leading-none) and generous bottom padding so the "y"
+            descender has room and isn't clipped by the footer's own
+            overflow-hidden. */}
+        <div
+          aria-hidden
+          className="select-none pointer-events-none flex items-center justify-center gap-3 md:gap-5 px-4 pt-4 pb-10 md:pb-16"
+        >
+          <span className="h-px w-6 md:w-12 bg-near-black/15 flex-shrink-0" />
+          <span
+            className="text-center font-logo font-bold whitespace-nowrap"
+            style={{
+              fontSize: 'clamp(6rem, 30vw, 26rem)',
+              lineHeight: 1.15,
+              backgroundImage:
+                'linear-gradient(180deg, #FFD68F 0%, #F4E3A0 24%, #A8DCC0 52%, #7DC9CB 76%, #00778B 100%)',
+              WebkitBackgroundClip: 'text',
+              backgroundClip: 'text',
+              color: 'transparent',
+            }}
           >
-            <span className="h-px w-6 md:w-24 bg-near-black/15 flex-shrink-0" />
-            <span
-              className="text-center font-logo font-bold leading-none whitespace-nowrap"
-              style={{
-                fontSize: 'clamp(5rem, 16vw, 13rem)',
-                backgroundImage:
-                  'linear-gradient(180deg, #FFD68F 0%, #F4E3A0 24%, #A8DCC0 52%, #7DC9CB 76%, #00778B 100%)',
-                WebkitBackgroundClip: 'text',
-                backgroundClip: 'text',
-                color: 'transparent',
-              }}
-            >
-              caye
-            </span>
-            <span className="h-px w-6 md:w-24 bg-near-black/15 flex-shrink-0" />
-          </div>
+            caye
+          </span>
+          <span className="h-px w-6 md:w-12 bg-near-black/15 flex-shrink-0" />
         </div>
 
         {/* Tinted close — sand giving way to sea, under the wordmark only. */}
