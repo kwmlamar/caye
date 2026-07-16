@@ -108,12 +108,13 @@ export default function LandingPage() {
   const [dimensions, setDimensions] = useState({ width: 1920, height: 1080 })
   const [mounted, setMounted] = useState(false)
 
-  // Phone dock's top offset — floor keeps it clear of the CTA block on
-  // short viewports, tight enough that the WhatsApp badge doesn't float
-  // in a dead gap below "Free for 7 days"; the 0.6 factor pulls it
-  // toward the fold on taller viewports so it doesn't sit awkwardly
-  // high with empty space beneath it.
-  const phoneTopOffset = Math.max(560, dimensions.height * 0.6)
+  // Phone dock's top offset — floor keeps it clear of the CTA block (now
+  // including the WhatsApp badge, which lives in normal document flow
+  // right below the CTA text rather than at a guessed absolute pixel
+  // offset) on short viewports; the 0.6 factor pulls it toward the fold
+  // on taller viewports so it doesn't sit awkwardly high with empty
+  // space beneath it.
+  const phoneTopOffset = Math.max(620, dimensions.height * 0.6)
 
   // Phone grows a bit on wider screens — purely a size choice now, not
   // constrained by a crop budget (see heroMinHeight below).
@@ -281,40 +282,37 @@ export default function LandingPage() {
               <p className="font-mono text-[10.5px] uppercase tracking-[0.16em] text-near-black/55">
                 Free for 7 days · No credit card
               </p>
+
+              {/* Channel badge — sits just above the phone dock, the same
+                  beat Viktor uses for its Slack/Teams toggle right above
+                  its chat screenshot: name the surface she actually lives
+                  in, right before you show it. WhatsApp only (not the
+                  full integration list from the strip below) because
+                  this is about where she lives, not everywhere she's
+                  plugged in. In normal document flow (not absolutely
+                  positioned off a guessed pixel offset) so it can never
+                  overlap or float away from the CTA text above it. */}
+              <div className="mt-5 flex items-center gap-2 rounded-full border border-near-black/15 bg-white/60 backdrop-blur-sm px-4 py-2 shadow-[0_4px_16px_-8px_rgba(14,26,26,0.15)]">
+                <span
+                  className="flex items-center justify-center w-[18px] h-[18px] rounded-full flex-shrink-0"
+                  style={{ background: '#25D366' }}
+                  aria-hidden
+                >
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none">
+                    <path
+                      d="M12 2C6.48 2 2 6.48 2 12c0 1.85.5 3.58 1.36 5.07L2 22l5.1-1.33A9.94 9.94 0 0 0 12 22c5.52 0 10-4.48 10-10S17.52 2 12 2Zm5.2 14.13c-.22.62-1.29 1.19-1.78 1.24-.46.06-1.02.08-1.65-.1a13.6 13.6 0 0 1-5.8-4.09 6.6 6.6 0 0 1-1.4-3.36c0-.9.47-1.34.64-1.52.17-.18.37-.22.5-.22h.36c.12 0 .28-.02.43.34.16.4.55 1.4.6 1.5.05.1.08.22.02.36-.06.13-.09.22-.19.34l-.28.33c-.09.1-.19.2-.08.4.11.2.5.86 1.09 1.4.75.68 1.4.9 1.6 1 .2.1.32.09.44-.05.13-.14.51-.6.65-.8.14-.2.27-.17.46-.1.19.07 1.2.58 1.4.68.2.1.34.15.39.24.05.09.05.5-.17 1.11Z"
+                      fill="#fff"
+                    />
+                  </svg>
+                </span>
+                <span className="font-mono text-[10.5px] uppercase tracking-[0.14em] text-near-black/70 font-medium">
+                  Live, right now, in WhatsApp
+                </span>
+              </div>
             </motion.div>
           </div>
 
         </div>
-
-        {/* Channel badge — sits just above the phone dock, the same beat
-            Viktor uses for its Slack/Teams toggle right above its chat
-            screenshot: name the surface she actually lives in, right
-            before you show it. WhatsApp only (not the full integration
-            list from the strip below) because this is about where she
-            lives, not everywhere she's plugged in. */}
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.7, ease: heroEase, delay: 0.56 }}
-          className="absolute left-1/2 -translate-x-1/2 z-10 flex items-center gap-2 rounded-full border border-near-black/15 bg-white/60 backdrop-blur-sm px-4 py-2 shadow-[0_4px_16px_-8px_rgba(14,26,26,0.15)]"
-          style={{ top: phoneTopOffset - 44 }}
-        >
-          <span
-            className="flex items-center justify-center w-[18px] h-[18px] rounded-full flex-shrink-0"
-            style={{ background: '#25D366' }}
-            aria-hidden
-          >
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none">
-              <path
-                d="M12 2C6.48 2 2 6.48 2 12c0 1.85.5 3.58 1.36 5.07L2 22l5.1-1.33A9.94 9.94 0 0 0 12 22c5.52 0 10-4.48 10-10S17.52 2 12 2Zm5.2 14.13c-.22.62-1.29 1.19-1.78 1.24-.46.06-1.02.08-1.65-.1a13.6 13.6 0 0 1-5.8-4.09 6.6 6.6 0 0 1-1.4-3.36c0-.9.47-1.34.64-1.52.17-.18.37-.22.5-.22h.36c.12 0 .28-.02.43.34.16.4.55 1.4.6 1.5.05.1.08.22.02.36-.06.13-.09.22-.19.34l-.28.33c-.09.1-.19.2-.08.4.11.2.5.86 1.09 1.4.75.68 1.4.9 1.6 1 .2.1.32.09.44-.05.13-.14.51-.6.65-.8.14-.2.27-.17.46-.1.19.07 1.2.58 1.4.68.2.1.34.15.39.24.05.09.05.5-.17 1.11Z"
-                fill="#fff"
-              />
-            </svg>
-          </span>
-          <span className="font-mono text-[10.5px] uppercase tracking-[0.14em] text-near-black/70 font-medium">
-            Live, right now, in WhatsApp
-          </span>
-        </motion.div>
 
         {/* Phone dock — the real product surface, live in the hero. The
             section is sized (see heroMinHeight) to always fully contain
