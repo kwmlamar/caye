@@ -493,7 +493,7 @@ export default function LandingPage() {
           className="select-none pointer-events-none overflow-hidden flex items-start justify-center gap-3 md:gap-5 px-4 -mt-10 md:-mt-16"
           style={{
             fontSize: 'clamp(6rem, 30vw, 26rem)',
-            height: '0.78em',
+            height: '0.88em',
             background:
               'linear-gradient(180deg, transparent 0%, rgba(168,220,192,0.14) 100%)',
           }}
