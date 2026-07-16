@@ -292,7 +292,7 @@ export default function LandingPage() {
                   plugged in. In normal document flow (not absolutely
                   positioned off a guessed pixel offset) so it can never
                   overlap or float away from the CTA text above it. */}
-              <div className="mt-5 flex items-center gap-2 rounded-full border border-near-black/15 bg-white/60 backdrop-blur-sm px-4 py-2 shadow-[0_4px_16px_-8px_rgba(14,26,26,0.15)]">
+              <div className="mt-3 flex items-center gap-2 rounded-full border border-near-black/15 bg-white/60 backdrop-blur-sm px-4 py-2 shadow-[0_4px_16px_-8px_rgba(14,26,26,0.15)]">
                 <span
                   className="flex items-center justify-center w-[18px] h-[18px] rounded-full flex-shrink-0"
                   style={{ background: '#25D366' }}
