@@ -490,7 +490,7 @@ export default function LandingPage() {
             instead of compounding padding/line-height math. */}
         <div
           aria-hidden
-          className="select-none pointer-events-none overflow-hidden flex items-start justify-center gap-3 md:gap-5 px-4"
+          className="select-none pointer-events-none overflow-hidden flex items-start justify-center gap-3 md:gap-5 px-4 -mt-10 md:-mt-16"
           style={{
             fontSize: 'clamp(6rem, 30vw, 26rem)',
             height: '0.78em',
