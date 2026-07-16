@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { motion } from 'framer-motion'
 import { MeshGradient } from '@paper-design/shaders-react'
+import { WhatsappLogoIcon, InstagramLogoIcon, MessengerLogoIcon } from '@phosphor-icons/react'
 import WhatsAppMockup from '@/components/landing/WhatsAppMockup'
 
 // Simplified landing — credibility surface, not a conversion engine.
@@ -66,6 +67,16 @@ const FOOTER_COLUMNS: {
       { label: 'Data deletion', href: '/data-deletion' },
     ],
   },
+]
+
+// Front desk — the channels Caye actually talks to customers through.
+// Zoho Mail / Gmail / Google Calendar are back-office reads/writes, not
+// conversation surfaces, so they get quiet secondary treatment instead
+// of equal billing in this row (see the channel-strip section below).
+const FRONT_DESK_CHANNELS = [
+  { label: 'WhatsApp', Icon: WhatsappLogoIcon, bg: '#DFF5E4', color: '#1F9D55' },
+  { label: 'Instagram', Icon: InstagramLogoIcon, bg: '#FCE4EC', color: '#C13584' },
+  { label: 'Messenger', Icon: MessengerLogoIcon, bg: '#E3F2FD', color: '#0084FF' },
 ]
 
 // Hero load choreography — one staggered settle on page load (eyebrow →
@@ -336,46 +347,62 @@ export default function LandingPage() {
         />
       </section>
 
-      {/* ── Channel strip — install-and-go proof ─────────────────── */}
-      <section id="channels" className="relative py-14 px-6 bg-cream border-y border-near-black/[0.06]">
-        <div className="max-w-4xl mx-auto text-center">
+      {/* ── Channel strip — front desk vs. back office ────────────── */}
+      <section id="channels" className="relative py-20 px-6 bg-cream border-y border-near-black/[0.06]">
+        <div className="max-w-2xl mx-auto text-center">
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true, margin: '-80px' }}
             transition={{ duration: 0.6, ease: heroEase }}
-            className="font-mono text-[10.5px] uppercase tracking-[0.22em] text-near-black/55 font-medium mb-5"
+            className="flex items-center justify-center gap-3 mb-8"
           >
-            Plays with the lines you already use
+            <span className="h-px w-8 bg-near-black/30" />
+            <span className="font-mono text-[10.5px] uppercase tracking-[0.22em] text-near-black/60 font-medium">
+              Where she works
+            </span>
+            <span className="h-px w-8 bg-near-black/30" />
           </motion.div>
-          <div className="flex items-center justify-center gap-x-5 gap-y-2 flex-wrap text-near-black/70">
-            {[
-              'WhatsApp',
-              'Instagram',
-              'Messenger',
-              'Zoho Mail',
-              'Gmail',
-              'Google Calendar',
-            ].map((label, i, arr) => (
+
+          {/* Front desk — the surfaces she actually talks to customers
+              through. Real brand marks, small and grouped as chips, so
+              they read as proof rather than a decorative row. */}
+          <div className="flex flex-wrap items-center justify-center gap-3">
+            {FRONT_DESK_CHANNELS.map(({ label, Icon, bg, color }, i) => (
               <motion.span
                 key={label}
-                initial={{ opacity: 0, y: 8 }}
+                initial={{ opacity: 0, y: 10 }}
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true, margin: '-80px' }}
-                transition={{
-                  duration: 0.5,
-                  ease: heroEase,
-                  delay: 0.12 + i * 0.07,
-                }}
-                className="flex items-center gap-x-5"
+                transition={{ duration: 0.5, ease: heroEase, delay: 0.1 + i * 0.08 }}
+                className="inline-flex items-center gap-2 rounded-full pl-2.5 pr-4 py-2 border border-near-black/[0.08] bg-white/50 backdrop-blur-sm"
               >
-                <span className="font-newsreader text-[16px]">{label}</span>
-                {i < arr.length - 1 && (
-                  <span className="text-near-black/30">·</span>
-                )}
+                <span
+                  className="flex items-center justify-center w-6 h-6 rounded-full flex-shrink-0"
+                  style={{ background: bg }}
+                >
+                  <Icon size={14} weight="fill" color={color} />
+                </span>
+                <span className="font-newsreader text-[15px] text-near-black/80">
+                  {label}
+                </span>
               </motion.span>
             ))}
           </div>
+
+          {/* Back office — quiet on purpose. She reads and writes here;
+              she doesn't hold a conversation through them, so they don't
+              compete visually with the front-desk row above. */}
+          <motion.p
+            initial={{ opacity: 0 }}
+            whileInView={{ opacity: 1 }}
+            viewport={{ once: true, margin: '-80px' }}
+            transition={{ duration: 0.6, ease: heroEase, delay: 0.4 }}
+            className="mt-9 font-newsreader italic text-[14px] text-near-black/40"
+          >
+            Quietly reads and writes to Zoho Mail, Gmail, and Google
+            Calendar too.
+          </motion.p>
         </div>
       </section>
 
