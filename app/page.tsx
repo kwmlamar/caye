@@ -108,11 +108,12 @@ export default function LandingPage() {
   const [dimensions, setDimensions] = useState({ width: 1920, height: 1080 })
   const [mounted, setMounted] = useState(false)
 
-  // Phone dock's top offset — floor keeps it clear of the CTA block
-  // (fixed ~590px tall regardless of viewport height) on short viewports;
-  // the 0.6 factor pulls it toward the fold on taller ones so it doesn't
-  // sit awkwardly high with empty space beneath it.
-  const phoneTopOffset = Math.max(630, dimensions.height * 0.6)
+  // Phone dock's top offset — floor keeps it clear of the CTA block on
+  // short viewports, tight enough that the WhatsApp badge doesn't float
+  // in a dead gap below "Free for 7 days"; the 0.6 factor pulls it
+  // toward the fold on taller viewports so it doesn't sit awkwardly
+  // high with empty space beneath it.
+  const phoneTopOffset = Math.max(560, dimensions.height * 0.6)
 
   // Phone grows a bit on wider screens — purely a size choice now, not
   // constrained by a crop budget (see heroMinHeight below).
