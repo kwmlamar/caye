@@ -1,4 +1,4 @@
-import type { Metadata } from 'next'
+import type { Metadata, Viewport } from 'next'
 import { Geist, JetBrains_Mono, Playfair_Display, Fraunces, Instrument_Serif, DM_Serif_Display, Newsreader, Space_Grotesk } from 'next/font/google'
 import { Toaster } from 'sonner'
 import './globals.css'
@@ -65,6 +65,13 @@ export const metadata: Metadata = {
     ],
     apple: '/brand/caye-orb.svg',
   },
+}
+
+// Cream, not white — mobile Safari paints its status-bar and toolbar
+// areas with this, so it must match the landing/legal page background
+// or the page renders with white bands top and bottom.
+export const viewport: Viewport = {
+  themeColor: '#FAF7F2',
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

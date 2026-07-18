@@ -182,6 +182,19 @@ export default function LandingPage() {
                 offsetX={0.08}
               />
               <div className="absolute inset-0 pointer-events-none bg-cream/10" />
+              {/* Top fade — the page's very first pixel row is solid
+                  cream, matching the themeColor that mobile Safari paints
+                  its status-bar chrome with, so browser chrome dissolves
+                  into the mesh instead of meeting it at a hard white
+                  edge. Short ramp: fully gone before the headline. */}
+              <div
+                aria-hidden
+                className="absolute inset-x-0 top-0 h-28 md:h-36 pointer-events-none"
+                style={{
+                  background:
+                    'linear-gradient(to bottom, rgba(250,247,242,1) 0%, rgba(250,247,242,0.5) 45%, rgba(250,247,242,0) 100%)',
+                }}
+              />
               {/* Bottom fade — dissolves the mesh into the next section's
                   cream. Long ramp (22vh) so it doesn't feel like a strip,
                   ending at full opacity so the seam against the solid

@@ -451,7 +451,10 @@
 }
 
 /* ====================================================== LANDING PAGE FULL */
-.lp-body { overflow: auto !important; }
+/* Landing pages scroll (dashboard body is overflow: hidden) and paint
+   the document cream so iOS Safari tints its status-bar / toolbar chrome
+   to match the page instead of default white. */
+.lp-body { overflow: auto !important; background: #FAF7F2 !important; }
 
 .lp-page {
   /* Landing page design tokens */
