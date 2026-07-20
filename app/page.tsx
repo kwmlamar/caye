@@ -1,5 +1,5 @@
 import type { Metadata } from 'next'
-import LandingPageClient from '@/components/landing/LandingPageClient'
+import LandingPageClient, { FAQ_ITEMS } from '@/components/landing/LandingPageClient'
 
 // Metadata has to live in a server component — the landing page itself
 // is 'use client' (mesh-gradient hero, scroll reveals), so the actual
@@ -51,6 +51,17 @@ const jsonLd = {
       operatingSystem: 'Web, WhatsApp',
       description:
         'Caye answers guest messages, quotes tours, and books them for tour operators — live on WhatsApp, Instagram, and Messenger. No app for guests to install.',
+    },
+    {
+      '@type': 'FAQPage',
+      mainEntity: FAQ_ITEMS.map((item) => ({
+        '@type': 'Question',
+        name: item.q,
+        acceptedAnswer: {
+          '@type': 'Answer',
+          text: item.a,
+        },
+      })),
     },
   ],
 }

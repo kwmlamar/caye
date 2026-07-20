@@ -94,6 +94,33 @@ void PALETTE_SOFT
 void PALETTE_SUNSET
 void PALETTE_REEF
 
+// FAQ — the copy here is also what app/page.tsx serializes into
+// FAQPage JSON-LD, so it's written as literal, factual answers (not ad
+// copy) that hold up as things an AI answer engine can lift verbatim.
+// Keep this array and the JSON-LD in app/page.tsx in sync.
+export const FAQ_ITEMS = [
+  {
+    q: 'Does Caye use my own WhatsApp number?',
+    a: "Yes. Caye runs through your existing WhatsApp Business, Instagram, and Messenger accounts via Meta's Tech Provider access — there's no separate Caye-branded number for guests to learn.",
+  },
+  {
+    q: 'Do my guests need to install an app?',
+    a: 'No. Guests just message the WhatsApp number, Instagram, or Messenger account they already have. Caye answers from inside that conversation.',
+  },
+  {
+    q: "What happens if Caye can't answer a guest's question?",
+    a: "She flags it to you instead of guessing — Caye never invents a price or a policy she isn't sure of. You get pinged, you answer, she picks the conversation back up from there.",
+  },
+  {
+    q: 'What else does Caye handle besides WhatsApp messages?',
+    a: 'She quotes and books tours directly in chat, and quietly reads and writes to Zoho Mail, Gmail, and Google Calendar in the back office.',
+  },
+  {
+    q: 'How much does Caye cost?',
+    a: "It's free to try for 7 days, no credit card required. Message her on WhatsApp and she'll walk you through pricing for your business.",
+  },
+] as const
+
 // Testimonial slot — OFF until a pilot converts to paid. When Karenda
 // (or whoever pays first) gives a real quote, drop it in and flip the
 // flag. The section is fully styled and reveals on scroll.
@@ -411,6 +438,47 @@ export default function LandingPageClient() {
             Quietly reads and writes to Zoho Mail, Gmail, and Google
             Calendar too.
           </motion.p>
+        </div>
+      </section>
+
+      {/* ── FAQ — static (no accordion) so the full text is in the
+          initial HTML for crawlers and AI answer engines, not hidden
+          behind a click. Copy is mirrored into FAQPage JSON-LD in
+          app/page.tsx; keep FAQ_ITEMS as the single source of truth. ── */}
+      <section className="relative py-20 px-6 bg-cream">
+        <div className="max-w-2xl mx-auto">
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true, margin: '-80px' }}
+            transition={{ duration: 0.6, ease: heroEase }}
+            className="flex items-center justify-center gap-3 mb-12"
+          >
+            <span className="h-px w-8 bg-near-black/30" />
+            <h2 className="font-mono text-[10.5px] uppercase tracking-[0.22em] text-near-black/60 font-medium">
+              Questions
+            </h2>
+            <span className="h-px w-8 bg-near-black/30" />
+          </motion.div>
+
+          <div className="space-y-10">
+            {FAQ_ITEMS.map((item, i) => (
+              <motion.div
+                key={item.q}
+                initial={{ opacity: 0, y: 12 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true, margin: '-80px' }}
+                transition={{ duration: 0.5, ease: heroEase, delay: i * 0.06 }}
+              >
+                <h3 className="font-instrument text-[1.3rem] md:text-[1.45rem] tracking-[-0.01em] text-near-black leading-snug">
+                  {item.q}
+                </h3>
+                <p className="mt-2.5 font-newsreader text-[15.5px] leading-[1.6] text-near-black/70">
+                  {item.a}
+                </p>
+              </motion.div>
+            ))}
+          </div>
         </div>
       </section>
 

@@ -22,6 +22,24 @@
 Small tour operators and activity businesses — the kind of team where the
 owner or a couple of staff currently answer guest DMs by hand.
 
+## Frequently asked
+
+Q: Does Caye use my own WhatsApp number?
+A: Yes — Caye runs through the operator's existing WhatsApp Business,
+   Instagram, and Messenger accounts via Meta's Tech Provider access.
+   There's no separate Caye-branded number for guests to learn.
+
+Q: Do guests need to install an app?
+A: No — guests just message the number/account they already have.
+
+Q: What happens if Caye can't answer a guest's question?
+A: She flags it to the operator instead of guessing. Caye never invents
+   a price or a policy she isn't sure of.
+
+Q: How much does Caye cost?
+A: Free to try for 7 days, no credit card required. Pricing is discussed
+   directly over WhatsApp, not published as a fixed self-serve rate.
+
 ## Company
 
 Caye is built by TropiTech Solutions, based in Nassau, Bahamas.
