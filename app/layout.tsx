@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next'
 import { Geist, JetBrains_Mono, Playfair_Display, Fraunces, Instrument_Serif, DM_Serif_Display, Newsreader, Space_Grotesk } from 'next/font/google'
 import { Toaster } from 'sonner'
+import GoogleAnalyticsGate from '@/components/analytics/GoogleAnalyticsGate'
 import './globals.css'
 import './dashboard-ui.css'
 
@@ -57,8 +58,13 @@ const spaceGrotesk = Space_Grotesk({
 })
 
 export const metadata: Metadata = {
-  title: 'Caye',
-  description: 'AI-powered workspace for tour operators',
+  metadataBase: new URL('https://www.meetcaye.com'),
+  title: {
+    default: 'Caye — Your AI Front Desk for WhatsApp',
+    template: '%s · Caye',
+  },
+  description:
+    'Caye is a WhatsApp-first AI staff member for tour operators — she answers guests, books tours, and runs your back office over chat. No app to learn.',
   icons: {
     icon: [
       { url: '/brand/caye-orb.svg', type: 'image/svg+xml' },
@@ -80,6 +86,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className={`${geist.variable} ${jetbrainsMono.variable} ${playfair.variable} ${fraunces.variable} ${instrumentSerif.variable} ${dmSerif.variable} ${newsreader.variable} ${spaceGrotesk.variable}`}>
         {children}
         <Toaster position="bottom-right" richColors />
+        <GoogleAnalyticsGate />
       </body>
     </html>
   )

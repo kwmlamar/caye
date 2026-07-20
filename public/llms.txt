@@ -1,0 +1,34 @@
+# Caye
+
+> Caye is a WhatsApp-first AI staff member for tour operators. She answers
+> guest messages, quotes tours, and books them — live on WhatsApp,
+> Instagram, and Messenger. Guests never install an app; they just message
+> the operator's existing number and Caye handles the conversation.
+
+## What Caye does
+
+- Answers guest questions about tours, pricing, and availability in real time.
+- Quotes and books tours directly inside the chat.
+- Works across WhatsApp, Instagram DMs, and Messenger — the operator's own
+  business accounts, not a separate Caye-branded number.
+- Reads and writes to the operator's Zoho Mail, Gmail, and Google Calendar
+  in the back office.
+- Back-office control (the operator managing Caye's settings, seeing
+  bookings, etc.) also happens by messaging Caye directly on WhatsApp,
+  not through a settings dashboard.
+
+## Who it's for
+
+Small tour operators and activity businesses — the kind of team where the
+owner or a couple of staff currently answer guest DMs by hand.
+
+## Company
+
+Caye is built by TropiTech Solutions, based in Nassau, Bahamas.
+
+## Key pages
+
+- Home / product overview: https://www.meetcaye.com/
+- Terms: https://www.meetcaye.com/terms
+- Privacy: https://www.meetcaye.com/privacy
+- Contact: mailto:lamar@tropitech.org
