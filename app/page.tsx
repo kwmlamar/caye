@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
-import LandingPageClient, { FAQ_ITEMS } from '@/components/landing/LandingPageClient'
+import LandingPageClient from '@/components/landing/LandingPageClient'
+import { FAQ_ITEMS } from '@/components/landing/faq-data'
 
 // Metadata has to live in a server component — the landing page itself
 // is 'use client' (mesh-gradient hero, scroll reveals), so the actual
