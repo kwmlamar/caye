@@ -152,11 +152,6 @@ export interface EscalationPingInput {
   /** Used to make the idempotency key unique across retries on the same
    *  escalation row. */
   timestamp?: string
-  /** True for the one-shot closing ping sent when an escalation's target
-   *  date has passed unanswered — suppresses the "still waiting" / "say the
-   *  word" framing in both the WhatsApp template and the Caye Direct log,
-   *  since there's nothing left to decide on a dead date. */
-  expired?: boolean
 }
 
 /**
@@ -208,7 +203,6 @@ export async function enqueueEscalationPings(
         // Falls back inside the worker if absent.
         ping_summary: input.pingSummary?.slice(0, 120),
         escalationId: input.escalationId,
-        expired: input.expired ?? false,
       },
       // Each recipient gets one row, immediate. Quiet-hours don't apply —
       // escalations carry their own urgency by definition (the customer is
@@ -224,7 +218,7 @@ interface EscalationRecipient {
   role: 'owner' | 'founder'
 }
 
-async function resolveEscalationRecipients(
+export async function resolveEscalationRecipients(
   workspaceId: string,
   routeTo: 'owner' | 'founder' | 'both'
 ): Promise<EscalationRecipient[]> {

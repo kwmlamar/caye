@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 
 vi.mock('server-only', () => ({}))
 
-import { composeFollowupPingSummary } from './route'
+import { composeFollowupPingSummary } from '@/lib/whatsapp/escalation-followup'
 
 describe('composeFollowupPingSummary', () => {
   it('uses the stored clean ping_summary, not internal_context jargon', () => {

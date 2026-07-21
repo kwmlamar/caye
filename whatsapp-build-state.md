@@ -115,7 +115,7 @@ Cleanup is non-urgent. Park it.
 5. **Submit 5 templates** programmatically against the new Caye WABA. Specs in [STATE.md](STATE.md) under "Live" section but here they are:
    - `caye_otp` (authentication) — `Your Caye code: {{1}}. Don't share it.`
    - `caye_welcome` (utility) — `Hey {{1}} — Caye here. I'll DM you when something needs your call. You can reply to me normally. Reply 'help' anytime.`
-   - `caye_morning_digest` (utility) — `Morning, {{1}}. {{2}} held for you, {{3}} bookings today. Reply 'show' for details.`
+   - `caye_morning_digest` (utility) — `Morning, {{1}}. {{2}} held for you, {{3}} bookings today. Reply 'show' for details.` — **updated 2026-07-21**: now 4 placeholders, `{{4}}` carries the once-daily "still aging" escalation list (see `supabase/migrations/20260721b_morning_digest_aging_escalations_placeholder.sql` and `decisions-log.md` 2026-07-21). Body: `Morning, {{1}}. {{2}} held for you, {{3}} bookings today.{{4}} Reply 'show' for details.` Flipped back to `pending` in the local registry — needs Meta resubmission before the aging detail actually renders; held-count/bookings still send fine on the old approved body in the meantime.
    - `caye_urgent_hold` (utility) — `{{1}} needs your call — {{2}}. Tap to see the draft.`
    - `caye_auth_failure` (utility) — `Heads up — {{1}} disconnected. Tap to reconnect: {{2}}.`
    

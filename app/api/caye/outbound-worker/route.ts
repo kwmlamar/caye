@@ -258,17 +258,22 @@ function operatorPingLogBody(kind: string, payload: Record<string, unknown>): st
       return `Kicking this one up to you — ${who}: ${summary}. Tell me what to say and I'll send it, or handle it yourself and I'll stand down.`
     }
     case 'escalation_followup': {
+      // Owner-facing follow-up pings were folded into morning_digest
+      // (2026-07-21) — the only sender left for this kind is the founder
+      // backstop (maybeEscalateToFounder in lib/whatsapp/escalation-followup.ts),
+      // so `who`/`summary` here always describe an operator-hasn't-acted
+      // situation read by the founder, not the owner.
       const who = str('contactName', 'A guest')
       const summary = str('ping_summary') || `${str('category', 'policy')} escalation`
-      if (payload.expired === true) {
-        return `${summary} — letting it go, no reply needed.`
-      }
       return `Still sitting on this one — ${who} has been waiting a while now: ${summary}. Say the word and I'll send a holding reply, or let me know you've got it.`
     }
     case 'same_day_booking':
       return `Heads up — ${str('guest', 'A guest')} just booked for today.`
-    case 'morning_digest':
-      return `${payload.heldCount ?? 0} threads holding for you, ${payload.bookingsTodayCount ?? 0} booked today. Want me to work through the held ones with you?`
+    case 'morning_digest': {
+      const aging = str('agingEscalationsSummary')
+      const agingLine = aging ? ` Oldest waiting: ${aging}` : ''
+      return `${payload.heldCount ?? 0} threads holding for you, ${payload.bookingsTodayCount ?? 0} booked today.${agingLine} Want me to work through the held ones with you?`
+    }
     case 'auth_failure':
       return `${str('service', 'A connected service')} needs reconnecting — I can't see new messages there until you do. Want me to walk you through it?`
     default:
@@ -431,15 +436,25 @@ function templateForKind(
       return { name: 'caye_otp', placeholders: [str('code')] }
     case 'welcome':
       return { name: 'caye_welcome', placeholders: [str('firstName', 'there')] }
-    case 'morning_digest':
+    case 'morning_digest': {
+      // 4th placeholder holds the once-daily "still aging" escalation list
+      // (see app/api/caye/morning-digest/route.ts's buildAgingEscalationsSummary
+      // and decisions-log.md 2026-07-21) — a single pre-formatted string so
+      // Meta's template stays a flat placeholder list, no conditionals.
+      // Blank when there's nothing aging. Requires the caye_morning_digest
+      // template to carry this 4th slot; falls back to just not showing
+      // aging detail until that revision clears Meta review.
+      const aging = str('agingEscalationsSummary')
       return {
         name: 'caye_morning_digest',
         placeholders: [
           str('firstName', 'there'),
           String(payload.heldCount ?? 0),
           String(payload.bookingsTodayCount ?? 0),
+          aging ? ` Oldest waiting: ${aging}` : '',
         ],
       }
+    }
     case 'urgent_hold':
       return {
         name: 'caye_urgent_hold',
@@ -470,16 +485,14 @@ function templateForKind(
       }
     }
     case 'escalation_followup': {
+      // Only sender left for this kind is the founder backstop (see
+      // operatorPingLogBody's escalation_followup case above).
       const baseSummary =
         str('ping_summary', '') ||
         `${str('category', 'policy')} escalation`
-      // The one-shot closing ping (target date passed, nothing left to
-      // decide) already reads as closed — don't prepend "still waiting",
-      // that's exactly the framing this ping exists to avoid.
-      const reason = payload.expired === true ? baseSummary : `still waiting — ${baseSummary}`
       return {
         name: 'caye_urgent_hold',
-        placeholders: [str('contactName', 'A guest'), reason],
+        placeholders: [str('contactName', 'A guest'), `still waiting — ${baseSummary}`],
       }
     }
     default:
