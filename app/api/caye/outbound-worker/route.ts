@@ -221,7 +221,7 @@ async function dispatch(row: QueueRow, config: WorkspaceConfig): Promise<{ resul
   const mustUseTemplate = TEMPLATE_REQUIRED_KINDS.has(row.kind) || !windowOpen
 
   if (mustUseTemplate) {
-    const tmpl = templateForKind(row.kind, row.payload)
+    const tmpl = await templateForKind(row.kind, row.payload)
     if (!tmpl) {
       return { result: { status: 'failed', error: `no template mapped for kind=${row.kind}`, transient: false }, phone }
     }
@@ -424,10 +424,28 @@ async function operatorRepliedDirectly(row: QueueRow): Promise<boolean> {
 // Template + free-form body composers (kept in-route until Phase 3 expands them)
 // ---------------------------------------------------------------------------
 
-function templateForKind(
+// caye_morning_digest is a live, already-approved template — the
+// 4-placeholder revision (decisions-log.md 2026-07-21) is only safe to send
+// once Meta has actually approved it. Sending 4 params against a template
+// Meta still recognizes with 3 would get rejected by the Cloud API,
+// breaking the previously-working held-count/bookings digest, not just
+// the new aging detail. Checked at send time (not cached) so the moment
+// the follow-up migration flips status back to 'approved' post-review,
+// sends pick it up with no further deploy.
+async function morningDigestSupports4Placeholders(): Promise<boolean> {
+  const supabase = createServiceClient()
+  const { data } = await supabase
+    .from('whatsapp_templates')
+    .select('status, placeholder_count')
+    .eq('name', 'caye_morning_digest')
+    .maybeSingle()
+  return data?.status === 'approved' && (data?.placeholder_count ?? 0) >= 4
+}
+
+async function templateForKind(
   kind: string,
   payload: Record<string, unknown>
-): { name: string; placeholders: string[] } | null {
+): Promise<{ name: string; placeholders: string[] } | null> {
   const str = (k: string, fallback = ''): string =>
     typeof payload[k] === 'string' ? (payload[k] as string) : fallback
 
@@ -437,22 +455,19 @@ function templateForKind(
     case 'welcome':
       return { name: 'caye_welcome', placeholders: [str('firstName', 'there')] }
     case 'morning_digest': {
+      const base = [str('firstName', 'there'), String(payload.heldCount ?? 0), String(payload.bookingsTodayCount ?? 0)]
+      const supports4 = await morningDigestSupports4Placeholders()
+      if (!supports4) {
+        return { name: 'caye_morning_digest', placeholders: base }
+      }
       // 4th placeholder holds the once-daily "still aging" escalation list
-      // (see app/api/caye/morning-digest/route.ts's buildAgingEscalationsSummary
-      // and decisions-log.md 2026-07-21) — a single pre-formatted string so
-      // Meta's template stays a flat placeholder list, no conditionals.
-      // Blank when there's nothing aging. Requires the caye_morning_digest
-      // template to carry this 4th slot; falls back to just not showing
-      // aging detail until that revision clears Meta review.
+      // (see app/api/caye/morning-digest/route.ts's buildAgingEscalationsSummary)
+      // — a single pre-formatted string so Meta's template stays a flat
+      // placeholder list, no conditionals. Blank when there's nothing aging.
       const aging = str('agingEscalationsSummary')
       return {
         name: 'caye_morning_digest',
-        placeholders: [
-          str('firstName', 'there'),
-          String(payload.heldCount ?? 0),
-          String(payload.bookingsTodayCount ?? 0),
-          aging ? ` Oldest waiting: ${aging}` : '',
-        ],
+        placeholders: [...base, aging ? ` Oldest waiting: ${aging}` : ''],
       }
     }
     case 'urgent_hold':
