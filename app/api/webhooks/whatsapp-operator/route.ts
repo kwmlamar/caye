@@ -25,6 +25,7 @@ import { classifyOperatorIntent } from '@/lib/whatsapp/intent'
 import { getPendingHeldItems } from '@/lib/whatsapp/pending'
 import { dispatchOperatorIntent } from '@/lib/whatsapp/actions'
 import { sendFreeFormWhatsApp } from '@/lib/whatsapp/outbound'
+import { generateCayeAutoReply } from '@/lib/caye-reply'
 import { cayeAgent } from '@/lib/caye-agent'
 import { persistAgentTurns } from '@/lib/caye-operator-messages'
 import {
@@ -171,6 +172,15 @@ async function handleOneInbound(
     .maybeSingle()).data
 
   if (!allow) {
+    // Sales demo: a founder-pre-registered prospect phone (see
+    // demo_prospects table) gets a live front-desk-persona demo instead
+    // of falling into real signup/onboarding below. Checked first, so a
+    // demo number can never accidentally cold-start a real workspace.
+    if (message.type === 'text' && message.text?.body) {
+      const handled = await tryHandleDemoProspect(supabase, normalized, message)
+      if (handled) return
+    }
+
     // First contact from an unrecognized phone. Could be an OAuth-created
     // workspace's handoff (carries an invisible signup code — see
     // /onboarding) or a genuinely new WhatsApp-first signup (no code at
@@ -660,4 +670,142 @@ async function handleOneInbound(
       )
     }
   }
+}
+
+// ─── Sales demo mode ──────────────────────────────────────────────────────
+//
+// A founder-pre-registered prospect (demo_prospects row) texts Caye's
+// platform number and gets a live front-desk-persona reply — same
+// generateCayeAutoReply engine real customers get, seeded with a demo
+// workspace's system prompt (their own tour catalog), with real
+// multi-turn memory via the same unified_conversations/unified_messages
+// tables the production front-desk channel uses. No Meta business
+// connection required on the prospect's side; the reply ships from
+// Caye's own platform WhatsApp number via sendFreeFormWhatsApp.
+//
+// Returns true if this phone was a registered demo prospect (caller
+// should stop processing — never fall through to cold-start/onboarding).
+async function tryHandleDemoProspect(
+  supabase: ReturnType<typeof createServiceClient>,
+  normalizedPhone: string,
+  message: WaInboundMessage
+): Promise<boolean> {
+  const { data: prospect } = await supabase
+    .from('demo_prospects')
+    .select('demo_workspace_id, label')
+    .eq('phone', normalizedPhone)
+    .maybeSingle()
+
+  if (!prospect) return false
+
+  const workspaceId = prospect.demo_workspace_id as string
+  const body = message.text?.body ?? ''
+
+  const [{ data: config }, { data: account }] = await Promise.all([
+    supabase
+      .from('workspace_ai_config')
+      .select('system_prompt')
+      .eq('workspace_id', workspaceId)
+      .maybeSingle(),
+    supabase
+      .from('connected_accounts')
+      .select('id')
+      .eq('user_id', workspaceId)
+      .eq('channel_type', 'whatsapp')
+      .maybeSingle(),
+  ])
+
+  if (!config?.system_prompt || !account) {
+    console.error(`[whatsapp-operator] demo prospect ${normalizedPhone} missing seed data (workspace ${workspaceId})`)
+    return true // still true — don't fall through to real signup for a known demo number
+  }
+
+  // Upsert the demo conversation thread, same shape the real front-desk
+  // webhook (app/api/webhooks/whatsapp/route.ts) uses.
+  const { data: conversation, error: convErr } = await supabase
+    .from('unified_conversations')
+    .upsert(
+      {
+        connected_account_id: account.id,
+        channel_type: 'whatsapp',
+        channel_conversation_id: `+${normalizedPhone}`,
+        customer_name: prospect.label ?? 'Demo prospect',
+        customer_id: `+${normalizedPhone}`,
+        status: 'open',
+        last_message_at: new Date().toISOString(),
+        last_message_preview: body.slice(0, 100),
+        last_sender_type: 'customer',
+        metadata: { demo: true },
+      },
+      { onConflict: 'connected_account_id,channel_conversation_id' }
+    )
+    .select('id')
+    .single()
+
+  if (convErr || !conversation) {
+    console.error(`[whatsapp-operator] demo conversation upsert failed for ${normalizedPhone}:`, convErr)
+    return true
+  }
+
+  await supabase.from('unified_messages').insert({
+    conversation_id: conversation.id,
+    channel_message_id: message.id,
+    sender_type: 'customer',
+    content: body,
+    message_type: 'text',
+    sent_at: new Date().toISOString(),
+    status: 'delivered',
+    metadata: { demo: true },
+  })
+
+  let decision: Awaited<ReturnType<typeof generateCayeAutoReply>>
+  try {
+    decision = await generateCayeAutoReply(config.system_prompt, {
+      senderName: prospect.label ?? 'Demo prospect',
+      body,
+      channel: 'whatsapp',
+      workspaceId,
+      conversationId: conversation.id,
+      currentChannelMessageId: message.id,
+    })
+  } catch (err) {
+    console.error(`[whatsapp-operator] demo reply generation failed for ${normalizedPhone}:`, err)
+    await sendFreeFormWhatsApp(
+      `+${normalizedPhone}`,
+      "Sorry, I hit a snag there — try that again in a moment?",
+      `demo-error-${message.id}`
+    )
+    return true
+  }
+
+  // No real operator exists to escalate to for a demo workspace, so a
+  // silent hold (correct in production — the operator sees it in their
+  // queue) would just look broken here. Prefer customerAcknowledgement
+  // (identity-guarded, safe to send verbatim); fall back to the
+  // operator-facing proposedReply rather than go silent, since there's
+  // no operator to rescue it either way.
+  const replyText =
+    decision.action === 'hold'
+      ? decision.customerAcknowledgement ??
+        decision.proposedReply ??
+        "Let me check on that and get right back to you!"
+      : decision.content
+
+  const sendResult = await sendFreeFormWhatsApp(`+${normalizedPhone}`, replyText, `demo-${message.id}`)
+  if (sendResult.status === 'failed') {
+    console.error(`[whatsapp-operator] demo reply send failed for ${normalizedPhone}:`, sendResult.error)
+  }
+
+  await supabase.from('unified_messages').insert({
+    conversation_id: conversation.id,
+    channel_message_id: `demo_${Date.now()}`,
+    sender_type: 'business',
+    content: replyText,
+    message_type: 'text',
+    sent_at: new Date().toISOString(),
+    status: 'sent',
+    metadata: { demo: true, generated_by: 'caye' },
+  })
+
+  return true
 }
