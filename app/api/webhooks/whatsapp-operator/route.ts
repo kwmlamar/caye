@@ -36,6 +36,18 @@ import {
   handleDiscoveryAnswer,
   normalizeE164,
 } from '@/lib/onboarding-whatsapp'
+import {
+  getActiveDemoSession,
+  startDemoSession,
+  endDemoSession,
+  isDemoEntryKeyword,
+  isDemoExitKeyword,
+  loadDemoHistory,
+  advanceDemoSession,
+  generateDemoReply,
+  DEMO_INTRO_MESSAGE,
+  DEMO_EXIT_MESSAGE,
+} from '@/lib/caye-demo'
 
 // Held-item action intents stay on the legacy classifier+dispatch path
 // for now — those reply flows (send / skip / edit / handled / mute /
@@ -481,6 +493,57 @@ async function handleOneInbound(
       operator_role: operator.role,
     })
     return
+  }
+
+  // ── Demo mode (guest-roleplay simulation, 2026-07-22) ────────────────
+  // Lets an already-onboarded operator preview Caye's guest-facing voice
+  // in this same thread. Runs only once cfg.system_prompt exists (we've
+  // fallen through the discovery-grill branch above), so it can never
+  // fire mid-onboarding. Intentionally checked before intent
+  // classification / legacy dispatch / the back-office agent — a demo
+  // turn must never be logged as real back-office conversation or
+  // classified as a held-item action. Drivers are excluded (they return
+  // earlier, in the driver-mode branch above) — demo mode is for
+  // owner/staff/founder only, per the "any operator can trigger it"
+  // decision, which didn't extend to the narrow driver persona.
+  {
+    const demoText =
+      message.type === 'text'
+        ? (message.text?.body ?? '').trim()
+        : message.type === 'button'
+          ? (message.button?.text ?? '').trim()
+          : ''
+
+    const activeDemo = await getActiveDemoSession(supabase, workspaceId, operatorId)
+
+    if (activeDemo) {
+      if (demoText && isDemoExitKeyword(demoText)) {
+        await endDemoSession(supabase, activeDemo.id, 'keyword')
+        await sendFreeFormWhatsApp(replyTo, DEMO_EXIT_MESSAGE, `demo-exit-${message.id}`)
+        return
+      }
+      if (demoText) {
+        const history = await loadDemoHistory(supabase, activeDemo.id)
+        const cayeReply = await generateDemoReply(cfg.system_prompt ?? '', 'your business', history, demoText)
+        await advanceDemoSession(supabase, activeDemo, demoText, cayeReply)
+        const sendResult = await sendFreeFormWhatsApp(
+          replyTo,
+          `🎭 [Demo]\n${cayeReply}`,
+          `demo-turn-${message.id}`
+        )
+        if (sendResult.status === 'failed') {
+          console.error(`[whatsapp-operator] demo reply send failed for ${workspaceId}:`, sendResult.error)
+        }
+      }
+      // Non-text turns during an active demo (media, etc.) are just ignored — no media roleplay in v1.
+      return
+    }
+
+    if (demoText && isDemoEntryKeyword(demoText)) {
+      await startDemoSession(supabase, workspaceId, operatorId, replyTo)
+      await sendFreeFormWhatsApp(replyTo, DEMO_INTRO_MESSAGE, `demo-start-${message.id}`)
+      return
+    }
   }
 
   if (message.type !== 'text' || !message.text?.body) {

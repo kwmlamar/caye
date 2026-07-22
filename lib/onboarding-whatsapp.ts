@@ -388,6 +388,14 @@ export async function handleDiscoveryAnswer(
   const connectUrl = `${process.env.NEXT_PUBLIC_APP_URL || ''}/connect?ws=${workspaceId}`
   const claimUrl = `${process.env.NEXT_PUBLIC_APP_URL || ''}/login?ws=${workspaceId}`
 
+  // Fire-and-forget, same pattern as notifyFounderOfNewSignup above — a
+  // slow/failed demo-offer send must never delay or block the closing
+  // onboarding reply.
+  const { sendDemoOffer } = await import('@/lib/caye-demo')
+  sendDemoOffer(supabase, workspaceId, `+${normalizedPhone}`, businessName).catch((err) =>
+    console.error(`[onboarding-whatsapp] demo offer failed for workspace=${workspaceId}:`, err)
+  )
+
   return {
     replyText:
       "That's everything I need — I'm live and ready to represent your business. 🎉\n\n" +
