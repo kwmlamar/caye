@@ -29,6 +29,18 @@ export const LOOKBACK_HOURS = 24 * 30 // 30 days — a sane outer bound, not a s
 export const FOUNDER_ESCALATION_HOURS = 24 * 7 // 7 days — normal categories
 export const FOUNDER_ESCALATION_URGENT_HOURS = 24 // time-sensitive holds
 
+// Bookkeeping-only close-out for escalations with no target_date, so they
+// don't sit "open" forever once the founder backstop has already fired and
+// nothing further is happening. Anchored off founder_escalated_at (owner-
+// routed rows) or created_at + the applicable founder threshold (founder/
+// both-routed rows, which never get a separate founder_escalated_at ping
+// since the founder was already in the loop from creation). Does NOT touch
+// the conversation's human_agent_enabled — the customer's hold is real and
+// stays real; this only stops the escalation row from reading as "actively
+// escalated" in get_held_queue and future cron runs (2026-07-22 pile-up fix,
+// see decisions-log.md).
+export const ESCALATION_BOOKKEEPING_EXPIRY_HOURS = 24 * 7 // +7 days after founder ping
+
 // Oldest-first cap on the digest's aging list — keeps the WhatsApp template
 // placeholder short and predictable regardless of backlog size.
 export const AGING_LIST_MAX_ITEMS = 4
@@ -153,6 +165,73 @@ export async function maybeEscalateToFounder(
     .eq('id', row.id)
 
   return true
+}
+
+/**
+ * Should this escalation be closed out as bookkeeping-only (no target_date
+ * path applies)? See ESCALATION_BOOKKEEPING_EXPIRY_HOURS docstring — this
+ * governs eligibility only; expireEscalationBookkeepingOnly does the write.
+ */
+export function shouldExpireBookkeeping(row: EscalationRow): boolean {
+  const now = Date.now()
+  const bufferMs = ESCALATION_BOOKKEEPING_EXPIRY_HOURS * 60 * 60 * 1000
+
+  if (row.founder_escalated_at) {
+    return now - new Date(row.founder_escalated_at).getTime() > bufferMs
+  }
+
+  // route_to === 'owner' rows with no founder_escalated_at yet haven't hit
+  // the founder backstop threshold — not eligible until they do.
+  if (row.route_to !== 'founder' && row.route_to !== 'both') return false
+
+  // founder/both-routed rows never get a founder_escalated_at ping (the
+  // founder's already in the loop from creation) — anchor off created_at
+  // plus the threshold that would have applied, so the total window matches
+  // the owner-routed case.
+  const urgent =
+    classifyHoldUrgency({
+      inboundBody: `${row.internal_context} ${row.customer_facing_message}`,
+    }) === 'urgent'
+  const thresholdMs = (urgent ? FOUNDER_ESCALATION_URGENT_HOURS : FOUNDER_ESCALATION_HOURS) * 60 * 60 * 1000
+  return now - new Date(row.created_at).getTime() > thresholdMs + bufferMs
+}
+
+/**
+ * Bookkeeping-only close-out: marks expired_at and logs an internal note
+ * (dashboard-visible via caye_operator_messages, no WhatsApp send) so
+ * there's an audit trail — but deliberately does NOT touch the
+ * conversation's human_agent_enabled flag. The customer's hold is a real,
+ * unresolved fact; this function only stops caye_escalations bookkeeping
+ * from claiming the row is still under active automated escalation.
+ */
+export async function expireEscalationBookkeepingOnly(
+  row: EscalationRow,
+  contactName: string
+): Promise<void> {
+  const supabase = createServiceClient()
+  const closingNote =
+    `No further auto-follow-up on ${contactName} — founder already notified, still unresolved. ` +
+    `The thread itself is still held and waiting on you.`.slice(0, 200)
+
+  const recipients = await resolveEscalationRecipients(row.workspace_id, row.route_to)
+  for (const recipient of recipients) {
+    const operator = await resolveOperatorByPhone(supabase, row.workspace_id, recipient.phone)
+    await supabase.from('caye_operator_messages').insert({
+      workspace_id: row.workspace_id,
+      direction: 'outbound',
+      wa_message_id: null,
+      body: closingNote,
+      intent: null,
+      operator_allowlist_id: operator?.id ?? null,
+      operator_name: operator?.name ?? null,
+      operator_role: operator?.role ?? null,
+    })
+  }
+
+  await supabase
+    .from('caye_escalations')
+    .update({ expired_at: new Date().toISOString() })
+    .eq('id', row.id)
 }
 
 /**

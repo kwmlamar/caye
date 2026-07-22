@@ -12,6 +12,16 @@
  * a nudge to the OPERATOR that they have unanswered drafts, not a
  * second message to the customer.
  *
+ * Pile-up fix (2026-07-22): previously the same stale item reappeared in
+ * this daily email indefinitely, forever, with no upper bound — a hold
+ * from three weeks ago read identically to one from yesterday. Items now
+ * age out of the daily rollup after AGED_BACKLOG_DAYS and move into a
+ * once-weekly "aged backlog" section instead (still surfaced, never
+ * silently dropped — just off the daily cadence). This governs the
+ * OPERATOR-facing email only; it does not touch human_agent_enabled or
+ * send anything to the customer, so nothing here weakens the "no autosend"
+ * guarantee in lib/autosend-gate.ts.
+ *
  * Respects workspace_ai_config.notifications_paused: when paused, the
  * sweep computes the rollup but does NOT send. The would-have-sent
  * payload is logged so you can verify the sweep on a paused workspace
@@ -33,6 +43,17 @@ import { sendZohoEmail } from '@/lib/email-ai'
 import { loadScheduleConfig, inQuietHours } from '@/lib/whatsapp/schedule'
 
 const STALE_BUSINESS_HOURS = 4
+
+// Items held this long (measured from human_agent_marked_at, when Caye
+// first flagged the thread) age out of the daily rollup and move to the
+// once-weekly aged-backlog section instead. Matches the 7-day rhythm
+// already used for the founder escalation backstop (FOUNDER_ESCALATION_HOURS)
+// so operators get one consistent "a week untouched" mental model across
+// the hold/escalation system.
+const AGED_BACKLOG_DAYS = 7
+
+// Day the weekly aged-backlog section is included (UTC). Monday.
+const WEEKLY_DIGEST_DAY_UTC = 1
 
 interface SweepSummary {
   workspaces_scanned: number
@@ -108,6 +129,7 @@ interface StaleHold {
   proposedReply: string | null
   lastBusinessAt: string | null
   hoursStale: number
+  daysHeld: number
 }
 
 async function processWorkspace(args: ProcessArgs): Promise<WorkspaceOutcome> {
@@ -136,12 +158,14 @@ async function processWorkspace(args: ProcessArgs): Promise<WorkspaceOutcome> {
 
   const cfg = await loadScheduleConfig(args.workspaceId)
   const now = new Date()
+  const isWeeklyDigestDay = now.getUTCDay() === WEEKLY_DIGEST_DAY_UTC
 
   // Compute "business hours since last business message" per conversation.
   // Simplified: total elapsed hours minus quiet-hour blocks the elapsed
   // window crossed. Good-enough heuristic for "is this stale?" — exact
   // business-hours math isn't worth the complexity here.
   const stale: StaleHold[] = []
+  const agedStale: StaleHold[] = []
   for (const c of held) {
     const lastBusinessAt = (c.last_message_at as string | null) ?? null
     if (!lastBusinessAt) continue
@@ -180,7 +204,13 @@ async function processWorkspace(args: ProcessArgs): Promise<WorkspaceOutcome> {
     const proposedReply =
       typeof meta.proposed_reply === 'string' ? (meta.proposed_reply as string) : null
 
-    stale.push({
+    // Age from when Caye first flagged the thread, not from last activity —
+    // a hold that's been sitting 10 days but had a customer follow-up
+    // yesterday is still a 10-day-old pile-up problem, not a fresh one.
+    const markedAt = (c.human_agent_marked_at as string | null) ?? lastBusinessAt
+    const daysHeld = (now.getTime() - new Date(markedAt).getTime()) / (1000 * 60 * 60 * 24)
+
+    const entry: StaleHold = {
       conversationId: c.id as string,
       customerName: (c.customer_name as string | null) ?? null,
       customerId: (c.customer_id as string | null) ?? null,
@@ -189,13 +219,21 @@ async function processWorkspace(args: ProcessArgs): Promise<WorkspaceOutcome> {
       proposedReply,
       lastBusinessAt,
       hoursStale: Math.round(elapsedHours * 10) / 10,
-    })
+      daysHeld: Math.round(daysHeld * 10) / 10,
+    }
+
+    if (daysHeld >= AGED_BACKLOG_DAYS) {
+      agedStale.push(entry)
+    } else {
+      stale.push(entry)
+    }
   }
 
-  if (stale.length === 0) return 'no_stale'
+  if (stale.length === 0 && (!isWeeklyDigestDay || agedStale.length === 0)) return 'no_stale'
 
-  // Compose the rollup.
-  const { subject, body } = composeRollup(args, stale)
+  // Compose the rollup — aged-backlog section only included on the weekly
+  // digest day, so daily emails stay focused on genuinely fresh items.
+  const { subject, body } = composeRollup(args, stale, isWeeklyDigestDay ? agedStale : [])
 
   // Pause gate — log and skip the send.
   const { data: notifCfg } = await supabase
@@ -217,32 +255,56 @@ async function processWorkspace(args: ProcessArgs): Promise<WorkspaceOutcome> {
   return 'sent'
 }
 
-function composeRollup(args: ProcessArgs, stale: StaleHold[]): { subject: string; body: string } {
+function composeRollup(
+  args: ProcessArgs,
+  stale: StaleHold[],
+  agedStale: StaleHold[] = []
+): { subject: string; body: string } {
   const opName = args.operatorName?.trim() || 'there'
   const bizName = args.businessName?.trim() || 'your business'
   const n = stale.length
-  const subject = `${n} ${n === 1 ? 'thread is' : 'threads are'} waiting on you — ${bizName}`
+  const subjectParts = [n > 0 ? `${n} ${n === 1 ? 'thread' : 'threads'}` : null,
+    agedStale.length > 0 ? `${agedStale.length} aged` : null].filter(Boolean)
+  const subject = `${subjectParts.join(' + ')} waiting on you — ${bizName}`
 
   const lines: string[] = []
   lines.push(`Hi ${opName.split(' ')[0]},`)
   lines.push('')
-  lines.push(
-    `${n === 1 ? 'One customer thread is' : `${n} customer threads are`} still waiting ` +
-      `on your call — I held ${n === 1 ? 'it' : 'them'} earlier and the customer hasn't heard back.`
-  )
-  lines.push('')
 
-  for (const h of stale) {
-    const who = h.customerName || h.customerId || 'A customer'
-    const ch = h.channelType ? ` (${h.channelType})` : ''
-    lines.push(`— ${who}${ch} — ${h.hoursStale}h since last reply`)
-    if (h.reason) lines.push(`    Why I held: ${h.reason}`)
-    if (h.proposedReply) {
-      const trimmed = h.proposedReply.replace(/\s+/g, ' ').trim()
-      const preview = trimmed.length > 240 ? `${trimmed.slice(0, 237)}…` : trimmed
-      lines.push(`    Draft I wrote: "${preview}"`)
-    }
+  if (n > 0) {
+    lines.push(
+      `${n === 1 ? 'One customer thread is' : `${n} customer threads are`} still waiting ` +
+        `on your call — I held ${n === 1 ? 'it' : 'them'} earlier and the customer hasn't heard back.`
+    )
     lines.push('')
+
+    for (const h of stale) {
+      const who = h.customerName || h.customerId || 'A customer'
+      const ch = h.channelType ? ` (${h.channelType})` : ''
+      lines.push(`— ${who}${ch} — ${h.hoursStale}h since last reply`)
+      if (h.reason) lines.push(`    Why I held: ${h.reason}`)
+      if (h.proposedReply) {
+        const trimmed = h.proposedReply.replace(/\s+/g, ' ').trim()
+        const preview = trimmed.length > 240 ? `${trimmed.slice(0, 237)}…` : trimmed
+        lines.push(`    Draft I wrote: "${preview}"`)
+      }
+      lines.push('')
+    }
+  }
+
+  if (agedStale.length > 0) {
+    lines.push(
+      `Weekly aged backlog — these have been sitting ${AGED_BACKLOG_DAYS}+ days with no ` +
+        `action, so I've stopped including them in the daily email. Still open, still waiting on you:`
+    )
+    lines.push('')
+    for (const h of agedStale) {
+      const who = h.customerName || h.customerId || 'A customer'
+      const ch = h.channelType ? ` (${h.channelType})` : ''
+      lines.push(`— ${who}${ch} — held ${h.daysHeld}d`)
+      if (h.reason) lines.push(`    Why I held: ${h.reason}`)
+      lines.push('')
+    }
   }
 
   lines.push(

@@ -26,6 +26,19 @@
  *      (24h, time-sensitive holds) get a one-shot ping to the founder.
  *      Unaffected by the digest-merge change: different recipient, already
  *      one-shot, not part of the wall-of-texts problem.
+ *   4. Bookkeeping close-out (2026-07-22, pile-up fix) — escalations with
+ *      no target_date at all previously stayed "open" forever once the
+ *      founder backstop fired: no further automation touched them, but
+ *      expired_at never got set, so get_held_queue's has_open_escalation
+ *      kept reading them as actively escalated indefinitely. Once
+ *      ESCALATION_BOOKKEEPING_EXPIRY_HOURS (7d) have passed since the
+ *      founder ping (or since creation, for founder/both-routed rows that
+ *      never get a separate ping), mark expired_at and log an internal
+ *      note. Does NOT touch human_agent_enabled — the customer's hold
+ *      stays open and unresolved; this only closes the escalation-tracking
+ *      record (see expireEscalationBookkeepingOnly). Checked AFTER #2's
+ *      target_date expiry, which takes priority when both apply since it's
+ *      the one path that actually clears the hold.
  *
  * Authenticated via CRON_SECRET. Accepts either `x-cron-secret: <secret>`
  * or `Authorization: Bearer <secret>`. Registered on cron-job.org.
@@ -38,10 +51,12 @@ import {
   ESCALATION_FOLLOWUP_HOURS,
   LOOKBACK_HOURS,
   composeFollowupPingSummary,
+  expireEscalationBookkeepingOnly,
   expireEscalationLogOnly,
   maybeEscalateToFounder,
   operatorRepliedSince,
   resolveContactName,
+  shouldExpireBookkeeping,
   type EscalationRow,
 } from '@/lib/whatsapp/escalation-followup'
 
@@ -137,13 +152,31 @@ async function processEscalation(
   // The underlying window already passed (e.g. a specific booking date)
   // with no operator response. Nudging about a dead date is just noise —
   // log a closing note and stop selecting this row entirely (no WhatsApp
-  // send — see expireEscalationLogOnly's docstring).
+  // send — see expireEscalationLogOnly's docstring). Checked before the
+  // bookkeeping close-out below: a passed target_date is a stronger, more
+  // certain signal (nothing left to act on) and is the one path that
+  // clears the conversation's hold — it should win if both conditions
+  // happen to be true on the same row.
   const todayISO = new Date().toISOString().slice(0, 10)
   if (row.target_date && row.target_date < todayISO) {
     try {
       await expireEscalationLogOnly(row, contactName)
     } catch (err) {
       console.error('[escalation-followup] expiry logging failed:', err)
+      return { status: 'skipped', founderEscalated: false }
+    }
+    return { status: 'expired', founderEscalated: false }
+  }
+
+  // Bookkeeping close-out — no (unexpired) target_date, founder backstop
+  // already fired (or never applied, for founder/both-routed rows) plus the
+  // follow-up buffer has elapsed. Closes the escalation record only; the
+  // hold itself is untouched.
+  if (shouldExpireBookkeeping(row)) {
+    try {
+      await expireEscalationBookkeepingOnly(row, contactName)
+    } catch (err) {
+      console.error('[escalation-followup] bookkeeping expiry failed:', err)
       return { status: 'skipped', founderEscalated: false }
     }
     return { status: 'expired', founderEscalated: false }
