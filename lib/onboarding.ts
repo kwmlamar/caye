@@ -24,6 +24,14 @@ export interface BusinessProfile {
 // decide it. Everything after this is adaptive (see decideNextDiscoveryStep).
 export const FIRST_DISCOVERY_QUESTION = "What's your business called?"
 
+// Always the second thing Caye asks, right after the business name —
+// deterministic, no LLM call needed. Captures customers.full_name and
+// customers.contact_email (see parseNameAndEmail in onboarding-whatsapp.ts),
+// which otherwise never get filled in on a WhatsApp-first signup. Adaptive
+// questions (decideNextDiscoveryStep) only start after this one.
+export const SECOND_DISCOVERY_QUESTION =
+  "Got it. And what's your name, and the best email for you? I'll use it for your account and any receipts."
+
 // Grill-me-style ceiling: never ask more than this many questions total
 // (including the fixed business-name one), no matter how thin the
 // signal — wrap up with what's there rather than exhaust the owner.
@@ -55,7 +63,7 @@ export async function decideNextDiscoveryStep(
 
 Ask ONE thing at a time. Prefer the fewest, highest-value questions — if an earlier answer already covers a topic (even partially), don't ask a dedicated question for it, infer it instead. Never ask something you could reasonably infer. The owner is busy and likely on their phone, so keep questions short and give a brief example answer to lower their effort.
 
-They've answered ${turns.length} question(s) so far (including their business name). Keep the total under ${MAX_DISCOVERY_QUESTIONS} — wrap up ("done": true) once you have enough for a solid profile, even if some minor detail is still unknown.
+They've answered ${turns.length} question(s) so far (including their business name and contact info). Keep the total under ${MAX_DISCOVERY_QUESTIONS} — wrap up ("done": true) once you have enough for a solid profile, even if some minor detail is still unknown.
 
 Return ONLY valid JSON, no markdown, no explanation:
 {"done": boolean, "question": "string or null — the single next question, only if done is false", "suggested_answer": "string or null — a short example answer, only if done is false"}`,

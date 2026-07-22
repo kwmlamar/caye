@@ -465,7 +465,7 @@ async function handleOneInbound(
       operator_role: operator.role,
     })
 
-    const { replyText } = await handleDiscoveryAnswer(supabase, workspaceId, answerText)
+    const { replyText } = await handleDiscoveryAnswer(supabase, workspaceId, answerText, normalized)
     const sendResult = await sendFreeFormWhatsApp(replyTo, replyText, `discovery-${message.id}`)
     if (sendResult.status === 'failed') {
       console.error(`[whatsapp-operator] discovery send failed for ${workspaceId}:`, sendResult.error)

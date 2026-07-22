@@ -2,6 +2,7 @@ import 'server-only'
 import { createServiceClient } from '@/lib/supabase-server'
 import {
   FIRST_DISCOVERY_QUESTION,
+  SECOND_DISCOVERY_QUESTION,
   MAX_DISCOVERY_QUESTIONS,
   decideNextDiscoveryStep,
   buildBusinessProfile,
@@ -185,6 +186,72 @@ export async function tryColdStartWorkspace(
   return inserted as ProvisionedOwner
 }
 
+/**
+ * Pings the founder's own WhatsApp once a brand-new cold-start signup has
+ * given up their name/business name (see handleDiscoveryAnswer below —
+ * fired right after the fixed second question is answered). Deliberately
+ * not fired at cold-start time: at that point neither is known yet, and a
+ * bare-phone-number ping is much less useful than one that says who it is.
+ * The founder is already auto-added to every workspace's operator_allowlist
+ * via the ensure_founder_in_allowlist DB trigger — this just surfaces the
+ * event in real time instead of the founder finding it later in the
+ * dashboard. Best-effort: a failure here must never block onboarding.
+ */
+export async function notifyFounderOfNewSignup(
+  supabase: SupabaseClient,
+  workspaceId: string,
+  info: { normalizedPhone: string; businessName: string | null; fullName: string | null }
+): Promise<void> {
+  try {
+    const { data: setting } = await supabase
+      .from('platform_settings')
+      .select('value')
+      .eq('key', 'founder_phone')
+      .maybeSingle()
+
+    const founderPhone = setting?.value as string | undefined
+    if (!founderPhone) return
+
+    const who = [info.fullName, info.businessName].filter(Boolean).join(' — ') || 'unknown name'
+
+    const { sendFreeFormWhatsApp } = await import('@/lib/whatsapp/outbound')
+    const result = await sendFreeFormWhatsApp(
+      founderPhone,
+      `🌴 New Caye signup — ${who} (+${info.normalizedPhone}).`,
+      `founder-new-signup-${workspaceId}`
+    )
+    if (result.status === 'failed') {
+      console.error(
+        `[onboarding-whatsapp] founder signup notify failed for workspace=${workspaceId}:`,
+        result.error
+      )
+    }
+  } catch (err) {
+    console.error(
+      `[onboarding-whatsapp] founder signup notify threw for workspace=${workspaceId}:`,
+      err
+    )
+  }
+}
+
+// Best-effort split of a free-text "name + email" WhatsApp reply. Not
+// bulletproof NLP — just pulls out anything email-shaped and treats the
+// remainder as the name, which covers the overwhelming majority of how
+// people actually answer this on a phone (e.g. "Dave Rolle, dave@x.com").
+const EMAIL_RE = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/
+
+function parseNameAndEmail(answer: string): { fullName: string | null; email: string | null } {
+  const match = answer.match(EMAIL_RE)
+  const email = match ? match[0] : null
+  const withoutEmail = email ? answer.replace(email, ' ') : answer
+  const fullName = withoutEmail
+    .replace(/\b(my name is|i'?m|this is|name|email)\b[:\s]*/gi, ' ')
+    .replace(/[,:;]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return { fullName: fullName || null, email }
+}
+
 const GREETING =
   "Hey! I'm Caye — your AI receptionist. I'll ask a few quick questions about your business — I'll keep it as short as I can. 🌴"
 
@@ -204,7 +271,8 @@ export function firstDiscoveryMessage(): string {
 export async function handleDiscoveryAnswer(
   supabase: SupabaseClient,
   workspaceId: string,
-  answerText: string
+  answerText: string,
+  normalizedPhone: string
 ): Promise<{ replyText: string; completed: boolean }> {
   const { data: config } = await supabase
     .from('workspace_ai_config')
@@ -215,6 +283,7 @@ export async function handleDiscoveryAnswer(
   const turns: DiscoveryTurn[] = config?.onboarding_wa_answers ?? []
 
   let newTurns: DiscoveryTurn[]
+  let justCapturedContactInfo = false
   if (turns.length === 0) {
     // No prior turns means this answer is necessarily the reply to the
     // fixed business-name question — always asked first, deterministically.
@@ -224,6 +293,17 @@ export async function handleDiscoveryAnswer(
     // the founder dashboard, and buildBusinessProfile's businessName arg
     // all read customers.business_name directly.
     await supabase.from('customers').update({ business_name: answerText }).eq('id', workspaceId)
+  } else if (turns.length === 1) {
+    // Reply to the fixed second question (name + email) — always asked
+    // right after business name, deterministically. See parseNameAndEmail.
+    const lastQuestion = config?.onboarding_wa_last_question ?? SECOND_DISCOVERY_QUESTION
+    newTurns = [...turns, { question: lastQuestion, answer: answerText }]
+    const { fullName, email } = parseNameAndEmail(answerText)
+    await supabase
+      .from('customers')
+      .update({ full_name: fullName, contact_email: email })
+      .eq('id', workspaceId)
+    justCapturedContactInfo = true
   } else {
     const lastQuestion = config?.onboarding_wa_last_question ?? FIRST_DISCOVERY_QUESTION
     newTurns = [...turns, { question: lastQuestion, answer: answerText }]
@@ -231,13 +311,33 @@ export async function handleDiscoveryAnswer(
 
   const { data: customer } = await supabase
     .from('customers')
-    .select('business_name')
+    .select('business_name, full_name')
     .eq('id', workspaceId)
     .maybeSingle()
   const businessName = customer?.business_name || 'your business'
 
+  if (justCapturedContactInfo) {
+    // Fire-and-forget: now that we know who signed up, tell the founder.
+    // Never awaited — a slow/failed WhatsApp send must not delay the
+    // customer's next onboarding question.
+    notifyFounderOfNewSignup(supabase, workspaceId, {
+      normalizedPhone,
+      businessName: customer?.business_name ?? null,
+      fullName: customer?.full_name ?? null,
+    })
+  }
+
   const atCap = newTurns.length >= MAX_DISCOVERY_QUESTIONS
-  const step = atCap ? { done: true as const } : await decideNextDiscoveryStep(businessName, newTurns)
+  const step =
+    newTurns.length === 1
+      ? {
+          done: false as const,
+          question: SECOND_DISCOVERY_QUESTION,
+          suggestedAnswer: 'Dave Rolle, dave@simplydavetours.com',
+        }
+      : atCap
+        ? { done: true as const }
+        : await decideNextDiscoveryStep(businessName, newTurns)
 
   if (!step.done) {
     await supabase
