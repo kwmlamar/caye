@@ -21,7 +21,7 @@ import { htmlToPlainText } from '@/lib/email-text'
 import { maybeRefreshOwnerVoiceProfile } from '@/lib/owner-voice-learning'
 import { maybeSuggestBusinessFacts } from '@/lib/business-fact-suggestions'
 import { detectOwnerCorrection } from '@/lib/owner-correction'
-import { isNoReplySender, isCalendarInvite, isPaymentReceipt } from '@/lib/sender-classifier'
+import { isNoReplySender, isCalendarInvite, isPaymentReceipt, isOutOfOffice } from '@/lib/sender-classifier'
 import {
   isWeb3FormsNotification,
   parseWeb3FormsFields,
@@ -1029,6 +1029,15 @@ async function processMessage(
   // Berezhna 2026-05-21 case dropped 4 ATS meeting-invite conversations
   // into the inbox before this guard existed).
   if (!web3FormsFields && !archiveOnCreate && isCalendarInvite(subject, body)) {
+    archiveOnCreate = true
+  }
+
+  // Out-of-office / vacation-responder check — same body-dependent shape as
+  // the calendar-invite check above. Real human senders, not customer
+  // conversations. Added for issue #66 (TropiTech's own cold-outreach reply
+  // inbox), but applies to every workspace — OOO bounces aren't useful
+  // signal anywhere.
+  if (!web3FormsFields && !archiveOnCreate && isOutOfOffice(subject, body)) {
     archiveOnCreate = true
   }
 

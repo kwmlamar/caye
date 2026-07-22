@@ -22,6 +22,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase-server'
 import { enqueueOutbound } from '@/lib/whatsapp/outbound'
 import { loadScheduleConfig, isDigestHour } from '@/lib/whatsapp/schedule'
+import { recordCronRun } from '@/lib/cron-run-log'
 import {
   AGING_LIST_MAX_ITEMS,
   ESCALATION_FOLLOWUP_HOURS,
@@ -40,6 +41,22 @@ export async function GET(request: NextRequest) {
     }
   }
 
+  try {
+    return NextResponse.json(await runMorningDigest())
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown error'
+    return NextResponse.json({ error: message }, { status: 500 })
+  }
+}
+
+/**
+ * Core digest logic, extracted so both the scheduled cron hit above AND
+ * the founder-triggered manual run (lib/caye-agent/tools/admin/write-high/
+ * trigger-cron.ts, via Admin Shell) call the exact same code — no
+ * duplicated logic, no drift between the two invocation paths.
+ */
+export async function runMorningDigest() {
+  return recordCronRun('morning-digest', async () => {
   const supabase = createServiceClient()
 
   const { data: workspaces, error } = await supabase
@@ -50,7 +67,7 @@ export async function GET(request: NextRequest) {
 
   if (error) {
     console.error('[morning-digest] workspace fetch failed:', error)
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    throw new Error(error.message)
   }
 
   const now = new Date()
@@ -105,7 +122,8 @@ export async function GET(request: NextRequest) {
     summary.queued++
   }
 
-  return NextResponse.json(summary)
+  return summary
+  })
 }
 
 function pickFirstName(fullName: string | null | undefined): string | null {

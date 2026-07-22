@@ -6,13 +6,22 @@ import type { VoiceProfile } from '@/lib/voice-profile'
 import { loadOperatorContext } from './context'
 import { buildBackOfficeSystemPrompt } from './modes/back-office'
 import { buildDriverSystemPrompt } from './modes/driver'
+import { buildAdminShellSystemPrompt } from './modes/admin-shell'
+import { loadAdminShellContext } from './admin-shell-context'
 import { runToolLoop } from './execute'
 import type { Role } from './tools/types'
 
 const MODEL = 'claude-sonnet-4-6'
 const MAX_OUTPUT_TOKENS = 1024
 
-export type CayeAgentMode = 'front-desk' | 'back-office' | 'driver'
+// Not a real customers.id — admin-shell has no workspace concept at all.
+// Exists only so ToolContext.workspaceId (required, read by every other
+// mode's tools) and the llm_call_log telemetry insert (nullable, no FK)
+// stay well-formed. Admin-shell tools (get_cron_health, trigger_cron)
+// never read this value.
+const ADMIN_SHELL_PLACEHOLDER_WORKSPACE_ID = '00000000-0000-0000-0000-000000000000'
+
+export type CayeAgentMode = 'front-desk' | 'back-office' | 'driver' | 'admin-shell'
 
 export interface CayeAgentInput {
   mode: CayeAgentMode
@@ -82,6 +91,9 @@ export interface CayeAgentResult {
 export async function cayeAgent(input: CayeAgentInput): Promise<CayeAgentResult> {
   if (input.mode === 'driver') {
     return runDriverAgent(input)
+  }
+  if (input.mode === 'admin-shell') {
+    return runAdminShellAgent(input)
   }
   if (input.mode !== 'back-office') {
     throw new Error(
@@ -265,6 +277,43 @@ async function runDriverAgent(input: CayeAgentInput): Promise<CayeAgentResult> {
   })
 }
 
+/**
+ * Admin Shell mode (2026-07-21). Founder-only dev/ops console — no
+ * workspace, no operator, no voice profile, no customer/business lookup
+ * at all. Mirrors runDriverAgent's shape (narrowest existing mode) rather
+ * than back-office's: this is not a variant of the business-ops agent.
+ */
+async function runAdminShellAgent(input: CayeAgentInput): Promise<CayeAgentResult> {
+  const systemPrompt = buildAdminShellSystemPrompt({
+    callerName: input.callerName ?? null,
+  })
+
+  const history = await loadAdminShellContext()
+  const initialMessages: Anthropic.MessageParam[] = [
+    ...history,
+    { role: 'user', content: input.userMessage },
+  ]
+
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+
+  return runToolLoop({
+    client,
+    model: MODEL,
+    maxTokens: MAX_OUTPUT_TOKENS,
+    systemPrompt,
+    initialMessages,
+    ctx: {
+      workspaceId: ADMIN_SHELL_PLACEHOLDER_WORKSPACE_ID,
+      callerRole: 'founder',
+      operatorId: null,
+      requestId: randomUUID(),
+    },
+    mode: 'admin-shell',
+  })
+}
+
 export { loadOperatorContext } from './context'
 export { buildBackOfficeSystemPrompt } from './modes/back-office'
 export { buildDriverSystemPrompt } from './modes/driver'
+export { buildAdminShellSystemPrompt } from './modes/admin-shell'
+export { loadAdminShellContext } from './admin-shell-context'

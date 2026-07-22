@@ -40,13 +40,18 @@ export type Role = 'owner' | 'staff' | 'founder' | 'driver'
  *   read-only booking/logistics lookups scoped to the caller's own
  *   assignment, plus an escalate-to-owner tool. Never shares tools with
  *   back-office.
+ * - admin-shell: founder-only dev/ops console (2026-07-21), NOT a
+ *   variant of back-office. Back-office tools are business-ops (bookings,
+ *   customers, voice/services) and workspace-scoped; admin-shell tools
+ *   are dev/ops (cron health, manual cron triggers) and workspace-less.
+ *   Never shares tools with back-office/front-desk/driver.
  *
  * runToolLoop filters TOOL_REGISTRY by the request's mode so the API
  * call only ships the tool schemas relevant to the current surface,
  * dropping input tokens per request. Tools tagged with both modes are
  * cross-cutting (e.g. escalate_to_team eventually).
  */
-export type ToolMode = 'front-desk' | 'back-office' | 'driver'
+export type ToolMode = 'front-desk' | 'back-office' | 'driver' | 'admin-shell'
 
 export interface ToolContext {
   workspaceId: string

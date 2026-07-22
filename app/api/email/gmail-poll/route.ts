@@ -26,7 +26,8 @@ import { enqueueHoldPing } from '@/lib/whatsapp/triggers'
 import { applyEscalation } from '@/lib/whatsapp/escalation'
 import { htmlToPlainText } from '@/lib/email-text'
 import { sendGmailReply } from '@/lib/gmail-send'
-import { isNoReplySender, isCalendarInvite } from '@/lib/sender-classifier'
+import { isNoReplySender, isCalendarInvite, isOutOfOffice } from '@/lib/sender-classifier'
+import { recordCronRun } from '@/lib/cron-run-log'
 
 const GMAIL_API_BASE = 'https://gmail.googleapis.com/gmail/v1/users/me'
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
@@ -252,7 +253,7 @@ async function processGmailMessage(
     // helpers with the Zoho poll path. See app/api/email/poll/route.ts and
     // lib/sender-classifier.ts for the rationale.
     const archiveOnCreate =
-      isNoReplySender(fromEmail) || isCalendarInvite(subject, body)
+      isNoReplySender(fromEmail) || isCalendarInvite(subject, body) || isOutOfOffice(subject, body)
 
     const { data: created, error: convErr } = await supabase
       .from('unified_conversations')
@@ -594,34 +595,50 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  const supabase = createServiceClient()
-  const { data: accounts, error } = await supabase
-    .from('connected_accounts')
-    .select('*')
-    .eq('channel_type', 'gmail')
-    .eq('is_active', true)
-
-  if (error) {
-    console.error('[gmail-poll] account fetch failed:', error)
-    return NextResponse.json({ error: error.message }, { status: 500 })
+  try {
+    return NextResponse.json(await runGmailPoll())
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown error'
+    return NextResponse.json({ error: message }, { status: 500 })
   }
+}
 
-  const results: PollStats[] = []
-  for (const account of accounts ?? []) {
-    try {
-      results.push(await pollAccount(supabase, account as Account))
-    } catch (err) {
-      console.error(`[gmail-poll] pollAccount threw for ${account.id}:`, err)
-      results.push({
-        account: String(account.channel_account_name || account.id),
-        fetched: 0,
-        processed: 0,
-        held: 0,
-        skipped: 0,
-        errors: 1,
-      })
+/**
+ * Core poll logic, extracted so both the scheduled cron hit above AND the
+ * founder-triggered manual run (lib/caye-agent/tools/admin/write-high/
+ * trigger-cron.ts, via Admin Shell) call the exact same code.
+ */
+export async function runGmailPoll() {
+  return recordCronRun('gmail-poll', async () => {
+    const supabase = createServiceClient()
+    const { data: accounts, error } = await supabase
+      .from('connected_accounts')
+      .select('*')
+      .eq('channel_type', 'gmail')
+      .eq('is_active', true)
+
+    if (error) {
+      console.error('[gmail-poll] account fetch failed:', error)
+      throw new Error(error.message)
     }
-  }
 
-  return NextResponse.json({ accounts: results.length, results })
+    const results: PollStats[] = []
+    for (const account of accounts ?? []) {
+      try {
+        results.push(await pollAccount(supabase, account as Account))
+      } catch (err) {
+        console.error(`[gmail-poll] pollAccount threw for ${account.id}:`, err)
+        results.push({
+          account: String(account.channel_account_name || account.id),
+          fetched: 0,
+          processed: 0,
+          held: 0,
+          skipped: 0,
+          errors: 1,
+        })
+      }
+    }
+
+    return { accounts: results.length, results }
+  })
 }

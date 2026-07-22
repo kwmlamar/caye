@@ -31,6 +31,7 @@ import {
   isNoReplySender,
   isCalendarInvite,
   isPaymentReceipt,
+  isOutOfOffice,
 } from '@/lib/sender-classifier'
 import {
   isWeb3FormsNotification,
@@ -172,7 +173,7 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
   // the parsed customer for webforms (so webforms aren't archived even
   // though the raw From is noreply-style).
   const archiveOnCreate =
-    isNoReplySender(effectiveEmail) || isCalendarInvite(subject, body)
+    isNoReplySender(effectiveEmail) || isCalendarInvite(subject, body) || isOutOfOffice(subject, body)
 
   const supabase = createServiceClient()
 
@@ -314,7 +315,9 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
                 archived_on_create: true,
                 archive_reason: isCalendarInvite(subject, body)
                   ? 'calendar_invite'
-                  : 'noreply_sender',
+                  : isOutOfOffice(subject, body)
+                    ? 'out_of_office'
+                    : 'noreply_sender',
               }
             : {}),
         },

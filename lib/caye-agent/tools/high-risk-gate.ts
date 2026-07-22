@@ -7,8 +7,12 @@ const PENDING_TTL_MINUTES = 15
 /**
  * Deterministic JSON with sorted object keys, so the same logical args
  * always produce the same string regardless of key insertion order.
+ *
+ * Exported so lib/caye-agent/tools/admin/admin-high-risk-gate.ts (the
+ * admin-shell analog of this gate, backed by a separate workspace-less
+ * table) can reuse it instead of duplicating.
  */
-function stableArgsKey(args: unknown): string {
+export function stableArgsKey(args: unknown): string {
   const sort = (value: unknown): unknown => {
     if (Array.isArray(value)) return value.map(sort)
     if (value && typeof value === 'object') {

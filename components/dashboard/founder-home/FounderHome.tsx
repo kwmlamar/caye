@@ -12,6 +12,7 @@ import CommandConversations from '@/components/dashboard/command-conversations/C
 import CayeDirect from '@/components/dashboard/caye-direct/CayeDirect'
 import GlobalPerformance from '@/components/dashboard/global-performance/GlobalPerformance'
 import ContactsPanel from '@/components/dashboard/founder-home/ContactsPanel'
+import AdminShell from '@/components/dashboard/admin-shell/AdminShell'
 import { CayeLoadingPulse } from '@/components/dashboard/founder-home/CayeLoadingPulse'
 import type { CustomerStatus } from '@/types/database'
 
@@ -204,7 +205,7 @@ const RAIL_ITEMS: { id: RailId; label: string; icon: ReactNode; stub: boolean }[
   { id: 'risk', label: 'Risk & Safety Audits', stub: true, icon: (
     <path d="M12 2l8 3.5v6c0 5-3.5 8-8 10.5-4.5-2.5-8-5.5-8-10.5v-6z" />
   ) },
-  { id: 'admin', label: 'Admin Shell', stub: true, icon: (
+  { id: 'admin', label: 'Admin Shell', stub: false, icon: (
     <><polyline points="4 6 10 12 4 18" /><line x1="12" y1="18" x2="20" y2="18" /></>
   ) },
 ]
@@ -404,6 +405,8 @@ export default function FounderHome() {
           <GlobalPerformance />
         ) : railView === 'contacts' ? (
           <ContactsPanel workspaceId={workspaceId} />
+        ) : railView === 'admin' ? (
+          <AdminShell />
         ) : activeRailItem.stub ? (
           <StubConsole label={activeRailItem.label} />
         ) : (

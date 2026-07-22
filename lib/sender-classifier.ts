@@ -61,6 +61,36 @@ export function isCalendarInvite(subject: string | null | undefined, body: strin
 }
 
 /**
+ * Detect out-of-office / vacation-responder auto-replies. These come from
+ * real human senders (isNoReplySender misses them — the OOO tool sends
+ * from the person's own address) but they're pure noise: a bounce back
+ * from a business you emailed, not a conversation. Auto-archived same as
+ * isNoReplySender/isCalendarInvite.
+ *
+ * Added for issue #66 (TropiTech's own cold-outreach reply inbox,
+ * ~100+/day outbound) where OOO volume would otherwise flood the founder's
+ * review queue with nothing to act on, but the check applies globally —
+ * OOO noise isn't useful signal for any workspace.
+ *
+ * Detection: common subject prefixes ("Automatic reply:", "Out of Office:",
+ * "Away from my desk", "Auto-Reply:", "Autoresponder:") or body phrases
+ * typical of vacation-responder templates ("I am currently out of the
+ * office", "I will be out of office", "I am away from my desk").
+ */
+
+const OUT_OF_OFFICE_SUBJECT_RE =
+  /^(?:re:\s*|fwd?:\s*)?(?:automatic reply|auto[\s-]?reply|autoresponder|out of office|away from (?:my|the) (?:desk|office))\s*[:\-]?/i
+
+const OUT_OF_OFFICE_BODY_RE =
+  /\b(?:i(?:'m| am) currently out of the office|i(?:'m| am) out of the office|i will be out of (?:the )?office|i(?:'m| am) away from (?:my|the) desk|i(?:'m| am) on (?:vacation|leave|pto)\b.{0,40}\b(?:limited|no) access to email|thank you for your email\.? i am (?:currently )?(?:out of|away))\b/i
+
+export function isOutOfOffice(subject: string | null | undefined, body: string | null | undefined): boolean {
+  if (subject && OUT_OF_OFFICE_SUBJECT_RE.test(subject.trim())) return true
+  if (body && OUT_OF_OFFICE_BODY_RE.test(body)) return true
+  return false
+}
+
+/**
  * Detect ChargeAnywhere-style payment processor receipts. Sender is
  * typically `noreply@chargeanywhere.com` (already caught by isNoReplySender)
  * but the subject is generic ("Receipt", "Settlement Details for MM/DD/YY",

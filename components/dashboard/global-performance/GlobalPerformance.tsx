@@ -43,12 +43,22 @@ interface WorkspaceRow {
   status: CustomerStatus
   call_count: number
   cost_usd: number
+  conversations_30d: number
+  bookings_30d: number
+  conversion_rate: number | null
 }
 
 interface DailyPoint {
   day: string
   cost_usd: number
   calls: number
+  conversations: number
+  bookings: number
+}
+
+function fmtConversionRate(rate: number | null): string {
+  if (rate === null) return '—'
+  return `${Math.round(rate * 100)}%`
 }
 
 function fmtDay(iso: string): string {
@@ -96,6 +106,63 @@ function DailyCostChart({ daily }: { daily: DailyPoint[] }) {
       <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6, fontSize: 9.5, fontFamily: 'var(--font-mono)', color: LABEL_COLOR }}>
         <span>{fmtDay(daily[0].day)}</span>
         <span>{fmtDay(daily[daily.length - 1].day)}</span>
+      </div>
+    </div>
+  )
+}
+
+// Conversations vs. bookings, same 30-day window as the cost chart.
+// This is a volume ratio (bookings that happened ÷ conversations that
+// happened in the period), not per-thread attribution — most bookings
+// (Zoho Calendar syncs) aren't linked to the conversation that produced
+// them, so a strict funnel would wildly undercount. Founder-facing
+// caption says so explicitly since this is the number that gets shown
+// to a customer as ROI proof.
+function ConversionTrendChart({ daily }: { daily: DailyPoint[] }) {
+  const totalConversations = daily.reduce((acc, d) => acc + d.conversations, 0)
+  const totalBookings = daily.reduce((acc, d) => acc + d.bookings, 0)
+  const rate = totalConversations > 0 ? totalBookings / totalConversations : null
+  const max = Math.max(...daily.map((d) => Math.max(d.conversations, d.bookings)), 1)
+
+  return (
+    <div style={{ padding: '4px 16px 16px', borderTop: `1px solid ${CARD_BORDER}` }}>
+      <div style={{ display: 'flex', gap: 20, margin: '10px 0 12px' }}>
+        <div>
+          <div style={{ fontSize: 9, fontFamily: 'var(--font-mono)', letterSpacing: '0.06em', textTransform: 'uppercase', color: LABEL_COLOR }}>30-day conversations</div>
+          <div style={{ fontSize: 15, fontFamily: 'var(--font-display)', fontWeight: 600 }}>{totalConversations.toLocaleString()}</div>
+        </div>
+        <div>
+          <div style={{ fontSize: 9, fontFamily: 'var(--font-mono)', letterSpacing: '0.06em', textTransform: 'uppercase', color: LABEL_COLOR }}>30-day bookings</div>
+          <div style={{ fontSize: 15, fontFamily: 'var(--font-display)', fontWeight: 600 }}>{totalBookings.toLocaleString()}</div>
+        </div>
+        <div>
+          <div style={{ fontSize: 9, fontFamily: 'var(--font-mono)', letterSpacing: '0.06em', textTransform: 'uppercase', color: LABEL_COLOR }}>Conversion rate</div>
+          <div style={{ fontSize: 15, fontFamily: 'var(--font-display)', fontWeight: 600, color: '#FFD68F' }}>{fmtConversionRate(rate)}</div>
+        </div>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: 60 }}>
+        {daily.map((d) => (
+          <div key={d.day} title={`${fmtDay(d.day)} — ${d.conversations} conversation${d.conversations === 1 ? '' : 's'}, ${d.bookings} booking${d.bookings === 1 ? '' : 's'}`}
+            style={{ flex: 1, minWidth: 2, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', gap: 1, height: '100%' }}>
+            <div style={{ height: `${Math.max((d.conversations / max) * 100, d.conversations > 0 ? 4 : 1)}%`, background: 'rgba(255,255,255,0.12)', borderRadius: '2px 2px 0 0' }} />
+            <div style={{ height: `${Math.max((d.bookings / max) * 100, d.bookings > 0 ? 4 : 1)}%`, background: '#FFD68F', borderRadius: '2px 2px 0 0' }} />
+          </div>
+        ))}
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6, fontSize: 9.5, fontFamily: 'var(--font-mono)', color: LABEL_COLOR }}>
+        <span>{fmtDay(daily[0].day)}</span>
+        <span>{fmtDay(daily[daily.length - 1].day)}</span>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8, fontSize: 9.5, fontFamily: 'var(--font-mono)', color: LABEL_COLOR }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <span style={{ width: 7, height: 7, borderRadius: 2, background: 'rgba(255,255,255,0.12)' }} /> Conversations
+        </span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <span style={{ width: 7, height: 7, borderRadius: 2, background: '#FFD68F' }} /> Bookings
+        </span>
+      </div>
+      <div style={{ marginTop: 8, fontSize: 10.5, color: '#52525b', lineHeight: 1.4 }}>
+        Volume ratio, not a per-conversation funnel — most bookings sync in from the operator&apos;s calendar rather than a tracked Caye thread.
       </div>
     </div>
   )
@@ -180,7 +247,7 @@ export default function GlobalPerformance() {
 
       <div style={{ flex: 1, minHeight: 0, background: CARD_BG, border: `1px solid ${CARD_BORDER}`, borderRadius: 16, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         <div style={{
-          display: 'grid', gridTemplateColumns: '20px 1fr 110px 130px 130px',
+          display: 'grid', gridTemplateColumns: '20px 1fr 110px 130px 130px 110px',
           padding: '10px 16px', borderBottom: `1px solid ${CARD_BORDER}`,
           fontSize: 10, fontFamily: 'var(--font-mono)', letterSpacing: '0.06em', textTransform: 'uppercase', color: LABEL_COLOR,
         }}>
@@ -189,6 +256,7 @@ export default function GlobalPerformance() {
           <span>Status</span>
           <span style={{ textAlign: 'right' }}>7-day calls</span>
           <span style={{ textAlign: 'right' }}>7-day cost</span>
+          <span style={{ textAlign: 'right' }}>Conv. rate (30d)</span>
         </div>
         <div style={{ flex: 1, overflowY: 'auto' }}>
           {error ? (
@@ -206,7 +274,7 @@ export default function GlobalPerformance() {
                   <button
                     onClick={() => toggleRow(r.workspace_id)}
                     style={{
-                      display: 'grid', gridTemplateColumns: '20px 1fr 110px 130px 130px', width: '100%',
+                      display: 'grid', gridTemplateColumns: '20px 1fr 110px 130px 130px 110px', width: '100%',
                       padding: '11px 16px', border: 'none',
                       background: isOpen ? 'rgba(125,201,203,0.05)' : 'transparent', cursor: 'pointer', textAlign: 'left', alignItems: 'center',
                     }}
@@ -225,6 +293,12 @@ export default function GlobalPerformance() {
                     <span style={{ fontSize: 13, textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>
                       ${r.cost_usd.toFixed(2)}
                     </span>
+                    <span
+                      title={`${r.bookings_30d} booking${r.bookings_30d === 1 ? '' : 's'} / ${r.conversations_30d} conversation${r.conversations_30d === 1 ? '' : 's'}, last 30 days`}
+                      style={{ fontSize: 13, textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 600, color: r.conversion_rate === null ? '#52525b' : '#FFD68F' }}
+                    >
+                      {fmtConversionRate(r.conversion_rate)}
+                    </span>
                   </button>
                   {isOpen && (
                     <div style={{ borderTop: `1px solid ${CARD_BORDER}`, background: 'rgba(255,255,255,0.02)' }}>
@@ -233,7 +307,10 @@ export default function GlobalPerformance() {
                       ) : detail === 'error' ? (
                         <div style={{ padding: 16, fontSize: 12, color: '#fb7185' }}>Failed to load trend.</div>
                       ) : (
-                        <DailyCostChart daily={detail} />
+                        <>
+                          <DailyCostChart daily={detail} />
+                          <ConversionTrendChart daily={detail} />
+                        </>
                       )}
                     </div>
                   )}

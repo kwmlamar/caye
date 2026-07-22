@@ -33,6 +33,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase-server'
+import { recordCronRun } from '@/lib/cron-run-log'
 import {
   ESCALATION_FOLLOWUP_HOURS,
   LOOKBACK_HOURS,
@@ -57,6 +58,21 @@ export async function GET(request: NextRequest) {
     }
   }
 
+  try {
+    return NextResponse.json(await runEscalationFollowup())
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown error'
+    return NextResponse.json({ error: message }, { status: 500 })
+  }
+}
+
+/**
+ * Core follow-up logic, extracted so both the scheduled cron hit above AND
+ * the founder-triggered manual run (lib/caye-agent/tools/admin/write-high/
+ * trigger-cron.ts, via Admin Shell) call the exact same code.
+ */
+export async function runEscalationFollowup() {
+  return recordCronRun('escalation-followup', async () => {
   const supabase = createServiceClient()
   const now = Date.now()
   const cutoff = new Date(now - ESCALATION_FOLLOWUP_HOURS * 60 * 60 * 1000).toISOString()
@@ -76,7 +92,7 @@ export async function GET(request: NextRequest) {
 
   if (error) {
     console.error('[escalation-followup] fetch failed:', error)
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    throw new Error(error.message)
   }
 
   const summary = {
@@ -86,7 +102,7 @@ export async function GET(request: NextRequest) {
     founder_escalated: 0,
     skipped: 0,
   }
-  if (!rows?.length) return NextResponse.json(summary)
+  if (!rows?.length) return summary
 
   for (const row of rows as EscalationRow[]) {
     const outcome = await processEscalation(row)
@@ -94,7 +110,8 @@ export async function GET(request: NextRequest) {
     if (outcome.founderEscalated) summary.founder_escalated += 1
   }
 
-  return NextResponse.json(summary)
+  return summary
+  })
 }
 
 type Status = 'resolved' | 'expired' | 'skipped'

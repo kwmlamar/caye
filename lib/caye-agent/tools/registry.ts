@@ -41,6 +41,9 @@ import { notifyDriver } from './write-low/notify-driver'
 import { getMyAssignments } from './read/get-my-assignments'
 import { getLogisticsFacts } from './read/get-logistics-facts'
 import { escalateDriverQuestion } from './write-low/escalate-driver-question'
+import { getCronHealth } from './admin/read/get-cron-health'
+import { triggerCron } from './admin/write-high/trigger-cron'
+import { gateAdminHighRisk } from './admin/admin-high-risk-gate'
 
 /**
  * All tools available to the back-office agent.
@@ -100,6 +103,12 @@ export const TOOL_REGISTRY: AnyTool[] = [
   getMyAssignments as AnyTool,
   getLogisticsFacts as AnyTool,
   escalateDriverQuestion as AnyTool,
+  // Admin Shell (2026-07-21) — founder-only dev/ops console, workspace-less.
+  // trigger_cron is gated via gateAdminHighRisk (a separate confirmation
+  // mechanism from gateHighRisk above, backed by caye_admin_pending_actions
+  // rather than caye_pending_actions — see admin-high-risk-gate.ts).
+  getCronHealth as AnyTool,
+  gateAdminHighRisk(triggerCron) as AnyTool,
 ]
 
 export function findTool(name: string): AnyTool | undefined {

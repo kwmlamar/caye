@@ -40,6 +40,7 @@ import {
   buildSubtleComplaintEscalation,
   type ForcedEscalation,
 } from './forced-escalation'
+import { applyAutosendGate } from './autosend-gate'
 
 export type EscalationCategory = 'gap' | 'policy' | 'knowledge' | 'sensitive'
 export type EscalationRouteTo = 'owner' | 'founder' | 'both'
@@ -249,6 +250,20 @@ const TOOLS: Anthropic.Tool[] = [
             'medium or low triggers an escalation automatically — your drafted reply still ' +
             'goes to the customer (no silent hold), but the operator is pinged with the ' +
             'thread and gets the chance to follow up. This is the safety net; use it.',
+        },
+        high_stakes_claim: {
+          type: 'boolean',
+          description:
+            'Set true when this reply makes a specific factual claim about physical ' +
+            'safety, accessibility, or health/medical/allergy accommodation — e.g. ' +
+            '"the vehicle is wheelchair accessible," "there are no stairs," "minimal ' +
+            'walking involved," "safe for someone with a heart condition." Leave false ' +
+            'or omit for ordinary scheduling, pricing, or itinerary questions.\n\n' +
+            'When high_stakes_claim=true AND confidence is medium or low, the reply is ' +
+            'held for the owner instead of being sent automatically — an unverified ' +
+            'guess about someone\'s safety or accessibility needs risks real harm, not ' +
+            'just an annoyed customer, so this case skips the normal "ship now, ' +
+            'escalate after" path.',
         },
       },
       required: ['content', 'confidence'],
@@ -537,6 +552,16 @@ const TOOLS: Anthropic.Tool[] = [
     cache_control: { type: 'ephemeral', ttl: '1h' },
   },
 ]
+
+// Reduced tool list for workspace_kind='internal_sales' (issue #66) — no
+// booking/pricing/calendar concept exists for TropiTech's own cold-outreach
+// reply inbox, so those tools are never offered rather than left for the
+// model to (incorrectly) consider. Filtered from TOOLS rather than
+// duplicated so the schemas stay a single source of truth; escalate_to_team
+// being last here preserves its cache_control breakpoint.
+const SALES_TOOLS: Anthropic.Tool[] = TOOLS.filter(
+  t => t.name === 'hold_for_human' || t.name === 'escalate_to_team'
+)
 
 function formatServicesList(services: ServiceRow[]): string {
   if (!services.length) {
@@ -901,6 +926,74 @@ function buildSystem(
   }
 
   dynamic += '\n\nYou MUST end every turn by calling either send_reply or hold_for_human.'
+
+  return { stable, dynamic }
+}
+
+/**
+ * System prompt for workspace_kind='internal_sales' (issue #66) — TropiTech's
+ * own cold-outreach reply inbox. Deliberately NOT buildSystem: there's no
+ * business/services/booking/cancellation-policy concept here, and buildSystem
+ * ends by requiring send_reply, which this workspace never offers as a tool
+ * (see SALES_TOOLS). Every turn ends in hold_for_human (or escalate_to_team)
+ * — draft-and-hold only, no autosend. lib/autosend-gate.ts is the code-level
+ * backstop; this prompt is the first line of defense, not the only one.
+ */
+function buildSalesSystem(
+  systemPrompt: string,
+  voiceProfile: VoiceProfile | undefined,
+  todayISO: string
+): { stable: string; dynamic: string } {
+  let stable = systemPrompt
+
+  stable +=
+    '\n\nWHAT THIS INBOX IS:\n' +
+    '- This is hello@getcaye.com — replies to TropiTech\'s own cold outreach ' +
+    'campaign (WhatsApp + email) pitching Caye to Bahamian tour operators/SMBs. ' +
+    'You are drafting reply SUGGESTIONS for the founder to review, edit, and send ' +
+    'himself. Nothing you draft here ever ships without him reading it first.\n' +
+    '- There is no calendar, no services catalog, no pricing tiers, no bookings ' +
+    'to look up for this workspace — those tools do not exist here because this ' +
+    'is a sales inbox, not a customer-facing business inbox. Don\'t reference or ' +
+    'imply any of that machinery.\n' +
+    '- The reply is signed and sent as the FOUNDER (Lamar), never as "Caye" — ' +
+    'you are drafting on his behalf, not replying as an AI. You may reference ' +
+    'Caye/TropiTech by name as the product being pitched (e.g. "Caye already ' +
+    'handles this for Bimini Island Tours") — that is fine and expected. What\'s ' +
+    'not allowed is signing as Caye or writing as if you are the one who sent it.'
+
+  if (voiceProfile) {
+    stable +=
+      '\n\nVOICE PROFILE — write in this person\'s actual style:\n' +
+      `- Formality: ${voiceProfile.formality_level}\n` +
+      `- Style: ${voiceProfile.writing_style}\n` +
+      `- Common phrases to use naturally: ${(voiceProfile.common_phrases ?? []).join(', ')}\n` +
+      `- Tone notes: ${voiceProfile.tone_notes}`
+  }
+
+  stable +=
+    '\n\nCLASSIFY, THEN DRAFT:\n' +
+    'Every inbound reply falls roughly into one of: interested (wants to talk ' +
+    'more / book a demo / ask next steps), question (about Caye, pricing, how ' +
+    'it works, fit for their business), or not interested (declining, unsubscribe, ' +
+    'hostile). Put your read of which one this is at the start of hold_for_human\'s ' +
+    '`reason` field (e.g. "Interested — asked about next steps"), then draft ' +
+    'accordingly in `proposed_reply`:\n' +
+    '- Interested: warm, low-friction next step. No feature-list dump.\n' +
+    '- Question: answer directly and briefly, then a light next step.\n' +
+    '- Not interested: gracious, short, no pushback, no re-pitching.\n\n' +
+    'PRICING / CONTRACT TERMS:\n' +
+    'Never draft a committed offer, custom price, or contract term as if final — ' +
+    'that is always the founder\'s call, even if you\'re confident what he\'d say. ' +
+    'Acknowledge the interest and note in hold_for_human\'s `note` field that ' +
+    'pricing/terms need his direct reply.'
+
+  const dynamic =
+    `\n\nToday's date: ${todayISO}\n\n` +
+    'Write only the reply body — no markdown, no signature block unless the ' +
+    'voice profile specifies one. Never mention that you are an AI, assistant, ' +
+    'or automated. You MUST end every turn by calling either hold_for_human or ' +
+    'escalate_to_team — send_reply is not available on this workspace.'
 
   return { stable, dynamic }
 }
@@ -1549,7 +1642,7 @@ async function fetchConversationHistory(
  * Runs a tool-use loop so Caye can check availability and create bookings
  * before terminating with send_reply or hold_for_human.
  */
-export async function generateCayeAutoReply(
+async function generateCayeAutoReplyCore(
   systemPrompt: string,
   inbound: CayeAutoReplyInput,
   voiceProfile?: VoiceProfile
@@ -1580,10 +1673,14 @@ export async function generateCayeAutoReply(
   const { data: workspaceRow } = await supabase
     .from('customers')
     .select(
-      'booking_url, website_url, timezone, voice_register_overrides, contact_email, contact_phone, whatsapp_business_number'
+      'booking_url, website_url, timezone, voice_register_overrides, contact_email, contact_phone, whatsapp_business_number, workspace_kind'
     )
     .eq('id', inbound.workspaceId)
     .maybeSingle()
+  // internal_sales (issue #66) = TropiTech's own cold-outreach reply inbox.
+  // No booking/services/forced-escalation machinery applies — see
+  // buildSalesSystem and SALES_TOOLS.
+  const isSalesWorkspace = workspaceRow?.workspace_kind === 'internal_sales'
   if (workspaceRow) {
     if (workspaceRow.booking_url || workspaceRow.website_url) {
       businessLinks = {
@@ -1658,72 +1755,79 @@ export async function generateCayeAutoReply(
     }
   }
 
-  // Classify the inbound so buildSystem can append a situational tone
-  // hint. Cheap regex/keyword pass — no API call. Returns null on
-  // uncertainty (default tone takes over).
-  const { category: inboundCategory } = classifyInbound(
-    inbound.body,
-    inbound.subject ?? ''
-  )
-
-  // Layer the voice register override (#54) onto the voice profile. b2b
-  // override fires only for B2B-classified inbound; otherwise default.
-  // Falls back to no override (cleanly null) when none is set.
+  // internal_sales workspaces skip all of this: classification, voice-
+  // register overrides, and forced-escalation are booking/tour-operator
+  // concepts (b2b_partnership tone, "Caye does not negotiate" templates,
+  // etc.) that don't map onto a cold-outreach reply inbox and would
+  // otherwise short-circuit straight to a tour-operator-flavored template
+  // without ever letting the model draft (issue #66).
+  let inboundCategory: InboundCategory | null = null
   let effectiveVoiceProfile: VoiceProfile | undefined = voiceProfile
-  if (voiceRegisterOverrides) {
-    const scope: 'b2b' | 'default' =
-      inboundCategory === 'b2b_partnership' && voiceRegisterOverrides.b2b
-        ? 'b2b'
-        : 'default'
-    const override = voiceRegisterOverrides[scope]
-    if (override) {
-      effectiveVoiceProfile = {
-        ...(voiceProfile ?? {
-          writing_style: '',
-          common_phrases: [],
-          greeting_style: '',
-          signoff_style: '',
-          formality_level: 'warm-professional',
-          tone_notes: '',
-          signature_block: null,
-          tagline: null,
-          standard_signoff: null,
-          standard_opener: null,
-        }),
-        register_override: override,
-        register_scope: scope,
+
+  if (!isSalesWorkspace) {
+    // Classify the inbound so buildSystem can append a situational tone
+    // hint. Cheap regex/keyword pass — no API call. Returns null on
+    // uncertainty (default tone takes over).
+    inboundCategory = classifyInbound(inbound.body, inbound.subject ?? '').category
+
+    // Layer the voice register override (#54) onto the voice profile. b2b
+    // override fires only for B2B-classified inbound; otherwise default.
+    // Falls back to no override (cleanly null) when none is set.
+    if (voiceRegisterOverrides) {
+      const scope: 'b2b' | 'default' =
+        inboundCategory === 'b2b_partnership' && voiceRegisterOverrides.b2b
+          ? 'b2b'
+          : 'default'
+      const override = voiceRegisterOverrides[scope]
+      if (override) {
+        effectiveVoiceProfile = {
+          ...(voiceProfile ?? {
+            writing_style: '',
+            common_phrases: [],
+            greeting_style: '',
+            signoff_style: '',
+            formality_level: 'warm-professional',
+            tone_notes: '',
+            signature_block: null,
+            tagline: null,
+            standard_signoff: null,
+            standard_opener: null,
+          }),
+          register_override: override,
+          register_scope: scope,
+        }
       }
     }
-  }
 
-  // Layer 1 confidence model (#57) — deterministic forced-escalation
-  // triggers. If the inbound matches a known shape (complaint, B2B,
-  // refund, custom request), skip the LLM entirely and return a
-  // controlled-template escalation. Cheaper, faster, and removes any
-  // chance Caye drafts something commercial she shouldn't.
-  let forced: ForcedEscalation | null = detectForcedEscalation(inbound.body, inboundCategory)
-  if (!forced) {
-    // Hybrid sentiment cascade — Haiku second-pass when the keyword
-    // classifier returned nothing OR landed on general_question (the
-    // ambiguous bucket). We skip when the classifier is confident about
-    // a non-complaint shape (booking_inquiry, gratitude, etc.) so we
-    // don't pay for Haiku on every normal customer message. Matches the
-    // cascade pattern from #47.
-    const ambiguous =
-      inboundCategory === null || inboundCategory === 'general_question'
-    if (ambiguous) {
-      const subtle = await detectSubtleComplaint(inbound.body, inbound.workspaceId)
-      if (subtle) forced = buildSubtleComplaintEscalation(inbound.body)
+    // Layer 1 confidence model (#57) — deterministic forced-escalation
+    // triggers. If the inbound matches a known shape (complaint, B2B,
+    // refund, custom request), skip the LLM entirely and return a
+    // controlled-template escalation. Cheaper, faster, and removes any
+    // chance Caye drafts something commercial she shouldn't.
+    let forced: ForcedEscalation | null = detectForcedEscalation(inbound.body, inboundCategory)
+    if (!forced) {
+      // Hybrid sentiment cascade — Haiku second-pass when the keyword
+      // classifier returned nothing OR landed on general_question (the
+      // ambiguous bucket). We skip when the classifier is confident about
+      // a non-complaint shape (booking_inquiry, gratitude, etc.) so we
+      // don't pay for Haiku on every normal customer message. Matches the
+      // cascade pattern from #47.
+      const ambiguous =
+        inboundCategory === null || inboundCategory === 'general_question'
+      if (ambiguous) {
+        const subtle = await detectSubtleComplaint(inbound.body, inbound.workspaceId)
+        if (subtle) forced = buildSubtleComplaintEscalation(inbound.body)
+      }
     }
-  }
-  if (forced) {
-    return {
-      action: 'escalate',
-      content: sanitizeDashes(forced.customerFacingMessage),
-      category: forced.category,
-      routeTo: forced.routeTo,
-      internalContext: forced.internalContext,
-      pingSummary: forced.pingSummary,
+    if (forced) {
+      return {
+        action: 'escalate',
+        content: sanitizeDashes(forced.customerFacingMessage),
+        category: forced.category,
+        routeTo: forced.routeTo,
+        internalContext: forced.internalContext,
+        pingSummary: forced.pingSummary,
+      }
     }
   }
 
@@ -1743,25 +1847,27 @@ export async function generateCayeAutoReply(
     )
   }
 
-  const businessFacts = await fetchBusinessFacts(inbound.workspaceId)
+  const businessFacts = isSalesWorkspace ? [] : await fetchBusinessFacts(inbound.workspaceId)
 
-  const { stable: systemStable, dynamic: systemDynamic } = buildSystem(
-    systemPrompt,
-    effectiveVoiceProfile,
-    contactProfile,
-    contactFacts,
-    businessLinks,
-    businessContact,
-    customerHistory,
-    inboundCategory,
-    inbound.channel,
-    isEmail,
-    inbound.isFirstMessage ?? false,
-    services,
-    todayISO,
-    serviceMatch,
-    businessFacts
-  )
+  const { stable: systemStable, dynamic: systemDynamic } = isSalesWorkspace
+    ? buildSalesSystem(systemPrompt, effectiveVoiceProfile, todayISO)
+    : buildSystem(
+        systemPrompt,
+        effectiveVoiceProfile,
+        contactProfile,
+        contactFacts,
+        businessLinks,
+        businessContact,
+        customerHistory,
+        inboundCategory,
+        inbound.channel,
+        isEmail,
+        inbound.isFirstMessage ?? false,
+        services,
+        todayISO,
+        serviceMatch,
+        businessFacts
+      )
 
   // Pull prior conversation history (if we have a conversation to query) so
   // Caye sees what was already said. Non-fatal — empty history just means
@@ -1798,7 +1904,7 @@ export async function generateCayeAutoReply(
         { type: 'text', text: systemStable, cache_control: { type: 'ephemeral', ttl: '1h' } },
         { type: 'text', text: systemDynamic },
       ],
-      tools: TOOLS,
+      tools: isSalesWorkspace ? SALES_TOOLS : TOOLS,
       tool_choice: { type: 'any' },
       messages,
     }, { source: 'lib/caye-reply.ts:generateCayeAutoReply', workspaceId: inbound.workspaceId })
@@ -1838,6 +1944,7 @@ export async function generateCayeAutoReply(
           flag_for_owner_followup?: boolean
           owner_note?: string
           confidence?: 'high' | 'medium' | 'low'
+          high_stakes_claim?: boolean
         }
         const leak = detectIdentityLeak(input.content)
         if (leak) {
@@ -1850,6 +1957,27 @@ export async function generateCayeAutoReply(
             note:
               `Caye drafted a reply but the identity guard blocked it (${leak}). ` +
               `Review the draft below and send manually if appropriate.\n\n---\n\n${input.content}`,
+          }
+        } else if (input.high_stakes_claim && input.confidence && input.confidence !== 'high') {
+          // Safety/accessibility-adjacent claim + non-high confidence: unlike the
+          // normal "ship now, escalate after" path below, don't send an unverified
+          // guess about someone's physical safety or accessibility needs. Hold for
+          // the owner instead — a short acknowledgement goes out so the customer
+          // isn't left hanging while the real answer waits on the owner.
+          terminal = {
+            action: 'hold',
+            reason: `High-stakes claim at ${input.confidence} confidence`,
+            note:
+              `Caye drafted a reply making a safety/accessibility-adjacent claim she ` +
+              `rated ${input.confidence} confidence, so it was held instead of sent ` +
+              `automatically. Review and send (edited if needed).` +
+              (input.owner_note?.trim()
+                ? `\n\nCaye's note: ${input.owner_note.trim()}`
+                : ''),
+            proposedReply: sanitizeDashes(input.content),
+            customerAcknowledgement:
+              "Thanks for the detail — let me confirm the specifics with our team so I can give you an accurate answer, and we'll follow up shortly.",
+            urgency: 'urgent',
           }
         } else if (input.confidence && input.confidence !== 'high') {
           // Layer 2 confidence model (#57) — medium/low confidence escalates
@@ -2063,4 +2191,33 @@ export async function generateCayeAutoReply(
   }
 
   throw new Error('[caye-reply] Max tool rounds exceeded without send_reply or hold_for_human')
+}
+
+/**
+ * Public entry point. Wraps generateCayeAutoReplyCore with the autosend
+ * gate (issue #66) — a single choke point covering every caller (email,
+ * WhatsApp, Instagram, Messenger) and every exit path out of the core
+ * function (the tool-loop return, the forced-escalation early return, the
+ * max-rounds throw never reaches here since it throws). Applied here
+ * rather than at each webhook call site: lib/whatsapp/escalation.ts's
+ * applyEscalation collapses an 'escalate' decision into a plain 'reply' at
+ * the webhook layer specifically so the normal send path runs unchanged —
+ * gating only where callers check `action === 'escalate'` would already be
+ * too late for that collapsed path.
+ */
+export async function generateCayeAutoReply(
+  systemPrompt: string,
+  inbound: CayeAutoReplyInput,
+  voiceProfile?: VoiceProfile
+): Promise<CayeAutoReply> {
+  const decision = await generateCayeAutoReplyCore(systemPrompt, inbound, voiceProfile)
+
+  const supabase = createServiceClient()
+  const { data: workspaceRow } = await supabase
+    .from('customers')
+    .select('autosend_enabled')
+    .eq('id', inbound.workspaceId)
+    .maybeSingle()
+
+  return applyAutosendGate(decision, workspaceRow?.autosend_enabled ?? true)
 }
