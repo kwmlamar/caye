@@ -203,18 +203,30 @@ export function shouldExpireBookkeeping(row: EscalationRow): boolean {
  * conversation's human_agent_enabled flag. The customer's hold is a real,
  * unresolved fact; this function only stops caye_escalations bookkeeping
  * from claiming the row is still under active automated escalation.
+ *
+ * Note text is per-recipient-role (2026-07-23 fix): the original version
+ * used one fixed "founder already notified" string for everyone, which
+ * read as confusing internal jargon when it landed in an OWNER's Caye
+ * Direct thread on an owner-routed row (the owner has no reason to care
+ * that the founder was pinged — what matters to them is that the thread
+ * is still sitting on THEM, unresolved).
  */
 export async function expireEscalationBookkeepingOnly(
   row: EscalationRow,
   contactName: string
 ): Promise<void> {
   const supabase = createServiceClient()
-  const closingNote =
-    `No further auto-follow-up on ${contactName} — founder already notified, still unresolved. ` +
-    `The thread itself is still held and waiting on you.`.slice(0, 200)
 
   const recipients = await resolveEscalationRecipients(row.workspace_id, row.route_to)
   for (const recipient of recipients) {
+    const closingNote = (
+      recipient.role === 'founder'
+        ? `No further auto-follow-up on ${contactName} from me — you were already looped in, ` +
+          `still unresolved. The thread itself is still held and waiting on a reply.`
+        : `Letting the auto-nagging go on ${contactName} — it's been sitting a while now. ` +
+          `The thread is still held and still needs your call; I just won't keep bringing it up daily.`
+    ).slice(0, 200)
+
     const operator = await resolveOperatorByPhone(supabase, row.workspace_id, recipient.phone)
     await supabase.from('caye_operator_messages').insert({
       workspace_id: row.workspace_id,
