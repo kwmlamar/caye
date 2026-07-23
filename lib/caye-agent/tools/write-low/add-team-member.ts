@@ -12,13 +12,13 @@ interface AddTeamMemberInput {
 const OTP_TTL_MS = 24 * 60 * 60 * 1000 // 24h — generous; member may not see it for a while
 
 /**
- * Drivers confirm with a fixed "OK" reply instead of a random code
- * (2026-07-05, grilled). A random OTP isn't protecting anything a
- * friendlier consent ask doesn't already — a wrong-number stranger who
- * receives either message can just as easily echo back 6 digits as type
- * "OK". The friendlier copy fits the driver relationship better.
+ * Everyone confirms with a fixed "OK" reply instead of a random code
+ * (drivers since 2026-07-05, extended to owner/staff 2026-07-23, both
+ * grilled). A random OTP isn't protecting anything a friendlier consent
+ * ask doesn't already — a wrong-number stranger who receives either
+ * message can just as easily echo back 6 digits as type "OK".
  */
-const DRIVER_CONSENT_REPLY = 'OK'
+const CONSENT_REPLY = 'OK'
 
 export function normalizeE164(raw: string): string | null {
   const digits = raw.replace(/\D/g, '')
@@ -38,9 +38,9 @@ export const addTeamMember: Tool<AddTeamMemberInput> = {
     "- driver: a tour guide/driver you can dispatch pickups to (via notify_driver) and who can " +
     "ask Caye basic pickup questions. Zero back-office access.\n" +
     "(founder is auto-assigned, never set via this tool.)\n\n" +
-    "Caye sends the new member a verification message via WhatsApp template. Owner/staff reply " +
-    "with a code; drivers just reply OK. Until they verify, their messages to Caye are dropped " +
-    "— so the owner can safely add a wrong number without it actually granting access.",
+    "Caye sends the new member a verification message via WhatsApp template — everyone confirms " +
+    "by replying OK. Until they verify, their messages to Caye are dropped — so the owner can " +
+    "safely add a wrong number without it actually granting access.",
   risk: 'low',
   roles: ['owner', 'founder'],
   modes: ['back-office'],
@@ -76,10 +76,28 @@ export const addTeamMember: Tool<AddTeamMemberInput> = {
     }
 
     const isDriver = args.role === 'driver'
-    const code = isDriver
-      ? DRIVER_CONSENT_REPLY
-      : String(Math.floor(100000 + Math.random() * 900000))
     const expiresAt = new Date(Date.now() + OTP_TTL_MS).toISOString()
+
+    // caye_team_consent is a brand-new template (2026-07-23) and won't
+    // actually send until it clears Meta review — sendTemplateWhatsApp hits
+    // Meta directly by name, so an unapproved template just fails outbound.
+    // Fall back to the already-approved numeric caye_otp flow for owner/staff
+    // until then. Remove this branch once caye_team_consent is approved.
+    let templateName: 'caye_driver_consent' | 'caye_team_consent' | 'caye_otp' = isDriver
+      ? 'caye_driver_consent'
+      : 'caye_team_consent'
+    let code: string = CONSENT_REPLY
+    if (!isDriver) {
+      const { data: teamConsentTemplate } = await supabase
+        .from('whatsapp_templates')
+        .select('status')
+        .eq('name', 'caye_team_consent')
+        .maybeSingle()
+      if (teamConsentTemplate?.status !== 'approved') {
+        templateName = 'caye_otp'
+        code = String(Math.floor(100000 + Math.random() * 900000))
+      }
+    }
 
     const { error: insErr } = await supabase.from('operator_allowlist').insert({
       workspace_id: ctx.workspaceId,
@@ -93,32 +111,25 @@ export const addTeamMember: Tool<AddTeamMemberInput> = {
     })
     if (insErr) return { ok: false, error: insErr.message }
 
-    // Drivers get the friendlier consent template (caye_driver_consent);
-    // owner/staff get the numeric OTP template (caye_otp). Fire-once —
-    // failure leaves the row in place; owner can re-trigger via
+    // Fire-once — failure leaves the row in place; owner can re-trigger via
     // update_team_member_permissions later, or remove + re-add.
-    let driverBusinessName = 'the business'
-    if (isDriver) {
+    let placeholders = [code]
+    if (templateName !== 'caye_otp') {
       const { data: business } = await supabase
         .from('customers')
         .select('business_name, full_name')
         .eq('id', ctx.workspaceId)
         .maybeSingle()
-      driverBusinessName = business?.business_name?.trim() || business?.full_name?.trim() || 'the business'
+      const businessName = business?.business_name?.trim() || business?.full_name?.trim() || 'the business'
+      placeholders = [name, businessName]
     }
-    const sent = isDriver
-      ? await sendTemplateWhatsApp(
-          phone,
-          'caye_driver_consent',
-          [name, driverBusinessName],
-          `team-add-${ctx.workspaceId}-${phone}-${Date.now()}`
-        )
-      : await sendTemplateWhatsApp(
-          phone,
-          'caye_otp',
-          [code],
-          `team-add-${ctx.workspaceId}-${phone}-${Date.now()}`
-        )
+
+    const sent = await sendTemplateWhatsApp(
+      phone,
+      templateName,
+      placeholders,
+      `team-add-${ctx.workspaceId}-${phone}-${Date.now()}`
+    )
     const sendOk = sent.status === 'sent'
     if (!sendOk) {
       console.error('[add-team-member] verification template failed:', sent)
