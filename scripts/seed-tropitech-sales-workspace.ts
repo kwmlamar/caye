@@ -18,11 +18,10 @@
  *      voice, drawn from outreach-script.md / outreach/log.md) instead of
  *      running the AI discovery interview.
  *
- * Run with: npx tsx scripts/seed-tropitech-sales-workspace.ts <workspaceId>
+ * Run with (dotenv isn't installed in this repo — source env vars directly):
+ *   set -a && source .env.local && set +a && npx tsx scripts/seed-tropitech-sales-workspace.ts <workspaceId>
  */
 
-import { config } from 'dotenv'
-config({ path: '.env.local' })
 import { createClient } from '@supabase/supabase-js'
 
 const SYSTEM_PROMPT = `You are drafting reply suggestions for Lamar, founder of TropiTech Solutions — a Bahamian tech company. This inbox (hello@getcaye.com) receives replies to TropiTech's own cold outreach campaign pitching Caye, an AI receptionist product, to Bahamian tour operators, restaurants, salons, and other owner-operated SMBs.

@@ -1,11 +1,12 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useLayoutEffect } from 'react'
 import { getSession } from '@/lib/supabase'
 import { formatDistanceToNow } from '@/lib/utils'
 import { CayeMark } from '@/components/brand/CayeMark'
 import { FormattedReplyText } from '@/components/ui/FormattedReplyText'
 import { CayeLoadingPulse } from '@/components/dashboard/founder-home/CayeLoadingPulse'
+import { Pill } from '@/components/dashboard/founder-home/console-ui'
 import type { ConversationSummary } from '@/lib/useCommandOverview'
 
 const GLASS = { backdropFilter: 'blur(20px) saturate(140%)', WebkitBackdropFilter: 'blur(20px) saturate(140%)' } as const
@@ -15,9 +16,14 @@ interface ThreadMessage {
   sender_type: string
   content: string
   sent_at: string
-  metadata?: { generated_by?: string } | null
+  metadata?: { generated_by?: string; proposed_reply?: string } | null
   is_internal?: boolean
 }
+
+// Channels /api/messages/send doesn't dispatch for yet — matches its
+// switch statement's default 422 case (lib SMS send never got wired to
+// that endpoint, only inbound).
+const SEND_UNSUPPORTED = new Set(['sms'])
 
 const CHANNEL_LABEL: Record<string, string> = {
   whatsapp: 'WA',
@@ -78,9 +84,7 @@ function ConversationRow({ c, active, onClick }: { c: ConversationSummary; activ
         <span style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
           {c.customer_name || 'Unknown'}
         </span>
-        <span style={{ fontSize: 9, fontFamily: 'var(--font-mono)', fontWeight: 600, color, background: `${color}1a`, border: `1px solid ${color}4d`, borderRadius: 999, padding: '1px 6px', flexShrink: 0 }}>
-          {label}
-        </span>
+        <Pill color={color} label={label} dot={false} />
       </div>
       <p style={{
         fontSize: 11.5, marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
@@ -89,15 +93,7 @@ function ConversationRow({ c, active, onClick }: { c: ConversationSummary; activ
         {c.human_agent_enabled ? (c.human_agent_reason || 'Needs review') : c.last_message_preview}
       </p>
       {c.human_agent_enabled && (
-        <span style={{
-          display: 'inline-flex', alignItems: 'center', gap: 5, marginTop: 4,
-          fontSize: 9, fontWeight: 600, fontFamily: 'var(--font-mono)', letterSpacing: '0.06em', textTransform: 'uppercase',
-          color: '#fb7185', background: 'rgba(251,113,133,0.1)', border: '1px solid rgba(251,113,133,0.3)',
-          borderRadius: 999, padding: '2px 8px',
-        }}>
-          <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#fb7185', flexShrink: 0 }} />
-          Needs review
-        </span>
+        <div style={{ marginTop: 4 }}><Pill color="#fb7185" label="Needs review" /></div>
       )}
     </button>
   )
@@ -110,16 +106,36 @@ interface Props {
    *  jump this panel to a specific conversation without owning its
    *  internal selection/search/tab state. */
   selectedConversationId?: string | null
+  /** Called after a manual send succeeds so the parent's conversations
+   *  list (human_agent_enabled, last_message_preview) can refetch — this
+   *  panel doesn't own that data, useCommandOverview upstream does. */
+  onSent?: () => void
+  /** True in the small grid-card layout (unexpanded dashboard tile) —
+   *  hides the compose box there since a two-line textarea + send button
+   *  doesn't fit that width/height without crowding the thread. The
+   *  ExpandButton at FounderHome's card level is how the founder gets to
+   *  the full view where sending actually makes sense. */
+  compact?: boolean
 }
 
-export default function CommandConversations({ workspaceId, conversations, selectedConversationId }: Props) {
+export default function CommandConversations({ workspaceId, conversations, selectedConversationId, onSent, compact = false }: Props) {
   const [tab, setTab] = useState<'all' | 'review'>('all')
   const [query, setQuery] = useState('')
   const [activeId, setActiveId] = useState<string | null>(conversations[0]?.id ?? null)
   const [thread, setThread] = useState<{ customer_name: string | null; messages: ThreadMessage[] } | null>(null)
   const [threadLoading, setThreadLoading] = useState(false)
   const [searchFocused, setSearchFocused] = useState(false)
+  const [replyText, setReplyText] = useState('')
+  const [sending, setSending] = useState(false)
+  const [sendError, setSendError] = useState<string | null>(null)
+  const [drafting, setDrafting] = useState(false)
   const threadContainerRef = useRef<HTMLDivElement | null>(null)
+  const replyTextareaRef = useRef<HTMLTextAreaElement | null>(null)
+  // In-progress compose text per conversation, keyed by conversation id —
+  // switching threads and coming back used to wipe whatever was typed or
+  // drafted, since replyText was a single flat value reset on every switch.
+  const draftsRef = useRef<Map<string, string>>(new Map())
+  const prevActiveIdRef = useRef<string | null>(null)
 
   // A booking click in CommandCalendar routes here — jump straight to that
   // customer's thread, clearing any tab/search filter that would hide it.
@@ -160,6 +176,122 @@ export default function CommandConversations({ workspaceId, conversations, selec
 
   const activeSummary = conversations.find((c) => c.id === activeId)
 
+  // Auto-fill is scoped narrowly to hold_kind==='outreach_followup' — the
+  // repeatable, policy-constrained (outreach-script.md's "one follow-up,
+  // low-pressure, then stop") cold-lead nudge case that's proven safe to
+  // one-click-send. General holds/escalations (a founder judgment call —
+  // the Gwyn/charity-partnership case) still open empty on purpose: only
+  // "Draft with Caye" puts text there, and only when explicitly asked for.
+  //
+  // This also stashes whatever's in the box for the conversation being
+  // left (typed by hand or drafted) into draftsRef, and restores it if you
+  // come back — so switching threads never silently wipes an in-progress
+  // reply. A stashed value (including one you've edited down to empty
+  // after auto-fill) always wins over re-deriving the auto-fill again.
+  // replyText is read via closure rather than listed as a dependency
+  // (it's the previous conversation's value at the moment this runs, which
+  // is exactly what needs saving) — same pattern as ChannelsPanel's
+  // one-time param-cleanup effect elsewhere in this codebase.
+  useEffect(() => {
+    const prevId = prevActiveIdRef.current
+    if (prevId) draftsRef.current.set(prevId, replyText)
+
+    if (!activeId) {
+      setReplyText('')
+    } else if (draftsRef.current.has(activeId)) {
+      setReplyText(draftsRef.current.get(activeId) ?? '')
+    } else {
+      const entering = conversations.find((c) => c.id === activeId)
+      const autoFill =
+        entering?.human_agent_enabled && entering.metadata?.hold_kind === 'outreach_followup'
+          ? entering.metadata?.proposed_reply ?? ''
+          : ''
+      setReplyText(autoFill)
+    }
+    setSendError(null)
+    prevActiveIdRef.current = activeId
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId])
+
+  // Auto-grow the compose box to fit its content (up to a cap, then it
+  // scrolls internally) instead of a fixed row count — a drafted nudge
+  // can be 6+ lines and a static 2-row box was hiding most of it.
+  const REPLY_MAX_HEIGHT = 220
+  useLayoutEffect(() => {
+    const el = replyTextareaRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(el.scrollHeight, REPLY_MAX_HEIGHT)}px`
+  }, [replyText])
+
+  // On-demand draft, distinct from the auto-populated hold draft above —
+  // this is for conversations with no proposed_reply already sitting there
+  // (a normal thread, not a held escalation) where the founder wants a
+  // starting point instead of writing from scratch. Only offered while the
+  // box is empty so it can never silently clobber something being typed.
+  async function handleDraft() {
+    if (!activeId || drafting) return
+    setDrafting(true)
+    setSendError(null)
+    try {
+      const { session } = await getSession()
+      if (!session) { setSendError('Not signed in'); return }
+      const res = await fetch('/api/founder/draft-reply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ conversationId: activeId }),
+      })
+      const json = await res.json() as { draft?: string; error?: string }
+      if (!res.ok || !json.draft) {
+        setSendError(json.error ?? 'Failed to generate a draft')
+        return
+      }
+      setReplyText(json.draft)
+    } catch {
+      setSendError('Failed to generate a draft')
+    } finally {
+      setDrafting(false)
+    }
+  }
+
+  async function handleSend() {
+    const text = replyText.trim()
+    if (!activeId || !text || sending) return
+    setSending(true)
+    setSendError(null)
+    try {
+      const { session } = await getSession()
+      if (!session) { setSendError('Not signed in'); return }
+      const res = await fetch('/api/messages/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ conversation_id: activeId, content: text }),
+      })
+      const json = await res.json() as { success?: boolean; error?: string; message?: { id: string; sent_at: string } }
+      if (!res.ok || !json.success) {
+        setSendError(json.error ?? 'Failed to send')
+        return
+      }
+      setThread((prev) => prev ? {
+        ...prev,
+        messages: [...prev.messages, {
+          id: json.message?.id ?? `local_${Date.now()}`,
+          sender_type: 'business',
+          content: text,
+          sent_at: json.message?.sent_at ?? new Date().toISOString(),
+          is_internal: false,
+        }],
+      } : prev)
+      setReplyText('')
+      if (activeId) draftsRef.current.delete(activeId)
+      onSent?.()
+    } catch {
+      setSendError('Failed to send')
+    } finally {
+      setSending(false)
+    }
+  }
+
   // Scroll the thread container to the bottom whenever the thread
   // finishes loading or new messages arrive so the newest messages
   // are visible by default.
@@ -176,7 +308,7 @@ export default function CommandConversations({ workspaceId, conversations, selec
   return (
     <div style={{ height: '100%', display: 'flex', color: '#f5f5f4' }}>
       {/* ── List column ── */}
-      <div style={{ width: '46%', borderRight: '1px solid rgba(255,255,255,0.08)', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ width: '46%', background: 'rgba(255,255,255,0.015)', display: 'flex', flexDirection: 'column' }}>
         <div style={{ padding: '16px 16px 10px' }}>
           <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
             {(['all', 'review'] as const).map((t) => (
@@ -217,7 +349,7 @@ export default function CommandConversations({ workspaceId, conversations, selec
           <div style={{ padding: 16, fontSize: 13, color: 'rgba(245,245,244,0.35)' }}>Select a conversation.</div>
         ) : (
           <>
-            <div style={{ padding: '14px 16px', flexShrink: 0, borderBottom: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.02)', ...GLASS }}>
+            <div style={{ padding: '14px 16px', flexShrink: 0, background: 'rgba(255,255,255,0.035)', ...GLASS }}>
               <div style={{ fontSize: 14, fontWeight: 700 }}>{activeSummary.customer_name || 'Unknown'}</div>
               <div style={{ fontSize: 11, color: 'rgba(245,245,244,0.35)', marginTop: 2 }}>
                 Channel: {CHANNEL_LABEL[activeSummary.channel_type] ?? activeSummary.channel_type}
@@ -238,6 +370,11 @@ export default function CommandConversations({ workspaceId, conversations, selec
                   // width annotation card instead, so it can't be mistaken
                   // for something Caye actually sent.
                   if (m.is_internal) {
+                    // proposed_reply intentionally not rendered here — the
+                    // auto-generated hold draft still exists (it feeds the
+                    // WhatsApp ping) but surfacing it in-thread just invited
+                    // one-click-sending filler before actually deciding
+                    // anything. "Draft with Caye" below is opt-in instead.
                     const noteBody = m.content.replace(/^\[[^\]]*\]\s*/, '')
                     return (
                       <div key={m.id} style={{
@@ -248,7 +385,7 @@ export default function CommandConversations({ workspaceId, conversations, selec
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#FFD68F" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginTop: 3, flexShrink: 0 }}>
                           <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" /><line x1="4" y1="22" x2="4" y2="15" />
                         </svg>
-                        <div>
+                        <div style={{ flex: 1 }}>
                           <div style={{ fontSize: 9, fontFamily: 'var(--font-mono)', fontWeight: 700, letterSpacing: '0.08em', color: '#FFD68F', textTransform: 'uppercase', marginBottom: 2 }}>
                             Internal note — not sent to customer
                           </div>
@@ -282,8 +419,7 @@ export default function CommandConversations({ workspaceId, conversations, selec
                       style={{
                         alignSelf: isBusiness ? 'flex-end' : 'flex-start',
                         maxWidth: '80%',
-                        background: 'rgba(255,255,255,0.05)',
-                        border: '1px solid rgba(255,255,255,0.08)',
+                        background: 'rgba(255,255,255,0.07)',
                         borderRadius: isBusiness ? '12px 3px 12px 12px' : '3px 12px 12px 12px',
                         padding: '8px 12px',
                       }}
@@ -296,6 +432,74 @@ export default function CommandConversations({ workspaceId, conversations, selec
               </div>
             )}
             </div>
+            {!compact && !SEND_UNSUPPORTED.has(activeSummary.channel_type) && (
+              <div style={{ flexShrink: 0, padding: 12, borderTop: '1px solid rgba(255,255,255,0.08)', ...GLASS }}>
+                {sendError && (
+                  <div style={{ fontSize: 11.5, color: '#fb7185', marginBottom: 6 }}>{sendError}</div>
+                )}
+                {!replyText.trim() && (
+                  <button
+                    onClick={handleDraft}
+                    disabled={drafting}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 5, marginBottom: 6,
+                      border: 'none', background: 'transparent', cursor: drafting ? 'default' : 'pointer',
+                      padding: '2px 4px', fontSize: 11.5, fontWeight: 600,
+                      color: drafting ? 'rgba(245,245,244,0.3)' : 'rgba(125,201,203,0.85)',
+                    }}
+                  >
+                    {drafting ? <CayeLoadingPulse size={11} /> : <CayeMark size={12} />}
+                    {drafting ? 'Drafting…' : 'Draft with Caye'}
+                  </button>
+                )}
+                <div style={{
+                  display: 'flex', alignItems: 'flex-end', gap: 8,
+                  borderRadius: 20,
+                  background: 'rgba(255,255,255,0.04)', padding: '8px 8px 8px 14px',
+                }}>
+                  <textarea
+                    ref={replyTextareaRef}
+                    value={replyText}
+                    onChange={(e) => setReplyText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); handleSend() }
+                    }}
+                    placeholder={`Reply to ${activeSummary.customer_name || 'this conversation'}… (⌘/Ctrl+Enter to send)`}
+                    rows={1}
+                    disabled={sending}
+                    style={{
+                      flex: 1, resize: 'none', overflowY: 'auto',
+                      maxHeight: REPLY_MAX_HEIGHT,
+                      background: 'transparent', border: 'none',
+                      padding: '6px 0', fontSize: 13.5, lineHeight: 1.5, color: '#f5f5f4',
+                      outline: 'none', fontFamily: 'inherit',
+                    }}
+                  />
+                  <button
+                    onClick={handleSend}
+                    disabled={sending || !replyText.trim()}
+                    title="Send (⌘/Ctrl+Enter)"
+                    style={{
+                      flexShrink: 0, width: 32, height: 32, borderRadius: '50%', border: 'none',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      cursor: sending || !replyText.trim() ? 'default' : 'pointer',
+                      background: sending || !replyText.trim() ? 'rgba(255,255,255,0.08)' : '#7DC9CB',
+                      transition: 'background 0.15s ease',
+                    }}
+                  >
+                    {sending ? (
+                      <CayeLoadingPulse size={12} />
+                    ) : (
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+                        stroke={!replyText.trim() ? 'rgba(245,245,244,0.35)' : '#0a0a0b'}
+                        strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M12 19V5" /><path d="M5 12l7-7 7 7" />
+                      </svg>
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
           </>
         )}
       </div>

@@ -35,6 +35,10 @@ export interface ConversationSummary {
   last_message_at: string
   human_agent_enabled: boolean
   human_agent_reason: string | null
+  /** hold_kind==='outreach_followup' + proposed_reply is what lets the
+   *  compose box auto-fill — scoped to this one narrow, policy-constrained
+   *  follow-up case, not held items generally (see CommandConversations). */
+  metadata?: { hold_kind?: string; proposed_reply?: string } | null
 }
 
 export interface CommandOverview {

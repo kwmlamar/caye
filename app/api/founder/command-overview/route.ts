@@ -96,7 +96,7 @@ export async function GET(req: NextRequest) {
     connectedAccountIds.length
       ? supabase
           .from('unified_conversations')
-          .select('id, channel_type, customer_name, last_message_preview, last_message_at, human_agent_enabled, human_agent_reason')
+          .select('id, channel_type, customer_name, last_message_preview, last_message_at, human_agent_enabled, human_agent_reason, metadata')
           .in('connected_account_id', connectedAccountIds)
           .order('last_message_at', { ascending: false })
           .limit(30)

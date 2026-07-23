@@ -3,13 +3,19 @@
  * from app/api/caye/nudge-scan so trigger windows + edge cases can be
  * unit tested without Supabase / Anthropic.
  *
- * Two nudge types in v1:
+ * Two nudge types in v1 (customer-facing, service_business workspaces):
  *   - REVIEW REQUEST: 24h+ after a completed booking, max once per booking
  *   - GHOSTED LEAD: 3+ days after Caye's last reply on a thread that
  *     never produced a booking and the customer never responded to
  *
  * The cron endpoint does the Supabase querying + the actual nudge send.
  * These functions just decide "given this row, should we nudge now?"
+ *
+ * A third, separate kind lives here too — OUTREACH FOLLOW-UP — for
+ * TropiTech's own internal_sales workspace (issue #66 follow-on, outreach
+ * autonomy roadmap step 2, decisions-log 2026-07-21). It never sends
+ * directly; app/api/caye/outreach-nudge-scan drafts a held item instead,
+ * since autosend_enabled is hard-false for internal_sales workspaces.
  */
 
 export const REVIEW_REQUEST_MIN_HOURS_AFTER_BOOKING = 24
@@ -97,6 +103,60 @@ export function shouldSendGhostedLeadNudge(
   if (isNaN(lastMs)) return false
   const daysSilent = (now.getTime() - lastMs) / (1000 * 60 * 60 * 24)
   return daysSilent >= GHOSTED_LEAD_MIN_DAYS_SILENCE
+}
+
+// ── Outreach follow-up (cold-outreach leads, internal_sales workspace) ──────
+
+export const OUTREACH_FOLLOWUP_MIN_DAYS_SILENCE = 2
+export const OUTREACH_FOLLOWUP_COLD_AFTER_DAYS = 14
+
+export interface OutreachLeadCandidate {
+  first_touch_sent_at: string | null
+  /** How many follow-ups have already gone out — capped at 1, see below. */
+  nudge_count: number
+  last_nudge_at: string | null
+  /** Explicit decline/unsubscribe or manual founder override — hard stop. */
+  opted_out_at: string | null
+  status: string
+  /** Computed by the caller via a join against unified_messages — has this
+   *  lead ever sent anything back on this workspace's inbox? */
+  has_replied: boolean
+}
+
+export type OutreachLeadAction = 'nudge' | 'mark_cold' | 'none'
+
+/**
+ * TropiTech's own cold-outreach follow-up policy (outreach-script.md §5:
+ * "one follow-up, then stop — chasing ghosts is wasted outreach"). Never
+ * more than one nudge per lead, ever:
+ *   - 'nudge': first touch sent 2+ days ago, no reply, no nudge sent yet.
+ *   - 'mark_cold': the one allowed nudge already went out 14+ days ago,
+ *     still no reply — bookkeeping only, no second message. Mirrors
+ *     escalation-followup.ts's log-only expiry rather than a re-pitch.
+ *   - 'none': not yet due, already replied/converted/cold, or opted out.
+ */
+export function decideOutreachLeadAction(
+  candidate: OutreachLeadCandidate,
+  now: Date
+): OutreachLeadAction {
+  if (candidate.opted_out_at) return 'none'
+  if (candidate.has_replied) return 'none'
+  if (candidate.status !== 'sent') return 'none'
+  if (!candidate.first_touch_sent_at) return 'none'
+
+  const firstTouchMs = Date.parse(candidate.first_touch_sent_at)
+  if (isNaN(firstTouchMs)) return 'none'
+
+  if (candidate.nudge_count >= 1) {
+    const anchor = candidate.last_nudge_at ?? candidate.first_touch_sent_at
+    const anchorMs = Date.parse(anchor)
+    if (isNaN(anchorMs)) return 'none'
+    const daysSinceAnchor = (now.getTime() - anchorMs) / (1000 * 60 * 60 * 24)
+    return daysSinceAnchor >= OUTREACH_FOLLOWUP_COLD_AFTER_DAYS ? 'mark_cold' : 'none'
+  }
+
+  const daysSinceFirstTouch = (now.getTime() - firstTouchMs) / (1000 * 60 * 60 * 24)
+  return daysSinceFirstTouch >= OUTREACH_FOLLOWUP_MIN_DAYS_SILENCE ? 'nudge' : 'none'
 }
 
 // ── Auto-complete sweep ─────────────────────────────────────────────────────

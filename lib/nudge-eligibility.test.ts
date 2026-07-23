@@ -3,6 +3,7 @@ import {
   shouldSendReviewRequest,
   shouldSendGhostedLeadNudge,
   shouldAutoCompleteBooking,
+  decideOutreachLeadAction,
 } from './nudge-eligibility'
 
 const NOW = new Date('2026-06-01T12:00:00Z')
@@ -138,6 +139,90 @@ describe('shouldSendGhostedLeadNudge', () => {
         NOW
       )
     ).toBe(true)
+  })
+})
+
+describe('decideOutreachLeadAction', () => {
+  function makeCandidate(overrides: Partial<Parameters<typeof decideOutreachLeadAction>[0]> = {}) {
+    return {
+      first_touch_sent_at: '2026-05-30T12:00:00Z', // 2 days ago
+      nudge_count: 0,
+      last_nudge_at: null,
+      opted_out_at: null,
+      status: 'sent',
+      has_replied: false,
+      ...overrides,
+    }
+  }
+
+  it('nudges at exactly 2 days of silence with no prior nudge', () => {
+    expect(decideOutreachLeadAction(makeCandidate(), NOW)).toBe('nudge')
+  })
+
+  it('does NOT nudge before 2 days have passed', () => {
+    expect(
+      decideOutreachLeadAction(
+        makeCandidate({ first_touch_sent_at: '2026-05-31T12:00:01Z' }), // just under 2 days
+        NOW
+      )
+    ).toBe('none')
+  })
+
+  it('does NOT nudge when the lead has replied', () => {
+    expect(decideOutreachLeadAction(makeCandidate({ has_replied: true }), NOW)).toBe('none')
+  })
+
+  it('does NOT nudge when the lead opted out', () => {
+    expect(
+      decideOutreachLeadAction(
+        makeCandidate({ opted_out_at: '2026-05-31T00:00:00Z' }),
+        NOW
+      )
+    ).toBe('none')
+  })
+
+  it('does NOT nudge when status is not "sent" (e.g. replied/converted/cold)', () => {
+    expect(decideOutreachLeadAction(makeCandidate({ status: 'cold' }), NOW)).toBe('none')
+  })
+
+  it('does NOT nudge again once one nudge already went out (one follow-up max)', () => {
+    expect(
+      decideOutreachLeadAction(
+        makeCandidate({ nudge_count: 1, last_nudge_at: '2026-05-31T12:00:00Z' }),
+        NOW
+      )
+    ).toBe('none')
+  })
+
+  it('marks cold once the one allowed nudge is 14+ days old with still no reply', () => {
+    expect(
+      decideOutreachLeadAction(
+        makeCandidate({ nudge_count: 1, last_nudge_at: '2026-05-18T12:00:00Z' }), // 14 days ago
+        NOW
+      )
+    ).toBe('mark_cold')
+  })
+
+  it('does NOT mark cold before 14 days since the nudge', () => {
+    expect(
+      decideOutreachLeadAction(
+        makeCandidate({ nudge_count: 1, last_nudge_at: '2026-05-20T12:00:00Z' }), // 12 days ago
+        NOW
+      )
+    ).toBe('none')
+  })
+
+  it('anchors the cold-off window on first_touch_sent_at if last_nudge_at is somehow missing', () => {
+    expect(
+      decideOutreachLeadAction(
+        makeCandidate({
+          first_touch_sent_at: '2026-05-18T12:00:00Z', // 14 days ago
+          nudge_count: 1,
+          last_nudge_at: null,
+        }),
+        NOW
+      )
+    ).toBe('mark_cold')
   })
 })
 
