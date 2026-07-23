@@ -10,12 +10,13 @@ interface HeldRow {
   human_agent_reason: string | null
   human_agent_marked_at: string | null
   last_message_preview: string | null
+  target_date: string | null
 }
 
 export const getHeldQueue: Tool<Record<string, never>> = {
   name: 'get_held_queue',
   description:
-    "Get the current held items needing the operator's call. Each item is a customer thread Caye paused because she wasn't confident enough to reply autonomously. Use this when the operator asks 'anything need my call?' / 'anyone held?' / 'what's pending?'. Each item carries has_open_escalation — true means it already has its own daily nag cadence via escalation-followup, so briefings/recaps should NOT re-describe it in detail or re-propose an action (that's duplicate noise the operator already saw); just fold escalated items into a one-line count. Only items with has_open_escalation=false are new enough to warrant calling out by name.",
+    "Get the current held items needing the operator's call. Each item is a customer thread Caye paused because she wasn't confident enough to reply autonomously. Use this when the operator asks 'anything need my call?' / 'anyone held?' / 'what's pending?'. Each item carries has_open_escalation — true means it already has its own daily nag cadence via escalation-followup, so briefings/recaps should NOT re-describe it in detail or re-propose an action (that's duplicate noise the operator already saw); just fold escalated items into a one-line count. Only items with has_open_escalation=false are new enough to warrant calling out by name. Each item also carries date_passed — true means the customer referenced a specific calendar date (e.g. a booking date) that has already gone by with no response sent. When narrating these, say so plainly (e.g. 'that date's already passed') instead of repeating the original ask as if it were still live — don't imply the date is still actionable.",
   risk: 'read',
   roles: ['owner', 'founder'],
   modes: ['back-office'],
@@ -39,7 +40,7 @@ export const getHeldQueue: Tool<Record<string, never>> = {
     const { data, error } = await supabase
       .from('unified_conversations')
       .select(
-        'id, customer_name, customer_id, channel_type, human_agent_reason, human_agent_marked_at, last_message_preview'
+        'id, customer_name, customer_id, channel_type, human_agent_reason, human_agent_marked_at, last_message_preview, target_date'
       )
       .in('connected_account_id', accountIds)
       .eq('is_archived', false)
@@ -69,6 +70,8 @@ export const getHeldQueue: Tool<Record<string, never>> = {
       )
     }
 
+    const todayISO = new Date().toISOString().slice(0, 10)
+
     return {
       ok: true,
       data: {
@@ -80,6 +83,7 @@ export const getHeldQueue: Tool<Record<string, never>> = {
           preview: r.last_message_preview,
           held_at: r.human_agent_marked_at,
           has_open_escalation: openEscalationConvIds.has(r.id),
+          date_passed: !!r.target_date && r.target_date < todayISO,
         })),
         count: rows.length,
       },

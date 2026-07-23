@@ -22,6 +22,17 @@
  * send anything to the customer, so nothing here weakens the "no autosend"
  * guarantee in lib/autosend-gate.ts.
  *
+ * Dead-date fix (2026-07-23): a held item can reference a specific calendar
+ * date (e.g. a booking request) that passes while the hold sits unanswered
+ * — Caye would otherwise keep repeating the same stale ask verbatim forever
+ * with no sign the date's dead. unified_conversations.target_date (captured
+ * once at hold-creation time — see lib/whatsapp/urgency.ts's
+ * extractHoldTargetDate) is checked here: once it's passed, the item skips
+ * the usual staleness/quiet-hours gates and the weekly-aging bucket
+ * entirely, surfaces immediately at the top of the daily email with a
+ * templated suggested reply, and — same principle as the rest of this file
+ * — never auto-clears human_agent_enabled. A human still decides.
+ *
  * Respects workspace_ai_config.notifications_paused: when paused, the
  * sweep computes the rollup but does NOT send. The would-have-sent
  * payload is logged so you can verify the sweep on a paused workspace
@@ -130,6 +141,30 @@ interface StaleHold {
   lastBusinessAt: string | null
   hoursStale: number
   daysHeld: number
+  isDeadDate: boolean
+  targetDate: string | null
+}
+
+/**
+ * Templated (not LLM-generated) suggested reply for a dead-date hold — the
+ * customer asked about a specific date that's since passed and never got a
+ * real answer. Deliberately a fixed template, not a fresh model call: this
+ * only needs to be good enough for the operator to approve or edit, and a
+ * cron job calling an LLM per stale item adds cost/latency/failure modes
+ * for marginal benefit at current volume (2026-07-23 dead-date fix).
+ */
+function buildDeadDateSuggestedReply(customerName: string | null, targetDate: string): string {
+  const who = customerName?.trim() || 'there'
+  const dateLabel = new Date(`${targetDate}T00:00:00Z`).toLocaleDateString('en-US', {
+    month: 'long',
+    day: 'numeric',
+    timeZone: 'UTC',
+  })
+  return (
+    `Hi ${who.split(' ')[0]}, so sorry for the delayed response — we missed getting back to you ` +
+    `about ${dateLabel}, and that date's passed now. If another date works, just let us know and ` +
+    `we'll get you booked!`
+  )
 }
 
 async function processWorkspace(args: ProcessArgs): Promise<WorkspaceOutcome> {
@@ -147,7 +182,7 @@ async function processWorkspace(args: ProcessArgs): Promise<WorkspaceOutcome> {
   const { data: held } = await supabase
     .from('unified_conversations')
     .select(
-      'id, customer_name, customer_id, channel_type, human_agent_reason, human_agent_marked_at, last_message_at, last_business_sender_kind, last_sender_type'
+      'id, customer_name, customer_id, channel_type, human_agent_reason, human_agent_marked_at, last_message_at, last_business_sender_kind, last_sender_type, target_date'
     )
     .in('connected_account_id', accountIds)
     .eq('human_agent_enabled', true)
@@ -158,6 +193,7 @@ async function processWorkspace(args: ProcessArgs): Promise<WorkspaceOutcome> {
 
   const cfg = await loadScheduleConfig(args.workspaceId)
   const now = new Date()
+  const todayISO = now.toISOString().slice(0, 10)
   const isWeeklyDigestDay = now.getUTCDay() === WEEKLY_DIGEST_DAY_UTC
 
   // Compute "business hours since last business message" per conversation.
@@ -179,12 +215,22 @@ async function processWorkspace(args: ProcessArgs): Promise<WorkspaceOutcome> {
       continue
     }
 
+    // Dead-date check runs before (and bypasses) the usual staleness/quiet-
+    // hours gates below — a booking date that's already passed is worth
+    // flagging immediately, not after the normal 4-business-hour /
+    // quiet-hours wait. Day-granularity comparison, so "immediately" here
+    // just means "don't make it wait for the next gate."
+    const targetDate = (c.target_date as string | null) ?? null
+    const isDeadDate = !!targetDate && targetDate < todayISO
+
     const elapsedMs = now.getTime() - new Date(lastBusinessAt).getTime()
     const elapsedHours = elapsedMs / (1000 * 60 * 60)
-    if (elapsedHours < STALE_BUSINESS_HOURS) continue
-    // If we're currently in quiet hours, push the alarm to morning; the
-    // sweep only triggers when out-of-quiet-hours and the threshold is met.
-    if (inQuietHours(now, cfg)) continue
+    if (!isDeadDate) {
+      if (elapsedHours < STALE_BUSINESS_HOURS) continue
+      // If we're currently in quiet hours, push the alarm to morning; the
+      // sweep only triggers when out-of-quiet-hours and the threshold is met.
+      if (inQuietHours(now, cfg)) continue
+    }
 
     // Pull the latest Caye internal note for this conversation so we can
     // include the held reason + proposed_reply in the rollup.
@@ -201,8 +247,14 @@ async function processWorkspace(args: ProcessArgs): Promise<WorkspaceOutcome> {
     const reason =
       (c.human_agent_reason as string | null) ??
       (typeof meta.hold_reason === 'string' ? (meta.hold_reason as string) : null)
-    const proposedReply =
-      typeof meta.proposed_reply === 'string' ? (meta.proposed_reply as string) : null
+    const customerName = (c.customer_name as string | null) ?? null
+    // Dead-date holds get a fixed suggested reply instead of whatever Caye
+    // originally drafted (which was for the now-dead date, not for what to
+    // say once it's passed) — never auto-clears the hold, just gives the
+    // operator something to approve/edit instead of composing from scratch.
+    const proposedReply = isDeadDate
+      ? buildDeadDateSuggestedReply(customerName, targetDate as string)
+      : (typeof meta.proposed_reply === 'string' ? (meta.proposed_reply as string) : null)
 
     // Age from when Caye first flagged the thread, not from last activity —
     // a hold that's been sitting 10 days but had a customer follow-up
@@ -212,7 +264,7 @@ async function processWorkspace(args: ProcessArgs): Promise<WorkspaceOutcome> {
 
     const entry: StaleHold = {
       conversationId: c.id as string,
-      customerName: (c.customer_name as string | null) ?? null,
+      customerName,
       customerId: (c.customer_id as string | null) ?? null,
       channelType: (c.channel_type as string | null) ?? null,
       reason,
@@ -220,14 +272,23 @@ async function processWorkspace(args: ProcessArgs): Promise<WorkspaceOutcome> {
       lastBusinessAt,
       hoursStale: Math.round(elapsedHours * 10) / 10,
       daysHeld: Math.round(daysHeld * 10) / 10,
+      isDeadDate,
+      targetDate,
     }
 
-    if (daysHeld >= AGED_BACKLOG_DAYS) {
+    if (isDeadDate) {
+      // Always daily, never demoted to the weekly bucket — a dead date is
+      // exactly the kind of thing that shouldn't wait a week to surface.
+      stale.push(entry)
+    } else if (daysHeld >= AGED_BACKLOG_DAYS) {
       agedStale.push(entry)
     } else {
       stale.push(entry)
     }
   }
+
+  // Dead-date items float to the top of the daily list.
+  stale.sort((a, b) => Number(b.isDeadDate) - Number(a.isDeadDate))
 
   if (stale.length === 0 && (!isWeeklyDigestDay || agedStale.length === 0)) return 'no_stale'
 
@@ -281,12 +342,17 @@ function composeRollup(
     for (const h of stale) {
       const who = h.customerName || h.customerId || 'A customer'
       const ch = h.channelType ? ` (${h.channelType})` : ''
-      lines.push(`— ${who}${ch} — ${h.hoursStale}h since last reply`)
+      if (h.isDeadDate) {
+        lines.push(`⚠️ — ${who}${ch} — asked about ${h.targetDate}, which has already passed`)
+      } else {
+        lines.push(`— ${who}${ch} — ${h.hoursStale}h since last reply`)
+      }
       if (h.reason) lines.push(`    Why I held: ${h.reason}`)
       if (h.proposedReply) {
         const trimmed = h.proposedReply.replace(/\s+/g, ' ').trim()
         const preview = trimmed.length > 240 ? `${trimmed.slice(0, 237)}…` : trimmed
-        lines.push(`    Draft I wrote: "${preview}"`)
+        const label = h.isDeadDate ? 'Suggested reply (date already passed)' : 'Draft I wrote'
+        lines.push(`    ${label}: "${preview}"`)
       }
       lines.push('')
     }

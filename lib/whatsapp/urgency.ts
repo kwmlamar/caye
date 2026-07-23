@@ -117,6 +117,17 @@ function candidateDateForMonthDay(month: number, day: number, now: Date): Date |
  * escalation, whereas for urgency classification a false positive is
  * harmless (worst case: treated as urgent when it wasn't).
  */
+/**
+ * extractTargetDate wrapper for plain-hold write sites (2026-07-23,
+ * dead-date pile-up fix) — same extraction, returned as an ISO date string
+ * ready to store on unified_conversations.target_date, mirroring how
+ * lib/whatsapp/escalation.ts stores it on caye_escalations.target_date.
+ */
+export function extractHoldTargetDate(reason: string, inboundBody: string): string | null {
+  const date = extractTargetDate(`${reason} ${inboundBody}`)
+  return date ? date.toISOString().slice(0, 10) : null
+}
+
 export function extractTargetDate(text: string): Date | null {
   const now = new Date()
 
