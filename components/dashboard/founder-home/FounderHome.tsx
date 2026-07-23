@@ -10,10 +10,12 @@ import type { FounderRailId } from '@/lib/types'
 import CommandCalendar from '@/components/dashboard/command-calendar/CommandCalendar'
 import CommandConversations from '@/components/dashboard/command-conversations/CommandConversations'
 import CayeDirect from '@/components/dashboard/caye-direct/CayeDirect'
+import ChannelsCard from '@/components/dashboard/founder-home/ChannelsCard'
 import GlobalPerformance from '@/components/dashboard/global-performance/GlobalPerformance'
 import ContactsPanel from '@/components/dashboard/founder-home/ContactsPanel'
 import AdminShell from '@/components/dashboard/admin-shell/AdminShell'
 import { CayeLoadingPulse } from '@/components/dashboard/founder-home/CayeLoadingPulse'
+import { Pill, GhostButton } from '@/components/dashboard/founder-home/console-ui'
 import type { CustomerStatus } from '@/types/database'
 
 // Tokens lifted directly from Sandbox/caye-command (the reference
@@ -23,9 +25,9 @@ import type { CustomerStatus } from '@/types/database'
 // that's replaced with our own teal/gold mesh palette (matches the
 // landing hero + CayeMark orb), per the earlier gradient-consistency
 // decision. 2026-07-02 theme pass.
-const APP_BG = '#09090b'
-const CARD_BG = '#121214'
-const CARD_BORDER = '#1f1f23'
+const APP_BG = '#111113'
+const CARD_BG = '#1a1a1e'
+const CARD_BORDER = '#28282d'
 const LABEL_COLOR = '#71717a' // zinc-500
 const GRADIENT = 'linear-gradient(90deg, #00778B, #7DC9CB, #FFD68F)'
 
@@ -52,18 +54,7 @@ const STATUS_COLOR: Record<CustomerStatus, string> = {
 }
 
 function StatusPill({ status }: { status: CustomerStatus }) {
-  const color = STATUS_COLOR[status]
-  return (
-    <span style={{
-      fontSize: 10, fontWeight: 600, fontFamily: 'var(--font-mono)', textTransform: 'uppercase',
-      color, background: `${color}1a`, border: `1px solid ${color}33`,
-      borderRadius: 999, padding: '2px 8px', flexShrink: 0,
-      display: 'inline-flex', alignItems: 'center', gap: 5,
-    }}>
-      <span style={{ width: 5, height: 5, borderRadius: '50%', background: color }} />
-      {STATUS_LABEL[status]}
-    </span>
-  )
+  return <Pill color={STATUS_COLOR[status]} label={STATUS_LABEL[status]} />
 }
 
 function ExpandButton({ expanded, onClick }: { expanded: boolean; onClick: () => void }) {
@@ -109,10 +100,9 @@ function StatCard({ label, value, valueColor = '#f4f4f5', action }: { label: str
   return (
     <div style={{
       position: 'relative', overflow: 'hidden',
-      background: CARD_BG, border: `1px solid ${CARD_BORDER}`, borderRadius: 18, padding: '16px 18px',
+      background: CARD_BG, borderRadius: 18, padding: '16px 18px',
       display: 'flex', flexDirection: 'column', justifyContent: 'space-between', minHeight: 96,
     }}>
-      <div aria-hidden style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 2, background: GRADIENT, opacity: 0.45 }} />
       <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', textTransform: 'uppercase', color: LABEL_COLOR, marginBottom: 8 }}>
         {label}
       </div>
@@ -135,7 +125,6 @@ function StatCard({ label, value, valueColor = '#f4f4f5', action }: { label: str
 // workspace owners.
 function DeploymentToggle({ workspaceId, active, onToggled }: { workspaceId: string; active: boolean; onToggled: () => void }) {
   const [busy, setBusy] = useState(false)
-  const [hover, setHover] = useState(false)
 
   async function handleClick() {
     if (busy) return
@@ -158,25 +147,14 @@ function DeploymentToggle({ workspaceId, active, onToggled }: { workspaceId: str
   }
 
   return (
-    <button
+    <GhostButton
+      label={active ? 'Pause' : 'Resume'}
+      color={active ? '#fca5a5' : '#34d399'}
       onClick={handleClick}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
       disabled={busy}
+      busy={busy}
       title={active ? 'Pause Caye for this workspace' : 'Resume Caye for this workspace'}
-      style={{
-        fontSize: 10, fontWeight: 600, fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.04em',
-        padding: '4px 9px', borderRadius: 7, cursor: busy ? 'default' : 'pointer',
-        color: active ? '#fca5a5' : '#34d399',
-        background: hover && !busy ? (active ? 'rgba(251,113,133,0.14)' : 'rgba(52,211,153,0.14)') : 'transparent',
-        border: `1px solid ${active ? 'rgba(251,113,133,0.35)' : 'rgba(52,211,153,0.35)'}`,
-        opacity: busy ? 0.5 : 1,
-        transition: 'background 0.15s ease',
-        flexShrink: 0,
-      }}
-    >
-      {busy ? '···' : active ? 'Pause' : 'Resume'}
-    </button>
+    />
   )
 }
 
@@ -235,6 +213,44 @@ function RailButton({ item, active, onClick }: { item: (typeof RAIL_ITEMS)[numbe
   )
 }
 
+const SIDEBAR_COLLAPSE_KEY = 'caye_founder_sidebar_collapsed'
+const SIDEBAR_WIDTH_EXPANDED = 250
+const SIDEBAR_WIDTH_COLLAPSED = 60
+
+function businessInitials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean)
+  if (parts.length === 0) return '?'
+  return parts.slice(0, 2).map((p) => p[0]!.toUpperCase()).join('')
+}
+
+function SidebarToggle({ collapsed, onClick }: { collapsed: boolean; onClick: () => void }) {
+  const [hover, setHover] = useState(false)
+  return (
+    <button
+      onClick={onClick}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      title={collapsed ? 'Expand workspaces' : 'Collapse workspaces'}
+      style={{
+        width: 26, height: 26, borderRadius: 8, flexShrink: 0,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: hover ? 'rgba(255,255,255,0.08)' : 'transparent',
+        border: `1px solid ${hover ? CARD_BORDER : 'transparent'}`,
+        color: hover ? '#a1a1aa' : '#52525b', cursor: 'pointer',
+        transition: 'background 0.15s ease, border-color 0.15s ease, color 0.15s ease',
+      }}
+    >
+      <svg
+        width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+        strokeLinecap="round" strokeLinejoin="round"
+        style={{ transform: collapsed ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s ease' }}
+      >
+        <polyline points="15 6 9 12 15 18" />
+      </svg>
+    </button>
+  )
+}
+
 function StubConsole({ label }: { label: string }) {
   return (
     <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -262,6 +278,20 @@ export default function FounderHome() {
   const searchParams = useSearchParams()
   const { workspace, workspaceId, workspaces } = useWorkspace()
   const [weekOffset, setWeekOffset] = useState(0)
+  // Persisted so the founder's rail state (this list eats real vertical
+  // space once there are more than a couple of workspaces) survives
+  // reloads — same convention as lastActiveWorkspaceId in lib/supabase.ts.
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    if (typeof window === 'undefined') return false
+    return window.localStorage.getItem(SIDEBAR_COLLAPSE_KEY) === '1'
+  })
+  const toggleSidebarCollapsed = () => {
+    setSidebarCollapsed((prev) => {
+      const next = !prev
+      window.localStorage.setItem(SIDEBAR_COLLAPSE_KEY, next ? '1' : '0')
+      return next
+    })
+  }
   const { data, refetch } = useCommandOverview(workspaceId, weekOffset)
   const [expanded, setExpanded] = useState<'calendar' | 'conversations' | 'cayeDirect' | null>(null)
   // Set by CommandCalendar on a booking click — jumps CommandConversations
@@ -306,7 +336,7 @@ export default function FounderHome() {
           left them (unbuilt), per explicit direction to add the rail
           now with temp pages rather than wait for all of it. ── */}
       <nav style={{
-        width: 64, flexShrink: 0, background: 'rgba(8,8,10,0.6)', borderRight: `1px solid ${CARD_BORDER}`,
+        width: 64, flexShrink: 0, background: 'rgba(17,17,19,0.6)', borderRight: `1px solid ${CARD_BORDER}`,
         display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, padding: '16px 0',
         ...GLASS,
       }}>
@@ -328,28 +358,67 @@ export default function FounderHome() {
       </nav>
 
       {/* ── Workspaces sidebar (real cross-workspace list) ── */}
-      <aside style={{ width: 250, flexShrink: 0, borderRight: `1px solid ${CARD_BORDER}`, padding: 16, overflowY: 'auto' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
-          <span style={{ fontSize: 12, fontWeight: 700, fontFamily: 'var(--font-mono)', letterSpacing: '0.06em', color: LABEL_COLOR }}>
-            WORKSPACES
-          </span>
+      <aside style={{
+        width: sidebarCollapsed ? SIDEBAR_WIDTH_COLLAPSED : SIDEBAR_WIDTH_EXPANDED,
+        flexShrink: 0, borderRight: `1px solid ${CARD_BORDER}`,
+        padding: sidebarCollapsed ? '16px 8px' : 16, overflowY: 'auto', overflowX: 'hidden',
+        transition: 'width 0.2s ease, padding 0.2s ease',
+      }}>
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16,
+          justifyContent: sidebarCollapsed ? 'center' : 'space-between',
+        }}>
+          {!sidebarCollapsed && (
+            <span style={{
+              fontSize: 12, fontWeight: 700, fontFamily: 'var(--font-mono)', letterSpacing: '0.06em', color: LABEL_COLOR,
+              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+            }}>
+              WORKSPACES
+            </span>
+          )}
+          <SidebarToggle collapsed={sidebarCollapsed} onClick={toggleSidebarCollapsed} />
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: sidebarCollapsed ? 8 : 4 }}>
           {workspaces.map((m) => {
             const active = m.workspace_id === workspaceId
+            const goTo = () => router.push(
+              `/dashboard/${m.workspace_id}${railView !== 'dashboard' ? `?rail=${railView}` : ''}`
+            )
+            if (sidebarCollapsed) {
+              return (
+                <button
+                  key={m.workspace_id}
+                  onClick={goTo}
+                  title={`${m.customer.business_name} · ${STATUS_LABEL[m.customer.status]}`}
+                  style={{
+                    position: 'relative', width: 40, height: 40, margin: '0 auto', flexShrink: 0,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    borderRadius: 11, cursor: 'pointer',
+                    border: `1px solid ${active ? 'rgba(125,201,203,0.4)' : CARD_BORDER}`,
+                    background: active ? 'rgba(125,201,203,0.1)' : 'rgba(255,255,255,0.03)',
+                    fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-mono)',
+                    color: active ? '#7DC9CB' : '#a1a1aa',
+                  }}
+                >
+                  {businessInitials(m.customer.business_name)}
+                  <span aria-hidden style={{
+                    position: 'absolute', top: -2, right: -2, width: 8, height: 8, borderRadius: '50%',
+                    background: STATUS_COLOR[m.customer.status], border: `2px solid ${APP_BG}`,
+                  }} />
+                </button>
+              )
+            }
             return (
               <button
                 key={m.workspace_id}
-                onClick={() => router.push(
-                  `/dashboard/${m.workspace_id}${railView !== 'dashboard' ? `?rail=${railView}` : ''}`
-                )}
+                onClick={goTo}
                 style={{
                   position: 'relative',
                   display: 'flex', flexDirection: 'column', gap: 6,
                   textAlign: 'left', border: `1px solid ${active ? '#2d2d34' : 'transparent'}`,
                   cursor: 'pointer', borderRadius: 12,
                   padding: '12px 14px 12px 17px',
-                  background: active ? 'rgba(24,24,27,0.55)' : 'transparent',
+                  background: active ? 'rgba(26,26,30,0.55)' : 'transparent',
                   ...(active ? GLASS : {}),
                 }}
               >
@@ -389,7 +458,7 @@ export default function FounderHome() {
             it (the radial-gradient div above) shows through faintly. */}
         <div style={{
           padding: '16px 24px', borderBottom: `1px solid ${CARD_BORDER}`, display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0,
-          background: 'rgba(9,9,11,0.55)', ...GLASS,
+          background: 'rgba(17,17,19,0.55)', ...GLASS,
         }}>
           {railView === 'performance' ? (
             <h1 style={{ fontSize: 16, fontWeight: 600, fontFamily: 'var(--font-display)', margin: 0 }}>Global Performance — All Workspaces</h1>
@@ -448,9 +517,8 @@ export default function FounderHome() {
               <div style={{
                 display: expanded === 'conversations' ? 'none' : 'block',
                 position: 'relative',
-                border: `1px solid ${CARD_BORDER}`, borderRadius: 16, overflow: 'hidden', background: CARD_BG,
+                borderRadius: 16, overflow: 'hidden', background: CARD_BG,
               }}>
-                <div aria-hidden style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 2, background: GRADIENT, opacity: 0.45, zIndex: 1 }} />
                 <ExpandButton expanded={expanded === 'calendar'} onClick={() => setExpanded(expanded === 'calendar' ? null : 'calendar')} />
                 {data && (
                   <CommandCalendar
@@ -465,15 +533,16 @@ export default function FounderHome() {
               <div style={{
                 display: expanded === 'calendar' ? 'none' : 'block',
                 position: 'relative',
-                border: `1px solid ${CARD_BORDER}`, borderRadius: 16, overflow: 'hidden', background: CARD_BG,
+                borderRadius: 16, overflow: 'hidden', background: CARD_BG,
               }}>
-                <div aria-hidden style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 2, background: GRADIENT, opacity: 0.45, zIndex: 1 }} />
                 <ExpandButton expanded={expanded === 'conversations'} onClick={() => setExpanded(expanded === 'conversations' ? null : 'conversations')} />
                 {data && (
                   <CommandConversations
                     workspaceId={workspaceId}
                     conversations={data.conversations}
                     selectedConversationId={selectedConversationId}
+                    onSent={refetch}
+                    compact={expanded !== 'conversations'}
                   />
                 )}
               </div>
@@ -489,11 +558,13 @@ export default function FounderHome() {
               ...(expanded === 'cayeDirect'
                 ? { flex: 1, minHeight: 0 }
                 : { flexShrink: 0, height: 380 }),
-              border: `1px solid ${CARD_BORDER}`, borderRadius: 16, overflow: 'hidden', background: CARD_BG,
+              borderRadius: 16, overflow: 'hidden', background: CARD_BG,
             }}>
               <ExpandButton expanded={expanded === 'cayeDirect'} onClick={() => setExpanded(expanded === 'cayeDirect' ? null : 'cayeDirect')} />
               <CayeDirect workspaceId={workspaceId} />
             </div>
+
+            {!expanded && <ChannelsCard workspaceId={workspaceId} />}
 
             <div aria-hidden style={{ display: expanded ? 'none' : 'block', flexShrink: 0, height: 3, borderRadius: 3, background: GRADIENT, opacity: 0.4 }} />
           </div>

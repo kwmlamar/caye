@@ -15,10 +15,15 @@ export async function GET(req: NextRequest) {
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL!
   const mobileUrl = `${appUrl}/m/${workspaceId}`
-  const desktopUrl = `${appUrl}/dashboard/${workspaceId}/settings?tab=channels`
+  // 'founder' = connected from Caye Command's Channels card — send them
+  // back there instead of a settings tab they never navigated from.
+  const desktopUrl = sourceVal === 'founder'
+    ? `${appUrl}/dashboard/${workspaceId}`
+    : `${appUrl}/dashboard/${workspaceId}/settings?tab=channels`
+  const desktopSep = desktopUrl.includes('?') ? '&' : '?'
 
-  const ok = (param: string) => isMobile ? mobileUrl : `${desktopUrl}&${param}`
-  const fail = (param: string) => isMobile ? mobileUrl : `${desktopUrl}&${param}`
+  const ok = (param: string) => isMobile ? mobileUrl : `${desktopUrl}${desktopSep}${param}`
+  const fail = (param: string) => isMobile ? mobileUrl : `${desktopUrl}${desktopSep}${param}`
 
   if (googleError || !code || !workspaceId) {
     console.error('[gmail/callback] Access denied or missing params:', { googleError, code: !!code, workspaceId })

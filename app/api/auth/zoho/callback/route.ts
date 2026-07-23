@@ -19,11 +19,17 @@ export async function GET(req: NextRequest) {
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL!
   const mobileUrl = `${appUrl}/m/${workspaceId}`
-  const desktopUrl = `${appUrl}/dashboard/${workspaceId}/settings?tab=channels`
+  // 'founder' = connected from Caye Command's Channels card, not the
+  // workspace's own Settings page — send them back to Caye Command
+  // instead of a settings tab they never navigated from.
+  const desktopUrl = sourceVal === 'founder'
+    ? `${appUrl}/dashboard/${workspaceId}`
+    : `${appUrl}/dashboard/${workspaceId}/settings?tab=channels`
+  const desktopSep = desktopUrl.includes('?') ? '&' : '?'
 
   // Mobile gets a clean redirect — the mobile app reads state from Supabase, not query params
-  const ok = (param: string) => isMobile ? mobileUrl : `${desktopUrl}&${param}`
-  const fail = (param: string) => isMobile ? mobileUrl : `${desktopUrl}&${param}`
+  const ok = (param: string) => isMobile ? mobileUrl : `${desktopUrl}${desktopSep}${param}`
+  const fail = (param: string) => isMobile ? mobileUrl : `${desktopUrl}${desktopSep}${param}`
 
   if (zohoError || !code || !workspaceId) {
     console.error('[zoho/callback] Access denied or missing params:', { zohoError, code: !!code, workspaceId })

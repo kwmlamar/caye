@@ -157,11 +157,16 @@ export async function GET(req: NextRequest) {
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL!
   const mobileUrl = `${appUrl}/m/${workspaceId}`
-  const desktopUrl = `${appUrl}/dashboard/${workspaceId}/settings?tab=channels`
+  // 'founder' = connected from Caye Command's Channels card — send them
+  // back there instead of a settings tab they never navigated from.
+  const desktopUrl = sourceVal === 'founder'
+    ? `${appUrl}/dashboard/${workspaceId}`
+    : `${appUrl}/dashboard/${workspaceId}/settings?tab=channels`
+  const desktopSep = desktopUrl.includes('?') ? '&' : '?'
 
   // Mobile gets a clean redirect — mobile app reads state from Supabase, not query params
-  const ok = (param: string) => isMobile ? mobileUrl : `${desktopUrl}&${param}`
-  const fail = (param: string) => isMobile ? mobileUrl : `${desktopUrl}&${param}`
+  const ok = (param: string) => isMobile ? mobileUrl : `${desktopUrl}${desktopSep}${param}`
+  const fail = (param: string) => isMobile ? mobileUrl : `${desktopUrl}${desktopSep}${param}`
 
   if (metaError || !code || !workspaceId) {
     console.error('[meta/callback] Denied or missing params:', { metaError, hasCode: !!code, workspaceId })
@@ -254,7 +259,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.redirect(mobileUrl)
     }
     const encoded = Buffer.from(JSON.stringify(whatsappNumbers)).toString('base64url')
-    return NextResponse.redirect(`${desktopUrl}&whatsapp_pages=${encoded}`)
+    return NextResponse.redirect(`${desktopUrl}${desktopSep}whatsapp_pages=${encoded}`)
   }
 
   // 3. Fetch pages (optionally including instagram_business_account if connecting Instagram)
@@ -305,7 +310,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.redirect(mobileUrl)
     }
     const encoded = Buffer.from(JSON.stringify(instagramAccounts)).toString('base64url')
-    return NextResponse.redirect(`${desktopUrl}&instagram_pages=${encoded}`)
+    return NextResponse.redirect(`${desktopUrl}${desktopSep}instagram_pages=${encoded}`)
   }
 
   // Default flow: Messenger (Facebook Page connection)
@@ -328,5 +333,5 @@ export async function GET(req: NextRequest) {
   const encoded = Buffer.from(
     JSON.stringify(pages.map(p => ({ id: p.id, name: p.name, token: p.access_token })))
   ).toString('base64url')
-  return NextResponse.redirect(`${desktopUrl}&messenger_pages=${encoded}`)
+  return NextResponse.redirect(`${desktopUrl}${desktopSep}messenger_pages=${encoded}`)
 }
