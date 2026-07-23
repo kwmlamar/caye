@@ -23,6 +23,7 @@ import { sendMetaMessage, fetchMetaSenderName } from '@/lib/meta-reply'
 import { generateCayeAutoReply } from '@/lib/caye-reply'
 import { enqueueHoldPing } from '@/lib/whatsapp/triggers'
 import { applyEscalation } from '@/lib/whatsapp/escalation'
+import { extractHoldTargetDate } from '@/lib/whatsapp/urgency'
 import { maybeRefreshContactProfile } from '@/lib/contact-profile'
 import { syncBookingToCalendar } from '@/lib/calendar-sync'
 import type { VoiceProfile } from '@/lib/voice-profile'
@@ -281,7 +282,11 @@ async function processInboundInstagram(payload: Record<string, unknown>): Promis
       if (decision.action === 'hold') {
         await supabase
           .from('unified_conversations')
-          .update({ human_agent_enabled: true, human_agent_reason: decision.reason })
+          .update({
+            human_agent_enabled: true,
+            human_agent_reason: decision.reason,
+            target_date: extractHoldTargetDate(decision.reason, body),
+          })
           .eq('id', conversation.id)
         await supabase.from('unified_messages').insert({
           conversation_id: conversation.id,

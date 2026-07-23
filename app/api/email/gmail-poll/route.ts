@@ -24,6 +24,7 @@ import type { VoiceProfile } from '@/lib/voice-profile'
 import { ensureTagline } from '@/lib/voice-profile'
 import { enqueueHoldPing } from '@/lib/whatsapp/triggers'
 import { applyEscalation } from '@/lib/whatsapp/escalation'
+import { extractHoldTargetDate } from '@/lib/whatsapp/urgency'
 import { htmlToPlainText } from '@/lib/email-text'
 import { sendGmailReply } from '@/lib/gmail-send'
 import { isNoReplySender, isCalendarInvite, isOutOfOffice } from '@/lib/sender-classifier'
@@ -465,7 +466,11 @@ async function processGmailMessage(
 
   await supabase
     .from('unified_conversations')
-    .update({ human_agent_enabled: true, human_agent_reason: reason })
+    .update({
+      human_agent_enabled: true,
+      human_agent_reason: reason,
+      target_date: extractHoldTargetDate(reason, body || subject),
+    })
     .eq('id', conversationId)
 
   await supabase.from('unified_messages').insert({

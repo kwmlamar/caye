@@ -282,17 +282,19 @@ async function handleOneInbound(
       console.warn(`[whatsapp-operator] expired pending OTP for from=${fromRaw}`)
       return
     }
-    // Accept either a typed reply or a tap on the caye_driver_consent
-    // template's "OK" Quick Reply button — Meta delivers a button tap as
-    // type: 'button' with the button's label echoed back in .text.
+    // Accept either a typed reply or a tap on the consent template's "OK"
+    // Quick Reply button — Meta delivers a button tap as type: 'button'
+    // with the button's label echoed back in .text.
     const body =
       message.type === 'text'
         ? (message.text?.body ?? '').trim()
         : message.type === 'button'
           ? (message.button?.text ?? '').trim()
           : ''
-    // Case-insensitive: drivers confirm with "OK" (any casing); owner/staff
-    // codes are numeric so case never matters for them.
+    // Case-insensitive: drivers, and owner/staff once caye_team_consent is
+    // approved, confirm with a fixed "OK" reply (any casing). Until then,
+    // owner/staff fall back to a numeric code — add-team-member.ts picks
+    // whichever pending_otp_code fits, this compare is agnostic either way.
     if (body.toLowerCase() === (allow.pending_otp_code ?? '').toLowerCase()) {
       await supabase
         .from('operator_allowlist')

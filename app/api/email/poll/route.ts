@@ -16,6 +16,7 @@ import type { VoiceProfile } from '@/lib/voice-profile'
 import { ensureTagline } from '@/lib/voice-profile'
 import { enqueueHoldPing } from '@/lib/whatsapp/triggers'
 import { applyEscalation } from '@/lib/whatsapp/escalation'
+import { extractHoldTargetDate } from '@/lib/whatsapp/urgency'
 import { resolveOpenEscalations } from '@/lib/caye-agent/tools/write-low/resolve-open-escalations'
 import { htmlToPlainText } from '@/lib/email-text'
 import { maybeRefreshOwnerVoiceProfile } from '@/lib/owner-voice-learning'
@@ -1357,7 +1358,11 @@ async function processMessage(
   if (decision.action === 'hold') {
     await supabase
       .from('unified_conversations')
-      .update({ human_agent_enabled: true, human_agent_reason: decision.reason })
+      .update({
+        human_agent_enabled: true,
+        human_agent_reason: decision.reason,
+        target_date: extractHoldTargetDate(decision.reason, body || subject),
+      })
       .eq('id', conversation.id)
     await supabase.from('unified_messages').insert({
       conversation_id: conversation.id,

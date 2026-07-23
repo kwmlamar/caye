@@ -22,6 +22,7 @@ import { sendZohoReply } from '@/lib/email-ai'
 import { generateCayeAutoReply } from '@/lib/caye-reply'
 import { enqueueHoldPing } from '@/lib/whatsapp/triggers'
 import { applyEscalation } from '@/lib/whatsapp/escalation'
+import { extractHoldTargetDate } from '@/lib/whatsapp/urgency'
 import { syncBookingToCalendar } from '@/lib/calendar-sync'
 import type { VoiceProfile } from '@/lib/voice-profile'
 import { ensureTagline } from '@/lib/voice-profile'
@@ -462,7 +463,11 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
   if (decision.action === 'hold') {
     await supabase
       .from('unified_conversations')
-      .update({ human_agent_enabled: true, human_agent_reason: decision.reason })
+      .update({
+        human_agent_enabled: true,
+        human_agent_reason: decision.reason,
+        target_date: extractHoldTargetDate(decision.reason, effectiveBody || subject),
+      })
       .eq('id', conversation.id)
     await supabase.from('unified_messages').insert({
       conversation_id: conversation.id,
