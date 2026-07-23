@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from 'next'
-import { Geist, JetBrains_Mono, Playfair_Display, Fraunces, Instrument_Serif, DM_Serif_Display, Newsreader, Space_Grotesk } from 'next/font/google'
+import { Geist, IBM_Plex_Mono, Playfair_Display, Fraunces, Instrument_Serif, DM_Serif_Display, Newsreader, Space_Grotesk } from 'next/font/google'
 import { Toaster } from 'sonner'
 import GoogleAnalyticsGate from '@/components/analytics/GoogleAnalyticsGate'
 import './globals.css'
@@ -10,9 +10,15 @@ const geist = Geist({
   subsets: ['latin'],
 })
 
-const jetbrainsMono = JetBrains_Mono({
+// Swapped from JetBrains Mono (2026-07-23) — its tall, geometric
+// letterforms were reported as straining at the small uppercase-caps
+// sizes the founder console runs mono at everywhere (labels, pills,
+// timestamps). Plex Mono has the same technical/console character but
+// far gentler letterforms at 9-11px.
+const ibmPlexMono = IBM_Plex_Mono({
   variable: '--font-mono',
   subsets: ['latin'],
+  weight: ['400', '500', '600', '700'],
 })
 
 const playfair = Playfair_Display({
@@ -83,7 +89,7 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body className={`${geist.variable} ${jetbrainsMono.variable} ${playfair.variable} ${fraunces.variable} ${instrumentSerif.variable} ${dmSerif.variable} ${newsreader.variable} ${spaceGrotesk.variable}`}>
+      <body className={`${geist.variable} ${ibmPlexMono.variable} ${playfair.variable} ${fraunces.variable} ${instrumentSerif.variable} ${dmSerif.variable} ${newsreader.variable} ${spaceGrotesk.variable}`}>
         {children}
         <Toaster position="bottom-right" richColors />
         <GoogleAnalyticsGate />

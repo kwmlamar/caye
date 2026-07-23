@@ -6,8 +6,6 @@ import { CayeMark } from '@/components/brand/CayeMark'
 import { CayeLoadingPulse } from '@/components/dashboard/founder-home/CayeLoadingPulse'
 import CayeDirectThread from './CayeDirectThread'
 
-const CARD_BORDER = '#1f1f23'
-const GRADIENT = 'linear-gradient(90deg, #00778B, #7DC9CB, #FFD68F)'
 const GLASS = { backdropFilter: 'blur(20px) saturate(140%)', WebkitBackdropFilter: 'blur(20px) saturate(140%)' } as const
 
 interface Operator {
@@ -117,13 +115,12 @@ export default function CayeDirect({ workspaceId }: { workspaceId: string }) {
 
   return (
     <div style={{ display: 'flex', height: '100%', color: '#f4f4f5' }}>
-      <div style={{ width: 168, flexShrink: 0, borderRight: `1px solid ${CARD_BORDER}`, display: 'flex', flexDirection: 'column' }}>
-        <div style={{ position: 'relative', padding: '14px 14px 10px', background: 'rgba(255,255,255,0.02)', ...GLASS }}>
+      <div style={{ width: 168, flexShrink: 0, background: 'rgba(255,255,255,0.015)', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ position: 'relative', padding: '14px 14px 10px', background: 'rgba(255,255,255,0.035)', ...GLASS }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <CayeMark size={18} />
             <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 700, letterSpacing: '0.05em' }}>CAYE DIRECT</span>
           </div>
-          <div aria-hidden style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 1, background: GRADIENT, opacity: 0.35 }} />
         </div>
         <div style={{ padding: '8px 6px', flex: 1, overflowY: 'auto' }}>
           {operators === null ? (

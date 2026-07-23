@@ -3,10 +3,10 @@
 import { useState, useEffect } from 'react'
 import { getSession } from '@/lib/supabase'
 import { CayeLoadingPulse } from '@/components/dashboard/founder-home/CayeLoadingPulse'
+import { Pill } from '@/components/dashboard/founder-home/console-ui'
 import type { CustomerStatus } from '@/types/database'
 
-const CARD_BG = '#121214'
-const CARD_BORDER = '#1f1f23'
+const CARD_BG = '#1a1a1e'
 const LABEL_COLOR = '#71717a'
 
 const STATUS_LABEL: Record<CustomerStatus, string> = {
@@ -23,18 +23,7 @@ const STATUS_COLOR: Record<CustomerStatus, string> = {
 }
 
 function StatusPill({ status }: { status: CustomerStatus }) {
-  const color = STATUS_COLOR[status]
-  return (
-    <span style={{
-      fontSize: 10, fontWeight: 600, fontFamily: 'var(--font-mono)', textTransform: 'uppercase',
-      color, background: `${color}1a`, border: `1px solid ${color}33`,
-      borderRadius: 999, padding: '2px 8px', flexShrink: 0,
-      display: 'inline-flex', alignItems: 'center', gap: 5,
-    }}>
-      <span style={{ width: 5, height: 5, borderRadius: '50%', background: color }} />
-      {STATUS_LABEL[status]}
-    </span>
-  )
+  return <Pill color={STATUS_COLOR[status]} label={STATUS_LABEL[status]} />
 }
 
 interface WorkspaceRow {
@@ -125,7 +114,7 @@ function ConversionTrendChart({ daily }: { daily: DailyPoint[] }) {
   const max = Math.max(...daily.map((d) => Math.max(d.conversations, d.bookings)), 1)
 
   return (
-    <div style={{ padding: '4px 16px 16px', borderTop: `1px solid ${CARD_BORDER}` }}>
+    <div style={{ padding: '12px 16px 16px' }}>
       <div style={{ display: 'flex', gap: 20, margin: '10px 0 12px' }}>
         <div>
           <div style={{ fontSize: 9, fontFamily: 'var(--font-mono)', letterSpacing: '0.06em', textTransform: 'uppercase', color: LABEL_COLOR }}>30-day conversations</div>
@@ -219,7 +208,7 @@ export default function GlobalPerformance() {
   return (
     <div style={{ flex: 1, overflowY: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 16, minHeight: 0 }}>
       <div style={{ flexShrink: 0, display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
-        <div style={{ background: CARD_BG, border: `1px solid ${CARD_BORDER}`, borderRadius: 18, padding: '16px 18px' }}>
+        <div style={{ background: CARD_BG, borderRadius: 18, padding: '16px 18px' }}>
           <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', textTransform: 'uppercase', color: LABEL_COLOR, marginBottom: 8 }}>
             Workspaces
           </div>
@@ -227,7 +216,7 @@ export default function GlobalPerformance() {
             {rows?.length ?? '—'}
           </div>
         </div>
-        <div style={{ background: CARD_BG, border: `1px solid ${CARD_BORDER}`, borderRadius: 18, padding: '16px 18px' }}>
+        <div style={{ background: CARD_BG, borderRadius: 18, padding: '16px 18px' }}>
           <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', textTransform: 'uppercase', color: LABEL_COLOR, marginBottom: 8 }}>
             7-day calls (all workspaces)
           </div>
@@ -235,7 +224,7 @@ export default function GlobalPerformance() {
             {rows ? totalCalls.toLocaleString() : '—'}
           </div>
         </div>
-        <div style={{ background: CARD_BG, border: `1px solid ${CARD_BORDER}`, borderRadius: 18, padding: '16px 18px' }}>
+        <div style={{ background: CARD_BG, borderRadius: 18, padding: '16px 18px' }}>
           <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', textTransform: 'uppercase', color: LABEL_COLOR, marginBottom: 8 }}>
             7-day cost (all workspaces)
           </div>
@@ -245,10 +234,10 @@ export default function GlobalPerformance() {
         </div>
       </div>
 
-      <div style={{ flex: 1, minHeight: 0, background: CARD_BG, border: `1px solid ${CARD_BORDER}`, borderRadius: 16, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ flex: 1, minHeight: 0, background: CARD_BG, borderRadius: 16, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         <div style={{
           display: 'grid', gridTemplateColumns: '20px 1fr 110px 130px 130px 110px',
-          padding: '10px 16px', borderBottom: `1px solid ${CARD_BORDER}`,
+          padding: '10px 16px', background: 'rgba(255,255,255,0.025)',
           fontSize: 10, fontFamily: 'var(--font-mono)', letterSpacing: '0.06em', textTransform: 'uppercase', color: LABEL_COLOR,
         }}>
           <span />
@@ -270,7 +259,7 @@ export default function GlobalPerformance() {
               const isOpen = expandedId === r.workspace_id
               const detail = detailCache[r.workspace_id]
               return (
-                <div key={r.workspace_id} style={{ borderBottom: `1px solid ${CARD_BORDER}` }}>
+                <div key={r.workspace_id} style={{ boxShadow: 'inset 0 -1px 0 rgba(255,255,255,0.04)' }}>
                   <button
                     onClick={() => toggleRow(r.workspace_id)}
                     style={{
@@ -301,7 +290,7 @@ export default function GlobalPerformance() {
                     </span>
                   </button>
                   {isOpen && (
-                    <div style={{ borderTop: `1px solid ${CARD_BORDER}`, background: 'rgba(255,255,255,0.02)' }}>
+                    <div style={{ background: 'rgba(255,255,255,0.02)' }}>
                       {detail === 'loading' || detail === undefined ? (
                         <div style={{ padding: 16 }}><CayeLoadingPulse label="Loading trend…" size={14} /></div>
                       ) : detail === 'error' ? (

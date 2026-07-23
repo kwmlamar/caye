@@ -4,12 +4,12 @@ import { useState } from 'react'
 import { formatDistanceToNow } from '@/lib/utils'
 import { useWorkspaceContacts } from '@/lib/useWorkspaceContacts'
 import { CayeLoadingPulse } from '@/components/dashboard/founder-home/CayeLoadingPulse'
+import { Pill } from '@/components/dashboard/founder-home/console-ui'
 import type { Contact } from '@/types/database'
 
 // Same dark-console tokens as FounderHome.tsx — kept local rather than
 // imported since FounderHome doesn't export them.
-const CARD_BG = '#121214'
-const CARD_BORDER = '#1f1f23'
+const CARD_BG = '#1a1a1e'
 const LABEL_COLOR = '#71717a'
 
 const CHANNEL_LABEL: Record<string, string> = {
@@ -31,18 +31,6 @@ function Avatar({ name }: { name: string }) {
     }}>
       {initial}
     </div>
-  )
-}
-
-function StatusChip({ label, color }: { label: string; color: string }) {
-  return (
-    <span style={{
-      fontSize: 10, fontWeight: 600, fontFamily: 'var(--font-mono)', textTransform: 'uppercase',
-      color, background: `${color}1a`, border: `1px solid ${color}33`,
-      borderRadius: 999, padding: '2px 7px', flexShrink: 0,
-    }}>
-      {label}
-    </span>
   )
 }
 
@@ -74,7 +62,7 @@ function ContactDetail({ contact, onClose }: { contact: Contact; onClose: () => 
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
-          width: 360, background: CARD_BG, borderLeft: `1px solid ${CARD_BORDER}`,
+          width: 360, background: CARD_BG, boxShadow: '-24px 0 48px rgba(0,0,0,0.35)',
           padding: 20, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 16,
         }}
       >
@@ -93,8 +81,8 @@ function ContactDetail({ contact, onClose }: { contact: Contact; onClose: () => 
           <button
             onClick={onClose}
             style={{
-              width: 26, height: 26, borderRadius: 8, background: 'rgba(255,255,255,0.06)',
-              border: `1px solid ${CARD_BORDER}`, color: '#a1a1aa', cursor: 'pointer',
+              width: 26, height: 26, borderRadius: 8, background: 'rgba(255,255,255,0.09)',
+              color: '#a1a1aa', cursor: 'pointer',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}
           >
@@ -104,8 +92,8 @@ function ContactDetail({ contact, onClose }: { contact: Contact; onClose: () => 
 
         {(contact.is_blocked || contact.opted_out) && (
           <div style={{ display: 'flex', gap: 6 }}>
-            {contact.is_blocked && <StatusChip label="Blocked" color="#fb7185" />}
-            {contact.opted_out && <StatusChip label="Opted out" color="#fbbf24" />}
+            {contact.is_blocked && <Pill label="Blocked" color="#fb7185" />}
+            {contact.opted_out && <Pill label="Opted out" color="#fbbf24" />}
           </div>
         )}
 
@@ -177,7 +165,7 @@ function ContactRow({ contact, onClick }: { contact: Contact; onClick: () => voi
         </div>
       </div>
       {(contact.is_blocked || contact.opted_out) && (
-        <StatusChip
+        <Pill
           label={contact.is_blocked ? 'Blocked' : 'Opted out'}
           color={contact.is_blocked ? '#fb7185' : '#fbbf24'}
         />

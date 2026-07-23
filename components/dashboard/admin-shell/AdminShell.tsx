@@ -5,6 +5,7 @@ import { getSession } from '@/lib/supabase'
 import { formatDistanceToNow } from '@/lib/utils'
 import { CayeMark } from '@/components/brand/CayeMark'
 import { FormattedReplyText } from '@/components/ui/FormattedReplyText'
+import { Pill } from '@/components/dashboard/founder-home/console-ui'
 
 const CARD_BORDER = '#1f1f23'
 const NEAR_BOTTOM_PX = 96
@@ -64,10 +65,9 @@ function QuickCommandChip({ label, onClick, disabled }: { label: string; onClick
         display: 'inline-flex', alignItems: 'center', gap: 5,
         fontSize: 11, fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap',
         color: hover && !disabled ? '#dff4f4' : '#a1a1aa',
-        background: hover && !disabled ? 'rgba(125,201,203,0.1)' : 'rgba(255,255,255,0.03)',
-        border: `1px solid ${hover && !disabled ? 'rgba(125,201,203,0.45)' : CARD_BORDER}`,
+        background: hover && !disabled ? 'rgba(125,201,203,0.14)' : 'rgba(255,255,255,0.055)',
         borderRadius: 999, padding: '5px 10px 5px 8px', cursor: disabled ? 'default' : 'pointer',
-        transition: 'background 0.15s ease, border-color 0.15s ease, color 0.15s ease',
+        transition: 'background 0.15s ease, color 0.15s ease',
       }}
     >
       <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" style={{ opacity: 0.7, flexShrink: 0 }}>
@@ -288,12 +288,10 @@ export default function AdminShell() {
         .admin-shell-textarea::placeholder { color: rgba(244,244,245,0.32); }
       `}</style>
 
-      <div style={{ padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 8, borderBottom: `1px solid ${CARD_BORDER}`, background: 'rgba(255,255,255,0.02)', ...GLASS }}>
+      <div style={{ padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(255,255,255,0.035)', ...GLASS }}>
         <span style={{ fontSize: 12.5, fontWeight: 600 }}>Admin Shell</span>
         <span style={{ fontSize: 11, color: '#52525b' }}>↔ Caye (dev/ops)</span>
-        <span style={{ fontSize: 9, fontFamily: 'var(--font-mono)', color: '#71717a', background: 'rgba(255,255,255,0.05)', border: `1px solid ${CARD_BORDER}`, borderRadius: 999, padding: '2px 8px', marginLeft: 'auto' }}>
-          FOUNDER ONLY
-        </span>
+        <div style={{ marginLeft: 'auto' }}><Pill color="#71717a" label="Founder only" dot={false} /></div>
       </div>
 
       <div style={{ position: 'relative', flex: 1, minHeight: 0 }}>
@@ -334,7 +332,7 @@ export default function AdminShell() {
                       </div>
                     ) : (
                       <div style={{
-                        background: 'rgba(255,255,255,0.06)', border: `1px solid ${CARD_BORDER}`,
+                        background: 'rgba(255,255,255,0.08)',
                         borderRadius: bubbleRadius(isCaye, pos), padding: '9px 12px',
                       }}>
                         <p style={{ fontSize: 13.5, lineHeight: 1.55, whiteSpace: 'pre-wrap', color: '#f4f4f5' }}>{m.body}</p>
@@ -376,7 +374,7 @@ export default function AdminShell() {
         )}
       </div>
 
-      <div style={{ padding: 14, borderTop: `1px solid ${CARD_BORDER}`, background: 'rgba(255,255,255,0.02)', ...GLASS }}>
+      <div style={{ padding: 14, background: 'rgba(255,255,255,0.035)', ...GLASS }}>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
           {QUICK_COMMANDS.map((cmd) => (
             <QuickCommandChip key={cmd} label={cmd} disabled={sending} onClick={() => send(cmd)} />

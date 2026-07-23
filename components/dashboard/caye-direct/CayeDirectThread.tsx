@@ -5,10 +5,10 @@ import { getSession } from '@/lib/supabase'
 import { formatDistanceToNow } from '@/lib/utils'
 import { CayeMark } from '@/components/brand/CayeMark'
 import { FormattedReplyText } from '@/components/ui/FormattedReplyText'
+import { Pill } from '@/components/dashboard/founder-home/console-ui'
 
-const CARD_BORDER = '#1f1f23'
 const NEAR_BOTTOM_PX = 96
-const TEXTAREA_MAX_H = 120
+const TEXTAREA_MAX_H = 220
 const GLASS = { backdropFilter: 'blur(20px) saturate(140%)', WebkitBackdropFilter: 'blur(20px) saturate(140%)' } as const
 
 interface OperatorMessage {
@@ -64,10 +64,9 @@ function QuickCommandChip({ label, onClick, disabled }: { label: string; onClick
         display: 'inline-flex', alignItems: 'center', gap: 5,
         fontSize: 11, fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap',
         color: hover && !disabled ? '#dff4f4' : '#a1a1aa',
-        background: hover && !disabled ? 'rgba(125,201,203,0.1)' : 'rgba(255,255,255,0.03)',
-        border: `1px solid ${hover && !disabled ? 'rgba(125,201,203,0.45)' : CARD_BORDER}`,
+        background: hover && !disabled ? 'rgba(125,201,203,0.14)' : 'rgba(255,255,255,0.055)',
         borderRadius: 999, padding: '5px 10px 5px 8px', cursor: disabled ? 'default' : 'pointer',
-        transition: 'background 0.15s ease, border-color 0.15s ease, color 0.15s ease',
+        transition: 'background 0.15s ease, color 0.15s ease',
       }}
     >
       <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" style={{ opacity: 0.7, flexShrink: 0 }}>
@@ -162,7 +161,6 @@ interface Props {
 export default function CayeDirectThread({ workspaceId, operatorId, operatorLabel, readOnly }: Props) {
   const [messages, setMessages] = useState<OperatorMessage[]>([])
   const [input, setInput] = useState('')
-  const [inputFocused, setInputFocused] = useState(false)
   const [loading, setLoading] = useState(true)
   const [sending, setSending] = useState(false)
   const [showJump, setShowJump] = useState(false)
@@ -309,13 +307,11 @@ export default function CayeDirectThread({ workspaceId, operatorId, operatorLabe
         .caye-direct-textarea::placeholder { color: rgba(244,244,245,0.32); }
       `}</style>
 
-      <div style={{ padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 8, borderBottom: `1px solid ${CARD_BORDER}`, background: 'rgba(255,255,255,0.02)', ...GLASS }}>
+      <div style={{ padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(255,255,255,0.035)', ...GLASS }}>
         <span style={{ fontSize: 12.5, fontWeight: 600 }}>{operatorLabel}</span>
         <span style={{ fontSize: 11, color: '#52525b' }}>↔ Caye</span>
         {readOnly && (
-          <span style={{ fontSize: 9, fontFamily: 'var(--font-mono)', color: '#71717a', background: 'rgba(255,255,255,0.05)', border: `1px solid ${CARD_BORDER}`, borderRadius: 999, padding: '2px 8px', marginLeft: 'auto' }}>
-            READ-ONLY · REPLIES VIA WHATSAPP
-          </span>
+          <div style={{ marginLeft: 'auto' }}><Pill color="#71717a" label="Read-only · replies via WhatsApp" dot={false} /></div>
         )}
       </div>
 
@@ -362,7 +358,7 @@ export default function CayeDirectThread({ workspaceId, operatorId, operatorLabe
                       </div>
                     ) : (
                       <div style={{
-                        background: 'rgba(255,255,255,0.06)', border: `1px solid ${CARD_BORDER}`,
+                        background: 'rgba(255,255,255,0.08)',
                         borderRadius: bubbleRadius(isCaye, pos), padding: '9px 12px',
                       }}>
                         <p style={{ fontSize: 13.5, lineHeight: 1.55, whiteSpace: 'pre-wrap', color: '#f4f4f5' }}>{m.body}</p>
@@ -405,58 +401,59 @@ export default function CayeDirectThread({ workspaceId, operatorId, operatorLabe
       </div>
 
       {readOnly ? (
-        <div style={{ padding: '12px 16px', borderTop: `1px solid ${CARD_BORDER}`, fontSize: 11.5, color: '#52525b', textAlign: 'center', background: 'rgba(255,255,255,0.02)', ...GLASS }}>
+        <div style={{ padding: '12px 16px', fontSize: 11.5, color: '#52525b', textAlign: 'center', background: 'rgba(255,255,255,0.035)', ...GLASS }}>
           {operatorLabel} texts Caye directly from their own WhatsApp — you can watch here, not send as them.
         </div>
       ) : (
-        <div style={{ padding: 14, borderTop: `1px solid ${CARD_BORDER}`, background: 'rgba(255,255,255,0.02)', ...GLASS }}>
+        <div style={{ padding: 14, background: 'rgba(255,255,255,0.035)', ...GLASS }}>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
             {QUICK_COMMANDS.map((cmd) => (
               <QuickCommandChip key={cmd} label={cmd} disabled={sending} onClick={() => send(cmd)} />
             ))}
           </div>
-          <form
-            onSubmit={(e) => { e.preventDefault(); send(input) }}
-            style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}
-          >
-            <textarea
-              ref={textareaRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onFocus={() => setInputFocused(true)}
-              onBlur={() => setInputFocused(false)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(input) }
-              }}
-              placeholder="Direct command to Caye (e.g. 'pause yuhself')…"
-              disabled={sending}
-              rows={1}
-              className="caye-direct-textarea"
-              style={{
-                flex: 1, resize: 'none', background: 'rgba(255,255,255,0.05)',
-                border: `1px solid ${inputFocused ? 'rgba(125,201,203,0.55)' : CARD_BORDER}`,
-                borderRadius: 14, padding: '9px 12px', fontSize: 13, lineHeight: 1.4, color: '#f4f4f5', outline: 'none',
-                fontFamily: 'var(--font-sans)', maxHeight: TEXTAREA_MAX_H,
-                boxShadow: inputFocused ? '0 0 0 3px rgba(125,201,203,0.12)' : 'none',
-                transition: 'border-color 0.15s ease, box-shadow 0.15s ease',
-              }}
-            />
-            <button
-              type="submit"
-              disabled={sending || !input.trim()}
-              style={{
-                width: 36, height: 36, borderRadius: '50%', flexShrink: 0,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                background: 'linear-gradient(135deg, #00778B, #7DC9CB)', border: 'none', color: '#0a0a0b',
-                cursor: sending ? 'default' : 'pointer',
-                opacity: !input.trim() || sending ? 0.4 : 1,
-                transition: 'opacity 0.15s ease, transform 0.1s ease',
-              }}
-            >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="12" y1="19" x2="12" y2="5" /><polyline points="5 12 12 5 19 12" />
-              </svg>
-            </button>
+          <form onSubmit={(e) => { e.preventDefault(); send(input) }}>
+            <div style={{
+              display: 'flex', alignItems: 'flex-end', gap: 8,
+              borderRadius: 20,
+              background: 'rgba(255,255,255,0.04)', padding: '8px 8px 8px 14px',
+            }}>
+              <textarea
+                ref={textareaRef}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(input) }
+                }}
+                placeholder="Direct command to Caye (e.g. 'pause yuhself')…"
+                disabled={sending}
+                rows={1}
+                className="caye-direct-textarea"
+                style={{
+                  flex: 1, resize: 'none', overflowY: 'auto',
+                  maxHeight: TEXTAREA_MAX_H,
+                  background: 'transparent', border: 'none',
+                  padding: '6px 0', fontSize: 13.5, lineHeight: 1.5, color: '#f4f4f5',
+                  outline: 'none', fontFamily: 'inherit',
+                }}
+              />
+              <button
+                type="submit"
+                disabled={sending || !input.trim()}
+                style={{
+                  flexShrink: 0, width: 32, height: 32, borderRadius: '50%', border: 'none',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  cursor: sending || !input.trim() ? 'default' : 'pointer',
+                  background: sending || !input.trim() ? 'rgba(255,255,255,0.08)' : '#7DC9CB',
+                  transition: 'background 0.15s ease',
+                }}
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+                  stroke={!input.trim() ? 'rgba(245,245,244,0.35)' : '#0a0a0b'}
+                  strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="12" y1="19" x2="12" y2="5" /><polyline points="5 12 12 5 19 12" />
+                </svg>
+              </button>
+            </div>
           </form>
         </div>
       )}

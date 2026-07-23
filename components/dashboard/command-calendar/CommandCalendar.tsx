@@ -2,11 +2,11 @@
 
 import type { ReactNode } from 'react'
 import type { Booking } from '@/lib/useCommandOverview'
+import { Pill } from '@/components/dashboard/founder-home/console-ui'
 
 // Same dark-console tokens as FounderHome.tsx — kept local rather than
 // imported since FounderHome doesn't export them (matches the pattern
 // already used by GlobalPerformance.tsx / ContactsPanel.tsx).
-const CARD_BORDER = '#1f1f23'
 const LABEL_COLOR = '#71717a'
 const GRADIENT = 'linear-gradient(90deg, #00778B, #7DC9CB, #FFD68F)'
 
@@ -62,7 +62,7 @@ function NavButton({ onClick, disabled, children, title }: { onClick: () => void
       title={title}
       style={{
         width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center',
-        borderRadius: 6, border: `1px solid ${CARD_BORDER}`, background: 'rgba(255,255,255,0.03)',
+        borderRadius: 6, background: 'rgba(255,255,255,0.06)',
         color: disabled ? '#3f3f46' : '#a1a1aa', cursor: disabled ? 'default' : 'pointer',
         transition: 'background 0.15s ease, color 0.15s ease',
       }}
@@ -109,9 +109,7 @@ export default function CommandCalendar({ bookings, weekStart, weekOffset, onWee
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 600, letterSpacing: '0.06em', color: LABEL_COLOR }}>SOURCE CALENDAR</span>
-            <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', fontWeight: 600, color: '#7DC9CB', background: 'rgba(125,201,203,0.1)', border: '1px solid rgba(125,201,203,0.3)', borderRadius: 999, padding: '2px 8px' }}>
-              SYNCED
-            </span>
+            <Pill color="#7DC9CB" label="Synced" dot={false} />
           </div>
           <p style={{ fontSize: 12, color: 'rgba(245,245,244,0.4)', marginTop: 4 }}>
             {fmtDayMonth(monday)} – {fmtDayMonth(sunday)}{weekOffset === 0 && <span style={{ color: '#7DC9CB' }}> · this week</span>}
@@ -126,7 +124,7 @@ export default function CommandCalendar({ bookings, weekStart, weekOffset, onWee
               onClick={() => onWeekOffsetChange(0)}
               style={{
                 height: 24, padding: '0 10px', fontSize: 10.5, fontWeight: 600, fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.06em',
-                borderRadius: 6, border: `1px solid ${CARD_BORDER}`, background: 'rgba(255,255,255,0.03)', color: '#a1a1aa', cursor: 'pointer',
+                borderRadius: 6, background: 'rgba(255,255,255,0.06)', color: '#a1a1aa', cursor: 'pointer',
               }}
             >
               Today
@@ -142,8 +140,8 @@ export default function CommandCalendar({ bookings, weekStart, weekOffset, onWee
         {week.map((d) => (
           <div key={d.label} style={{
             position: 'relative', overflow: 'hidden', display: 'flex', flexDirection: 'column',
-            background: d.isToday ? 'rgba(125,201,203,0.07)' : 'rgba(255,255,255,0.03)',
-            border: `1px solid ${d.isToday ? 'rgba(125,201,203,0.4)' : 'rgba(255,255,255,0.07)'}`,
+            background: d.isToday ? 'rgba(125,201,203,0.07)' : 'rgba(255,255,255,0.045)',
+            border: d.isToday ? '1px solid rgba(125,201,203,0.4)' : 'none',
             borderRadius: 10, padding: d.isToday ? 10 : 8,
           }}>
             {d.isToday && <div aria-hidden style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 2, background: GRADIENT }} />}
@@ -166,7 +164,7 @@ export default function CommandCalendar({ bookings, weekStart, weekOffset, onWee
                     onClick={() => handleBookingClick(b)}
                     disabled={!b.conversation_id}
                     style={{
-                      textAlign: 'left', border: `1px solid ${CARD_BORDER}`, background: 'rgba(255,255,255,0.04)',
+                      textAlign: 'left', background: 'rgba(255,255,255,0.06)',
                       borderRadius: '3px 8px 8px 8px', padding: '7px 9px', cursor: b.conversation_id ? 'pointer' : 'default',
                       borderLeft: `2px solid ${STATUS_COLOR[b.status] ?? LABEL_COLOR}`,
                     }}
