@@ -210,12 +210,31 @@ export function shouldExpireBookkeeping(row: EscalationRow): boolean {
  * Direct thread on an owner-routed row (the owner has no reason to care
  * that the founder was pinged — what matters to them is that the thread
  * is still sitting on THEM, unresolved).
+ *
+ * Claims the row via a conditional `expired_at IS NULL` update BEFORE
+ * writing any note (2026-07-24 fix): this function is reachable from two
+ * independent call sites racing the same row (the hourly cron and a
+ * founder-triggered manual rerun of it, both via processEscalation in
+ * cron/route.ts) and previously set expired_at only at the very end, so
+ * two concurrent runs could both pass shouldExpireBookkeeping's gate and
+ * both insert a closing note — Karenda saw the same "auto-nagging" line
+ * duplicated in Caye Direct. Only the caller whose UPDATE actually flips
+ * the row from null moves on to inserting recipient notes.
  */
 export async function expireEscalationBookkeepingOnly(
   row: EscalationRow,
   contactName: string
 ): Promise<void> {
   const supabase = createServiceClient()
+
+  const { data: claimed } = await supabase
+    .from('caye_escalations')
+    .update({ expired_at: new Date().toISOString() })
+    .eq('id', row.id)
+    .is('expired_at', null)
+    .select('id')
+    .maybeSingle()
+  if (!claimed) return
 
   const recipients = await resolveEscalationRecipients(row.workspace_id, row.route_to)
   for (const recipient of recipients) {
@@ -239,11 +258,6 @@ export async function expireEscalationBookkeepingOnly(
       operator_role: operator?.role ?? null,
     })
   }
-
-  await supabase
-    .from('caye_escalations')
-    .update({ expired_at: new Date().toISOString() })
-    .eq('id', row.id)
 }
 
 /**
@@ -257,12 +271,28 @@ export async function expireEscalationBookkeepingOnly(
  * of both this cron's and the digest's selection queries, and clears the
  * conversation's hold flag so it also drops out of the inbox's
  * needs-review view.
+ *
+ * Claims the row via a conditional `expired_at IS NULL` update BEFORE
+ * writing any note (2026-07-24 fix, same race as
+ * expireEscalationBookkeepingOnly above): this is also reachable from two
+ * racing call sites (hourly cron + founder-triggered manual rerun, both via
+ * processEscalation), and previously only set expired_at at the end.
  */
 export async function expireEscalationLogOnly(
   row: EscalationRow,
   contactName: string
 ): Promise<void> {
   const supabase = createServiceClient()
+
+  const { data: claimed } = await supabase
+    .from('caye_escalations')
+    .update({ expired_at: new Date().toISOString() })
+    .eq('id', row.id)
+    .is('expired_at', null)
+    .select('id')
+    .maybeSingle()
+  if (!claimed) return
+
   const dateLabel = row.target_date
     ? new Date(`${row.target_date}T00:00:00Z`).toLocaleDateString('en-US', {
         month: 'short',
@@ -290,11 +320,6 @@ export async function expireEscalationLogOnly(
       operator_role: operator?.role ?? null,
     })
   }
-
-  await supabase
-    .from('caye_escalations')
-    .update({ expired_at: new Date().toISOString() })
-    .eq('id', row.id)
 
   if (row.conversation_id) {
     await supabase

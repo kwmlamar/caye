@@ -23,8 +23,27 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient, createServerClient } from '@/lib/supabase-server'
 import { isFounderUserId } from '@/lib/founder'
 import { cayeAgent } from '@/lib/caye-agent'
-import { persistAgentTurns } from '@/lib/caye-operator-messages'
+import { persistAgentTurns, isInternalOnlyBody } from '@/lib/caye-operator-messages'
 import { resolveFounderOperator } from '@/lib/operator-identity'
+
+/**
+ * Collapse immediate repeats (same direction + identical body back to
+ * back) before rendering. Fixes duplicate-insert bugs upstream (e.g. two
+ * racing cron runs writing the same closing note twice — see
+ * decisions-log.md 2026-07-24) showing up as repeated bubbles, without
+ * touching the underlying rows or the agent's history replay off this
+ * same table. Only merges adjacent matches, so two genuinely separate
+ * "yes" replies on different days won't get eaten.
+ */
+function dedupeConsecutive<T extends { direction: string; body: string }>(rows: T[]): T[] {
+  const out: T[] = []
+  for (const row of rows) {
+    const prev = out[out.length - 1]
+    if (prev && prev.direction === row.direction && prev.body === row.body) continue
+    out.push(row)
+  }
+  return out
+}
 
 async function requireFounder(req: NextRequest) {
   const authHeader = req.headers.get('authorization')
@@ -73,7 +92,9 @@ export async function GET(req: NextRequest) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  return NextResponse.json({ operatorId, messages: (data ?? []).reverse() })
+  const visible = dedupeConsecutive((data ?? []).filter((m) => !isInternalOnlyBody(m.body)))
+
+  return NextResponse.json({ operatorId, messages: visible.reverse() })
 }
 
 export async function POST(req: NextRequest) {

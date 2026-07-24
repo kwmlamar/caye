@@ -21,6 +21,20 @@ export function summarizeTurnBody(turn: Anthropic.MessageParam): string {
   return parts.join(' ').trim() || '[empty]'
 }
 
+const TOOL_MARKER_RE = /\[tool_use: [^\]]+\]|\[tool_result\]/g
+
+/**
+ * A turn whose body is nothing but tool_use/tool_result markers (see
+ * summarizeTurnBody above) — real for the agent's own history replay via
+ * claude_format, but internal scratch that a human reading Caye Direct
+ * shouldn't see as a raw "[tool_use: get_customer_history]" bubble. Used
+ * to filter the human-facing GET response, not to skip persisting the row.
+ */
+export function isInternalOnlyBody(body: string): boolean {
+  if (body === '[empty]') return true
+  return body.replace(TOOL_MARKER_RE, '').trim().length === 0
+}
+
 /**
  * Persists every turn produced during a cayeAgent tool loop so the next
  * sliding-window load reconstructs the full Claude history. direction
