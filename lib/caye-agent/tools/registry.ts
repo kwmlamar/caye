@@ -12,6 +12,7 @@ import { getPendingQuotes } from './read/get-pending-quotes'
 import { searchThreads } from './read/search-threads'
 import { queryBusinessKnowledge } from './read/query-business-knowledge'
 import { getServices } from './read/get-services'
+import { getTeamMembers } from './read/get-team-members'
 import { markHandled } from './write-low/mark-handled'
 import { addBusinessFact } from './write-low/add-business-fact'
 import { updateServicePrice } from './write-low/update-service-price'
@@ -49,7 +50,7 @@ import { gateAdminHighRisk } from './admin/admin-high-risk-gate'
 /**
  * All tools available to the back-office agent.
  *
- * Read tools (10): #38 + #40 — autonomous execution
+ * Read tools (11): #38 + #40 — autonomous execution
  * Low-risk write tools (18): #37 — autonomous execution
  * High-risk write tools (6): #42/#43 — gated through confirmation flow
  * Driver-mode tools (4, 2026-07-05): tagged modes: ['driver'] — never
@@ -71,6 +72,7 @@ export const TOOL_REGISTRY: AnyTool[] = [
   searchThreads as AnyTool,
   queryBusinessKnowledge as AnyTool,
   getServices as AnyTool,
+  getTeamMembers as AnyTool,
   // Low-risk write
   markHandled as AnyTool,
   addBusinessFact as AnyTool,
