@@ -111,7 +111,12 @@
     resize: none;
   }
 
-  ::selection { background: var(--tc-coral); color: #fff; }
+  /* Caye's own teal accent (#7DC9CB, used pervasively across the console
+     for anything "hers"), translucent so selected text keeps its own
+     color (e.g. a green status label stays legible) instead of a solid
+     fill forcing white — closer to how Claude.ai itself renders a
+     selection. */
+  ::selection { background: rgba(125, 201, 203, 0.35); color: inherit; }
 }
 
 .kbd {
@@ -502,7 +507,7 @@
 }
 .lp-page section, .lp-page .lp-marquee { position: relative; z-index: 2; }
 .lp-page a { color: inherit; text-decoration: none; }
-::selection { background: var(--lp-coral); color: #fff; }
+.lp-page ::selection { background: var(--lp-coral); color: #fff; }
 
 /* TYPE */
 .lp-display {
