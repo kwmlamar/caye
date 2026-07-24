@@ -502,7 +502,7 @@ export default function CayeDirectThread({ workspaceId, operatorId, operatorLabe
                   }
                   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(input) }
                 }}
-                placeholder="Direct command to Caye (e.g. 'pause yuhself')…"
+                placeholder="Direct command to Caye…"
                 disabled={sending}
                 rows={1}
                 className="caye-direct-textarea"
