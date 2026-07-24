@@ -12,7 +12,14 @@ import { runToolLoop } from './execute'
 import type { Role } from './tools/types'
 
 const MODEL = 'claude-sonnet-4-6'
-const MAX_OUTPUT_TOKENS = 1024
+// Was 1024 — nowhere near enough for a single tool call that drafts many
+// leads at once (create_outreach_leads with 16-20+ leads truncates mid-
+// JSON at 1024, producing a malformed tool call the model then narrates
+// as "something's blocking the tool call" and falls back to dumping text
+// in chat instead). 8192 is the standard non-extended ceiling for this
+// model family — comfortably covers large batch drafts without needing
+// the output-128k beta header.
+const MAX_OUTPUT_TOKENS = 8192
 
 // Not a real customers.id — admin-shell has no workspace concept at all.
 // Exists only so ToolContext.workspaceId (required, read by every other
