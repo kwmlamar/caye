@@ -307,7 +307,7 @@ export default function CayeDirectThread({ workspaceId, operatorId, operatorLabe
         .caye-direct-textarea::placeholder { color: rgba(244,244,245,0.32); }
       `}</style>
 
-      <div style={{ padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(255,255,255,0.035)', ...GLASS }}>
+      <div style={{ padding: '14px 40px 14px 16px', display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(255,255,255,0.035)', ...GLASS }}>
         <span style={{ fontSize: 12.5, fontWeight: 600 }}>{operatorLabel}</span>
         <span style={{ fontSize: 11, color: '#52525b' }}>↔ Caye</span>
         {readOnly && (
