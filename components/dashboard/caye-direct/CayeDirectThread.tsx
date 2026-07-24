@@ -20,7 +20,12 @@ interface OperatorMessage {
 
 type GroupPos = 'single' | 'first' | 'middle' | 'last'
 
-const QUICK_COMMANDS = ['pause yuhself', 'status briefing', 'vibe check', 'cancellation override']
+// Local slash commands, handled client-side in send() rather than sent to
+// the agent — add new ones here as they come up.
+interface SlashCommand { name: string; description: string }
+const SLASH_COMMANDS: SlashCommand[] = [
+  { name: 'clear', description: "Wipe this conversation — Caye won't remember it after" },
+]
 
 function dayLabel(iso: string): string {
   const d = new Date(iso)
@@ -52,47 +57,25 @@ function DateDivider({ label }: { label: string }) {
   )
 }
 
-function QuickCommandChip({ label, onClick, disabled }: { label: string; onClick: () => void; disabled: boolean }) {
-  const [hover, setHover] = useState(false)
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      style={{
-        display: 'inline-flex', alignItems: 'center', gap: 5,
-        fontSize: 11, fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap',
-        color: hover && !disabled ? '#dff4f4' : '#a1a1aa',
-        background: hover && !disabled ? 'rgba(125,201,203,0.14)' : 'rgba(255,255,255,0.055)',
-        borderRadius: 999, padding: '5px 10px 5px 8px', cursor: disabled ? 'default' : 'pointer',
-        transition: 'background 0.15s ease, color 0.15s ease',
-      }}
-    >
-      <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" style={{ opacity: 0.7, flexShrink: 0 }}>
-        <path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z" />
-      </svg>
-      {label}
-    </button>
-  )
-}
-
 function TypingIndicator() {
   return (
     <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, alignSelf: 'flex-start', animation: 'caye-msg-in 0.25s ease-out' }}>
       <CayeMark size={20} />
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: 3,
-        background: 'rgba(0,119,139,0.14)', border: '1px solid rgba(0,119,139,0.35)',
-        borderRadius: '16px 16px 16px 4px', padding: '11px 13px',
-      }}>
+      <div
+        className="caye-typing-bubble"
+        style={{
+          display: 'flex', alignItems: 'center', gap: 4,
+          borderRadius: '16px 16px 16px 4px', padding: '12px 14px',
+        }}
+      >
         {[0, 1, 2].map((i) => (
           <span
             key={i}
             style={{
-              width: 5, height: 5, borderRadius: '50%', background: '#7DC9CB',
-              animation: 'caye-typing-dot 1.1s ease-in-out infinite',
-              animationDelay: `${i * 0.15}s`,
+              width: 5, height: 5, borderRadius: '50%',
+              background: 'linear-gradient(135deg, #9EE3E5, #7DC9CB)',
+              animation: 'caye-typing-dot 1.2s ease-in-out infinite',
+              animationDelay: `${i * 0.16}s`,
             }}
           />
         ))}
@@ -121,6 +104,48 @@ function MessageSkeleton() {
   )
 }
 
+function CommandMenu({
+  commands, activeIndex, onHover, onSelect,
+}: {
+  commands: SlashCommand[]
+  activeIndex: number
+  onHover: (i: number) => void
+  onSelect: (cmd: SlashCommand) => void
+}) {
+  return (
+    <div
+      style={{
+        position: 'absolute', left: 0, right: 0, bottom: '100%', marginBottom: 8,
+        background: 'rgba(24,24,27,0.97)', ...GLASS,
+        borderRadius: 12, overflow: 'hidden',
+        boxShadow: '0 16px 36px -10px rgba(0,0,0,0.65)',
+        animation: 'caye-msg-in 0.15s ease-out',
+      }}
+    >
+      {commands.map((cmd, i) => (
+        <div
+          key={cmd.name}
+          onMouseDown={(e) => { e.preventDefault(); onSelect(cmd) }}
+          onMouseEnter={() => onHover(i)}
+          style={{
+            display: 'flex', alignItems: 'baseline', gap: 10, padding: '9px 12px',
+            background: i === activeIndex ? 'rgba(125,201,203,0.14)' : 'transparent',
+            cursor: 'pointer', transition: 'background 0.1s ease',
+          }}
+        >
+          <span style={{
+            fontFamily: 'var(--font-mono)', fontSize: 12.5, fontWeight: 600,
+            color: i === activeIndex ? '#7DC9CB' : '#f4f4f5', flexShrink: 0,
+          }}>
+            /{cmd.name}
+          </span>
+          <span style={{ fontSize: 11.5, color: '#71717a' }}>{cmd.description}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function EmptyState({ operatorLabel, readOnly }: { operatorLabel: string; readOnly: boolean }) {
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, textAlign: 'center', padding: '0 30px' }}>
@@ -135,7 +160,7 @@ function EmptyState({ operatorLabel, readOnly }: { operatorLabel: string; readOn
         <p style={{ fontSize: 12.5, color: '#71717a', lineHeight: 1.55, marginTop: 6, maxWidth: 260 }}>
           {readOnly
             ? `Nothing to show yet — this fills in once ${operatorLabel} texts Caye's back-office number.`
-            : "This is the same agent that runs your back office over WhatsApp. Send a command below, or tap a shortcut to get going."}
+            : "This is the same agent that runs your back office over WhatsApp. Send a message below to get going."}
         </p>
       </div>
     </div>
@@ -164,9 +189,26 @@ export default function CayeDirectThread({ workspaceId, operatorId, operatorLabe
   const [loading, setLoading] = useState(true)
   const [sending, setSending] = useState(false)
   const [showJump, setShowJump] = useState(false)
+  const [clearing, setClearing] = useState(false)
+  const [commandIndex, setCommandIndex] = useState(0)
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const atBottomRef = useRef(true)
+
+  // Still typing the "/command" token itself (no space yet) — filter the
+  // registry against it and show the picker while there's a match.
+  const slashQuery = input.startsWith('/') && !input.includes(' ') ? input.slice(1).toLowerCase() : null
+  const filteredCommands = slashQuery !== null
+    ? SLASH_COMMANDS.filter((c) => c.name.startsWith(slashQuery))
+    : []
+  const showCommandMenu = filteredCommands.length > 0
+  const activeCommandIndex = Math.min(commandIndex, filteredCommands.length - 1)
+
+  function selectCommand(cmd: SlashCommand) {
+    setInput(`/${cmd.name} `)
+    setCommandIndex(0)
+    textareaRef.current?.focus()
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -226,9 +268,30 @@ export default function CayeDirectThread({ workspaceId, operatorId, operatorLabe
     setShowJump(false)
   }
 
+  async function handleClear() {
+    if (clearing) return
+    setClearing(true)
+    setMessages([])
+    const { session } = await getSession()
+    if (session) {
+      await fetch(`/api/founder/caye-direct?workspaceId=${workspaceId}&operatorId=${operatorId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      })
+    }
+    setClearing(false)
+  }
+
   async function send(text: string) {
     const trimmed = text.trim()
     if (!trimmed || sending || readOnly) return
+
+    if (trimmed.toLowerCase() === '/clear') {
+      setInput('')
+      await handleClear()
+      return
+    }
+
     setSending(true)
     setInput('')
     atBottomRef.current = true
@@ -291,8 +354,8 @@ export default function CayeDirectThread({ workspaceId, operatorId, operatorLabe
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', flex: 1, minWidth: 0, color: '#f4f4f5' }}>
       <style>{`
         @keyframes caye-typing-dot {
-          0%, 60%, 100% { opacity: 0.25; transform: translateY(0); }
-          30% { opacity: 1; transform: translateY(-2px); }
+          0%, 60%, 100% { opacity: 0.3; transform: translateY(0) scale(0.85); }
+          30% { opacity: 1; transform: translateY(-3px) scale(1); }
         }
         @keyframes caye-msg-in {
           from { opacity: 0; transform: translateY(6px); }
@@ -304,7 +367,13 @@ export default function CayeDirectThread({ workspaceId, operatorId, operatorLabe
         }
         .caye-direct-scroll::-webkit-scrollbar { width: 6px; }
         .caye-direct-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 3px; }
+        .caye-direct-scroll ::selection { background: rgba(125, 201, 203, 0.35); color: inherit; }
+        .caye-direct-scroll ::-moz-selection { background: rgba(125, 201, 203, 0.35); color: inherit; }
         .caye-direct-textarea::placeholder { color: rgba(244,244,245,0.32); }
+        .caye-typing-bubble {
+          background: linear-gradient(155deg, rgba(0,119,139,0.20), rgba(0,119,139,0.09));
+          box-shadow: 0 1px 0 rgba(255,255,255,0.05) inset, 0 6px 16px -8px rgba(0,119,139,0.5);
+        }
       `}</style>
 
       <div style={{ padding: '14px 40px 14px 16px', display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(255,255,255,0.035)', ...GLASS }}>
@@ -405,12 +474,15 @@ export default function CayeDirectThread({ workspaceId, operatorId, operatorLabe
           {operatorLabel} texts Caye directly from their own WhatsApp — you can watch here, not send as them.
         </div>
       ) : (
-        <div style={{ padding: 14, background: 'rgba(255,255,255,0.035)', ...GLASS }}>
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
-            {QUICK_COMMANDS.map((cmd) => (
-              <QuickCommandChip key={cmd} label={cmd} disabled={sending} onClick={() => send(cmd)} />
-            ))}
-          </div>
+        <div style={{ padding: 14, background: 'rgba(255,255,255,0.035)', position: 'relative', ...GLASS }}>
+          {showCommandMenu && (
+            <CommandMenu
+              commands={filteredCommands}
+              activeIndex={activeCommandIndex}
+              onHover={setCommandIndex}
+              onSelect={selectCommand}
+            />
+          )}
           <form onSubmit={(e) => { e.preventDefault(); send(input) }}>
             <div style={{
               display: 'flex', alignItems: 'flex-end', gap: 8,
@@ -420,8 +492,14 @@ export default function CayeDirectThread({ workspaceId, operatorId, operatorLabe
               <textarea
                 ref={textareaRef}
                 value={input}
-                onChange={(e) => setInput(e.target.value)}
+                onChange={(e) => { setInput(e.target.value); setCommandIndex(0) }}
                 onKeyDown={(e) => {
+                  if (showCommandMenu) {
+                    if (e.key === 'ArrowDown') { e.preventDefault(); setCommandIndex((i) => Math.min(i + 1, filteredCommands.length - 1)); return }
+                    if (e.key === 'ArrowUp') { e.preventDefault(); setCommandIndex((i) => Math.max(i - 1, 0)); return }
+                    if (e.key === 'Tab' || e.key === 'Enter') { e.preventDefault(); selectCommand(filteredCommands[activeCommandIndex]); return }
+                    if (e.key === 'Escape') { e.preventDefault(); setInput(''); return }
+                  }
                   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(input) }
                 }}
                 placeholder="Direct command to Caye (e.g. 'pause yuhself')…"

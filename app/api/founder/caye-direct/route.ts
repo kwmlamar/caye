@@ -122,3 +122,44 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: msg }, { status: 500 })
   }
 }
+
+/**
+ * DELETE /api/founder/caye-direct?workspaceId=<uuid>&operatorId=<id>
+ *
+ * Clears one operator's caye_operator_messages history for this
+ * workspace. This IS the agent's conversational memory for back-office
+ * mode (see lib/caye-agent/context.ts: loadOperatorContext reads this
+ * same table) — clearing it is a real reset, not just a UI wipe. Caye
+ * won't recall anything from before the clear on her next reply.
+ */
+export async function DELETE(req: NextRequest) {
+  const workspaceId = req.nextUrl.searchParams.get('workspaceId')
+  if (!workspaceId) return NextResponse.json({ error: 'workspaceId is required' }, { status: 400 })
+
+  const user = await requireFounder(req)
+  if (!user) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+
+  const supabase = createServiceClient()
+
+  const operatorIdParam = req.nextUrl.searchParams.get('operatorId')
+  let operatorId: number | null
+  if (operatorIdParam) {
+    operatorId = Number(operatorIdParam)
+    if (!Number.isFinite(operatorId)) {
+      return NextResponse.json({ error: 'invalid operatorId' }, { status: 400 })
+    }
+  } else {
+    const founderOp = await resolveFounderOperator(supabase, workspaceId)
+    operatorId = founderOp?.id ?? null
+  }
+
+  let query = supabase.from('caye_operator_messages').delete().eq('workspace_id', workspaceId)
+  query = operatorId != null
+    ? query.eq('operator_allowlist_id', operatorId)
+    : query.is('operator_allowlist_id', null)
+
+  const { error } = await query
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  return NextResponse.json({ ok: true })
+}
