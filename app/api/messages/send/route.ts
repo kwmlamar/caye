@@ -13,7 +13,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase-server'
 import { sendMetaMessage } from '@/lib/meta-reply'
 import { sendWhatsAppMessage } from '@/lib/whatsapp'
-import { sendZohoReply } from '@/lib/email-ai'
+import { sendZohoReply, sendZohoEmail } from '@/lib/email-ai'
 import { resolveOpenEscalations } from '@/lib/caye-agent/tools/write-low/resolve-open-escalations'
 import { maybeRefreshOwnerVoiceProfile } from '@/lib/owner-voice-learning'
 import { maybeSuggestBusinessFacts } from '@/lib/business-fact-suggestions'
@@ -118,18 +118,27 @@ export async function POST(request: NextRequest) {
 
       case 'email': {
         const meta = (conv.metadata ?? {}) as Record<string, string>
-        const originalSubject = meta.subject || '(no subject)'
-        const replySubject = originalSubject.startsWith('Re:')
-          ? originalSubject
-          : `Re: ${originalSubject}`
-        // customer_id = sender email address, channel_conversation_id = Zoho thread ID
-        await sendZohoReply(
-          conv.customer_id,
-          replySubject,
-          text,
-          conv.channel_conversation_id,
-          account.user_id
-        )
+        if (meta.hold_kind === 'outreach_first_touch') {
+          // First-touch cold outreach — there's no real prior thread to reply
+          // into and no inbound subject to inherit, so send a clean standalone
+          // email with the subject the draft was created with. Using
+          // sendZohoReply here produced "Re: (no subject)" in practice.
+          const subject = meta.subject || 'Quick question'
+          await sendZohoEmail(conv.customer_id, subject, text, account.user_id)
+        } else {
+          const originalSubject = meta.subject || '(no subject)'
+          const replySubject = originalSubject.startsWith('Re:')
+            ? originalSubject
+            : `Re: ${originalSubject}`
+          // customer_id = sender email address, channel_conversation_id = Zoho thread ID
+          await sendZohoReply(
+            conv.customer_id,
+            replySubject,
+            text,
+            conv.channel_conversation_id,
+            account.user_id
+          )
+        }
         break
       }
 
@@ -188,6 +197,20 @@ export async function POST(request: NextRequest) {
   // forever (see resolveOpenEscalations) and the "Needs review" stat card
   // keeps counting a thread the owner already handled.
   await resolveOpenEscalations(supabase, conversation_id)
+
+  // First-touch cold-outreach send (create_outreach_leads tool) — flips
+  // the lead from 'draft' to 'sent' and stamps first_touch_sent_at, which
+  // is what makes outreach-nudge-scan's cron correctly find this lead 2
+  // days later if it goes quiet. .is('first_touch_sent_at', null) guards
+  // against a later reply on the same thread re-stamping the timestamp.
+  const convMeta = (conv.metadata ?? {}) as Record<string, unknown>
+  if (convMeta.source === 'outreach_leads' && convMeta.lead_id) {
+    await supabase
+      .from('outreach_leads')
+      .update({ status: 'sent', first_touch_sent_at: now })
+      .eq('id', convMeta.lead_id as string)
+      .is('first_touch_sent_at', null)
+  }
 
   // Fire-and-forget owner voice learning. Re-extracts the voice profile
   // every 10 trusted-channel owner messages. Non-blocking — silently

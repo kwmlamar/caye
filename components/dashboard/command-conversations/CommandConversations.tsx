@@ -20,6 +20,12 @@ interface ThreadMessage {
   is_internal?: boolean
 }
 
+// hold_kinds whose auto-generated draft is safe to pre-fill into the
+// compose box unattended — both are the same repeatable, policy-
+// constrained outreach copy (outreach-script.md's opener/follow-up
+// templates), not a founder judgment call like a general escalation.
+const AUTO_FILL_HOLD_KINDS = new Set(['outreach_followup', 'outreach_first_touch'])
+
 // Channels /api/messages/send doesn't dispatch for yet — matches its
 // switch statement's default 422 case (lib SMS send never got wired to
 // that endpoint, only inbound).
@@ -176,12 +182,13 @@ export default function CommandConversations({ workspaceId, conversations, selec
 
   const activeSummary = conversations.find((c) => c.id === activeId)
 
-  // Auto-fill is scoped narrowly to hold_kind==='outreach_followup' — the
-  // repeatable, policy-constrained (outreach-script.md's "one follow-up,
-  // low-pressure, then stop") cold-lead nudge case that's proven safe to
-  // one-click-send. General holds/escalations (a founder judgment call —
-  // the Gwyn/charity-partnership case) still open empty on purpose: only
-  // "Draft with Caye" puts text there, and only when explicitly asked for.
+  // Auto-fill is scoped narrowly to AUTO_FILL_HOLD_KINDS — the repeatable,
+  // policy-constrained cold-outreach cases (outreach-script.md's opener
+  // and "one follow-up, low-pressure, then stop" templates) that are safe
+  // to have sitting ready for a one-click send/edit. General holds/
+  // escalations (a founder judgment call — the Gwyn/charity-partnership
+  // case) still open empty on purpose: only "Draft with Caye" puts text
+  // there, and only when explicitly asked for.
   //
   // This also stashes whatever's in the box for the conversation being
   // left (typed by hand or drafted) into draftsRef, and restores it if you
@@ -203,7 +210,7 @@ export default function CommandConversations({ workspaceId, conversations, selec
     } else {
       const entering = conversations.find((c) => c.id === activeId)
       const autoFill =
-        entering?.human_agent_enabled && entering.metadata?.hold_kind === 'outreach_followup'
+        entering?.human_agent_enabled && AUTO_FILL_HOLD_KINDS.has(entering.metadata?.hold_kind ?? '')
           ? entering.metadata?.proposed_reply ?? ''
           : ''
       setReplyText(autoFill)

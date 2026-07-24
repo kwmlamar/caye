@@ -17,16 +17,61 @@
  *   2. Upserts a hand-authored workspace_ai_config.system_prompt (founder
  *      voice, drawn from outreach-script.md / outreach/log.md) instead of
  *      running the AI discovery interview.
+ *   3. Upserts customers.ai_voice_profile (2026-07-23, grilled) — a
+ *      SEPARATE channel from workspace_ai_config.system_prompt above.
+ *      buildBackOfficeSystemPrompt (lib/caye-agent/modes/back-office.ts)
+ *      never reads workspace_ai_config at all; it only reads
+ *      customers.ai_voice_profile, which was null for this workspace until
+ *      this step existed. That gap meant the back-office agent — which is
+ *      what actually handles create_outreach_leads — had zero tone/register
+ *      signal when drafting cold-outreach copy, confirmed as the root
+ *      cause of a real batch of drafts reading like generic LinkedIn
+ *      prospecting instead of Lamar's actual voice. Content below is
+ *      calibrated against his own real sent messages (see decisions-log),
+ *      not an invented description of "casual tone."
  *
  * Run with (dotenv isn't installed in this repo — source env vars directly):
  *   set -a && source .env.local && set +a && npx tsx scripts/seed-tropitech-sales-workspace.ts <workspaceId>
  */
 
 import { createClient } from '@supabase/supabase-js'
+import type { VoiceProfile } from '@/lib/voice-profile'
+
+const VOICE_PROFILE: VoiceProfile = {
+  writing_style:
+    "Short, direct sentences. Casual asides mixed in naturally (e.g. \"Haha yes, that's my dad\"). " +
+    'Reads like a text message or a quick voice note, not a marketing email — no corporate/analytical ' +
+    'framing ("is no small thing", "a real operational challenge", "that\'s a diverse itinerary"). Gets ' +
+    'to the point fast.',
+  common_phrases: [
+    "I'm Lamar with TropiTech",
+    'I run TropiTech, a Bahamian tech company',
+    'no commitment',
+    'worth a look',
+    'want me to show you',
+  ],
+  greeting_style: 'First name only ("Hey [name]" or "Hey,") — never "Dear" or a formal salutation.',
+  signoff_style: 'Just "Lamar" — no "Best,", "Warm regards,", or a company signature block on first-touch/cold messages.',
+  formality_level: 'casual',
+  tone_notes:
+    'Voice-note friendly per outreach-script.md — short, conversational, like texting someone, not ' +
+    'pitching in a boardroom. Reference (his own real sent messages, the calibration standard): ' +
+    '"Haha yes, that\'s my dad. Small island, good to actually connect with someone who knows him." and ' +
+    '"Hey, thanks for the quick reply, but I should clarify: I\'m not looking to book a rental. I\'m ' +
+    'Lamar with TropiTech." Always states who he is up front (see common_phrases) rather than jumping ' +
+    "straight into an observation about the business. Never uses em dashes — commas or periods only.",
+  signature_block: null,
+  tagline: null,
+  standard_signoff: 'Lamar',
+  // Deliberately null, not verbatim — first-touch opens must vary per
+  // lead's specific situation (2026-07-23 grilled finding: identical
+  // structure across a batch is exactly the "reads as bulk outreach" tell).
+  standard_opener: null,
+}
 
 const SYSTEM_PROMPT = `You are drafting reply suggestions for Lamar, founder of TropiTech Solutions — a Bahamian tech company. This inbox (hello@getcaye.com) receives replies to TropiTech's own cold outreach campaign pitching Caye, an AI receptionist product, to Bahamian tour operators, restaurants, salons, and other owner-operated SMBs.
 
-Every draft you write is reviewed and sent by Lamar himself — you are never sending anything directly. Write the way he writes to prospects: direct, warm, no corporate jargon, first-name casual, short. He signs as himself ("I run TropiTech, a Bahamian tech company") — never as Caye, never revealing an AI wrote the draft.
+Every draft you write is reviewed and sent by Lamar himself — you are never sending anything directly. Write the way he writes to prospects: direct, warm, no corporate jargon, first-name casual, short. He signs as himself ("I run TropiTech, a Bahamian tech company") — never as Caye, never revealing an AI wrote the draft. Never use em dashes — use commas or periods instead.
 
 What Caye (the product) actually is, so you represent it accurately: a receptionist that answers a business's messages and books their customers for them, 24/7, in the owner's own voice — not a dashboard or inbox tool they have to operate themselves. Sell the outcome (stop missing bookings, get your evenings back), not a feature list. Bimini Island Tours and Karenda are the standing proof point when social proof helps. Price is $79/mo flat, no founding discount — but the founder, not you, decides when and how to bring up price or terms in any given reply.`
 
@@ -90,6 +135,17 @@ async function main() {
     process.exit(1)
   }
   console.log('  workspace_ai_config.system_prompt seeded')
+
+  const { error: voiceErr } = await supabase
+    .from('customers')
+    .update({ ai_voice_profile: VOICE_PROFILE })
+    .eq('id', workspaceId)
+
+  if (voiceErr) {
+    console.error('Failed to upsert ai_voice_profile:', voiceErr.message)
+    process.exit(1)
+  }
+  console.log('  customers.ai_voice_profile seeded (reaches the back-office agent — create_outreach_leads, etc.)')
 
   console.log('\nDone. Before connecting hello@getcaye.com to live traffic, run the rollout checks from issue #66:')
   console.log('  1. npx vitest run lib/autosend-gate.test.ts')

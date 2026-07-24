@@ -22,6 +22,7 @@ import { addBlackoutDate } from './write-low/add-blackout-date'
 import { updateVoiceRegister } from './write-low/update-voice-register'
 import { addVoiceSample } from './write-low/add-voice-sample'
 import { addTeamMember } from './write-low/add-team-member'
+import { createOutreachLeads } from './write-low/create-outreach-leads'
 import { updateTeamMemberPermissions } from './write-low/update-team-member-permissions'
 import { switchWorkspace } from './write-low/switch-workspace'
 import { removeTeamMember } from './write-high/remove-team-member'
@@ -90,6 +91,7 @@ export const TOOL_REGISTRY: AnyTool[] = [
   addInternalNote as AnyTool,
   sendPaymentConfirmation as AnyTool,
   notifyDriver as AnyTool,
+  createOutreachLeads as AnyTool,
   // High-risk write — confirmation flow enforced in code (gateHighRisk,
   // #64), not just the prompt. See lib/caye-agent/tools/high-risk-gate.ts.
   gateHighRisk(sendReply) as AnyTool,
