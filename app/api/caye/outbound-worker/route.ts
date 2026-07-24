@@ -27,6 +27,7 @@ import {
 import { isWhatsAppWindowOpen } from '@/lib/whatsapp/window'
 import { emailFallbackForFailedPing } from '@/lib/whatsapp/email-fallback'
 import { resolveOperatorByPhone } from '@/lib/operator-identity'
+import { loadScheduleConfig, nextDigestTime, localDayOfWeek } from '@/lib/whatsapp/schedule'
 
 // Kinds that represent Caye proactively messaging an operator about
 // something (as opposed to system plumbing like otp/welcome/ack) — these
@@ -178,6 +179,23 @@ async function processRow(row: QueueRow): Promise<RowOutcome> {
       .update({ scheduled_for: config.whatsapp_muted_until, updated_at: new Date().toISOString() })
       .eq('id', row.id)
     return 'retried'
+  }
+
+  // digest_days may have been narrowed (Settings card) after this row was
+  // already queued for a day that's since been disabled — defensive
+  // re-check, same reschedule-not-cancel shape as the mute check above.
+  // The common case (digest_days unchanged since enqueue) never hits this,
+  // since nextDigestTime already skips disabled days at enqueue time.
+  if (row.kind === 'morning_digest') {
+    const schedCfg = await loadScheduleConfig(row.workspace_id)
+    const now = new Date()
+    if (!schedCfg.digestDays.includes(localDayOfWeek(now, schedCfg.timezone))) {
+      await supabase
+        .from('caye_outbound_queue')
+        .update({ scheduled_for: nextDigestTime(now, schedCfg).toISOString(), updated_at: new Date().toISOString() })
+        .eq('id', row.id)
+      return 'retried'
+    }
   }
 
   // For urgent_hold rows, confirm the conversation is still held.

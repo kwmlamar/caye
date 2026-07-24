@@ -11,6 +11,7 @@ import CommandCalendar from '@/components/dashboard/command-calendar/CommandCale
 import CommandConversations from '@/components/dashboard/command-conversations/CommandConversations'
 import CayeDirect from '@/components/dashboard/caye-direct/CayeDirect'
 import ChannelsCard from '@/components/dashboard/founder-home/ChannelsCard'
+import SettingsCard from '@/components/dashboard/founder-home/SettingsCard'
 import GlobalPerformance from '@/components/dashboard/global-performance/GlobalPerformance'
 import ContactsPanel from '@/components/dashboard/founder-home/ContactsPanel'
 import AdminShell from '@/components/dashboard/admin-shell/AdminShell'
@@ -58,14 +59,10 @@ function StatusPill({ status }: { status: CustomerStatus }) {
 }
 
 function ExpandButton({ expanded, onClick }: { expanded: boolean; onClick: () => void }) {
-  const [focused, setFocused] = useState(false)
   const [hover, setHover] = useState(false)
-  const active = focused || hover
   return (
     <button
       onClick={onClick}
-      onFocus={() => setFocused(true)}
-      onBlur={() => setFocused(false)}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       title={expanded ? 'Collapse' : 'Expand'}
@@ -73,11 +70,10 @@ function ExpandButton({ expanded, onClick }: { expanded: boolean; onClick: () =>
         position: 'absolute', top: 10, right: 10, zIndex: 1,
         width: 26, height: 26, borderRadius: 8,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        background: active ? 'rgba(125,201,203,0.16)' : 'rgba(255,255,255,0.08)',
-        border: `1px solid ${active ? 'rgba(125,201,203,0.45)' : CARD_BORDER}`,
-        color: active ? '#7DC9CB' : '#a1a1aa', cursor: 'pointer',
-        outline: 'none', boxShadow: focused ? '0 0 0 2px rgba(125,201,203,0.35)' : 'none',
-        transition: 'background 0.15s ease, border-color 0.15s ease, color 0.15s ease',
+        background: hover ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.08)',
+        color: '#a1a1aa', cursor: 'pointer',
+        outline: 'none', boxShadow: 'none',
+        transition: 'background 0.15s ease',
         ...GLASS,
       }}
     >
@@ -199,11 +195,10 @@ function RailButton({ item, active, onClick }: { item: (typeof RAIL_ITEMS)[numbe
       style={{
         width: 44, height: 44, borderRadius: 12, flexShrink: 0,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        background: active ? 'rgba(125,201,203,0.1)' : hover ? 'rgba(255,255,255,0.05)' : 'transparent',
-        border: `1px solid ${active ? 'rgba(125,201,203,0.35)' : 'transparent'}`,
+        background: active ? 'rgba(125,201,203,0.14)' : hover ? 'rgba(255,255,255,0.05)' : 'transparent',
         color: active ? '#7DC9CB' : hover ? '#a1a1aa' : '#52525b',
         cursor: 'pointer',
-        transition: 'background 0.15s ease, border-color 0.15s ease, color 0.15s ease',
+        transition: 'background 0.15s ease, color 0.15s ease',
       }}
     >
       <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -293,7 +288,7 @@ export default function FounderHome() {
     })
   }
   const { data, refetch } = useCommandOverview(workspaceId, weekOffset)
-  const [expanded, setExpanded] = useState<'calendar' | 'conversations' | 'cayeDirect' | null>(null)
+  const [expanded, setExpanded] = useState<'calendar' | 'conversations' | 'cayeDirect' | 'settings' | null>(null)
   // Set by CommandCalendar on a booking click — jumps CommandConversations
   // to that customer's thread. Lives here since the two panels are
   // siblings with no coordination of their own.
@@ -394,8 +389,7 @@ export default function FounderHome() {
                     position: 'relative', width: 40, height: 40, margin: '0 auto', flexShrink: 0,
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                     borderRadius: 11, cursor: 'pointer',
-                    border: `1px solid ${active ? 'rgba(125,201,203,0.4)' : CARD_BORDER}`,
-                    background: active ? 'rgba(125,201,203,0.1)' : 'rgba(255,255,255,0.03)',
+                    background: active ? 'rgba(125,201,203,0.16)' : 'rgba(255,255,255,0.045)',
                     fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-mono)',
                     color: active ? '#7DC9CB' : '#a1a1aa',
                   }}
@@ -415,7 +409,7 @@ export default function FounderHome() {
                 style={{
                   position: 'relative',
                   display: 'flex', flexDirection: 'column', gap: 6,
-                  textAlign: 'left', border: `1px solid ${active ? '#2d2d34' : 'transparent'}`,
+                  textAlign: 'left',
                   cursor: 'pointer', borderRadius: 12,
                   padding: '12px 14px 12px 17px',
                   background: active ? 'rgba(26,26,30,0.55)' : 'transparent',
@@ -564,7 +558,25 @@ export default function FounderHome() {
               <CayeDirect workspaceId={workspaceId} />
             </div>
 
-            {!expanded && <ChannelsCard workspaceId={workspaceId} />}
+            {/* Channels + Settings — paired row, same weight as Calendar/
+                Conversations above. Settings can expand to a full-page
+                editor (system prompt, voice profile); Channels doesn't
+                need that treatment (its content is already short). */}
+            <div style={{
+              display: expanded === 'calendar' || expanded === 'conversations' || expanded === 'cayeDirect' ? 'none' : 'grid',
+              gridTemplateColumns: expanded === 'settings' ? '1fr' : '1fr 1fr',
+              gap: 14,
+              ...(expanded === 'settings' ? { flex: 1, minHeight: 0 } : { flexShrink: 0 }),
+            }}>
+              {expanded !== 'settings' && <ChannelsCard workspaceId={workspaceId} />}
+              <div style={{
+                display: 'flex', flexDirection: 'column', position: 'relative',
+                ...(expanded === 'settings' ? { flex: 1, minHeight: 0 } : {}),
+              }}>
+                <ExpandButton expanded={expanded === 'settings'} onClick={() => setExpanded(expanded === 'settings' ? null : 'settings')} />
+                <SettingsCard workspaceId={workspaceId} compact={expanded !== 'settings'} />
+              </div>
+            </div>
 
             <div aria-hidden style={{ display: expanded ? 'none' : 'block', flexShrink: 0, height: 3, borderRadius: 3, background: GRADIENT, opacity: 0.4 }} />
           </div>

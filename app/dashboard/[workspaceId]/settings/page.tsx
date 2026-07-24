@@ -5,7 +5,6 @@ import { useSearchParams, useRouter } from 'next/navigation'
 import SettingsNav, { type TabId } from '@/components/settings/SettingsNav'
 import ProfilePanel from '@/components/settings/ProfilePanel'
 import ChannelsPanel from '@/components/settings/ChannelsPanel'
-import CayeAIPanel from '@/components/settings/CayeAIPanel'
 import CayeHealthPanel from '@/components/settings/CayeHealthPanel'
 import NotificationsPanel from '@/components/settings/NotificationsPanel'
 import WhatsAppPanel from '@/components/settings/WhatsAppPanel'
@@ -84,7 +83,6 @@ export default function SettingsPage() {
             )}
             {active === 'caye' && (
               <>
-                <CayeAIPanel />
                 <WhatsAppPanel />
                 <CayeHealthPanel />
               </>
