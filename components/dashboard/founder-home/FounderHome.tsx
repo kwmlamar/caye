@@ -411,17 +411,11 @@ export default function FounderHome() {
                   display: 'flex', flexDirection: 'column', gap: 6,
                   textAlign: 'left',
                   cursor: 'pointer', borderRadius: 12,
-                  padding: '12px 14px 12px 17px',
-                  background: active ? 'rgba(26,26,30,0.55)' : 'transparent',
+                  padding: '12px 14px',
+                  background: active ? 'rgba(125,201,203,0.09)' : 'transparent',
                   ...(active ? GLASS : {}),
                 }}
               >
-                {active && (
-                  <span aria-hidden style={{
-                    position: 'absolute', left: 5, top: 10, bottom: 10, width: 3, borderRadius: 3,
-                    background: GRADIENT,
-                  }} />
-                )}
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                   <span style={{
                     fontSize: 13, fontWeight: 600, letterSpacing: '-0.01em',
