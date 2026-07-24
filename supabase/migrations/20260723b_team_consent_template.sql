@@ -18,7 +18,7 @@ values
   (
     'caye_team_consent',
     'utility',
-    'Hi {{1}} — this is Caye, {{2}}''s scheduling assistant. You''ve been added as a team member with back-office access. Reply OK to confirm.',
+    'Hi {{1}} — this is Caye, {{2}}''s scheduling assistant. You''ve been added as a team member with back-office access. Tap OK to confirm.',
     2,
     'pending'
   )

@@ -39,8 +39,8 @@ export const addTeamMember: Tool<AddTeamMemberInput> = {
     "ask Caye basic pickup questions. Zero back-office access.\n" +
     "(founder is auto-assigned, never set via this tool.)\n\n" +
     "Caye sends the new member a verification message via WhatsApp template — everyone confirms " +
-    "by replying OK. Until they verify, their messages to Caye are dropped — so the owner can " +
-    "safely add a wrong number without it actually granting access.",
+    "with OK (tapping a button or typing it, either works). Until they verify, their messages to " +
+    "Caye are dropped — so the owner can safely add a wrong number without it actually granting access.",
   risk: 'low',
   roles: ['owner', 'founder'],
   modes: ['back-office'],
