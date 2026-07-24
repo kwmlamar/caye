@@ -274,9 +274,20 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
     const existingMeta = (existingConv.metadata ?? {}) as Record<string, unknown>
     const existingThreads = (existingMeta.related_thread_ids as string[] | undefined) ?? [existingMeta.thread_id as string | undefined].filter(Boolean) as string[]
     const relatedThreads = Array.from(new Set([...existingThreads, threadId]))
+    // Outreach leads start with the business name as a placeholder — once
+    // they actually reply, backfill customer_name from the reply's from-
+    // header display name. Scoped to outreach-sourced conversations only
+    // so normal customer conversations (already named at creation) can't
+    // have that name silently overwritten by a later reply's header.
+    const isOutreachLead = existingMeta.source === 'outreach_leads'
+    const nameBackfill =
+      isOutreachLead && effectiveName && effectiveName !== effectiveEmail
+        ? { customer_name: effectiveName }
+        : {}
     await supabase
       .from('unified_conversations')
       .update({
+        ...nameBackfill,
         contact_id: contactRow?.id ?? null,
         metadata: {
           ...existingMeta,

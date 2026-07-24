@@ -1097,7 +1097,7 @@ async function processMessage(
   let conversation: { id: string }
   const { data: existingConv } = await supabase
     .from('unified_conversations')
-    .select('id, metadata')
+    .select('id, customer_name, metadata')
     .eq('connected_account_id', String(account.id))
     .eq('channel_type', 'email')
     .eq('customer_id', effectiveEmail)
@@ -1107,9 +1107,23 @@ async function processMessage(
     const existingMeta = (existingConv.metadata ?? {}) as Record<string, unknown>
     const existingThreads = (existingMeta.related_thread_ids as string[] | undefined) ?? [existingMeta.thread_id as string | undefined].filter(Boolean) as string[]
     const relatedThreads = Array.from(new Set([...existingThreads, threadId]))
+    // Outreach leads are created with the business name as a placeholder —
+    // nobody's replied yet, so there's no real person's name to show.
+    // Once they actually reply, backfill customer_name from the reply's
+    // from-header display name. Scoped to outreach-sourced conversations
+    // only (metadata.source === 'outreach_leads') so this can never touch
+    // a normal customer-facing conversation, which already gets a real
+    // name at creation and shouldn't have it silently overwritten by a
+    // later reply's header.
+    const isOutreachLead = existingMeta.source === 'outreach_leads'
+    const nameBackfill =
+      isOutreachLead && effectiveName && effectiveName !== effectiveEmail
+        ? { customer_name: effectiveName }
+        : {}
     await supabase
       .from('unified_conversations')
       .update({
+        ...nameBackfill,
         metadata: {
           ...existingMeta,
           subject: existingMeta.subject ?? subject,

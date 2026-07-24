@@ -171,7 +171,13 @@ export const createOutreachLeads: Tool<CreateOutreachLeadsInput> = {
         connected_account_id: account.id,
         channel_type: 'email',
         channel_conversation_id: `outreach_${insertedLead.id}`,
-        customer_name: lead.contact_name ?? lead.business_name ?? email,
+        // Not ?? — Caye sometimes sends contact_name/business_name as "" rather
+        // than omitting the field, and "" ?? x still returns "" (nullish
+        // coalescing only falls through on null/undefined). That was leaving
+        // customer_name blank — displaying as "Unknown" — for every lead
+        // where no contact name was known, even though business_name was
+        // correctly saved right next to it.
+        customer_name: lead.contact_name?.trim() || lead.business_name?.trim() || email,
         customer_id: email,
         status: 'open',
         is_archived: false,
