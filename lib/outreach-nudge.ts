@@ -39,8 +39,12 @@ function buildOutreachFollowupSystem(ctx: OutreachFollowupContext): string {
     'This is the ONE allowed follow-up per TropiTech\'s outreach policy (outreach-script.md) — ' +
     'no chasing beyond this, so don\'t hint at future follow-ups either.\n\n' +
     'Tone: low-pressure, brief, no re-pitching Caye from scratch, no guilt trip. ' +
-    'Aim for "no rush — just floating this back up" energy: 2-3 sentences, one soft ' +
-    'restatement of the original question or offer, and an easy out if they\'re not interested. ' +
+    'Aim for "no rush — just floating this back up" energy: 2-3 sentences, and an easy out if ' +
+    'they\'re not interested. ' +
+    'The soft restatement is the demo\'s call-to-action, and it must stay concrete, per the demo ' +
+    'mechanics in the voice above (the meetcaye.com "Try for Free" link, texts from WhatsApp, no ' +
+    'card/signup, ~5 minutes) — never fall back to a vague "I\'d love to show you what that looks ' +
+    'like" with no next step attached. ' +
     'Do not invent details about their business you don\'t already know.\n\n' +
     'Write only the email body — no subject line, no markdown. Sign as the founder, never as ' +
     '"Caye" or an AI, per the voice above.'

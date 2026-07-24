@@ -46,13 +46,20 @@ When a pilot or contact refers you, the credibility is theirs, so stay light:
 *#2 gives you their pain in their own words — reuse it. #3 and #4 tell you if they're a real front-desk fit or a stall risk before you sink time in.*
 
 ## 4. The demo (this is the actual sales motion)
-Caribbean SMBs buy from a trusted local showing receipts, not from a pitch (decisions-log 2026-05-10). So:
+Caribbean SMBs buy from a trusted local showing receipts, not from a pitch (decisions-log 2026-05-10). Two ways to run it — lead with the self-serve one, it removes the "find 10 minutes with Lamar" friction entirely:
+
+**Self-serve demo (default — give them this link, don't gatekeep it behind a call):**
+> Head to https://www.meetcaye.com and hit "Try for Free." It'll text you from Caye's real WhatsApp number and ask a few quick questions about your business — no card, no signup form. Takes about 5 minutes and you'll see exactly how she'd sound handling your customers.
+Always frame it as concrete mechanics (the link, "texts you from her WhatsApp," "no card/no signup," "~5 minutes") — not a vague "I'd love to show you what that looks like." The concreteness is what gets the click.
+
+**Founder-led demo (fallback for a warm/engaged lead who wants Lamar walking them through it live):**
 - Take **one of their real, recent customer messages** (not an invented one).
 - Show Caye replying to it **in their voice**.
 - If they lean in → onboard right there. If they don't → the voice profile or the example missed; fix and retry.
 
 ## 5. Follow-up (after silence — once, then stop)
-> No rush [name] — whenever you've got 10 min I'll show you Caye answering one of your real messages. If it's not useful you'll know in 5 minutes.
+> No rush [name] — whenever you've got 5 min, head to https://www.meetcaye.com and hit "Try for Free." She'll text you straight from WhatsApp and walk you through it herself — no card, no call needed.
+Restate the self-serve link/mechanism, not a generic "I'd love to show you" — the follow-up's whole job is to make the next step as frictionless as the first message implied it would be.
 
 *One follow-up. If they go silent like Dave did, mark the lead cold and move on — chasing ghosts is wasted outreach.*
 
