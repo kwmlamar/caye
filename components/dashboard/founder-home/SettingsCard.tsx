@@ -405,7 +405,7 @@ export default function SettingsCard({ workspaceId, compact }: { workspaceId: st
                   <PhraseTags phrases={voice.common_phrases} onChange={(next) => setVoice({ ...voice, common_phrases: next })} />
                 </div>
 
-                <details>
+                <details style={{ paddingBottom: 20 }}>
                   <summary style={{ fontSize: 10.5, fontFamily: 'var(--font-mono)', letterSpacing: '0.06em', textTransform: 'uppercase', color: LABEL_COLOR, cursor: 'pointer', marginBottom: 8 }}>
                     Verbatim overrides (optional)
                   </summary>

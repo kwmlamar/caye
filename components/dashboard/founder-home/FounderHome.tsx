@@ -501,7 +501,7 @@ export default function FounderHome() {
                 one of these is expanded, so the expanded panel truly owns
                 the page. */}
             <div style={{
-              display: expanded === 'cayeDirect' ? 'none' : 'grid',
+              display: expanded === 'cayeDirect' || expanded === 'settings' ? 'none' : 'grid',
               gridTemplateColumns: expanded ? '1fr' : '1fr 1fr',
               gap: 14,
               ...(expanded === 'calendar' || expanded === 'conversations'
@@ -547,7 +547,7 @@ export default function FounderHome() {
                 Performance Scorecard will take the other half of this
                 row once built (next pass). */}
             <div style={{
-              display: expanded === 'calendar' || expanded === 'conversations' ? 'none' : 'block',
+              display: expanded === 'calendar' || expanded === 'conversations' || expanded === 'settings' ? 'none' : 'block',
               position: 'relative',
               ...(expanded === 'cayeDirect'
                 ? { flex: 1, minHeight: 0 }
