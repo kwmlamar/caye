@@ -212,8 +212,8 @@ const SIDEBAR_COLLAPSE_KEY = 'caye_founder_sidebar_collapsed'
 const SIDEBAR_WIDTH_EXPANDED = 250
 const SIDEBAR_WIDTH_COLLAPSED = 60
 
-function businessInitials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean)
+function businessInitials(name: string | null): string {
+  const parts = (name ?? '').trim().split(/\s+/).filter(Boolean)
   if (parts.length === 0) return '?'
   return parts.slice(0, 2).map((p) => p[0]!.toUpperCase()).join('')
 }
@@ -384,7 +384,7 @@ export default function FounderHome() {
                 <button
                   key={m.workspace_id}
                   onClick={goTo}
-                  title={`${m.customer.business_name} · ${STATUS_LABEL[m.customer.status]}`}
+                  title={`${m.customer.business_name ?? 'New signup'} · ${STATUS_LABEL[m.customer.status]}`}
                   style={{
                     position: 'relative', width: 40, height: 40, margin: '0 auto', flexShrink: 0,
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -422,7 +422,7 @@ export default function FounderHome() {
                     color: active ? '#f4f4f5' : '#a1a1aa',
                     whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
                   }}>
-                    {m.customer.business_name}
+                    {m.customer.business_name ?? 'New signup'}
                   </span>
                   <StatusPill status={m.customer.status} />
                 </div>
@@ -452,7 +452,7 @@ export default function FounderHome() {
             <h1 style={{ fontSize: 16, fontWeight: 600, fontFamily: 'var(--font-display)', margin: 0 }}>Global Performance — All Workspaces</h1>
           ) : (
             <>
-              <h1 style={{ fontSize: 16, fontWeight: 600, fontFamily: 'var(--font-display)', margin: 0 }}>{workspace.business_name}</h1>
+              <h1 style={{ fontSize: 16, fontWeight: 600, fontFamily: 'var(--font-display)', margin: 0 }}>{workspace.business_name ?? 'New signup'}</h1>
               <StatusPill status={workspace.status} />
             </>
           )}

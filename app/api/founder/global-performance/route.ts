@@ -158,7 +158,7 @@ export async function GET(req: NextRequest) {
 
   if (memberErr) return NextResponse.json({ error: memberErr.message }, { status: 500 })
 
-  type MembershipRow = { workspace_id: string; customer: { id: string; business_name: string; status: string } | null }
+  type MembershipRow = { workspace_id: string; customer: { id: string; business_name: string | null; status: string } | null }
   const workspaceRows = ((memberships ?? []) as unknown as MembershipRow[])
     .filter((m): m is MembershipRow & { customer: NonNullable<MembershipRow['customer']> } => m.customer !== null)
 
@@ -246,7 +246,7 @@ export async function GET(req: NextRequest) {
       const bookings30d = bookingCounts.get(m.workspace_id) ?? 0
       return {
         workspace_id: m.workspace_id,
-        business_name: m.customer.business_name,
+        business_name: m.customer.business_name ?? 'New signup',
         status: m.customer.status,
         call_count: stats.calls,
         cost_usd: Number(stats.cost_usd.toFixed(4)),

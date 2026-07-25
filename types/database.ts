@@ -26,7 +26,7 @@ export interface BusinessHours {
 // Customer (Business / Workspace owner) table
 export interface Customer {
   id: string
-  business_name: string
+  business_name: string | null
   has_onboarded: boolean
   ai_voice_profile?: unknown
   ai_autopilot_enabled: boolean
@@ -40,7 +40,7 @@ export interface Customer {
   website_url: string | null
   proactive_nudges_enabled: boolean
   full_name: string | null
-  contact_email: string
+  contact_email: string | null
   password_hash?: string
   status: CustomerStatus
   plan: CustomerPlan

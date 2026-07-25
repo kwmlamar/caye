@@ -176,6 +176,10 @@ export async function tryColdStartWorkspace(
 
   if (allowlistError || !inserted) {
     console.error('[onboarding-whatsapp] cold-start allowlist insert failed:', allowlistError)
+    // Roll back the orphaned customers row so a retry (e.g. the sender
+    // texting again) gets a clean cold-start instead of a second blank
+    // trial workspace with no owner.
+    await supabase.from('customers').delete().eq('id', workspaceId)
     return null
   }
 
