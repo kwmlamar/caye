@@ -20,11 +20,13 @@
 
 import { NextRequest, NextResponse, after } from 'next/server'
 import { createHmac } from 'crypto'
+import type Anthropic from '@anthropic-ai/sdk'
 import { createServiceClient } from '@/lib/supabase-server'
 import { classifyOperatorIntent } from '@/lib/whatsapp/intent'
 import { getPendingHeldItems } from '@/lib/whatsapp/pending'
 import { dispatchOperatorIntent } from '@/lib/whatsapp/actions'
 import { sendFreeFormWhatsApp } from '@/lib/whatsapp/outbound'
+import { downloadWhatsAppMedia, isSupportedImageMimeType } from '@/lib/whatsapp/media'
 import { generateCayeAutoReply } from '@/lib/caye-reply'
 import { cayeAgent } from '@/lib/caye-agent'
 import { persistAgentTurns } from '@/lib/caye-operator-messages'
@@ -134,19 +136,31 @@ interface WaInboundMessage {
    *  button (2026-07-05, caye_driver_consent's "OK" button). Meta echoes
    *  the button's label back as .text. */
   button?: { text?: string; payload?: string }
+  /** Present when type === 'image' — a photo/screenshot sent to Caye Direct. */
+  image?: { id: string; mime_type: string; sha256?: string; caption?: string }
   context?: { id: string; from?: string }
+}
+
+/** Meta delivery-status callback — arrives on this same webhook, keyed by
+ *  the message id returned at send time (lib/whatsapp/outbound.ts). */
+interface WaStatusUpdate {
+  id: string
+  status: 'sent' | 'delivered' | 'read' | 'failed'
+  timestamp?: string
+  errors?: Array<{ code?: number; title?: string; message?: string }>
 }
 
 interface WaValue {
   metadata?: { phone_number_id?: string }
   messages?: WaInboundMessage[]
+  statuses?: WaStatusUpdate[]
 }
 
 async function processInbound(payload: Record<string, unknown>): Promise<void> {
   const entry = (payload.entry as Record<string, unknown>[] | undefined)?.[0]
   const change = (entry?.changes as Record<string, unknown>[] | undefined)?.[0]
   const value = change?.value as WaValue | undefined
-  if (!value?.messages?.length) return
+  if (!value) return
 
   const expectedPhoneNumberId = process.env.CAYE_PLATFORM_WHATSAPP_PHONE_NUMBER_ID
   if (expectedPhoneNumberId && value.metadata?.phone_number_id !== expectedPhoneNumberId) {
@@ -156,8 +170,47 @@ async function processInbound(payload: Record<string, unknown>): Promise<void> {
 
   const supabase = createServiceClient()
 
+  if (value.statuses?.length) {
+    for (const s of value.statuses) {
+      await handleDeliveryStatus(supabase, s)
+    }
+  }
+
+  if (!value.messages?.length) return
+
   for (const message of value.messages) {
     await handleOneInbound(supabase, message)
+  }
+}
+
+/**
+ * Only matches rows sent through caye_outbound_queue (proactive pings —
+ * escalations, urgent holds, digests) since those are the only sends that
+ * store wa_message_id. Synchronous replies (acks, back-office chat) aren't
+ * queued, so their statuses have nothing to match and are silently no-ops
+ * — acceptable: those are reactive responses to a message the operator
+ * just sent, not the "Caye pinged you unprompted" case this exists for.
+ */
+async function handleDeliveryStatus(
+  supabase: ReturnType<typeof createServiceClient>,
+  s: WaStatusUpdate
+): Promise<void> {
+  const statusAt = s.timestamp ? new Date(Number(s.timestamp) * 1000).toISOString() : new Date().toISOString()
+  const errorText = s.errors?.length
+    ? s.errors.map((e) => `${e.code ?? '?'}: ${e.title ?? e.message ?? ''}`).join('; ')
+    : null
+
+  const { error } = await supabase
+    .from('caye_outbound_queue')
+    .update({
+      wa_delivery_status: s.status,
+      wa_delivery_status_at: statusAt,
+      wa_delivery_error: errorText,
+    })
+    .eq('wa_message_id', s.id)
+
+  if (error) {
+    console.error('[whatsapp-operator] delivery-status update failed:', error)
   }
 }
 
@@ -548,8 +601,25 @@ async function handleOneInbound(
     }
   }
 
+  // ── Image messages (screenshots/photos, 2026-07-24) ──────────────────
+  // Skips intent classification entirely (images are never held-item
+  // actions) and goes straight to the back-office agent as a vision turn.
+  if (message.type === 'image' && message.image) {
+    await handleImageInbound(supabase, {
+      message,
+      workspaceId,
+      operator,
+      operatorId,
+      callerRole,
+      callerName,
+      replyTo,
+      whatsappOutboundEnabled: cfg.whatsapp_outbound_enabled,
+    })
+    return
+  }
+
   if (message.type !== 'text' || !message.text?.body) {
-    // Non-text — just log and bail. We don't classify media in v1.
+    // Non-text, non-image — just log and bail. We don't classify other media in v1.
     await supabase.from('caye_operator_messages').insert({
       workspace_id: workspaceId,
       direction: 'inbound',
@@ -734,6 +804,131 @@ async function handleOneInbound(
         console.error(`[whatsapp-operator] error-fallback send failed for ${workspaceId}:`, sendErr)
       )
     }
+  }
+}
+
+// ─── Image inbound (2026-07-24) ──────────────────────────────────────────
+//
+// Screenshots/photos sent to Caye Direct. Downloaded from WhatsApp's Cloud
+// API and passed to the back-office agent as an Anthropic vision content
+// block, the same way an image attachment works in Claude.ai.
+//
+// claude_format for the persisted inbound row deliberately stores a text
+// placeholder, not the real image bytes: loadOperatorContext replays
+// claude_format verbatim on every future turn in the sliding window, and
+// an image's base64 payload is 100x+ heavier than a text turn. The real
+// bytes are only ever sent to the model on the turn they arrive.
+
+interface ImageInboundParams {
+  message: WaInboundMessage
+  workspaceId: string
+  operator: { id: number; name: string | null; role: 'owner' | 'staff' | 'founder' | 'driver' }
+  operatorId: number
+  callerRole: 'owner' | 'staff' | 'founder' | 'driver'
+  callerName: string | null
+  replyTo: string
+  whatsappOutboundEnabled: boolean | null
+}
+
+async function handleImageInbound(
+  supabase: ReturnType<typeof createServiceClient>,
+  params: ImageInboundParams
+): Promise<void> {
+  const { message, workspaceId, operator, operatorId, callerRole, callerName, replyTo, whatsappOutboundEnabled } =
+    params
+  const image = message.image!
+  const caption = image.caption?.trim() || null
+  const placeholderBody = caption ? `[image: ${caption}]` : '[image]'
+
+  await supabase.from('caye_operator_messages').insert({
+    workspace_id: workspaceId,
+    direction: 'inbound',
+    wa_message_id: message.id,
+    body: placeholderBody,
+    intent: null,
+    claude_format: { role: 'user', content: placeholderBody },
+    operator_allowlist_id: operator.id,
+    operator_name: operator.name,
+    operator_role: operator.role,
+  })
+
+  if (!isSupportedImageMimeType(image.mime_type)) {
+    await sendFreeFormWhatsApp(
+      replyTo,
+      `Can't read that file type (${image.mime_type}) — send it as a JPEG, PNG, GIF, or WebP.`,
+      `image-unsupported-${message.id}`
+    )
+    return
+  }
+
+  // Same outbound gate as the text path: log it, but don't act on it, if
+  // the workspace flag is off.
+  if (!whatsappOutboundEnabled) {
+    console.log(`[whatsapp-operator] flag off for ${workspaceId} — skipping image action`)
+    return
+  }
+
+  let content: Anthropic.MessageParam['content']
+  try {
+    const { base64, mimeType } = await downloadWhatsAppMedia(image.id)
+    if (!isSupportedImageMimeType(mimeType)) {
+      // Rare: differs from the mime_type Meta reported on the webhook
+      // payload. Treat the same as an unsupported type up front.
+      await sendFreeFormWhatsApp(
+        replyTo,
+        `Can't read that file type (${mimeType}) — send it as a JPEG, PNG, GIF, or WebP.`,
+        `image-unsupported-download-${message.id}`
+      )
+      return
+    }
+    content = [
+      { type: 'image', source: { type: 'base64', media_type: mimeType, data: base64 } },
+      ...(caption ? [{ type: 'text' as const, text: caption }] : []),
+    ]
+  } catch (err) {
+    console.error(`[whatsapp-operator] image download failed for ${workspaceId}:`, err)
+    await sendFreeFormWhatsApp(
+      replyTo,
+      "Couldn't pull that image down — try sending it again?",
+      `image-download-error-${message.id}`
+    )
+    return
+  }
+
+  try {
+    const agentResult = await cayeAgent({
+      mode: 'back-office',
+      workspaceId,
+      userMessage: content,
+      callerRole,
+      callerName,
+      operatorId,
+    })
+
+    if (!agentResult.replyText) {
+      console.warn(`[whatsapp-operator] empty reply from back-office agent (image) for ${workspaceId}`)
+      return
+    }
+
+    const sendResult = await sendFreeFormWhatsApp(
+      replyTo,
+      agentResult.replyText,
+      `back-office-image-${message.id}`
+    )
+    if (sendResult.status === 'failed') {
+      console.error(`[whatsapp-operator] Meta send failed (image) for ${workspaceId}:`, sendResult.error)
+    }
+
+    await persistAgentTurns(supabase, workspaceId, agentResult.newTurns, operator)
+  } catch (err) {
+    console.error(`[whatsapp-operator] back-office agent failed (image) for ${workspaceId}:`, err)
+    await sendFreeFormWhatsApp(
+      replyTo,
+      "Sorry, I hit a snag with that image — give me a minute and try again.",
+      `back-office-image-error-${message.id}`
+    ).catch((sendErr) =>
+      console.error(`[whatsapp-operator] image error-fallback send failed for ${workspaceId}:`, sendErr)
+    )
   }
 }
 

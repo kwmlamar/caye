@@ -46,7 +46,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase-server'
-import { recordCronRun } from '@/lib/cron-run-log'
+import { recordCronRun, checkStaleCronsAndAlert } from '@/lib/cron-run-log'
 import {
   ESCALATION_FOLLOWUP_HOURS,
   LOOKBACK_HOURS,
@@ -72,6 +72,12 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
   }
+
+  // Redundant with outbound-worker's own check (lib/cron-run-log.ts) —
+  // hourly cadence here means it still catches a stall even if
+  // outbound-worker itself is the one down, same failure mode this cron
+  // would otherwise miss entirely.
+  await checkStaleCronsAndAlert()
 
   try {
     return NextResponse.json(await runEscalationFollowup())

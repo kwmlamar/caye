@@ -27,7 +27,9 @@ export async function GET(request: NextRequest) {
 
   let query = supabase
     .from('caye_outbound_queue')
-    .select('id, kind, status, scheduled_for, sent_at, created_at, last_error, conversation_id, payload')
+    .select(
+      'id, kind, status, scheduled_for, sent_at, created_at, last_error, conversation_id, payload, wa_delivery_status, wa_delivery_status_at, wa_delivery_error'
+    )
     .eq('workspace_id', workspaceId)
     .order('created_at', { ascending: false })
     .limit(50)

@@ -59,3 +59,116 @@ export async function recordCronRun<T extends Record<string, unknown>>(
     throw err
   }
 }
+
+// ---------------------------------------------------------------------------
+// Stale-cron alerting — a dead-man's-switch on top of caye_cron_runs.
+//
+// Built after discovering (2026-07-25) that /api/caye/outbound-worker went
+// ~25h without a single cron-job.org hit, and separately that
+// /api/caye/morning-digest had *never* run — neither surfaced anywhere
+// until an operator (Karenda/Bimini) reported missing WhatsApp messages.
+// caye_cron_runs already tracked last-run state (built for the founder's
+// on-demand get_cron_health admin-shell tool); this just adds a push check
+// on top so a stalled job doesn't sit silent for days before someone
+// thinks to ask.
+//
+// Deliberately NOT its own cron (chicken-and-egg — the thing checking for
+// stalled crons could itself stall). Instead called opportunistically from
+// two independent, differently-scheduled crons (outbound-worker: ~1min,
+// escalation-followup: hourly) so one going dark doesn't blind the check.
+// ---------------------------------------------------------------------------
+
+interface CronExpectation {
+  cronName: string
+  label: string
+  maxStalenessMinutes: number
+}
+
+const MONITORED_CRONS: CronExpectation[] = [
+  { cronName: 'outbound-worker', label: 'Outbound worker', maxStalenessMinutes: 10 },
+  { cronName: 'morning-digest', label: 'Morning digest', maxStalenessMinutes: 150 },
+  { cronName: 'escalation-followup', label: 'Escalation follow-up', maxStalenessMinutes: 150 },
+  { cronName: 'eod-summary', label: 'EOD summary', maxStalenessMinutes: 150 },
+]
+
+// Once alerted, don't re-alert for the same stall for 4h — a stuck
+// cron-job.org registration doesn't need a fresh ping every minute.
+const ALERT_COOLDOWN_MINUTES = 240
+
+interface CronRunRow {
+  cron_name: string
+  last_finished_at: string | null
+  last_stale_alert_at: string | null
+}
+
+/**
+ * Best-effort — never throws. Call fire-and-forget from a frequently-run
+ * cron; a failure here must never break the cron that called it.
+ */
+export async function checkStaleCronsAndAlert(): Promise<void> {
+  try {
+    const supabase = createServiceClient()
+    const { data: rows } = await supabase
+      .from('caye_cron_runs')
+      .select('cron_name, last_finished_at, last_stale_alert_at')
+
+    const byName = new Map((rows ?? []).map((r) => [r.cron_name, r as CronRunRow]))
+    const now = Date.now()
+    const staleLabels: string[] = []
+    const toMarkAlerted: string[] = []
+
+    for (const cron of MONITORED_CRONS) {
+      const row = byName.get(cron.cronName)
+      const lastFinishedMs = row?.last_finished_at ? new Date(row.last_finished_at).getTime() : null
+      const ageMinutes = lastFinishedMs ? (now - lastFinishedMs) / 60000 : Infinity
+      if (ageMinutes <= cron.maxStalenessMinutes) continue
+
+      staleLabels.push(
+        `${cron.label} (${lastFinishedMs ? `${Math.round(ageMinutes / 60)}h since last run` : 'never run'})`
+      )
+
+      const lastAlertMs = row?.last_stale_alert_at ? new Date(row.last_stale_alert_at).getTime() : null
+      const cooledDown = !lastAlertMs || (now - lastAlertMs) / 60000 > ALERT_COOLDOWN_MINUTES
+      if (cooledDown) toMarkAlerted.push(cron.cronName)
+    }
+
+    if (toMarkAlerted.length === 0) return
+
+    await alertFounderOfStaleCrons(staleLabels)
+
+    await supabase.from('caye_cron_runs').upsert(
+      toMarkAlerted.map((cronName) => ({
+        cron_name: cronName,
+        last_stale_alert_at: new Date().toISOString(),
+      })),
+      { onConflict: 'cron_name' }
+    )
+  } catch (err) {
+    console.error('[cron-run-log] stale-check failed:', err)
+  }
+}
+
+async function alertFounderOfStaleCrons(staleLabels: string[]): Promise<void> {
+  const supabase = createServiceClient()
+  const { data: setting } = await supabase
+    .from('platform_settings')
+    .select('value')
+    .eq('key', 'founder_phone')
+    .maybeSingle()
+
+  const founderPhone = setting?.value as string | undefined
+  if (!founderPhone) {
+    console.error('[cron-run-log] stale crons detected but no founder_phone configured:', staleLabels)
+    return
+  }
+
+  const { sendFreeFormWhatsApp } = await import('@/lib/whatsapp/outbound')
+  const result = await sendFreeFormWhatsApp(
+    founderPhone,
+    `⚠️ Cron health: ${staleLabels.join('; ')} — check cron-job.org.`,
+    `cron-stale-alert-${Math.floor(Date.now() / (ALERT_COOLDOWN_MINUTES * 60 * 1000))}`
+  )
+  if (result.status === 'failed') {
+    console.error('[cron-run-log] stale-cron founder alert send failed:', result.error)
+  }
+}

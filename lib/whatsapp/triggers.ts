@@ -31,36 +31,40 @@ export interface HoldPingInput {
  * Decide whether to enqueue + at what time. No-op when the workspace flag is
  * off or the operator number isn't verified — both checked up-front to avoid
  * landing dead rows in the queue.
+ *
+ * Routine (non-urgent) holds don't enqueue anything here — they're already
+ * reflected in the next morning digest's live heldCount query
+ * (app/api/caye/morning-digest/route.ts queries unified_conversations
+ * directly). Enqueueing a kind='morning_digest' row per hold used to be how
+ * this worked, but nothing ever consumed those rows for aggregation — the
+ * generic outbound-worker picked them up and dispatched each one straight
+ * through templateForKind('morning_digest', ...), which only recognizes
+ * firstName/heldCount/bookingsTodayCount. A hold's actual payload
+ * (contactName/reason/inboundBody) doesn't match that shape, so these sent
+ * as content-free "Morning, there. 0 held for you, 0 bookings today."
+ * pings (or hard-failed on a template param mismatch) — confirmed live in
+ * caye_outbound_queue 2026-07-24 while investigating a Karenda/Bimini
+ * report of missing WhatsApp messages.
  */
 export async function enqueueHoldPing(input: HoldPingInput): Promise<void> {
   const enabled = await operatorPingsEnabled(input.workspaceId)
   if (!enabled) return
 
   const urgency = input.urgency ?? classifyHoldUrgency({ inboundBody: input.inboundBody })
+  if (urgency !== 'urgent') return
+
   const cfg = await loadScheduleConfig(input.workspaceId)
   const now = new Date()
 
-  let scheduledFor: Date
-  let kind: 'urgent_hold' | 'morning_digest'
-
-  if (urgency === 'urgent' && !inQuietHours(now, cfg)) {
-    scheduledFor = now
-    kind = 'urgent_hold'
-  } else if (urgency === 'urgent' && inQuietHours(now, cfg)) {
-    // Urgent during quiet hours → flush at the start of the digest window (7am).
-    scheduledFor = nextDigestTime(now, cfg)
-    kind = 'urgent_hold'
-  } else {
-    // Routine → batch into the morning digest.
-    scheduledFor = nextDigestTime(now, cfg)
-    kind = 'morning_digest'
-  }
+  const scheduledFor = inQuietHours(now, cfg)
+    ? nextDigestTime(now, cfg) // Urgent during quiet hours → flush at the start of the digest window (7am).
+    : now
 
   const ts = input.timestamp ?? now.toISOString()
 
   await enqueueOutbound({
     workspaceId: input.workspaceId,
-    kind,
+    kind: 'urgent_hold',
     conversationId: input.conversationId,
     payload: {
       contactName: input.contactName,

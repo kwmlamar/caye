@@ -28,6 +28,7 @@ import { isWhatsAppWindowOpen } from '@/lib/whatsapp/window'
 import { emailFallbackForFailedPing } from '@/lib/whatsapp/email-fallback'
 import { resolveOperatorByPhone } from '@/lib/operator-identity'
 import { loadScheduleConfig, nextDigestTime, localDayOfWeek } from '@/lib/whatsapp/schedule'
+import { checkStaleCronsAndAlert } from '@/lib/cron-run-log'
 
 // Kinds that represent Caye proactively messaging an operator about
 // something (as opposed to system plumbing like otp/welcome/ack) — these
@@ -107,6 +108,11 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
   }
+
+  // Fire on every authenticated tick (the common case is an empty queue,
+  // which is exactly when this needs to still run) — see cron-run-log.ts
+  // for why this lives here rather than as its own cron.
+  await checkStaleCronsAndAlert()
 
   const supabase = createServiceClient()
   const nowIso = new Date().toISOString()
@@ -327,7 +333,7 @@ async function handleResult(
   if (result.status === 'sent') {
     await supabase
       .from('caye_outbound_queue')
-      .update({ status: 'sent', sent_at: now, updated_at: now })
+      .update({ status: 'sent', sent_at: now, wa_message_id: result.messageId, updated_at: now })
       .eq('id', row.id)
     await supabase
       .from('workspace_ai_config')
