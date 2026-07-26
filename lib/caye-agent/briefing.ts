@@ -92,6 +92,15 @@ export async function composeEodSummary(args: {
  */
 export async function composeMorningBriefing(args: {
   workspaceId: string
+  /** Name of the operator this briefing is actually being sent to (resolve
+   *  via resolveOperatorByPhone against the destination phone before
+   *  calling). customers.full_name is a business-level field — it can hold
+   *  something like "Mrs. Max" that has nothing to do with whoever's phone
+   *  the message lands on. Confirmed live 2026-07-25: Bimini's briefing
+   *  greeted Karenda as "Mrs. Max" because this fell back to
+   *  customers.full_name. Falls back to that same field only when no
+   *  operator name is supplied. */
+  operatorName?: string | null
 }): Promise<string> {
   const supabase = createServiceClient()
 
@@ -101,7 +110,8 @@ export async function composeMorningBriefing(args: {
     .eq('id', args.workspaceId)
     .maybeSingle()
 
-  const operator = (customer?.full_name as string | null)?.trim() || 'the owner'
+  const operator =
+    args.operatorName?.trim() || (customer?.full_name as string | null)?.trim() || 'the owner'
   const business = (customer?.business_name as string | null)?.trim() || 'their business'
 
   const systemPrompt = [

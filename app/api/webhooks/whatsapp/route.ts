@@ -27,6 +27,8 @@ import { extractHoldTargetDate } from '@/lib/whatsapp/urgency'
 import { maybeRefreshContactProfile } from '@/lib/contact-profile'
 import { syncBookingToCalendar } from '@/lib/calendar-sync'
 import type { VoiceProfile } from '@/lib/voice-profile'
+import { alertFounderOfDeliveryFailure } from '@/lib/whatsapp/founder-alert'
+import { OPERATOR_LOGGABLE_KINDS } from '@/app/api/caye/outbound-worker/route'
 
 // ─── GET — webhook verification ──────────────────────────────────────────────
 
@@ -105,10 +107,18 @@ interface WaTextMessage {
   text?: { body: string }
 }
 
+interface WaStatus {
+  id: string
+  status: string // 'sent' | 'delivered' | 'read' | 'failed'
+  timestamp: string
+  errors?: { code: number; title: string; message?: string }[]
+}
+
 interface WaValue {
   metadata: WaMetadata
   contacts?: WaContact[]
   messages?: WaTextMessage[]
+  statuses?: WaStatus[]
 }
 
 async function processInboundWhatsApp(payload: Record<string, unknown>): Promise<void> {
@@ -122,7 +132,7 @@ async function processInboundWhatsApp(payload: Record<string, unknown>): Promise
     return
   }
 
-  const { metadata, contacts, messages } = value
+  const { metadata, contacts, messages, statuses } = value
   const phone_number_id = metadata?.phone_number_id
 
   if (!phone_number_id) {
@@ -130,7 +140,18 @@ async function processInboundWhatsApp(payload: Record<string, unknown>): Promise
     return
   }
 
-  // Meta also sends delivery receipts with no messages array — ignore silently
+  // Delivery-status callbacks (sent/delivered/read/failed) arrive on this
+  // same webhook, keyed by the message ID we stored as wa_message_id when
+  // we sent it — see lib/whatsapp/founder-alert.ts for why this matters.
+  // These used to be silently dropped ("Meta also sends delivery receipts
+  // with no messages array — ignore silently"), which is exactly how a
+  // failed send could sit unnoticed.
+  if (statuses && statuses.length > 0) {
+    await processDeliveryStatuses(statuses)
+  }
+
+  // Meta sends delivery-receipt-only payloads with no messages array —
+  // nothing else to do for those once processDeliveryStatuses has run.
   if (!messages || messages.length === 0) return
 
   const supabase = createServiceClient()
@@ -405,5 +426,48 @@ async function processInboundWhatsApp(payload: Record<string, unknown>): Promise
     }
 
     console.log(`[whatsapp webhook] Auto-reply sent to ${from} for workspace ${workspaceId}`)
+  }
+}
+
+/**
+ * Consume Meta's delivery-status callbacks into caye_outbound_queue —
+ * columns wa_delivery_status/_at/_error already existed but nothing wrote
+ * to them before this. A row we don't recognize (no matching wa_message_id
+ * — e.g. a manual send outside the queue) is ignored; not every WhatsApp
+ * send on the platform goes through the queue.
+ */
+async function processDeliveryStatuses(statuses: WaStatus[]): Promise<void> {
+  const supabase = createServiceClient()
+
+  for (const s of statuses) {
+    const errorMsg = s.errors?.[0]?.message ?? s.errors?.[0]?.title ?? null
+    const statusAt = new Date(Number(s.timestamp) * 1000).toISOString()
+
+    const { data: updated, error } = await supabase
+      .from('caye_outbound_queue')
+      .update({
+        wa_delivery_status: s.status,
+        wa_delivery_status_at: statusAt,
+        wa_delivery_error: errorMsg,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('wa_message_id', s.id)
+      .select('id, workspace_id, kind')
+      .maybeSingle()
+
+    if (error) {
+      console.error('[whatsapp webhook] delivery-status update failed:', error)
+      continue
+    }
+    if (!updated) continue // no queue row for this message id — not ours to track
+
+    if (s.status === 'failed' && OPERATOR_LOGGABLE_KINDS.has(updated.kind)) {
+      await alertFounderOfDeliveryFailure({
+        workspaceId: updated.workspace_id,
+        kind: updated.kind,
+        detail: errorMsg,
+        stage: 'delivery',
+      }).catch(err => console.error('[whatsapp webhook] delivery-failure founder alert failed:', err))
+    }
   }
 }

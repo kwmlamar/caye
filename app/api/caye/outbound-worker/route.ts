@@ -29,6 +29,7 @@ import { emailFallbackForFailedPing } from '@/lib/whatsapp/email-fallback'
 import { resolveOperatorByPhone } from '@/lib/operator-identity'
 import { loadScheduleConfig, nextDigestTime, localDayOfWeek } from '@/lib/whatsapp/schedule'
 import { checkStaleCronsAndAlert } from '@/lib/cron-run-log'
+import { alertFounderOfDeliveryFailure } from '@/lib/whatsapp/founder-alert'
 
 // Kinds that represent Caye proactively messaging an operator about
 // something (as opposed to system plumbing like otp/welcome/ack) — these
@@ -37,7 +38,7 @@ import { checkStaleCronsAndAlert } from '@/lib/cron-run-log'
 // not have noticed. Without this, a real escalation ping can go out over
 // WhatsApp and never appear anywhere in the dashboard's conversation
 // history, which reads as "Caye said she'd follow up but never did."
-const OPERATOR_LOGGABLE_KINDS = new Set([
+export const OPERATOR_LOGGABLE_KINDS = new Set([
   'urgent_hold',
   'escalation',
   'escalation_followup',
@@ -113,6 +114,7 @@ export async function GET(request: NextRequest) {
   // which is exactly when this needs to still run) — see cron-run-log.ts
   // for why this lives here rather than as its own cron.
   await checkStaleCronsAndAlert()
+  await checkStaleDeliveryAndAlert()
 
   const supabase = createServiceClient()
   const nowIso = new Date().toISOString()
@@ -141,6 +143,55 @@ export async function GET(request: NextRequest) {
   }
 
   return NextResponse.json(summary)
+}
+
+// Meta normally posts a 'sent' status callback within seconds of accepting
+// a message — that first callback is Meta's own acknowledgment, not device
+// delivery, so 15 minutes of total silence past send means something is
+// actually wrong (a dropped webhook, a genuinely undelivered message), not
+// just a slow network. Rows in this state stay marked status='sent' with
+// wa_delivery_status still null forever unless something checks for them —
+// this is the other half of "never permanently 'sent'" alongside the
+// dispatch-time and async-status-webhook alert paths below.
+const DELIVERY_GRACE_MINUTES = 15
+
+/**
+ * Sweep for operator-bound sends Meta accepted but never followed up on
+ * with any delivery-status callback. Marks them with a synthetic
+ * wa_delivery_status='timeout' (distinct from Meta's real sent/delivered/
+ * read/failed values) so a later tick doesn't re-check or re-alert on the
+ * same row. Best-effort — never throws, matches checkStaleCronsAndAlert's
+ * shape.
+ */
+async function checkStaleDeliveryAndAlert(): Promise<void> {
+  try {
+    const supabase = createServiceClient()
+    const cutoff = new Date(Date.now() - DELIVERY_GRACE_MINUTES * 60 * 1000).toISOString()
+    const { data: rows } = await supabase
+      .from('caye_outbound_queue')
+      .select('id, workspace_id, kind, sent_at')
+      .eq('status', 'sent')
+      .is('wa_delivery_status', null)
+      .lt('sent_at', cutoff)
+      .in('kind', Array.from(OPERATOR_LOGGABLE_KINDS))
+      .limit(50)
+
+    for (const row of rows ?? []) {
+      await supabase
+        .from('caye_outbound_queue')
+        .update({ wa_delivery_status: 'timeout', wa_delivery_status_at: new Date().toISOString() })
+        .eq('id', row.id)
+
+      await alertFounderOfDeliveryFailure({
+        workspaceId: row.workspace_id,
+        kind: row.kind,
+        detail: `No delivery confirmation from Meta after ${DELIVERY_GRACE_MINUTES}min`,
+        stage: 'delivery',
+      })
+    }
+  } catch (err) {
+    console.error('[outbound-worker] stale-delivery check failed:', err)
+  }
 }
 
 type RowOutcome = 'sent' | 'failed' | 'cancelled' | 'retried'
@@ -242,6 +293,20 @@ async function dispatch(row: QueueRow, config: WorkspaceConfig): Promise<{ resul
   const idem = row.idempotency_key ?? `queue-${row.id}`
 
   const windowOpen = await isWhatsAppWindowOpen(row.workspace_id)
+
+  // morning_digest prefers the narrative briefing over the flat count
+  // template whenever the window's open — TEMPLATE_REQUIRED_KINDS keeps
+  // 'morning_digest' listed (below) so the closed-window case still falls
+  // straight through to the template, same as before this branch existed.
+  // Also falls through to template when composition failed at enqueue time
+  // (freeFormBodyForKind returns null) rather than hard-failing the send.
+  if (row.kind === 'morning_digest' && windowOpen) {
+    const narrativeBody = freeFormBodyForKind(row.kind, row.payload)
+    if (narrativeBody) {
+      return { result: await sendFreeFormWhatsApp(phone, narrativeBody, idem), phone }
+    }
+  }
+
   const mustUseTemplate = TEMPLATE_REQUIRED_KINDS.has(row.kind) || !windowOpen
 
   if (mustUseTemplate) {
@@ -294,6 +359,15 @@ function operatorPingLogBody(kind: string, payload: Record<string, unknown>): st
     case 'same_day_booking':
       return `Heads up — ${str('guest', 'A guest')} just booked for today.`
     case 'morning_digest': {
+      // Mirror the narrative body verbatim when that's what actually went
+      // out over WhatsApp — otherwise Caye Direct's dashboard thread shows
+      // different text than the message the operator received, which is
+      // exactly the kind of mismatch that erodes trust in what Caye says
+      // she did. Only synthesize the count-based line when the template
+      // fallback was the one actually sent (closed window / composition
+      // failure at enqueue time).
+      const narrative = str('narrativeBody')
+      if (narrative) return narrative
       const aging = str('agingEscalationsSummary')
       const agingLine = aging ? ` Oldest waiting: ${aging}` : ''
       return `${payload.heldCount ?? 0} threads holding for you, ${payload.bookingsTodayCount ?? 0} booked today.${agingLine} Want me to work through the held ones with you?`
@@ -362,6 +436,14 @@ async function handleResult(
       .update({ whatsapp_blocked: true, last_whatsapp_outbound_status: 'blocked' })
       .eq('workspace_id', row.workspace_id)
     if (EMAIL_FALLBACK_KINDS.has(row.kind)) await fireFallback(row)
+    if (OPERATOR_LOGGABLE_KINDS.has(row.kind)) {
+      await alertFounderOfDeliveryFailure({
+        workspaceId: row.workspace_id,
+        kind: row.kind,
+        detail: result.error,
+        stage: 'dispatch',
+      })
+    }
     return 'failed'
   }
 
@@ -400,6 +482,18 @@ async function handleResult(
     .eq('workspace_id', row.workspace_id)
 
   if (EMAIL_FALLBACK_KINDS.has(row.kind)) await fireFallback(row)
+  // Confirmed live 2026-07-23: without this, a permanently-failed row (the
+  // morning_digest template-param mismatch) sat silent for 3 days — nobody
+  // alerted, nothing retried, surfaced only when Karenda separately
+  // reported missing WhatsApp messages. This is the fix for that.
+  if (OPERATOR_LOGGABLE_KINDS.has(row.kind)) {
+    await alertFounderOfDeliveryFailure({
+      workspaceId: row.workspace_id,
+      kind: row.kind,
+      detail: result.error,
+      stage: 'dispatch',
+    })
+  }
   return 'failed'
 }
 
@@ -543,8 +637,19 @@ function freeFormBodyForKind(kind: string, payload: Record<string, unknown>): st
   if (kind === 'ack') {
     return typeof payload.body === 'string' ? (payload.body as string) : null
   }
+  // morning_digest's narrative body (lib/caye-agent/briefing.ts's
+  // composeMorningBriefing, composed at enqueue time in morning-digest's
+  // cron) — the richer LLM-composed briefing, preferred over the flat
+  // count template whenever the 24h window is open. Absent when
+  // composition failed at enqueue time; dispatch() falls back to the
+  // template in that case.
+  if (kind === 'morning_digest') {
+    return typeof payload.narrativeBody === 'string' && payload.narrativeBody.trim()
+      ? (payload.narrativeBody as string)
+      : null
+  }
   // All other kinds prefer their template; this is only used when the 24h
   // window is open AND the kind isn't in TEMPLATE_REQUIRED_KINDS. In v1
-  // that's effectively ack only.
+  // that's ack + morning_digest's narrative path.
   return null
 }

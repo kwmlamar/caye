@@ -21,6 +21,7 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { sendZohoReply } from '@/lib/email-ai'
 import { generateCayeAutoReply } from '@/lib/caye-reply'
 import { enqueueHoldPing } from '@/lib/whatsapp/triggers'
+import { claimInboundMessage } from '@/lib/inbound-claim'
 import { applyEscalation } from '@/lib/whatsapp/escalation'
 import { extractHoldTargetDate } from '@/lib/whatsapp/urgency'
 import { syncBookingToCalendar } from '@/lib/calendar-sync'
@@ -344,45 +345,43 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
     conversation = created
   }
 
-  // Dedup inbound message
-  const { data: existing } = await supabase
-    .from('unified_messages')
-    .select('id')
-    .eq('channel_message_id', messageId)
-    .maybeSingle()
-
-  if (!existing) {
-    const { error: inboundErr } = await supabase.from('unified_messages').insert({
-      conversation_id: conversation.id,
-      channel_message_id: messageId,
-      sender_type: 'customer',
-      content: effectiveBody || subject,
-      message_type: 'text',
-      sent_at: sentAt,
-      status: 'delivered',
-      metadata: {
-        subject,
-        from: web3FormsFields ? effectiveEmail : fromRaw,
-        zoho_message_id: messageId,
-        zoho_thread_id: threadId,
-        ...(web3FormsFields ? { source: 'web3forms', form_fields: web3FormsFields.fields } : {}),
-      },
-    })
-    if (inboundErr) {
-      console.error('[zoho-email webhook] Inbound message insert failed:', inboundErr)
+  // Atomic claim — see lib/inbound-claim.ts. A SELECT-then-INSERT dedup
+  // check here previously let this webhook fall through to decision logic
+  // (LLM hold/reply call) even when another processor (the email/poll cron,
+  // or a webhook redelivery) had already claimed this exact message —
+  // confirmed live 2026-07-26 on Ashley Kukuczka's inbound (held AND
+  // auto-replied 0.6s apart). The claim must happen before any decision is
+  // made, and losing it must stop processing here, not just skip the insert.
+  const claim = await claimInboundMessage(conversation.id, messageId, {
+    content: effectiveBody || subject,
+    sentAt,
+    metadata: {
+      subject,
+      from: web3FormsFields ? effectiveEmail : fromRaw,
+      zoho_message_id: messageId,
+      zoho_thread_id: threadId,
+      ...(web3FormsFields ? { source: 'web3forms', form_fields: web3FormsFields.fields } : {}),
+    },
+  })
+  if (!claim.claimed) {
+    if (claim.error) {
+      console.error('[zoho-email webhook] Inbound claim failed (non-conflict):', claim.error)
     } else {
-      await supabase
-        .from('unified_conversations')
-        .update({ last_sender_type: 'customer', last_message_at: sentAt, last_message_preview: (effectiveBody || subject).slice(0, 100) })
-        .eq('id', conversation.id)
-
-      // Fire-and-forget customer style learning. Never blocks the reply path.
-      if (contactRow?.id) {
-        maybeRefreshContactProfile(contactRow.id).catch(err =>
-          console.error('[zoho-email webhook] Contact profile refresh failed:', err)
-        )
-      }
+      console.log(`[zoho-email webhook] ${messageId} already claimed elsewhere — skipping`)
     }
+    return
+  }
+
+  await supabase
+    .from('unified_conversations')
+    .update({ last_sender_type: 'customer', last_message_at: sentAt, last_message_preview: (effectiveBody || subject).slice(0, 100) })
+    .eq('id', conversation.id)
+
+  // Fire-and-forget customer style learning. Never blocks the reply path.
+  if (contactRow?.id) {
+    maybeRefreshContactProfile(contactRow.id).catch(err =>
+      console.error('[zoho-email webhook] Contact profile refresh failed:', err)
+    )
   }
 
   // Don't auto-reply to pre-archived conversations (noreply senders /

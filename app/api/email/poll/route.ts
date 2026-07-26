@@ -15,6 +15,7 @@ import { generateCayeAutoReply } from '@/lib/caye-reply'
 import type { VoiceProfile } from '@/lib/voice-profile'
 import { ensureTagline } from '@/lib/voice-profile'
 import { enqueueHoldPing } from '@/lib/whatsapp/triggers'
+import { claimInboundMessage } from '@/lib/inbound-claim'
 import { applyEscalation } from '@/lib/whatsapp/escalation'
 import { extractHoldTargetDate } from '@/lib/whatsapp/urgency'
 import { resolveOpenEscalations } from '@/lib/caye-agent/tools/write-low/resolve-open-escalations'
@@ -1166,21 +1167,27 @@ async function processMessage(
     conversation = created
   }
 
-  // Insert inbound message — surface failures, since a silent trigger error
-  // here previously caused empty conversations
-  const { error: inboundErr } = await supabase.from('unified_messages').insert({
-    conversation_id: conversation.id,
-    channel_message_id: messageId,
-    sender_type: 'customer',
+  // Atomic claim — see lib/inbound-claim.ts. This insert is the actual race
+  // gate (relies on the unique_conversation_channel_message_id constraint);
+  // the early "Skip if already processed" check above this function is just
+  // an optimization to skip redundant work, not the safety mechanism — two
+  // concurrent invocations (this poll cron running every 2 minutes vs the
+  // zoho-email webhook, or two overlapping poll ticks) can both pass that
+  // check before either has inserted. A conflict here means another
+  // processor already claimed this message and is handling the decision —
+  // expected under a race, not a failure.
+  const claim = await claimInboundMessage(conversation.id, messageId, {
     content: body || subject,
-    message_type: 'text',
-    sent_at: receivedTime,
-    status: 'delivered',
+    sentAt: receivedTime,
     metadata: { subject, from: fromRaw, zoho_message_id: messageId, zoho_thread_id: threadId },
   })
-  if (inboundErr) {
-    console.error('[email/poll] Inbound message insert failed:', inboundErr, { messageId, conversationId: conversation.id })
-    return 'error'
+  if (!claim.claimed) {
+    if (claim.error) {
+      console.error('[email/poll] Inbound claim failed (non-conflict):', claim.error, { messageId, conversationId: conversation.id })
+      return 'error'
+    }
+    console.log(`[email/poll] ${messageId} already claimed elsewhere — skipping`)
+    return 'skipped'
   }
 
   await supabase

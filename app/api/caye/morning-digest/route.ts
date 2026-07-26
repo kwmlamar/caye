@@ -23,6 +23,8 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { enqueueOutbound } from '@/lib/whatsapp/outbound'
 import { loadScheduleConfig, isDigestHour } from '@/lib/whatsapp/schedule'
 import { recordCronRun } from '@/lib/cron-run-log'
+import { composeMorningBriefing } from '@/lib/caye-agent/briefing'
+import { resolveOperatorByPhone } from '@/lib/operator-identity'
 import {
   AGING_LIST_MAX_ITEMS,
   ESCALATION_FOLLOWUP_HOURS,
@@ -61,7 +63,9 @@ export async function runMorningDigest() {
 
   const { data: workspaces, error } = await supabase
     .from('workspace_ai_config')
-    .select('workspace_id, whatsapp_outbound_enabled, operator_whatsapp_verified_at')
+    .select(
+      'workspace_id, whatsapp_outbound_enabled, operator_whatsapp_verified_at, operator_whatsapp_number, operator_notification_override_phone'
+    )
     .eq('whatsapp_outbound_enabled', true)
     .not('operator_whatsapp_verified_at', 'is', null)
 
@@ -107,6 +111,29 @@ export async function runMorningDigest() {
     const firstName = pickFirstName(customer?.full_name) ?? customer?.business_name ?? 'there'
     const agingEscalationsSummary = await buildAgingEscalationsSummary(ws.workspace_id, now)
 
+    // Narrative briefing is the real morning message whenever the WhatsApp
+    // 24h window is open at send time (see outbound-worker's dispatch()) —
+    // the flat count fields above stay only as the template fallback for a
+    // closed window or a composition failure. Resolve the greeting name
+    // from operator_allowlist against the phone this will actually send to,
+    // not customers.full_name — that's a business-level field (Bimini's is
+    // literally the string "Mrs. Max") and greeting whoever picks up with
+    // it is wrong regardless of who that is. Confirmed live 2026-07-25:
+    // this exact bug sent "Morning, Mrs. Max" into Karenda's WhatsApp.
+    const destPhone = ws.operator_notification_override_phone ?? ws.operator_whatsapp_number
+    let narrativeBody: string | null = null
+    if (destPhone) {
+      try {
+        const operator = await resolveOperatorByPhone(supabase, ws.workspace_id, destPhone)
+        narrativeBody = await composeMorningBriefing({
+          workspaceId: ws.workspace_id,
+          operatorName: operator?.name ?? null,
+        })
+      } catch (err) {
+        console.error(`[morning-digest] composeMorningBriefing failed for ${ws.workspace_id}:`, err)
+      }
+    }
+
     await enqueueOutbound({
       workspaceId: ws.workspace_id,
       kind: 'morning_digest',
@@ -115,6 +142,7 @@ export async function runMorningDigest() {
         heldCount: held,
         bookingsTodayCount: bookings,
         agingEscalationsSummary,
+        narrativeBody,
       },
       scheduledFor: now,
       idempotencyKey: `digest-${ws.workspace_id}-${dayKey}`,
