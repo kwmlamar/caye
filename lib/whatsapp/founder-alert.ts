@@ -51,10 +51,27 @@ export async function alertFounderOfDeliveryFailure(args: {
 
     const stageLabel = args.stage === 'dispatch' ? 'send failed' : 'delivery failed'
     const bucket = Math.floor(Date.now() / (60 * 60 * 1000))
+    const alertKey = `wa-fail-alert-${args.workspaceId}-${args.kind}-${bucket}`
+
+    // The bucket above only matters if something actually checks it — Meta
+    // does not dedupe sends on biz_opaque_callback_data, it's just opaque
+    // tracking data echoed back in webhooks. Without this insert-or-skip
+    // guard, every stale/failed row in the bucket sent its own real
+    // WhatsApp (confirmed live 2026-07-26: a burst of Bimini
+    // escalation_followup rows produced 8+ near-identical founder alerts).
+    const { error: dedupErr } = await supabase
+      .from('caye_founder_alert_log')
+      .insert({ alert_key: alertKey })
+    if (dedupErr) {
+      if (dedupErr.code === '23505') return // already alerted this bucket
+      console.error('[founder-alert] dedup check failed:', dedupErr)
+      return
+    }
+
     const result = await sendFreeFormWhatsApp(
       founderPhone,
       `⚠️ ${business}: ${args.kind} ${stageLabel}${args.detail ? ` — ${args.detail.slice(0, 150)}` : ''}`,
-      `wa-fail-alert-${args.workspaceId}-${args.kind}-${bucket}`
+      alertKey
     )
     if (result.status === 'failed') {
       console.error('[founder-alert] send failed:', result.error)
