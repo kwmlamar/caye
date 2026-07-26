@@ -23,10 +23,37 @@ interface ConvEvent {
   last_message_at: string | null
 }
 
+interface FollowUpMsg {
+  conversation_id: string
+  sent_at: string
+  metadata: Record<string, unknown> | null
+}
+
+type Resolution = 'replied' | 'replied_then_corrected' | 'answered_by_operator' | 'resolved_no_reply'
+
+/**
+ * What actually happened after a hold was cleared, from the business
+ * messages sent on that conversation since it was marked held. Distinct
+ * outcomes matter here — "replied" (Caye answered it herself) reads very
+ * differently from "replied_then_corrected" (Caye answered, then the owner
+ * sent a different reply on the same thread — worth surfacing if asked),
+ * which reads differently again from "answered_by_operator" (a human
+ * replied directly, Caye never touched it).
+ */
+function classifyResolution(markedAt: string | null, msgs: FollowUpMsg[]): Resolution {
+  const after = msgs.filter((m) => !markedAt || m.sent_at > markedAt)
+  if (after.length === 0) return 'resolved_no_reply'
+  const hasCorrection = after.some((m) => (m.metadata as Record<string, unknown> | null)?.is_correction === true)
+  if (hasCorrection) return 'replied_then_corrected'
+  const cayeReplied = after.some((m) => (m.metadata as Record<string, unknown> | null)?.generated_by === 'caye')
+  return cayeReplied ? 'replied' : 'answered_by_operator'
+}
+
 export const getRecentActivity: Tool<GetRecentActivityInput> = {
   name: 'get_recent_activity',
   description:
-    "Get a chronological feed of recent activity: new bookings, status changes, holds opened. Defaults to last 24 hours. Use when the operator asks 'what happened?' or 'what's new since I last checked?'.",
+    "Get a chronological feed of recent activity: new bookings, status changes, holds opened. Defaults to last 24 hours. Use when the operator asks 'what happened?' or 'what's new since I last checked?'. " +
+    "Each hold_event carries still_held — true means it's genuinely awaiting the operator's call RIGHT NOW; false means it's already been dealt with. NEVER describe a still_held=false item as pending or awaiting attention — that's exactly the kind of stale reporting that erodes trust (confirmed live 2026-07-26: Caye told the owner a thread was 'held' hours after it had already been auto-replied to and then corrected). When still_held=false, use `resolution` to say what actually happened: 'replied' = Caye answered it herself, 'replied_then_corrected' = Caye answered and the owner later sent a different reply on the same thread (worth naming if asked why), 'answered_by_operator' = a human replied directly and Caye never touched it, 'resolved_no_reply' = cleared with no reply sent (e.g. the owner marked it handled).",
   risk: 'read',
   roles: ['owner', 'founder'],
   modes: ['back-office'],
@@ -73,6 +100,37 @@ export const getRecentActivity: Tool<GetRecentActivityInput> = {
       holds = (data ?? []) as ConvEvent[]
     }
 
+    // For every hold that's since been cleared, figure out what actually
+    // happened — one batched query across all of them rather than N
+    // per-conversation round-trips. is_internal=false excludes the hold
+    // note Caye writes to herself when opening the hold; sent_at filtering
+    // to strictly after each conversation's own marked_at happens below,
+    // per-conversation, since this single query can only apply one lower
+    // bound (the earliest across all of them).
+    const resolvedConvIds = holds.filter((c) => !c.human_agent_enabled).map((c) => c.id)
+    const followUpsByConv = new Map<string, FollowUpMsg[]>()
+    if (resolvedConvIds.length > 0) {
+      const earliestMarkedAt = holds.reduce<string>((min, c) => {
+        if (!c.human_agent_marked_at) return min
+        return !min || c.human_agent_marked_at < min ? c.human_agent_marked_at : min
+      }, '')
+      const { data: followUps } = await supabase
+        .from('unified_messages')
+        .select('conversation_id, sent_at, metadata')
+        .in('conversation_id', resolvedConvIds)
+        .eq('sender_type', 'business')
+        .eq('is_internal', false)
+        .gte('sent_at', earliestMarkedAt || cutoff)
+        .order('sent_at', { ascending: true })
+        .limit(100)
+
+      for (const m of (followUps ?? []) as FollowUpMsg[]) {
+        const list = followUpsByConv.get(m.conversation_id) ?? []
+        list.push(m)
+        followUpsByConv.set(m.conversation_id, list)
+      }
+    }
+
     const bookingRows = (bookings ?? []) as BookingEvent[]
     return {
       ok: true,
@@ -90,6 +148,10 @@ export const getRecentActivity: Tool<GetRecentActivityInput> = {
           customer: c.customer_name,
           channel: c.channel_type,
           marked_at: c.human_agent_marked_at,
+          still_held: c.human_agent_enabled,
+          resolution: c.human_agent_enabled
+            ? null
+            : classifyResolution(c.human_agent_marked_at, followUpsByConv.get(c.id) ?? []),
         })),
       },
     }
