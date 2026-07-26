@@ -36,6 +36,7 @@ import { archiveThread } from './write-low/archive-thread'
 import { addInternalNote } from './write-low/add-internal-note'
 import { sendPaymentConfirmation } from './write-low/send-payment-confirmation'
 import { sendReply } from './write-high/send-reply'
+import { sendPaymentLink } from './write-high/send-payment-link'
 import { confirmBooking } from './write-high/confirm-booking'
 import { rescheduleBooking } from './write-high/reschedule-booking'
 import { cancelBooking } from './write-high/cancel-booking'
@@ -52,7 +53,7 @@ import { gateAdminHighRisk } from './admin/admin-high-risk-gate'
  *
  * Read tools (11): #38 + #40 — autonomous execution
  * Low-risk write tools (18): #37 — autonomous execution
- * High-risk write tools (6): #42/#43 — gated through confirmation flow
+ * High-risk write tools (7): #42/#43 — gated through confirmation flow
  * Driver-mode tools (4, 2026-07-05): tagged modes: ['driver'] — never
  * shipped to back-office/front-desk requests, see execute.ts mode filter.
  */
@@ -97,6 +98,7 @@ export const TOOL_REGISTRY: AnyTool[] = [
   // High-risk write — confirmation flow enforced in code (gateHighRisk,
   // #64), not just the prompt. See lib/caye-agent/tools/high-risk-gate.ts.
   gateHighRisk(sendReply) as AnyTool,
+  gateHighRisk(sendPaymentLink) as AnyTool,
   gateHighRisk(confirmBooking) as AnyTool,
   gateHighRisk(rescheduleBooking) as AnyTool,
   gateHighRisk(cancelBooking) as AnyTool,

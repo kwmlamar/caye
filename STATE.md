@@ -30,7 +30,7 @@ Both modes live on one WhatsApp number per customer, routed by sender identity. 
 - **WhatsApp:** Cloud API on new **Caye WABA** (`1482716173600181`); legacy Tropichat WABA (On-Premise) left untouched. Inbound webhook built. Operator-side messaging (Caye → owner) is the v1 use. (decisions-log 2026-05-28)
 - **Instagram + Messenger:** inbound webhooks built.
 - **BSP / Embedded Signup:** TropiTech is a registered Meta Tech Provider — can onboard customers' WhatsApp without each one doing their own Meta setup. **Discovered, not yet built.** This is the fix for the #1 onboarding killer (see Broken/friction). (decisions-log 2026-05-28)
-- **Payments:** no native processor. Use customer's existing rail — Bimini = WeTravel links stored per tour, included in confirmations; post-payment receipt → Caye matches → sends logistics. (Bimini pulse 2026-05-30)
+- **Payments:** no native processor. Use customer's existing rail — Bimini's card rail is ChargeAnywhere. Receipt-confirm side is live: `isPaymentReceipt` (lib/sender-classifier.ts) + the email/poll receipt handler parse ChargeAnywhere receipts, match to a pending booking, and auto-send the customer a confirmation. Send side (`send_payment_link` tool, lib/payments/chargeanywhere.ts) is scaffolded but not wired — blocked on Karenda getting ChargeAnywhere API/developer credentials. (Bimini pulse 2026-07-23, 2026-07-26)
 - **Context Sources (external OS read):** designed, not built. Caye reads static knowledge (services, prices, job files) from a customer's Git repo / Google Drive / Notion. ODS `kwmlamar/ods-ai-os` is the test bed. Read-first, write-back later. (decisions-log 2026-05-30)
 
 ## Pilots

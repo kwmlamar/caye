@@ -64,6 +64,11 @@ Surfaced while fixing the Kelsey Tonner mis-reply / silent-poll bug. None blocki
 ### Payment-receipt subject pre-filter is wrong
 The receipt handler added 2026-05-26 only triggers on subjects matching `/RECEIPT PAGE/i`, but the real ChargeAnywhere receipts arrive with subject literal `"Receipt"`. The "RECEIPT PAGE" string lives in the body. Current behavior: receipts fall through to the normal AI path and get treated as regular email.
 **Fix:** detect by sender (`noreply@chargeanywhere.com`) + body markers (`Response:` + `ApprovalCode:` + `Customer Name:`). About 4 lines. Held for a separate commit after the bigger persona/scope work.
+**Status (2026-07-26): already fixed.** `isPaymentReceipt` in `lib/sender-classifier.ts` falls back to the body-marker check when the subject regex misses, so real ChargeAnywhere receipts are caught. This entry is stale — leaving it for history, but no action needed.
+
+### ChargeAnywhere payment-link send — scaffolded, blocked on API access
+`send_payment_link` tool (lib/caye-agent/tools/write-high/send-payment-link.ts) + `lib/payments/chargeanywhere.ts` client are built and registered — booking lookup, price calc (with deposit override), customer send, and DB bookkeeping (`payment_link_sent_at`/`payment_link_url`/`payment_link_invoice_number`, migration `20260726_bookings_payment_link.sql`) all work. The actual vendor call is stubbed: `createPaymentLink` always throws `ChargeAnywhereNotConfiguredError` because ChargeAnywhere's real API (request shape, auth) lives behind a merchant-gated developer portal — no public docs to build against.
+**To finish:** Karenda needs to request API/developer access on her ChargeAnywhere merchant account (their "Bill Presentment" product — same thing she uses manually today). Once we have the endpoint spec + merchant ID/API key, fill in `CHARGEANYWHERE_API_KEY`/`CHARGEANYWHERE_MERCHANT_ID`/`CHARGEANYWHERE_API_BASE_URL` and replace the throw in `createPaymentLink`.
 
 ### `tool_choice: 'any'` forces a reply or a hold every turn
 `generateCayeAutoReply` uses `tool_choice: { type: 'any' }`, so Claude is required to call a tool every round. There's no "silence" path — even when the right answer is "do nothing," it has to pick send_reply or hold_for_human. The scope rules added 2026-05-26 push it toward hold, but loosening to `'auto'` would let the model just not engage.
