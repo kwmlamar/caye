@@ -503,22 +503,6 @@ export default function FounderHome() {
                 : { flexShrink: 0, height: 420 }),
             }}>
               <div style={{
-                display: expanded === 'conversations' ? 'none' : 'block',
-                position: 'relative',
-                borderRadius: 16, overflow: 'hidden', background: CARD_BG,
-              }}>
-                <ExpandButton expanded={expanded === 'calendar'} onClick={() => setExpanded(expanded === 'calendar' ? null : 'calendar')} />
-                {data && (
-                  <CommandCalendar
-                    bookings={data.bookings}
-                    weekStart={data.week_start}
-                    weekOffset={weekOffset}
-                    onWeekOffsetChange={setWeekOffset}
-                    onSelectConversation={setSelectedConversationId}
-                  />
-                )}
-              </div>
-              <div style={{
                 display: expanded === 'calendar' ? 'none' : 'block',
                 position: 'relative',
                 borderRadius: 16, overflow: 'hidden', background: CARD_BG,
@@ -534,6 +518,22 @@ export default function FounderHome() {
                   />
                 )}
               </div>
+              <div style={{
+                display: expanded === 'conversations' ? 'none' : 'block',
+                position: 'relative',
+                borderRadius: 16, overflow: 'hidden', background: CARD_BG,
+              }}>
+                <ExpandButton expanded={expanded === 'calendar'} onClick={() => setExpanded(expanded === 'calendar' ? null : 'calendar')} />
+                {data && (
+                  <CommandCalendar
+                    bookings={data.bookings}
+                    weekStart={data.week_start}
+                    weekOffset={weekOffset}
+                    onWeekOffsetChange={setWeekOffset}
+                    onSelectConversation={setSelectedConversationId}
+                  />
+                )}
+              </div>
             </div>
 
             {/* Caye Direct — same back-office agent the founder already
@@ -545,7 +545,7 @@ export default function FounderHome() {
               position: 'relative',
               ...(expanded === 'cayeDirect'
                 ? { flex: 1, minHeight: 0 }
-                : { flexShrink: 0, height: 380 }),
+                : { flexShrink: 0, height: 480 }),
               borderRadius: 16, overflow: 'hidden', background: CARD_BG,
             }}>
               <ExpandButton expanded={expanded === 'cayeDirect'} onClick={() => setExpanded(expanded === 'cayeDirect' ? null : 'cayeDirect')} />
