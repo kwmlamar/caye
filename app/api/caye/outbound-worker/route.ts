@@ -188,10 +188,20 @@ async function checkStaleDeliveryAndAlert(): Promise<void> {
       .limit(50)
 
     for (const row of rows ?? []) {
-      await supabase
+      // Checking this error matters: caye_outbound_queue_wa_delivery_status_check
+      // rejected 'timeout' as a value for weeks of would-be fixes before this
+      // check existed (confirmed live 2026-07-26) — the update silently no-
+      // opped every tick, so rows never left the `wa_delivery_status IS NULL`
+      // pool, and the same backlog got rescanned and re-alerted (once per
+      // hour, per the alert's own dedup) forever instead of once ever.
+      const { error: markErr } = await supabase
         .from('caye_outbound_queue')
         .update({ wa_delivery_status: 'timeout', wa_delivery_status_at: new Date().toISOString() })
         .eq('id', row.id)
+      if (markErr) {
+        console.error(`[outbound-worker] failed to mark ${row.id} as timeout:`, markErr)
+        continue // don't alert for a row we couldn't actually retire — avoids the same forever-loop
+      }
 
       await alertFounderOfDeliveryFailure({
         workspaceId: row.workspace_id,
