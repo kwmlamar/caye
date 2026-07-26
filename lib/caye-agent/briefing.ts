@@ -101,6 +101,18 @@ export async function composeMorningBriefing(args: {
    *  customers.full_name. Falls back to that same field only when no
    *  operator name is supplied. */
   operatorName?: string | null
+  /** The single oldest currently-held conversation, workspace-wide,
+   *  regardless of escalation status — see findOldestAgingHold in
+   *  app/api/caye/morning-digest/route.ts. Overrides the normal "most
+   *  pressing held item" pick for Sentence 2 below. Without this, an old
+   *  hold with no live escalation (or an escalation that expired without
+   *  the hold ever clearing) can lose the "most pressing" slot to whatever
+   *  came in this morning, every single day, and just rot in "+N more"
+   *  forever — confirmed live 2026-07-26 (nicole silvera, 19 days held,
+   *  zero escalation rows ever created; Marissa McGourthy, 17 days held,
+   *  5 escalations all expired, hold never cleared). Null when nothing's
+   *  been held 3+ days. */
+  oldestAgingHold?: { customer: string; daysHeld: number } | null
 }): Promise<string> {
   const supabase = createServiceClient()
 
@@ -128,9 +140,13 @@ export async function composeMorningBriefing(args: {
     'WRITING THE BRIEFING',
     `- Hard cap: 3 sentences, no exceptions. This gets read at a glance on a phone lock screen — every sentence must stand alone, plain everyday words, no jargon, no parentheticals, no semicolons stacking two thoughts into one sentence.`,
     `- Sentence 1: today's calendar, one line. "Nothing booked today" or "Two tours today, both confirmed" — not a list.`,
-    `- Sentence 2 (only if something needs attention): the single most pressing held item with has_open_escalation=false, named once, no backstory ("Jeff's asking about Sunday" not "I'm holding a thread for Jeff Dworkin who reached out about a possible Sunday booking"). If more than one such item exists, name only the most pressing and count the rest — "+ 2 more waiting" — never list them all. Items with has_open_escalation=true already get their own daily "still waiting" ping from a separate system; don't name them here, fold all of them into at most one short clause total ("3 already escalated, no change") if you mention them at all — most mornings you can skip them entirely.`,
+    args.oldestAgingHold
+      ? `- Sentence 2 is NOT optional and is NOT your choice today: name ${args.oldestAgingHold.customer}, who has been waiting ${args.oldestAgingHold.daysHeld} days — e.g. "${args.oldestAgingHold.customer} — ${args.oldestAgingHold.daysHeld} days waiting." This overrides the normal "most pressing" pick below; nothing today outranks an item this old. Never claim you already flagged this before if this is the first time you're naming it.`
+      : `- Sentence 2 (only if something needs attention): the single most pressing held item with has_open_escalation=false, named once, no backstory ("Jeff's asking about Sunday" not "I'm holding a thread for Jeff Dworkin who reached out about a possible Sunday booking"). If more than one such item exists, name only the most pressing and count the rest — "+ 2 more waiting" — never list them all. Items with has_open_escalation=true already get their own daily "still waiting" ping from a separate system; don't name them here, fold all of them into at most one short clause total ("3 already escalated, no change") if you mention them at all — most mornings you can skip them entirely.`,
     `- Don't mention anything you auto-skipped (spam, marketing blasts) — that's invisible-by-design, not something the operator needs to hear about.`,
-    `- Sentence 3: exactly ONE concrete yes/no question, tied to sentence 2's item if there is one ("Want me to send Jeff a hold on Sunday?"). Never stack two items into one question with "or" — pick the single most important one and ask about just that. If nothing needs attention, close with one light specific offer instead of asking about a thread ("Want me to chase the Dworkin lead while it's quiet?").`,
+    args.oldestAgingHold
+      ? `- Sentence 3: offer to take a first pass at ${args.oldestAgingHold.customer}'s thread — e.g. "Want me to take a first pass?" Just the offer — never act on it without a yes.`
+      : `- Sentence 3: exactly ONE concrete yes/no question, tied to sentence 2's item if there is one ("Want me to send Jeff a hold on Sunday?"). Never stack two items into one question with "or" — pick the single most important one and ask about just that. If nothing needs attention, close with one light specific offer instead of asking about a thread ("Want me to chase the Dworkin lead while it's quiet?").`,
     `- Start with "Morning" or "Morning, ${operator}" — no other opening.`,
     '',
     'WHAT NEVER TO DO',

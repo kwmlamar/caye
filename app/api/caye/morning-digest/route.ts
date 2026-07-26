@@ -125,9 +125,11 @@ export async function runMorningDigest() {
     if (destPhone) {
       try {
         const operator = await resolveOperatorByPhone(supabase, ws.workspace_id, destPhone)
+        const oldestAgingHold = await findOldestAgingHold(ws.workspace_id, now)
         narrativeBody = await composeMorningBriefing({
           workspaceId: ws.workspace_id,
           operatorName: operator?.name ?? null,
+          oldestAgingHold,
         })
       } catch (err) {
         console.error(`[morning-digest] composeMorningBriefing failed for ${ws.workspace_id}:`, err)
@@ -158,6 +160,63 @@ function pickFirstName(fullName: string | null | undefined): string | null {
   if (!fullName) return null
   const first = fullName.trim().split(/\s+/)[0]
   return first || null
+}
+
+const AGING_HOLD_MIN_DAYS = 3
+
+/**
+ * The single oldest currently-held conversation for a workspace, regardless
+ * of channel or escalation status — deliberately NOT scoped to
+ * caye_escalations like buildAgingEscalationsSummary below, because some
+ * holds never get an escalation row at all (nicole silvera, held 19d, zero
+ * escalation rows — confirmed live 2026-07-26) or have escalations that
+ * expired without the underlying hold ever clearing (Marissa McGourthy,
+ * 17d, 5 expired escalations, hold still open). Both fall through every
+ * existing nag mechanism — buildAgingEscalationsSummary's own LOOKBACK_HOURS
+ * window wouldn't even reach back far enough to catch either of them.
+ *
+ * Fed into composeMorningBriefing as a must-mention override — get_held_queue's
+ * own "most pressing" pick is otherwise free to surface whatever's freshest
+ * today, which is exactly how an old hold rots in "+N more" forever. Null
+ * when nothing's been held AGING_HOLD_MIN_DAYS+ — a fresh same-morning hold
+ * doesn't need this override; B1's real-time ping and normal briefing
+ * prioritization already cover it.
+ */
+async function findOldestAgingHold(
+  workspaceId: string,
+  now: Date
+): Promise<{ customer: string; daysHeld: number } | null> {
+  const supabase = createServiceClient()
+  const { data: accounts } = await supabase
+    .from('connected_accounts')
+    .select('id')
+    .eq('user_id', workspaceId)
+  const accountIds = (accounts ?? []).map((a: { id: string }) => a.id)
+  if (accountIds.length === 0) return null
+
+  const { data, error } = await supabase
+    .from('unified_conversations')
+    .select('customer_name, customer_id, human_agent_marked_at')
+    .in('connected_account_id', accountIds)
+    .eq('is_archived', false)
+    .eq('human_agent_enabled', true)
+    .not('human_agent_marked_at', 'is', null)
+    .order('human_agent_marked_at', { ascending: true })
+    .limit(1)
+    .maybeSingle()
+
+  if (error) {
+    console.error('[morning-digest] oldest-aging-hold fetch failed:', error)
+    return null
+  }
+  if (!data?.human_agent_marked_at) return null
+
+  const daysHeld = Math.floor(
+    (now.getTime() - new Date(data.human_agent_marked_at).getTime()) / (24 * 60 * 60 * 1000)
+  )
+  if (daysHeld < AGING_HOLD_MIN_DAYS) return null
+
+  return { customer: data.customer_name || data.customer_id || 'a customer', daysHeld }
 }
 
 interface AgingEscalationCandidate {
