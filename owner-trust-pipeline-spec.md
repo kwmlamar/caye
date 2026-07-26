@@ -4,6 +4,11 @@ Date: 2026-07-26. Origin: Karenda (Bimini) complaint — "I did not get any comm
 from Caye yesterday and there were bookings." Investigated live DB + code; decisions
 grilled and locked with Lamar. Build order is A then B — do not start B until A ships.
 
+**Status: A1–A4 and B1–B3 all shipped 2026-07-26** (commits af4cf84, 232b416, 5d15a62,
+3f06b3a, 390745b, 051407b). One incident along the way, also fixed same day: A3's
+founder-alert code had no real dedup and spammed the founder's WhatsApp with a backlog
+of stale queue rows — see 3f06b3a and supabase/migrations/20260726c_founder_alert_dedup.sql.
+
 ## Confirmed findings (live data, Bimini workspace `653257d9-c0f1-4271-be6d-3e2596fd893e`)
 
 1. **Hold/auto-reply race.** Ashley Kukuczka's inbound (2026-07-26 00:36 UTC) was
