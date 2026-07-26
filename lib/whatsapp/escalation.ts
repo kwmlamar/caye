@@ -1,5 +1,6 @@
 import 'server-only'
 import { createServiceClient } from '@/lib/supabase-server'
+import { clearStaleOutreachAutofill } from '@/lib/outreach-autofill'
 import { enqueueEscalationPings } from './triggers'
 import { extractTargetDate } from './urgency'
 import type {
@@ -132,6 +133,10 @@ export async function recordEscalation(
   }
 
   if (input.conversationId) {
+    // See lib/outreach-autofill.ts — clear any stale outreach_followup
+    // autofill draft before marking this (unrelated) escalation, or the
+    // dashboard compose box keeps surfacing the old templated nudge.
+    await clearStaleOutreachAutofill(input.conversationId)
     await supabase
       .from('unified_conversations')
       .update({

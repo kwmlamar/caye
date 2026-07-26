@@ -23,6 +23,7 @@ import { generateCayeAutoReply } from '@/lib/caye-reply'
 import { enqueueHoldPing, enqueueBookingCreated } from '@/lib/whatsapp/triggers'
 import { claimInboundMessage } from '@/lib/inbound-claim'
 import { applyEscalation } from '@/lib/whatsapp/escalation'
+import { clearStaleOutreachAutofill } from '@/lib/outreach-autofill'
 import { extractHoldTargetDate } from '@/lib/whatsapp/urgency'
 import { syncBookingToCalendar } from '@/lib/calendar-sync'
 import type { VoiceProfile } from '@/lib/voice-profile'
@@ -471,6 +472,11 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
   })
 
   if (decision.action === 'hold') {
+    // Clear any stale outreach_followup/outreach_first_touch autofill draft
+    // before marking this hold — otherwise the dashboard compose box keeps
+    // surfacing an old templated nudge instead of staying empty for this
+    // (unrelated) judgment call. See lib/outreach-autofill.ts.
+    await clearStaleOutreachAutofill(conversation.id)
     await supabase
       .from('unified_conversations')
       .update({
