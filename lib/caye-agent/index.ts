@@ -33,7 +33,14 @@ export type CayeAgentMode = 'front-desk' | 'back-office' | 'driver' | 'admin-she
 export interface CayeAgentInput {
   mode: CayeAgentMode
   workspaceId: string
-  userMessage: string
+  /**
+   * Plain text for the common case. Also accepts an Anthropic content
+   * block array (e.g. an `image` block + optional caption `text` block)
+   * so back-office mode can pass through a WhatsApp photo/screenshot as a
+   * vision turn — see app/api/webhooks/whatsapp-operator/route.ts's image
+   * handling (2026-07-24).
+   */
+  userMessage: string | Anthropic.MessageParam['content']
   /**
    * Caller's role from operator_allowlist (#48). Enforced per-tool in
    * runToolLoop. Webhook callers pass the looked-up role; cron paths
