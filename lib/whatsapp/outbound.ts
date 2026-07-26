@@ -143,7 +143,7 @@ function normalizeE164(phone: string): string {
 
 export type OutboundKind =
   | 'urgent_hold'
-  | 'same_day_booking'
+  | 'booking_created'
   | 'auth_failure'
   | 'morning_digest'
   | 'welcome'

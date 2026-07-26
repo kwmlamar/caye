@@ -32,26 +32,25 @@ export interface HoldPingInput {
  * off or the operator number isn't verified — both checked up-front to avoid
  * landing dead rows in the queue.
  *
- * Routine (non-urgent) holds don't enqueue anything here — they're already
- * reflected in the next morning digest's live heldCount query
- * (app/api/caye/morning-digest/route.ts queries unified_conversations
- * directly). Enqueueing a kind='morning_digest' row per hold used to be how
- * this worked, but nothing ever consumed those rows for aggregation — the
- * generic outbound-worker picked them up and dispatched each one straight
- * through templateForKind('morning_digest', ...), which only recognizes
- * firstName/heldCount/bookingsTodayCount. A hold's actual payload
- * (contactName/reason/inboundBody) doesn't match that shape, so these sent
- * as content-free "Morning, there. 0 held for you, 0 bookings today."
- * pings (or hard-failed on a template param mismatch) — confirmed live in
- * caye_outbound_queue 2026-07-24 while investigating a Karenda/Bimini
- * report of missing WhatsApp messages.
+ * Every hold pings the owner in real time, regardless of urgency — locked
+ * 2026-07-26 after Karenda (Bimini) reported Caye going silent on holds she
+ * only discovered by asking. Caye had told her directly "I'll call out held
+ * items as they come in"; routine holds staying silent until the next
+ * digest broke that promise every time. Routine (non-urgent) holds used to
+ * be filtered out here on the theory that they'd already show up in the
+ * next morning digest's live heldCount query
+ * (app/api/caye/morning-digest/route.ts) — true in principle, but the
+ * digest was separately confirmed broken for days at a time (see
+ * owner-trust-pipeline-spec.md), so "it's in tomorrow's digest" meant "it
+ * may never surface." Quiet hours still defer to the next digest window —
+ * this only removes the routine/urgent split, not the quiet-hours handling
+ * below.
  */
 export async function enqueueHoldPing(input: HoldPingInput): Promise<void> {
   const enabled = await operatorPingsEnabled(input.workspaceId)
   if (!enabled) return
 
   const urgency = input.urgency ?? classifyHoldUrgency({ inboundBody: input.inboundBody })
-  if (urgency !== 'urgent') return
 
   const cfg = await loadScheduleConfig(input.workspaceId)
   const now = new Date()
@@ -78,16 +77,49 @@ export async function enqueueHoldPing(input: HoldPingInput): Promise<void> {
   })
 }
 
-export interface SameDayBookingInput {
+export interface BookingCreatedInput {
   workspaceId: string
   conversationId?: string | null
-  guest: string
   bookingId: string
 }
 
-export async function enqueueSameDayBooking(input: SameDayBookingInput): Promise<void> {
+/**
+ * Ping the owner whenever Caye creates a booking, any date — not just
+ * same-day (this replaces enqueueSameDayBooking, which existed but was
+ * never actually called anywhere in the codebase; same-day-only was the
+ * plan, but "no ping until it's today" left every future-dated booking
+ * silent, which is exactly what Karenda flagged: "there were bookings" as
+ * evidence Caye had gone quiet). Locked 2026-07-26 — bookings are revenue
+ * events; the owner should hear about them immediately regardless of when
+ * the tour itself happens.
+ *
+ * Fetches the booking's own details rather than requiring the caller to
+ * pass them through — every call site already has bookingId from
+ * decision.bookingId and nothing else, so resolving details here keeps
+ * every call site a one-liner.
+ */
+export async function enqueueBookingCreated(input: BookingCreatedInput): Promise<void> {
   const enabled = await operatorPingsEnabled(input.workspaceId)
   if (!enabled) return
+
+  const supabase = createServiceClient()
+  const { data: booking } = await supabase
+    .from('bookings')
+    .select('customer_name, booking_date, booking_time, number_of_people, service:booking_services(name)')
+    .eq('id', input.bookingId)
+    .maybeSingle()
+
+  if (!booking) return // gone/cancelled before the ping fired — nothing to say
+
+  const serviceRaw = booking.service as { name: string | null } | { name: string | null }[] | null
+  const serviceName = (Array.isArray(serviceRaw) ? serviceRaw[0]?.name : serviceRaw?.name) ?? null
+  const guest = booking.customer_name ?? 'A guest'
+  const summary = formatBookingSummary({
+    serviceName,
+    bookingDate: booking.booking_date,
+    bookingTime: booking.booking_time,
+    partySize: booking.number_of_people,
+  })
 
   const cfg = await loadScheduleConfig(input.workspaceId)
   const now = new Date()
@@ -95,12 +127,28 @@ export async function enqueueSameDayBooking(input: SameDayBookingInput): Promise
 
   await enqueueOutbound({
     workspaceId: input.workspaceId,
-    kind: 'same_day_booking',
+    kind: 'booking_created',
     conversationId: input.conversationId ?? null,
-    payload: { guest: input.guest, bookingId: input.bookingId },
+    payload: { guest, bookingId: input.bookingId, summary },
     scheduledFor,
-    idempotencyKey: `sameday-${input.bookingId}`,
+    idempotencyKey: `booking-${input.bookingId}`,
   })
+}
+
+function formatBookingSummary(args: {
+  serviceName: string | null
+  bookingDate: string
+  bookingTime: string | null
+  partySize: number | null
+}): string {
+  const dateLabel = new Date(`${args.bookingDate}T00:00:00`).toLocaleDateString('en-US', {
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+  })
+  const timeLabel = args.bookingTime ? ` at ${args.bookingTime.slice(0, 5)}` : ''
+  const partyLabel = args.partySize ? `, ${args.partySize} ${args.partySize === 1 ? 'guest' : 'guests'}` : ''
+  return `${args.serviceName ?? 'a tour'} on ${dateLabel}${timeLabel}${partyLabel}`
 }
 
 export interface AuthFailureInput {

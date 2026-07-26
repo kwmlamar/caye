@@ -21,7 +21,7 @@ import { createHmac } from 'crypto'
 import { createServiceClient } from '@/lib/supabase-server'
 import { sendMetaMessage, fetchMetaSenderName } from '@/lib/meta-reply'
 import { generateCayeAutoReply } from '@/lib/caye-reply'
-import { enqueueHoldPing } from '@/lib/whatsapp/triggers'
+import { enqueueHoldPing, enqueueBookingCreated } from '@/lib/whatsapp/triggers'
 import { applyEscalation } from '@/lib/whatsapp/escalation'
 import { extractHoldTargetDate } from '@/lib/whatsapp/urgency'
 import { maybeRefreshContactProfile } from '@/lib/contact-profile'
@@ -358,6 +358,11 @@ async function processInboundInstagram(payload: Record<string, unknown>): Promis
         syncBookingToCalendar(workspaceId, decision.bookingId, 'upsert').catch(err =>
           console.error('[instagram webhook] Calendar sync failed:', err)
         )
+        enqueueBookingCreated({
+          workspaceId,
+          conversationId: conversation.id,
+          bookingId: decision.bookingId,
+        }).catch(err => console.error('[instagram webhook] enqueueBookingCreated failed:', err))
         console.log(
           `[instagram webhook] Caye created booking ${decision.bookingId} for workspace ${workspaceId}`
         )

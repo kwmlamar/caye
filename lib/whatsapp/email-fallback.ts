@@ -6,7 +6,7 @@ import { sendZohoReply } from '@/lib/email-ai'
  * Email fallback for urgent Caye→operator pings that failed to deliver on
  * WhatsApp. Only invoked for kinds where silence is dangerous:
  *   - urgent_hold
- *   - same_day_booking
+ *   - booking_created
  *   - auth_failure
  *
  * Sends via the workspace's own Zoho Mail account to the operator's signup
@@ -16,7 +16,7 @@ import { sendZohoReply } from '@/lib/email-ai'
 
 export interface FallbackInput {
   workspaceId: string
-  kind: 'urgent_hold' | 'same_day_booking' | 'auth_failure'
+  kind: 'urgent_hold' | 'booking_created' | 'auth_failure'
   payload: Record<string, unknown>
 }
 
@@ -71,12 +71,13 @@ function composeFallback(
           `Open the dashboard to send or edit: ${dashboardUrl}\n\n— Caye`,
       }
     }
-    case 'same_day_booking': {
+    case 'booking_created': {
       const guest = (payload.guest as string) ?? 'A guest'
+      const summary = (payload.summary as string) ?? ''
       return {
-        subject: `Caye couldn't reach you on WhatsApp — booking for today: ${guest}`,
+        subject: `Caye couldn't reach you on WhatsApp — new booking: ${guest}`,
         body:
-          `${guest} booked for today. I auto-confirmed it.\n\n` +
+          `${guest} just booked${summary ? ` — ${summary}` : ''}. I auto-confirmed it.\n\n` +
           `Details: ${dashboardUrl}\n\n— Caye`,
       }
     }

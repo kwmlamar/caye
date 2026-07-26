@@ -28,7 +28,7 @@ import { isWhatsAppWindowOpen } from '@/lib/whatsapp/window'
 import { emailFallbackForFailedPing } from '@/lib/whatsapp/email-fallback'
 import { resolveOperatorByPhone } from '@/lib/operator-identity'
 import { loadScheduleConfig, nextDigestTime, localDayOfWeek } from '@/lib/whatsapp/schedule'
-import { checkStaleCronsAndAlert } from '@/lib/cron-run-log'
+import { recordCronRun, checkStaleCronsAndAlert } from '@/lib/cron-run-log'
 import { alertFounderOfDeliveryFailure } from '@/lib/whatsapp/founder-alert'
 
 // Kinds that represent Caye proactively messaging an operator about
@@ -42,7 +42,7 @@ export const OPERATOR_LOGGABLE_KINDS = new Set([
   'urgent_hold',
   'escalation',
   'escalation_followup',
-  'same_day_booking',
+  'booking_created',
   'morning_digest',
   'auth_failure',
 ])
@@ -58,6 +58,11 @@ const TEMPLATE_REQUIRED_KINDS = new Set([
   'morning_digest',
   'urgent_hold',
   'auth_failure',
+  // No dedicated template yet (reuses caye_urgent_hold) and no free-form
+  // body composer either — always template so a booking ping can never
+  // hard-fail with "no free-form body" just because the window happened
+  // to be open.
+  'booking_created',
   // Escalations may go to the founder, who has no 24h window with the
   // workspace's Caye number. Always template — match urgent_hold's shape.
   'escalation',
@@ -65,7 +70,7 @@ const TEMPLATE_REQUIRED_KINDS = new Set([
 ])
 
 // Kinds where silence is dangerous → email fallback if WhatsApp fails.
-const EMAIL_FALLBACK_KINDS = new Set(['urgent_hold', 'same_day_booking', 'auth_failure'])
+const EMAIL_FALLBACK_KINDS = new Set(['urgent_hold', 'booking_created', 'auth_failure'])
 
 // Kinds that bypass the operator mute.
 const MUTE_BYPASS_KINDS = new Set(['auth_failure'])
@@ -116,33 +121,39 @@ export async function GET(request: NextRequest) {
   await checkStaleCronsAndAlert()
   await checkStaleDeliveryAndAlert()
 
-  const supabase = createServiceClient()
-  const nowIso = new Date().toISOString()
+  try {
+    const summary = await recordCronRun('outbound-worker', async () => {
+      const supabase = createServiceClient()
+      const nowIso = new Date().toISOString()
 
-  const { data: rows, error } = await supabase
-    .from('caye_outbound_queue')
-    .select('id, workspace_id, kind, conversation_id, payload, scheduled_for, failure_count, idempotency_key')
-    .eq('status', 'pending')
-    .lte('scheduled_for', nowIso)
-    .order('scheduled_for', { ascending: true })
-    .limit(100)
+      const { data: rows, error } = await supabase
+        .from('caye_outbound_queue')
+        .select('id, workspace_id, kind, conversation_id, payload, scheduled_for, failure_count, idempotency_key')
+        .eq('status', 'pending')
+        .lte('scheduled_for', nowIso)
+        .order('scheduled_for', { ascending: true })
+        .limit(100)
 
-  if (error) {
-    console.error('[outbound-worker] queue fetch failed:', error)
-    return NextResponse.json({ error: error.message }, { status: 500 })
+      if (error) throw new Error(error.message)
+
+      const summary = { scanned: rows?.length ?? 0, sent: 0, failed: 0, cancelled: 0, retried: 0 }
+      if (!rows?.length) return summary
+
+      // Process with a small concurrency limit.
+      for (let i = 0; i < rows.length; i += CONCURRENCY) {
+        const slice = rows.slice(i, i + CONCURRENCY)
+        const results = await Promise.all(slice.map((row) => processRow(row)))
+        for (const r of results) summary[r] = (summary[r] ?? 0) + 1
+      }
+
+      return summary
+    })
+    return NextResponse.json(summary)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    console.error('[outbound-worker] queue fetch failed:', message)
+    return NextResponse.json({ error: message }, { status: 500 })
   }
-
-  const summary = { scanned: rows?.length ?? 0, sent: 0, failed: 0, cancelled: 0, retried: 0 }
-  if (!rows?.length) return NextResponse.json(summary)
-
-  // Process with a small concurrency limit.
-  for (let i = 0; i < rows.length; i += CONCURRENCY) {
-    const slice = rows.slice(i, i + CONCURRENCY)
-    const results = await Promise.all(slice.map((row) => processRow(row)))
-    for (const r of results) summary[r] = (summary[r] ?? 0) + 1
-  }
-
-  return NextResponse.json(summary)
 }
 
 // Meta normally posts a 'sent' status callback within seconds of accepting
@@ -356,8 +367,8 @@ function operatorPingLogBody(kind: string, payload: Record<string, unknown>): st
       const summary = str('ping_summary') || `${str('category', 'policy')} escalation`
       return `Still sitting on this one — ${who} has been waiting a while now: ${summary}. Say the word and I'll send a holding reply, or let me know you've got it.`
     }
-    case 'same_day_booking':
-      return `Heads up — ${str('guest', 'A guest')} just booked for today.`
+    case 'booking_created':
+      return `Just booked — ${str('guest', 'A guest')}, ${str('summary', 'details in the dashboard')}.`
     case 'morning_digest': {
       // Mirror the narrative body verbatim when that's what actually went
       // out over WhatsApp — otherwise Caye Direct's dashboard thread shows
@@ -514,7 +525,7 @@ async function fireFallback(row: QueueRow): Promise<void> {
   if (!EMAIL_FALLBACK_KINDS.has(row.kind)) return
   await emailFallbackForFailedPing({
     workspaceId: row.workspace_id,
-    kind: row.kind as 'urgent_hold' | 'same_day_booking' | 'auth_failure',
+    kind: row.kind as 'urgent_hold' | 'booking_created' | 'auth_failure',
     payload: row.payload,
   })
 }
@@ -598,11 +609,11 @@ async function templateForKind(
         name: 'caye_auth_failure',
         placeholders: [str('service', 'a connected service'), str('reconnectUrl', '')],
       }
-    case 'same_day_booking':
-      // No dedicated template in v1 — fall back to urgent_hold framing.
+    case 'booking_created':
+      // No dedicated template in v1 — reuse urgent_hold's two-placeholder shape.
       return {
         name: 'caye_urgent_hold',
-        placeholders: [str('guest', 'A guest'), 'booked for today'],
+        placeholders: [str('guest', 'A guest'), str('summary', 'just booked')],
       }
     case 'escalation': {
       // Reuse the urgent_hold template. Prefer the operator-friendly

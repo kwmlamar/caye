@@ -27,7 +27,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase-server'
 import { sendZohoReply } from '@/lib/email-ai'
 import { generateCayeAutoReply } from '@/lib/caye-reply'
-import { enqueueHoldPing } from '@/lib/whatsapp/triggers'
+import { enqueueHoldPing, enqueueBookingCreated } from '@/lib/whatsapp/triggers'
 import { applyEscalation } from '@/lib/whatsapp/escalation'
 import { syncBookingToCalendar } from '@/lib/calendar-sync'
 import type { VoiceProfile } from '@/lib/voice-profile'
@@ -305,6 +305,11 @@ export async function POST(request: NextRequest) {
     syncBookingToCalendar(workspaceId, decision.bookingId, 'upsert').catch((err) =>
       console.error('[admin/caye-respond] Calendar sync failed:', err)
     )
+    enqueueBookingCreated({
+      workspaceId,
+      conversationId,
+      bookingId: decision.bookingId,
+    }).catch((err) => console.error('[admin/caye-respond] enqueueBookingCreated failed:', err))
   }
 
   return NextResponse.json({

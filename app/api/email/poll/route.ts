@@ -14,7 +14,8 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { generateCayeAutoReply } from '@/lib/caye-reply'
 import type { VoiceProfile } from '@/lib/voice-profile'
 import { ensureTagline } from '@/lib/voice-profile'
-import { enqueueHoldPing } from '@/lib/whatsapp/triggers'
+import { enqueueHoldPing, enqueueBookingCreated } from '@/lib/whatsapp/triggers'
+import { syncBookingToCalendar } from '@/lib/calendar-sync'
 import { claimInboundMessage } from '@/lib/inbound-claim'
 import { applyEscalation } from '@/lib/whatsapp/escalation'
 import { extractHoldTargetDate } from '@/lib/whatsapp/urgency'
@@ -1460,6 +1461,24 @@ async function processMessage(
       .from('unified_conversations')
       .update({ last_sender_type: 'business', last_business_sender_kind: 'caye', last_message_at: replySentAt, last_message_preview: outboundBody.slice(0, 100) })
       .eq('id', conversation.id)
+  }
+
+  // Neither the calendar sync nor the booking-created ping existed on this
+  // path before — every other channel (whatsapp/instagram/messenger/zoho-
+  // email webhooks) already has this block; this one was simply missed
+  // when those were added. Zoho email is the primary channel, so this
+  // gap meant bookings made through the 2-minute poll cron (as opposed to
+  // the webhook) never synced to the calendar or notified the owner.
+  if (decision.bookingId) {
+    syncBookingToCalendar(workspaceId, decision.bookingId, 'upsert').catch(err =>
+      console.error('[email/poll] Calendar sync failed:', err)
+    )
+    enqueueBookingCreated({
+      workspaceId,
+      conversationId: conversation.id,
+      bookingId: decision.bookingId,
+    }).catch(err => console.error('[email/poll] enqueueBookingCreated failed:', err))
+    console.log(`[email/poll] Caye created booking ${decision.bookingId} for workspace ${workspaceId}`)
   }
 
   console.log(`[email/poll] Auto-replied to ${effectiveEmail} for workspace ${workspaceId}`)

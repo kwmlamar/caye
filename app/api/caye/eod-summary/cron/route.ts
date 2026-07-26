@@ -16,6 +16,7 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { composeEodSummary } from '@/lib/caye-agent/briefing'
 import { sendFreeFormWhatsApp } from '@/lib/whatsapp/outbound'
 import { resolveOperatorByPhone } from '@/lib/operator-identity'
+import { recordCronRun } from '@/lib/cron-run-log'
 
 interface WorkspaceRow {
   workspace_id: string
@@ -38,89 +39,94 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  const supabase = createServiceClient()
-  const nowISO = new Date().toISOString()
+  try {
+    const summary = await recordCronRun('eod-summary', async () => {
+      const supabase = createServiceClient()
+      const nowISO = new Date().toISOString()
 
-  const { data: rows, error } = await supabase
-    .from('workspace_ai_config')
-    .select(
-      'workspace_id, eod_summary_time, last_eod_sent_at, operator_whatsapp_number, whatsapp_muted_until, customers(timezone)'
-    )
-    .eq('eod_summary_enabled', true)
-    .not('operator_whatsapp_number', 'is', null)
-    .eq('whatsapp_outbound_enabled', true)
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 })
-  }
-
-  const results: Array<{ workspace_id: string; status: string; detail?: string }> = []
-  for (const row of (rows ?? []) as unknown as WorkspaceRow[]) {
-    if (!row.eod_summary_time || !row.operator_whatsapp_number) {
-      results.push({ workspace_id: row.workspace_id, status: 'skip', detail: 'missing config' })
-      continue
-    }
-    const tz = pickTimezone(row.customers)
-    const skip = shouldSkip({
-      nowISO,
-      targetTime: row.eod_summary_time,
-      lastSentAtISO: row.last_eod_sent_at,
-      timezone: tz,
-      mutedUntilISO: row.whatsapp_muted_until,
-    })
-    if (skip) {
-      results.push({ workspace_id: row.workspace_id, status: 'skip', detail: skip })
-      continue
-    }
-
-    try {
-      const text = await composeEodSummary({ workspaceId: row.workspace_id })
-      if (!text) {
-        results.push({ workspace_id: row.workspace_id, status: 'skip', detail: 'empty composition' })
-        continue
-      }
-      const idempotencyKey = `eod-${row.workspace_id}-${todayInTimezone(tz)}`
-      const sendResult = await sendFreeFormWhatsApp(
-        row.operator_whatsapp_number,
-        text,
-        idempotencyKey
-      )
-      if (sendResult.status === 'failed') {
-        results.push({
-          workspace_id: row.workspace_id,
-          status: 'send_failed',
-          detail: sendResult.error,
-        })
-        continue
-      }
-
-      await supabase
+      const { data: rows, error } = await supabase
         .from('workspace_ai_config')
-        .update({ last_eod_sent_at: nowISO })
-        .eq('workspace_id', row.workspace_id)
+        .select(
+          'workspace_id, eod_summary_time, last_eod_sent_at, operator_whatsapp_number, whatsapp_muted_until, customers(timezone)'
+        )
+        .eq('eod_summary_enabled', true)
+        .not('operator_whatsapp_number', 'is', null)
+        .eq('whatsapp_outbound_enabled', true)
 
-      const operator = await resolveOperatorByPhone(supabase, row.workspace_id, row.operator_whatsapp_number)
-      await supabase.from('caye_operator_messages').insert({
-        workspace_id: row.workspace_id,
-        direction: 'outbound',
-        wa_message_id: null,
-        body: text,
-        intent: null,
-        claude_format: { role: 'assistant', content: text },
-        operator_allowlist_id: operator?.id ?? null,
-        operator_name: operator?.name ?? null,
-        operator_role: operator?.role ?? null,
-      })
+      if (error) throw new Error(error.message)
 
-      results.push({ workspace_id: row.workspace_id, status: 'sent' })
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      console.error(`[eod-summary] workspace ${row.workspace_id}:`, msg)
-      results.push({ workspace_id: row.workspace_id, status: 'error', detail: msg })
-    }
+      const results: Array<{ workspace_id: string; status: string; detail?: string }> = []
+      for (const row of (rows ?? []) as unknown as WorkspaceRow[]) {
+        if (!row.eod_summary_time || !row.operator_whatsapp_number) {
+          results.push({ workspace_id: row.workspace_id, status: 'skip', detail: 'missing config' })
+          continue
+        }
+        const tz = pickTimezone(row.customers)
+        const skip = shouldSkip({
+          nowISO,
+          targetTime: row.eod_summary_time,
+          lastSentAtISO: row.last_eod_sent_at,
+          timezone: tz,
+          mutedUntilISO: row.whatsapp_muted_until,
+        })
+        if (skip) {
+          results.push({ workspace_id: row.workspace_id, status: 'skip', detail: skip })
+          continue
+        }
+
+        try {
+          const text = await composeEodSummary({ workspaceId: row.workspace_id })
+          if (!text) {
+            results.push({ workspace_id: row.workspace_id, status: 'skip', detail: 'empty composition' })
+            continue
+          }
+          const idempotencyKey = `eod-${row.workspace_id}-${todayInTimezone(tz)}`
+          const sendResult = await sendFreeFormWhatsApp(
+            row.operator_whatsapp_number,
+            text,
+            idempotencyKey
+          )
+          if (sendResult.status === 'failed') {
+            results.push({
+              workspace_id: row.workspace_id,
+              status: 'send_failed',
+              detail: sendResult.error,
+            })
+            continue
+          }
+
+          await supabase
+            .from('workspace_ai_config')
+            .update({ last_eod_sent_at: nowISO })
+            .eq('workspace_id', row.workspace_id)
+
+          const operator = await resolveOperatorByPhone(supabase, row.workspace_id, row.operator_whatsapp_number)
+          await supabase.from('caye_operator_messages').insert({
+            workspace_id: row.workspace_id,
+            direction: 'outbound',
+            wa_message_id: null,
+            body: text,
+            intent: null,
+            claude_format: { role: 'assistant', content: text },
+            operator_allowlist_id: operator?.id ?? null,
+            operator_name: operator?.name ?? null,
+            operator_role: operator?.role ?? null,
+          })
+
+          results.push({ workspace_id: row.workspace_id, status: 'sent' })
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err)
+          console.error(`[eod-summary] workspace ${row.workspace_id}:`, msg)
+          results.push({ workspace_id: row.workspace_id, status: 'error', detail: msg })
+        }
+      }
+
+      return { checked: results.length, results }
+    })
+    return NextResponse.json(summary)
+  } catch (err) {
+    return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
   }
-
-  return NextResponse.json({ checked: results.length, results })
 }
 
 function pickTimezone(cust: WorkspaceRow['customers']): string {

@@ -20,7 +20,7 @@ import { createHmac } from 'crypto'
 import { createServiceClient } from '@/lib/supabase-server'
 import { sendZohoReply } from '@/lib/email-ai'
 import { generateCayeAutoReply } from '@/lib/caye-reply'
-import { enqueueHoldPing } from '@/lib/whatsapp/triggers'
+import { enqueueHoldPing, enqueueBookingCreated } from '@/lib/whatsapp/triggers'
 import { claimInboundMessage } from '@/lib/inbound-claim'
 import { applyEscalation } from '@/lib/whatsapp/escalation'
 import { extractHoldTargetDate } from '@/lib/whatsapp/urgency'
@@ -593,6 +593,11 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
     syncBookingToCalendar(workspaceId, decision.bookingId, 'upsert').catch(err =>
       console.error('[zoho-email webhook] Calendar sync failed:', err)
     )
+    enqueueBookingCreated({
+      workspaceId,
+      conversationId: conversation.id,
+      bookingId: decision.bookingId,
+    }).catch(err => console.error('[zoho-email webhook] enqueueBookingCreated failed:', err))
     console.log(
       `[zoho-email webhook] Caye created booking ${decision.bookingId} for workspace ${workspaceId}`
     )

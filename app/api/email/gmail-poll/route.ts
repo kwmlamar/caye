@@ -22,7 +22,8 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { generateCayeAutoReply } from '@/lib/caye-reply'
 import type { VoiceProfile } from '@/lib/voice-profile'
 import { ensureTagline } from '@/lib/voice-profile'
-import { enqueueHoldPing } from '@/lib/whatsapp/triggers'
+import { enqueueHoldPing, enqueueBookingCreated } from '@/lib/whatsapp/triggers'
+import { syncBookingToCalendar } from '@/lib/calendar-sync'
 import { applyEscalation } from '@/lib/whatsapp/escalation'
 import { extractHoldTargetDate } from '@/lib/whatsapp/urgency'
 import { htmlToPlainText } from '@/lib/email-text'
@@ -446,6 +447,20 @@ async function processGmailMessage(
         convoUpdate.human_agent_reason = decision.ownerNote || 'Caye replied but owner follow-up requested'
       }
       await supabase.from('unified_conversations').update(convoUpdate).eq('id', conversationId)
+
+      // Missing on this path before, same gap as email/poll — every other
+      // channel already syncs the calendar and pings the owner when Caye
+      // creates a booking.
+      if (decision.bookingId) {
+        syncBookingToCalendar(workspaceId, decision.bookingId, 'upsert').catch(err =>
+          console.error('[gmail-poll] Calendar sync failed:', err)
+        )
+        enqueueBookingCreated({
+          workspaceId,
+          conversationId,
+          bookingId: decision.bookingId,
+        }).catch(err => console.error('[gmail-poll] enqueueBookingCreated failed:', err))
+      }
 
       console.log(`[gmail-poll] Replied: ${fromEmail} — gmailMsgId=${sent.gmailMessageId}`)
       return 'processed'
