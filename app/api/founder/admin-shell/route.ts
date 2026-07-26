@@ -15,23 +15,24 @@
  *
  * Auth: Bearer JWT, checked against FOUNDER_USER_IDS — identical pattern
  * to caye-direct/route.ts.
+ *
+ * Second gear (2026-07-26): a `/code <task>` prefix on the message bypasses
+ * cayeAgent entirely and boots a real Claude Code CLI session in an
+ * ephemeral, credential-isolated Vercel Sandbox (lib/coding-session/*) —
+ * deliberately NOT modeled as an LLM-invoked tool, since `/code` is a
+ * deterministic string match, not something worth routing through a tool
+ * loop.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { createServiceClient, createServerClient } from '@/lib/supabase-server'
-import { isFounderUserId } from '@/lib/founder'
+import { createServiceClient } from '@/lib/supabase-server'
+import { requireFounder } from '@/lib/founder'
 import { cayeAgent } from '@/lib/caye-agent'
 import { persistAdminShellTurns } from '@/lib/admin-shell-messages'
+import { startCodingSession } from '@/lib/coding-session/start'
+import { getLatestCodingSession } from '@/lib/coding-session/queries'
 
-async function requireFounder(req: NextRequest) {
-  const authHeader = req.headers.get('authorization')
-  const accessToken = authHeader?.replace('Bearer ', '')
-  if (!accessToken) return null
-  const userClient = createServerClient(accessToken)
-  const { data: { user } } = await userClient.auth.getUser()
-  if (!user || !isFounderUserId(user.id)) return null
-  return user
-}
+export const maxDuration = 180
 
 export async function GET(req: NextRequest) {
   const user = await requireFounder(req)
@@ -46,7 +47,9 @@ export async function GET(req: NextRequest) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  return NextResponse.json({ messages: (data ?? []).reverse() })
+  const codingSession = await getLatestCodingSession()
+
+  return NextResponse.json({ messages: (data ?? []).reverse(), codingSession })
 }
 
 export async function POST(req: NextRequest) {
@@ -68,6 +71,29 @@ export async function POST(req: NextRequest) {
     body: message,
     claude_format: { role: 'user', content: message },
   })
+
+  const codeMatch = message.trim().match(/^\/code\s+([\s\S]+)$/)
+  if (codeMatch) {
+    const task = codeMatch[1].trim()
+    try {
+      const { sessionId } = await startCodingSession({ task, requestedBy: user.id })
+      const replyText = `Started a coding session for: "${task}". I'll ping you on WhatsApp when it's done.`
+      await supabase.from('caye_admin_shell_messages').insert({
+        direction: 'outbound',
+        body: replyText,
+        claude_format: null,
+      })
+      return NextResponse.json({ replyText, codingSessionId: sessionId })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to start coding session'
+      await supabase.from('caye_admin_shell_messages').insert({
+        direction: 'outbound',
+        body: `Couldn't start the coding session: ${msg}`,
+        claude_format: null,
+      })
+      return NextResponse.json({ error: msg }, { status: 500 })
+    }
+  }
 
   try {
     const agentResult = await cayeAgent({

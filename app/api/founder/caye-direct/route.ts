@@ -20,8 +20,8 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { createServiceClient, createServerClient } from '@/lib/supabase-server'
-import { isFounderUserId } from '@/lib/founder'
+import { createServiceClient } from '@/lib/supabase-server'
+import { requireFounder } from '@/lib/founder'
 import { cayeAgent } from '@/lib/caye-agent'
 import { persistAgentTurns, isInternalOnlyBody } from '@/lib/caye-operator-messages'
 import { resolveFounderOperator } from '@/lib/operator-identity'
@@ -43,16 +43,6 @@ function dedupeConsecutive<T extends { direction: string; body: string }>(rows: 
     out.push(row)
   }
   return out
-}
-
-async function requireFounder(req: NextRequest) {
-  const authHeader = req.headers.get('authorization')
-  const accessToken = authHeader?.replace('Bearer ', '')
-  if (!accessToken) return null
-  const userClient = createServerClient(accessToken)
-  const { data: { user } } = await userClient.auth.getUser()
-  if (!user || !isFounderUserId(user.id)) return null
-  return user
 }
 
 export async function GET(req: NextRequest) {

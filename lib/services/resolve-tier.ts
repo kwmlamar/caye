@@ -11,6 +11,17 @@
  * (the Private-2-max rate). Deterministic tier matching with explicit
  * ambiguity holds eliminates that class of error.
  *
+ * VARIANT AXIS (2026-07-26): Karenda's confirmed 07-23 pricing introduced
+ * tours where a single group size has more than one legitimate price — e.g.
+ * North Bimini Heritage Tour at 1 guest is $110 (Standard/shared) OR $200
+ * (Private). group_size alone no longer uniquely determines price for these
+ * tours. `variant` (e.g. 'standard' | 'private') is the second axis: when
+ * multiple tiers match a group size, passing the customer's chosen variant
+ * narrows to exactly one. Omitting variant preserves the original
+ * single-axis behavior for tours that don't need it (each group size still
+ * maps to exactly one tier) and surfaces a hold that lists the available
+ * variants otherwise — see HoldReason.
+ *
  * RESULT TYPES:
  *   - { ok: true, ... }       — exactly one tier matches, Caye can quote
  *   - { ok: false, hold: ... } — ambiguous / missing / out-of-range, hold for owner
@@ -19,6 +30,13 @@
 export interface PricingTier {
   id: string
   tier_name: string
+  /**
+   * Machine-stable key for the variant axis (e.g. 'standard', 'private').
+   * Null/undefined for tiers where group_size alone is unambiguous — the
+   * vast majority of existing tours. Distinct from tier_name, which is the
+   * human-facing label and can change wording without breaking resolution.
+   */
+  variant?: string | null
   group_size_min: number
   group_size_max: number
   price_amount: number
@@ -56,6 +74,7 @@ export type HoldReason =
   | 'group_size_above_maximum'
   | 'multiple_tiers_matched'
   | 'tier_explicitly_ambiguous_above'
+  | 'variant_not_available'
 
 /**
  * Match a customer's group size to exactly one pricing tier, or hold.
@@ -70,8 +89,17 @@ export type HoldReason =
  *  6. If group_size is above the highest max → hold ("we don't have a tier for groups that large")
  *  7. If group_size falls in a gap between tiers (e.g. tier A is 1-2, tier B is 4+, group=3)
  *     → hold (ambiguous which tier the customer should be placed in)
+ *  8. If group_size matches multiple tiers AND a variant is supplied → narrow to the
+ *     tier(s) whose `variant` matches; exactly one remaining → resolve it (still subject
+ *     to is_ambiguous_above); zero remaining → hold 'variant_not_available' (the caller
+ *     asked for a variant this tour doesn't offer at this group size); more than one
+ *     remaining → hold 'multiple_tiers_matched' (operator has duplicate variant rows)
  */
-export function resolveTier(tiers: PricingTier[], groupSize: number): ResolveTierResult {
+export function resolveTier(
+  tiers: PricingTier[],
+  groupSize: number,
+  variant?: string | null
+): ResolveTierResult {
   // Guard: input sanitization
   if (!Number.isInteger(groupSize) || groupSize < 1) {
     return {
@@ -117,8 +145,7 @@ export function resolveTier(tiers: PricingTier[], groupSize: number): ResolveTie
     t => groupSize >= t.group_size_min && groupSize <= t.group_size_max
   )
 
-  if (matched.length === 1) {
-    const tier = matched[0]
+  const finalize = (tier: PricingTier): ResolveTierResult => {
     // Ambiguous-above tiers are "starting at" pricing — we hold even if exactly matched,
     // because the price is a floor, not a quote. Owner needs to confirm the real number.
     if (tier.is_ambiguous_above) {
@@ -142,13 +169,45 @@ export function resolveTier(tiers: PricingTier[], groupSize: number): ResolveTie
     }
   }
 
+  if (matched.length === 1) {
+    return finalize(matched[0])
+  }
+
   if (matched.length > 1) {
+    // More than one tier covers this group size — that's only resolvable
+    // deterministically if the caller told us which variant (shared/private/
+    // etc.) the customer wants. No variant supplied: surface all candidates
+    // so the front-desk agent can ask, then call back with variant set.
+    if (variant != null) {
+      const variantMatched = matched.filter(t => t.variant === variant)
+      if (variantMatched.length === 1) {
+        return finalize(variantMatched[0])
+      }
+      if (variantMatched.length === 0) {
+        return {
+          ok: false,
+          hold: 'variant_not_available',
+          groupSize,
+          candidateTiers: matched,
+          message: `No tier for variant "${variant}" at group size ${groupSize}. Available variants here: ${matched.map(t => t.variant ?? t.tier_name).join(', ')}.`,
+        }
+      }
+      // variantMatched.length > 1 — duplicate variant rows, operator data error.
+      return {
+        ok: false,
+        hold: 'multiple_tiers_matched',
+        groupSize,
+        candidateTiers: variantMatched,
+        message: `Group size ${groupSize} and variant "${variant}" match multiple tiers (${variantMatched.map(t => t.tier_name).join(', ')}). Operator must fix duplicate tier definitions.`,
+      }
+    }
+
     return {
       ok: false,
       hold: 'multiple_tiers_matched',
       groupSize,
       candidateTiers: matched,
-      message: `Group size ${groupSize} matches multiple tiers (${matched.map(t => t.tier_name).join(', ')}). Operator must fix overlapping tier definitions.`,
+      message: `Group size ${groupSize} matches multiple tiers (${matched.map(t => t.tier_name).join(', ')}). ${matched.every(t => t.variant) ? 'Ask the customer which they want, then call again with variant set.' : 'Operator must fix overlapping tier definitions.'}`,
     }
   }
 

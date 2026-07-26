@@ -17,6 +17,7 @@ interface ServiceRow {
 interface TierRow {
   service_id: string
   tier_name: string
+  variant: string | null
   group_size_min: number
   group_size_max: number
   price_amount: number | string
@@ -30,8 +31,12 @@ export const getServices: Tool<Record<string, never>> = {
   description:
     "List the full service catalog with pricing tiers, visibility, capacity, and duration. " +
     "Use when the operator asks \"what tours do we have?\", \"what's the price of the Heritage " +
-    "Tour?\", or before calling update_service_price / set_service_visibility / remove_service " +
-    "so you know the exact tier names and current prices.\n\n" +
+    "Tour?\", or before calling update_service_price / add_pricing_tier / remove_pricing_tier / " +
+    "set_service_visibility / remove_service so you know the exact tier names, variants, and " +
+    "current prices.\n\n" +
+    "A tier's `variant` field (e.g. 'standard', 'private') is only set when the tour prices the " +
+    "same group size two different ways — null means group size alone determines price for that " +
+    "tier.\n\n" +
     "Returns active services by default. Includes private services in the list but tagged as " +
     "such — the operator might want to update one even if it's not proactively offered to guests.",
   risk: 'read',
@@ -60,7 +65,7 @@ export const getServices: Tool<Record<string, never>> = {
 
     const { data: tiers, error: tierErr } = await supabase
       .from('service_pricing_tiers')
-      .select('service_id, tier_name, group_size_min, group_size_max, price_amount, price_label, is_flat, display_order')
+      .select('service_id, tier_name, variant, group_size_min, group_size_max, price_amount, price_label, is_flat, display_order')
       .eq('workspace_id', ctx.workspaceId)
       .in('service_id', rows.map((r) => r.id))
       .order('display_order', { ascending: true })
@@ -83,6 +88,7 @@ export const getServices: Tool<Record<string, never>> = {
       description: r.description,
       tiers: (tiersByService.get(r.id) ?? []).map((t) => ({
         tier_name: t.tier_name,
+        variant: t.variant ?? null,
         group_size_min: t.group_size_min,
         group_size_max: t.group_size_max,
         price_amount:

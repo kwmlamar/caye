@@ -190,7 +190,7 @@ export default function LandingPageClient() {
                   edge. Short ramp: fully gone before the headline. */}
               <div
                 aria-hidden
-                className="absolute inset-x-0 top-0 h-28 md:h-36 pointer-events-none"
+                className="absolute inset-x-0 top-0 h-28 pointer-events-none md:hidden"
                 style={{
                   background:
                     'linear-gradient(to bottom, rgba(250,247,242,1) 0%, rgba(250,247,242,0.5) 45%, rgba(250,247,242,0) 100%)',
@@ -551,7 +551,7 @@ export default function LandingPageClient() {
 
           <div className="mt-10 pt-5 border-t border-near-black/[0.07]">
             <span className="font-mono text-[10.5px] uppercase tracking-[0.16em] text-near-black/45 font-medium">
-              © 2026 Caye by TropiTech · Built in Nassau, Bahamas
+              © 2026 Caye by TropiTech · Built in Eleuthera, Bahamas
             </span>
           </div>
         </div>
@@ -560,17 +560,15 @@ export default function LandingPageClient() {
             (ELEUTHERA-style hand-lettered block signage: a vivid paint
             gradient) reinterpreted in the hero's own sunset-over-sea
             palette. Full-bleed (outside the 7xl container) so it has the
-            whole viewport to scale into. Deliberately cropped to the
-            page's own bottom edge (viktor.com's move) — the wrapper's own
-            fontSize is set to the same clamp() and the crop height is a
-            plain em value off that, so it's one predictable number
-            instead of compounding padding/line-height math. */}
+            whole viewport to scale into. Renders at natural height (no
+            fixed-em crop) so descenders never get sliced regardless of
+            which --font-logo typeface is active; mb below adds the
+            breathing room a tight crop used to fake. */}
         <div
           aria-hidden
-          className="select-none pointer-events-none overflow-hidden flex items-start justify-center gap-3 md:gap-5 px-4 -mt-10 md:-mt-16"
+          className="select-none pointer-events-none flex items-start justify-center gap-3 md:gap-5 px-4 -mt-10 md:-mt-16"
           style={{
             fontSize: 'clamp(6rem, 30vw, 26rem)',
-            height: '0.88em',
             background:
               'linear-gradient(180deg, transparent 0%, rgba(168,220,192,0.14) 100%)',
           }}
@@ -581,6 +579,7 @@ export default function LandingPageClient() {
             style={{
               fontSize: '1em',
               lineHeight: 1,
+              paddingBottom: '0.18em',
               backgroundImage:
                 'linear-gradient(180deg, #FFD68F 0%, #F4E3A0 24%, #A8DCC0 52%, #7DC9CB 76%, #00778B 100%)',
               WebkitBackgroundClip: 'text',

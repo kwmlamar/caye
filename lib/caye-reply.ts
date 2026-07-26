@@ -279,11 +279,23 @@ const TOOLS: Anthropic.Tool[] = [
       '  { ok: true, price_label, total_label, total_amount } — quote these verbatim. ' +
       'price_label is the per-tier rate (e.g. "$110/person"); total_label is the party ' +
       'total (e.g. "$300 total"). Both are pre-formatted for the email/message.\n' +
-      '  { ok: false, hold, message } — DO NOT quote a price. Decide between three paths:\n' +
-      '    (a) CLARIFY: if the customer can resolve the ambiguity in one reply (multi-tier ' +
-      'match like Golf Cart Guided Tour 1hr Orientation vs 2hr Fully Guided, OR a gap ' +
-      'between tiers the customer could clarify by saying which option they want), call ' +
-      'send_reply with a clarifying question naming the options. No hold needed.\n' +
+      '  { ok: false, hold, message, candidate_tiers } — DO NOT quote a price. Decide between three paths:\n' +
+      '    (a) CLARIFY: if the customer can resolve the ambiguity in one reply, call send_reply ' +
+      'with a clarifying question naming the options, then call lookup_price again once they answer. ' +
+      'This covers several shapes:\n' +
+      '        - hold="multiple_tiers_matched" with candidate_tiers that have different `variant` ' +
+      'values (e.g. "standard" vs "private") — this tour prices the same group size differently ' +
+      'depending on shared vs private. Ask "would you like to share the tour with others, or book it ' +
+      'privately?" Once they answer, call lookup_price again with the SAME service_id + group_size ' +
+      'PLUS variant set to the tier\'s variant string (e.g. variant="private"). Never guess which ' +
+      'candidate applies — the variant argument is what disambiguates.\n' +
+      '        - hold="multiple_tiers_matched" with no variant on the candidates (e.g. Golf Cart ' +
+      'Guided Tour 1hr Orientation vs 2hr Fully Guided) — ask which option/duration they want, then ' +
+      'call lookup_price again (still no variant; these are duration options, not price variants).\n' +
+      '        - hold="group_size_in_gap_between_tiers" — ask the customer to confirm/adjust the ' +
+      'group size if there\'s a plausible clarification.\n' +
+      '        - hold="variant_not_available" — you already passed a variant this tour doesn\'t ' +
+      'offer at this size; re-ask using the variant values actually listed in candidate_tiers.\n' +
       '    (b) DEFER (2B mode): if the service has custom/upon-request pricing OR the ' +
       'request is genuinely off-menu, call send_reply with an acknowledgment + qualifying ' +
       'questions + flag_for_owner_followup=true. Owner decides the price; customer gets ' +
@@ -303,6 +315,14 @@ const TOOLS: Anthropic.Tool[] = [
         group_size: {
           type: 'number',
           description: 'Number of guests in the party. Must be a positive integer.',
+        },
+        variant: {
+          type: 'string',
+          description:
+            'Optional. Only pass this on your SECOND call for a given service_id+group_size, ' +
+            'after the first call returned hold="multiple_tiers_matched" with candidate_tiers ' +
+            'that had different `variant` values and the customer told you which they want ' +
+            '(e.g. "standard" or "private"). Omit entirely on tours that don\'t need it.',
         },
       },
       required: ['service_id', 'group_size'],
@@ -778,7 +798,11 @@ function buildSystem(
     'hold only as the last resort.\n' +
     '- Before quoting any price you have not yet looked up in this turn, call lookup_price first. ' +
     'This is non-negotiable — past pricing mistakes (e.g. quoting the per-person group rate for a 2-person ' +
-    'Private tour) cost the owner real money and trust.'
+    'Private tour) cost the owner real money and trust.\n' +
+    '- Some tours price the SAME group size differently depending on shared vs private (or similar) — ' +
+    'lookup_price signals this with hold="multiple_tiers_matched" and candidate_tiers carrying a ' +
+    '`variant` field. Never pick one for the customer. Ask which they want, then call lookup_price ' +
+    'again with variant set to their choice — see the lookup_price tool description for the exact flow.'
 
   stable +=
     '\n\nAUTONOMY DECISION TREE (when you cannot directly send a booking confirmation):\n' +
@@ -787,7 +811,8 @@ function buildSystem(
     '1. CLARIFY — send_reply with a clarifying question.\n' +
     '   Use when: the customer can resolve the issue in one reply.\n' +
     '   Examples: multi-tier match ("Golf Cart Guided Tour" → 1hr Orientation OR 2hr Fully ' +
-    'Guided), ambiguous group size, ambiguous date, missing pickup info.\n' +
+    'Guided), shared-vs-private variant match (see PRICING POLICY above — ask, then re-call ' +
+    'lookup_price with variant set), ambiguous group size, ambiguous date, missing pickup info.\n' +
     '   Reply pattern: name the options clearly, ask one specific question, do NOT quote prices.\n' +
     '   No flag_for_owner_followup — the customer\'s reply will unblock the booking, owner ' +
     'doesn\'t need to do anything.\n' +
@@ -1123,10 +1148,11 @@ interface CreateBookingInput {
 async function lookupPriceForCaye(
   workspaceId: string,
   serviceId: string,
-  groupSize: number
+  groupSize: number,
+  variant?: string | null
 ): Promise<
-  | { ok: true; price_label: string; total_label: string; total_amount: number; tier_name: string }
-  | { ok: false; hold: string; message: string }
+  | { ok: true; price_label: string; total_label: string; total_amount: number; tier_name: string; variant?: string | null }
+  | { ok: false; hold: string; message: string; candidate_tiers?: { tier_name: string; variant: string | null }[] }
 > {
   const supabase = createServiceClient()
 
@@ -1148,7 +1174,7 @@ async function lookupPriceForCaye(
 
   const { data: tierRows, error } = await supabase
     .from('service_pricing_tiers')
-    .select('id, tier_name, group_size_min, group_size_max, price_amount, price_label, is_flat, is_ambiguous_above, display_order')
+    .select('id, tier_name, variant, group_size_min, group_size_max, price_amount, price_label, is_flat, is_ambiguous_above, display_order')
     .eq('service_id', serviceId)
     .eq('workspace_id', workspaceId)
     .order('display_order', { ascending: true })
@@ -1161,6 +1187,7 @@ async function lookupPriceForCaye(
   const tiers: PricingTier[] = (tierRows ?? []).map(r => ({
     id: r.id,
     tier_name: r.tier_name,
+    variant: r.variant ?? null,
     group_size_min: r.group_size_min,
     group_size_max: r.group_size_max,
     price_amount: typeof r.price_amount === 'string' ? parseFloat(r.price_amount) : r.price_amount,
@@ -1170,7 +1197,7 @@ async function lookupPriceForCaye(
     display_order: r.display_order,
   }))
 
-  const result = resolveTier(tiers, groupSize)
+  const result = resolveTier(tiers, groupSize, variant)
 
   if (result.ok) {
     return {
@@ -1179,10 +1206,16 @@ async function lookupPriceForCaye(
       total_label: result.totalLabel,
       total_amount: result.totalAmount,
       tier_name: result.tier.tier_name,
+      variant: result.tier.variant ?? null,
     }
   }
 
-  return { ok: false, hold: result.hold, message: result.message }
+  return {
+    ok: false,
+    hold: result.hold,
+    message: result.message,
+    candidate_tiers: result.candidateTiers.map(t => ({ tier_name: t.tier_name, variant: t.variant ?? null })),
+  }
 }
 
 async function createBookingFromCaye(
@@ -2105,11 +2138,12 @@ async function generateCayeAutoReplyCore(
           content: JSON.stringify(result),
         })
       } else if (tool.name === 'lookup_price') {
-        const input = tool.input as { service_id: string; group_size: number }
+        const input = tool.input as { service_id: string; group_size: number; variant?: string }
         const result = await lookupPriceForCaye(
           inbound.workspaceId,
           input.service_id,
-          input.group_size
+          input.group_size,
+          input.variant ?? null
         )
         toolResults.push({
           type: 'tool_result',

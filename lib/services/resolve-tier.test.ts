@@ -168,6 +168,80 @@ describe('resolveTier — ambiguous-above tiers (e.g. "starting at $X")', () => 
   })
 })
 
+describe('resolveTier — variant axis (Karenda 2026-07-23 confirmed pricing)', () => {
+  /**
+   * North Bimini Heritage Tour under the new confirmed structure: at every
+   * group size there are now TWO legitimate prices (Standard vs Private),
+   * so group_size alone is ambiguous. Mirrors the shape landed in
+   * supabase/migrations/20260726b_pricing_tier_variants.sql.
+   */
+  const HERITAGE_V2: PricingTier[] = [
+    { id: 'h-std-1', tier_name: 'Standard — 1 Guest', variant: 'standard', group_size_min: 1, group_size_max: 1, price_amount: 110, price_label: '$110/person', is_flat: false, is_ambiguous_above: false, display_order: 10 },
+    { id: 'h-priv-1', tier_name: 'Private — 1 Guest', variant: 'private', group_size_min: 1, group_size_max: 1, price_amount: 200, price_label: '$200 flat', is_flat: true, is_ambiguous_above: false, display_order: 20 },
+    { id: 'h-std-2', tier_name: 'Standard — 2 Guests', variant: 'standard', group_size_min: 2, group_size_max: 2, price_amount: 220, price_label: '$220 total', is_flat: true, is_ambiguous_above: false, display_order: 30 },
+    { id: 'h-priv-2', tier_name: 'Private — 2 Guests', variant: 'private', group_size_min: 2, group_size_max: 2, price_amount: 350, price_label: '$350 total', is_flat: true, is_ambiguous_above: false, display_order: 40 },
+    { id: 'h-std-3', tier_name: 'Standard — 3+ Guests', variant: 'standard', group_size_min: 3, group_size_max: 50, price_amount: 110, price_label: '$110/person', is_flat: false, is_ambiguous_above: false, display_order: 50 },
+    { id: 'h-priv-3', tier_name: 'Private — 3+ Guests', variant: 'private', group_size_min: 3, group_size_max: 50, price_amount: 150, price_label: '$150/person', is_flat: false, is_ambiguous_above: false, display_order: 60 },
+  ]
+
+  it('no variant supplied → HOLD multiple_tiers_matched, candidates carry variant labels', () => {
+    const r = resolveTier(HERITAGE_V2, 1)
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.hold).toBe('multiple_tiers_matched')
+    expect(r.candidateTiers.map(t => t.variant).sort()).toEqual(['private', 'standard'])
+    expect(r.message).toMatch(/ask the customer/i)
+  })
+
+  it('variant="standard" at 1 guest → resolves to $110/person', () => {
+    const r = resolveTier(HERITAGE_V2, 1, 'standard')
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.tier.tier_name).toBe('Standard — 1 Guest')
+    expect(r.totalAmount).toBe(110)
+  })
+
+  it('variant="private" at 1 guest → resolves to $200 flat, not $110', () => {
+    const r = resolveTier(HERITAGE_V2, 1, 'private')
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.tier.tier_name).toBe('Private — 1 Guest')
+    expect(r.totalAmount).toBe(200)
+  })
+
+  it('variant="private" at 2 guests → $350 total flat, not 2x175', () => {
+    const r = resolveTier(HERITAGE_V2, 2, 'private')
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.totalAmount).toBe(350)
+  })
+
+  it('variant="standard" at 6 guests → per-person $110 x 6 = $660', () => {
+    const r = resolveTier(HERITAGE_V2, 6, 'standard')
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.totalAmount).toBe(660)
+  })
+
+  it('unknown variant at a size that has options → HOLD variant_not_available', () => {
+    const r = resolveTier(HERITAGE_V2, 1, 'vip')
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.hold).toBe('variant_not_available')
+    expect(r.candidateTiers).toHaveLength(2)
+  })
+
+  it('variant supplied but group size only matches one tier → resolves normally (variant ignored)', () => {
+    // Regression guard: tours without a variant axis must be unaffected by
+    // a caller accidentally passing a variant string.
+    const r = resolveTier(NORTH_BIMINI_TIERS, 2, 'private')
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.tier.tier_name).toBe('Private (2 max)')
+    expect(r.totalAmount).toBe(375)
+  })
+})
+
 describe('resolveTier — flat vs per-person totals', () => {
   it('flat tier: total = price_amount regardless of group size', () => {
     const r = resolveTier(NORTH_BIMINI_TIERS, 2) // Private 2-max is flat

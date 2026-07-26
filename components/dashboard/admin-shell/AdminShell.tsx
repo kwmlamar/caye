@@ -6,8 +6,8 @@ import { formatDistanceToNow } from '@/lib/utils'
 import { CayeMark } from '@/components/brand/CayeMark'
 import { FormattedReplyText } from '@/components/ui/FormattedReplyText'
 import { Pill } from '@/components/dashboard/founder-home/console-ui'
+import { CodingSessionCard, type CodingSessionData, type CodingSessionMessageData } from './CodingSessionCard'
 
-const CARD_BORDER = '#1f1f23'
 const NEAR_BOTTOM_PX = 96
 const TEXTAREA_MAX_H = 120
 const GLASS = { backdropFilter: 'blur(20px) saturate(140%)', WebkitBackdropFilter: 'blur(20px) saturate(140%)' } as const
@@ -134,7 +134,7 @@ function EmptyState() {
           Founder-only dev/ops console
         </div>
         <p style={{ fontSize: 12.5, color: '#71717a', lineHeight: 1.55, marginTop: 6, maxWidth: 280 }}>
-          Ask about cron health or trigger a manual run — e.g. "cron health" or "run the gmail poll now." Not a terminal: only the tools it's given, nothing arbitrary.
+          Ask about cron health or trigger a manual run — e.g. "cron health" or "run the gmail poll now." Or hand off real code: "/code fix the stale-hold bug."
         </p>
       </div>
     </div>
@@ -149,10 +149,12 @@ function EmptyState() {
 export default function AdminShell() {
   const [messages, setMessages] = useState<AdminShellMessage[]>([])
   const [input, setInput] = useState('')
-  const [inputFocused, setInputFocused] = useState(false)
   const [loading, setLoading] = useState(true)
   const [sending, setSending] = useState(false)
   const [showJump, setShowJump] = useState(false)
+  const [codingSession, setCodingSession] = useState<CodingSessionData | null>(null)
+  const [codingMessages, setCodingMessages] = useState<CodingSessionMessageData[]>([])
+  const [killing, setKilling] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const atBottomRef = useRef(true)
@@ -167,12 +169,56 @@ export default function AdminShell() {
         headers: { Authorization: `Bearer ${session.access_token}` },
       })
       const json = await res.json()
-      if (!cancelled && res.ok) setMessages(json.messages)
+      if (!cancelled && res.ok) {
+        setMessages(json.messages)
+        if (json.codingSession) setCodingSession(json.codingSession)
+      }
       if (!cancelled) setLoading(false)
     }
     load()
     return () => { cancelled = true }
   }, [])
+
+  const codingSessionActive = codingSession && ['booting', 'running', 'testing'].includes(codingSession.status)
+
+  // Poll the active session while it's non-terminal so the card and its
+  // turn history update without the founder needing to keep the tab open
+  // and watch it live (a session survives closing the tab entirely — this
+  // just re-syncs it while the panel happens to be open).
+  useEffect(() => {
+    if (!codingSessionActive || !codingSession) return
+    let cancelled = false
+    async function poll() {
+      const { session } = await getSession()
+      if (!session || !codingSession) return
+      const res = await fetch(`/api/founder/coding-session/${codingSession.id}`, {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      })
+      if (!res.ok || cancelled) return
+      const json = await res.json()
+      if (cancelled) return
+      setCodingSession(json.session)
+      setCodingMessages(json.messages)
+    }
+    poll()
+    const id = setInterval(poll, 4000)
+    return () => { cancelled = true; clearInterval(id) }
+  }, [codingSessionActive, codingSession?.id])
+
+  async function killCodingSession() {
+    if (!codingSession || killing) return
+    setKilling(true)
+    try {
+      const { session } = await getSession()
+      if (!session) return
+      await fetch(`/api/founder/coding-session/${codingSession.id}/kill`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      })
+    } finally {
+      setKilling(false)
+    }
+  }
 
   useEffect(() => {
     if (loading) return
@@ -242,6 +288,20 @@ export default function AdminShell() {
           body: json.replyText,
           created_at: new Date().toISOString(),
         }])
+      }
+      if (res.ok && json.codingSessionId) {
+        setCodingSession({
+          id: json.codingSessionId,
+          task: trimmed.replace(/^\/code\s+/, ''),
+          status: 'booting',
+          final_commit_sha: null,
+          gate_output: null,
+          error: null,
+          created_at: new Date().toISOString(),
+          started_at: null,
+          finished_at: null,
+        })
+        setCodingMessages([])
       }
     } finally {
       setSending(false)
@@ -374,54 +434,66 @@ export default function AdminShell() {
         )}
       </div>
 
+      {codingSession && (
+        <div style={{ padding: '0 14px 12px' }}>
+          <CodingSessionCard
+            session={codingSession}
+            messages={codingMessages}
+            onKill={killCodingSession}
+            killing={killing}
+          />
+        </div>
+      )}
+
       <div style={{ padding: 14, background: 'rgba(255,255,255,0.035)', ...GLASS }}>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
           {QUICK_COMMANDS.map((cmd) => (
             <QuickCommandChip key={cmd} label={cmd} disabled={sending} onClick={() => send(cmd)} />
           ))}
         </div>
-        <form
-          onSubmit={(e) => { e.preventDefault(); send(input) }}
-          style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}
-        >
-          <textarea
-            ref={textareaRef}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onFocus={() => setInputFocused(true)}
-            onBlur={() => setInputFocused(false)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(input) }
-            }}
-            placeholder="Dev/ops command to Caye (e.g. 'cron health')…"
-            disabled={sending}
-            rows={1}
-            className="admin-shell-textarea"
-            style={{
-              flex: 1, resize: 'none', background: 'rgba(255,255,255,0.05)',
-              border: `1px solid ${inputFocused ? 'rgba(125,201,203,0.55)' : CARD_BORDER}`,
-              borderRadius: 14, padding: '9px 12px', fontSize: 13, lineHeight: 1.4, color: '#f4f4f5', outline: 'none',
-              fontFamily: 'var(--font-sans)', maxHeight: TEXTAREA_MAX_H,
-              boxShadow: inputFocused ? '0 0 0 3px rgba(125,201,203,0.12)' : 'none',
-              transition: 'border-color 0.15s ease, box-shadow 0.15s ease',
-            }}
-          />
-          <button
-            type="submit"
-            disabled={sending || !input.trim()}
-            style={{
-              width: 36, height: 36, borderRadius: '50%', flexShrink: 0,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              background: 'linear-gradient(135deg, #00778B, #7DC9CB)', border: 'none', color: '#0a0a0b',
-              cursor: sending ? 'default' : 'pointer',
-              opacity: !input.trim() || sending ? 0.4 : 1,
-              transition: 'opacity 0.15s ease, transform 0.1s ease',
-            }}
-          >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="12" y1="19" x2="12" y2="5" /><polyline points="5 12 12 5 19 12" />
-            </svg>
-          </button>
+        <form onSubmit={(e) => { e.preventDefault(); send(input) }}>
+          <div style={{
+            display: 'flex', alignItems: 'flex-end', gap: 8,
+            borderRadius: 20,
+            background: 'rgba(255,255,255,0.04)', padding: '8px 8px 8px 14px',
+          }}>
+            <textarea
+              ref={textareaRef}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(input) }
+              }}
+              placeholder="Dev/ops command to Caye (e.g. 'cron health')…"
+              disabled={sending}
+              rows={1}
+              className="admin-shell-textarea"
+              style={{
+                flex: 1, resize: 'none', overflowY: 'auto',
+                maxHeight: TEXTAREA_MAX_H,
+                background: 'transparent', border: 'none',
+                padding: '6px 0', fontSize: 13.5, lineHeight: 1.5, color: '#f4f4f5',
+                outline: 'none', fontFamily: 'inherit',
+              }}
+            />
+            <button
+              type="submit"
+              disabled={sending || !input.trim()}
+              style={{
+                flexShrink: 0, width: 32, height: 32, borderRadius: '50%', border: 'none',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                cursor: sending || !input.trim() ? 'default' : 'pointer',
+                background: sending || !input.trim() ? 'rgba(255,255,255,0.08)' : '#7DC9CB',
+                transition: 'background 0.15s ease',
+              }}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+                stroke={!input.trim() ? 'rgba(245,245,244,0.35)' : '#0a0a0b'}
+                strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="12" y1="19" x2="12" y2="5" /><polyline points="5 12 12 5 19 12" />
+              </svg>
+            </button>
+          </div>
         </form>
       </div>
     </div>

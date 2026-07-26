@@ -17,6 +17,7 @@ import { markHandled } from './write-low/mark-handled'
 import { addBusinessFact } from './write-low/add-business-fact'
 import { updateServicePrice } from './write-low/update-service-price'
 import { addService } from './write-low/add-service'
+import { addPricingTier } from './write-low/add-pricing-tier'
 import { setServiceVisibility } from './write-low/set-service-visibility'
 import { updateBusinessHours } from './write-low/update-business-hours'
 import { addBlackoutDate } from './write-low/add-blackout-date'
@@ -28,6 +29,7 @@ import { updateTeamMemberPermissions } from './write-low/update-team-member-perm
 import { switchWorkspace } from './write-low/switch-workspace'
 import { removeTeamMember } from './write-high/remove-team-member'
 import { removeService } from './write-high/remove-service'
+import { removePricingTier } from './write-high/remove-pricing-tier'
 import { removeBlackoutDate } from './write-high/remove-blackout-date'
 import { skipHeldItem } from './write-low/skip-held-item'
 import { muteCaye } from './write-low/mute-caye'
@@ -52,8 +54,10 @@ import { gateAdminHighRisk } from './admin/admin-high-risk-gate'
  * All tools available to the back-office agent.
  *
  * Read tools (11): #38 + #40 — autonomous execution
- * Low-risk write tools (18): #37 — autonomous execution
- * High-risk write tools (7): #42/#43 — gated through confirmation flow
+ * Low-risk write tools (19): #37 — autonomous execution (adds
+ * add_pricing_tier, 2026-07-26 — pricing tier variant axis)
+ * High-risk write tools (8): #42/#43 — gated through confirmation flow
+ * (adds remove_pricing_tier, 2026-07-26)
  * Driver-mode tools (4, 2026-07-05): tagged modes: ['driver'] — never
  * shipped to back-office/front-desk requests, see execute.ts mode filter.
  */
@@ -79,6 +83,7 @@ export const TOOL_REGISTRY: AnyTool[] = [
   addBusinessFact as AnyTool,
   updateServicePrice as AnyTool,
   addService as AnyTool,
+  addPricingTier as AnyTool,
   setServiceVisibility as AnyTool,
   updateBusinessHours as AnyTool,
   addBlackoutDate as AnyTool,
@@ -103,6 +108,7 @@ export const TOOL_REGISTRY: AnyTool[] = [
   gateHighRisk(rescheduleBooking) as AnyTool,
   gateHighRisk(cancelBooking) as AnyTool,
   gateHighRisk(removeService) as AnyTool,
+  gateHighRisk(removePricingTier) as AnyTool,
   gateHighRisk(removeBlackoutDate) as AnyTool,
   gateHighRisk(removeTeamMember) as AnyTool,
   // Driver mode

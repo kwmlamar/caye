@@ -21,7 +21,7 @@
   border-bottom:1px solid var(--line);
 }
 .set-nav-eyebrow{
-  font-family:'JetBrains Mono', monospace;
+  font-family:'Tahoma', monospace;
   font-size:10px; letter-spacing:0.16em; text-transform:uppercase;
   color:var(--ink-faint); font-weight:600;
   margin-bottom:6px;
@@ -32,7 +32,7 @@
 }
 .set-nav-org{
   font-size:12px; color:var(--ink-mute);
-  font-family:'JetBrains Mono', monospace; letter-spacing:0.04em;
+  font-family:'Tahoma', monospace; letter-spacing:0.04em;
   margin-top:6px;
 }
 
@@ -41,7 +41,7 @@
   display:flex; flex-direction:column; gap:2px;
 }
 .set-nav-section-label{
-  font-family:'JetBrains Mono', monospace;
+  font-family:'Tahoma', monospace;
   font-size:9.5px; letter-spacing:0.14em; text-transform:uppercase;
   color:var(--ink-faint); font-weight:600;
   padding:14px 12px 6px;
@@ -86,12 +86,12 @@
 .set-nav-item .sn-label{ font-size:13.5px; font-weight:600; color:inherit; }
 .set-nav-item .sn-sub{
   font-size:11px; color:var(--ink-faint);
-  font-family:'JetBrains Mono', monospace; letter-spacing:0.04em;
+  font-family:'Tahoma', monospace; letter-spacing:0.04em;
   margin-top:1px;
 }
 .set-nav-item.active .sn-sub{ color:var(--ink-mute); }
 .set-nav-item .sn-pill{
-  font-family:'JetBrains Mono', monospace;
+  font-family:'Tahoma', monospace;
   font-size:9.5px; letter-spacing:0.1em;
   background:var(--coral); color:#fff;
   padding:2px 7px; border-radius:999px; font-weight:600;
@@ -118,7 +118,7 @@
 }
 .set-page-head .ph-left{ flex:1; min-width:0; }
 .set-page-eyebrow{
-  font-family:'JetBrains Mono', monospace;
+  font-family:'Tahoma', monospace;
   font-size:10px; letter-spacing:0.14em; text-transform:uppercase;
   color:var(--coral); font-weight:600;
   margin-bottom:8px;
@@ -231,7 +231,7 @@
 }
 .s-input-affix .prefix, .s-input-affix .suffix{
   padding:9px 10px;
-  font-family:'JetBrains Mono', monospace;
+  font-family:'Tahoma', monospace;
   font-size:12px; color:var(--ink-faint);
   background:var(--bg-deep);
   border-right:1px solid var(--line);
@@ -249,7 +249,7 @@
   margin-top:6px; line-height:1.5;
   display:flex; align-items:center; gap:6px;
 }
-.s-help .mono{ font-family:'JetBrains Mono', monospace; font-size:11px; }
+.s-help .mono{ font-family:'Tahoma', monospace; font-size:11px; }
 
 /* ---------------- Toggle ---------------- */
 .s-toggle{
@@ -362,7 +362,7 @@
   border-radius:6px;
   font-weight:500;
   transition: background .15s;
-  font-family:'JetBrains Mono', monospace;
+  font-family:'Tahoma', monospace;
   letter-spacing:0.04em;
 }
 .s-seg button:hover{ color:var(--ink); }
@@ -437,7 +437,7 @@
 .logo-buttons{ display:flex; gap:6px; }
 .logo-hint{
   font-size:11.5px; color:var(--ink-mute);
-  font-family:'JetBrains Mono', monospace;
+  font-family:'Tahoma', monospace;
   letter-spacing:0.04em;
 }
 
@@ -473,13 +473,13 @@
 .channel-name{ font-size:14px; font-weight:600; color:var(--ink); }
 .channel-meta{
   font-size:11.5px; color:var(--ink-mute);
-  font-family:'JetBrains Mono', monospace; letter-spacing:0.04em;
+  font-family:'Tahoma', monospace; letter-spacing:0.04em;
   margin-top:2px;
   display:flex; align-items:center; gap:6px;
 }
 .channel-status{
   display:inline-flex; align-items:center; gap:5px;
-  font-family:'JetBrains Mono', monospace;
+  font-family:'Tahoma', monospace;
   font-size:10px; letter-spacing:0.12em; text-transform:uppercase;
   font-weight:600;
   padding:3px 8px;
@@ -522,7 +522,7 @@
 }
 .team-row:last-child{ border-bottom:none; }
 .team-row.head{
-  font-family:'JetBrains Mono', monospace;
+  font-family:'Tahoma', monospace;
   font-size:10px; letter-spacing:0.14em; text-transform:uppercase;
   color:var(--ink-faint); font-weight:600;
   padding:10px 22px;
@@ -533,7 +533,7 @@
 .team-who .nm{ font-size:13.5px; font-weight:600; color:var(--ink); }
 .team-who .em{
   font-size:11.5px; color:var(--ink-mute);
-  font-family:'JetBrains Mono', monospace; letter-spacing:0.04em;
+  font-family:'Tahoma', monospace; letter-spacing:0.04em;
   margin-top:1px;
 }
 .role-select{
@@ -552,7 +552,7 @@
   padding-right:26px;
 }
 .team-status{
-  font-family:'JetBrains Mono', monospace;
+  font-family:'Tahoma', monospace;
   font-size:10px; letter-spacing:0.1em; text-transform:uppercase;
   font-weight:600;
   display:inline-flex; align-items:center; gap:6px;
@@ -606,7 +606,7 @@
 }
 .plan-tag{
   display:inline-flex; align-items:center; gap:6px;
-  font-family:'JetBrains Mono', monospace;
+  font-family:'Tahoma', monospace;
   font-size:10px; letter-spacing:0.16em; text-transform:uppercase;
   color:var(--sun); font-weight:600;
   margin-bottom:8px;
@@ -632,7 +632,7 @@
 }
 .plan-price .amt .cur{ font-size:14px; color:rgba(245,243,238,0.6); }
 .plan-price .per{
-  font-family:'JetBrains Mono', monospace;
+  font-family:'Tahoma', monospace;
   font-size:10px; letter-spacing:0.1em; text-transform:uppercase;
   color:rgba(245,243,238,0.55);
   margin-top:2px;
@@ -648,7 +648,7 @@
   position:relative; z-index:1;
 }
 .plan-meter .k{
-  font-family:'JetBrains Mono', monospace;
+  font-family:'Tahoma', monospace;
   font-size:10px; letter-spacing:0.12em; text-transform:uppercase;
   color:rgba(245,243,238,0.55); font-weight:600;
 }
@@ -678,7 +678,7 @@
 }
 .plan-foot .renew{
   font-size:12px; color:rgba(245,243,238,0.6);
-  font-family:'JetBrains Mono', monospace; letter-spacing:0.04em;
+  font-family:'Tahoma', monospace; letter-spacing:0.04em;
 }
 .btn-upgrade{
   display:inline-flex; align-items:center; gap:8px;
@@ -720,7 +720,7 @@
 .feature-item .ft small{
   display:block;
   font-size:11.5px; color:var(--ink-mute);
-  font-family:'JetBrains Mono', monospace; letter-spacing:0.04em;
+  font-family:'Tahoma', monospace; letter-spacing:0.04em;
   margin-top:1px;
 }
 
@@ -764,7 +764,7 @@
   flex:1;
   display:flex; align-items:center; gap:8px;
   font-size:12px; color:var(--ink-mute);
-  font-family:'JetBrains Mono', monospace; letter-spacing:0.04em;
+  font-family:'Tahoma', monospace; letter-spacing:0.04em;
 }
 .save-bar .changes .pip{
   width:6px; height:6px; border-radius:50%; background:var(--sun);
@@ -859,7 +859,7 @@
   margin-top:8px;
 }
 .caye-banner .cb-stat-item{
-  font-family:'JetBrains Mono', monospace;
+  font-family:'Tahoma', monospace;
   font-size:11px; letter-spacing:0.06em;
   color:var(--ink-soft);
 }
@@ -867,7 +867,7 @@
   display:block;
   font-size:18px; font-weight:600; color:var(--ink);
   letter-spacing:-0.01em;
-  font-family:'Geist', sans-serif;
+  font-family:'Tahoma', sans-serif;
   margin-bottom:2px;
 }
 
