@@ -38,6 +38,7 @@ import {
   handleDiscoveryAnswer,
   normalizeE164,
 } from '@/lib/onboarding-whatsapp'
+import { FIRST_DISCOVERY_QUESTION } from '@/lib/onboarding'
 import {
   getActiveDemoSession,
   startDemoSession,
@@ -449,7 +450,7 @@ async function handleOneInbound(
   const { data: cfg } = await supabase
     .from('workspace_ai_config')
     .select(
-      'whatsapp_outbound_enabled, operator_whatsapp_number, system_prompt, onboarding_wa_question_index, onboarding_wa_answers'
+      'whatsapp_outbound_enabled, operator_whatsapp_number, system_prompt, onboarding_wa_question_index, onboarding_wa_answers, onboarding_wa_last_question'
     )
     .eq('workspace_id', workspaceId)
     .maybeSingle()
@@ -476,18 +477,24 @@ async function handleOneInbound(
   // that flag flips true only once discovery completes.
   const replyTo = `+${normalized}`
   if (!cfg.system_prompt) {
-    // No turns recorded yet means discovery hasn't actually started —
-    // whatever this first message says (however the phone got recognized:
-    // cold-start signup, OAuth handoff code, etc.), treat it as "hello,"
-    // not as an answer to the first question. onboarding_wa_answers is now
-    // an ordered turns array, not a fixed-key map, but Object.keys(...)
-    // .length === 0 is equally true for an empty array.
-    const discoveryNotStarted =
-      (cfg.onboarding_wa_question_index ?? 0) === 0 &&
-      Object.keys(cfg.onboarding_wa_answers ?? {}).length === 0
+    // onboarding_wa_last_question is only ever set once a question has
+    // actually been sent (see below, and handleDiscoveryAnswer for
+    // subsequent turns) — null means Q1 has never gone out, so whatever
+    // this message says (however the phone got recognized: cold-start
+    // signup, OAuth handoff code, etc.) is "hello," not an answer.
+    // Previously this checked onboarding_wa_question_index/_answers, both
+    // of which are only written by handleDiscoveryAnswer — since that only
+    // runs once discoveryNotStarted is false, nothing ever flipped it, and
+    // every reply to Q1 re-triggered this branch forever instead of being
+    // recorded as an answer.
+    const discoveryNotStarted = cfg.onboarding_wa_last_question == null
 
     if (discoveryNotStarted) {
       const replyText = firstDiscoveryMessage()
+      await supabase
+        .from('workspace_ai_config')
+        .update({ onboarding_wa_last_question: FIRST_DISCOVERY_QUESTION })
+        .eq('workspace_id', workspaceId)
       await supabase.from('caye_operator_messages').insert({
         workspace_id: workspaceId,
         direction: 'inbound',
