@@ -454,7 +454,16 @@ const TOOLS: Anthropic.Tool[] = [
       properties: {
         reason: {
           type: 'string',
-          description: 'One short sentence — why you are stepping back. Shown in the inbox as a label.',
+          description:
+            'Why you are stepping back — sent to the owner over WhatsApp verbatim, in a sentence ' +
+            'like "{name} came in — {reason}." Write it the way you\'d actually text it: short, ' +
+            'plain, one clause, ~8 words max. No em-dashes, no semicolons, no stacking multiple ' +
+            'facts together, no parenthetical dates or file-a-report tone. Good: "not a customer ' +
+            'message", "wants a refund", "asking about a group of 20", "high-value shoot, needs ' +
+            'your call". Bad: "High-value B2B/media transportation request — involves custom ' +
+            'multi-vehicle logistics, a media production context, and dates where one day is ' +
+            'owner_only and the other has existing bookings." All of that detail belongs in ' +
+            '`note`, not here — `reason` is just the one-line hook that gets someone to open the thread.',
         },
         note: {
           type: 'string',
