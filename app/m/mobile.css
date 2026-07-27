@@ -179,7 +179,7 @@
 .caye-mark {
   width: 28px; height: 28px;
   border-radius: 50%;
-  background: url('/caye-logo.png') center / cover no-repeat;
+  background: url('/caye-logo-icon.png') center / cover no-repeat;
   display: inline-flex;
   align-items: center;
   justify-content: center;

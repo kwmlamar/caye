@@ -493,7 +493,7 @@ export default function LandingPageClient() {
             {/* Brand column */}
             <div className="col-span-2 pr-4">
               <div className="flex items-center gap-2.5">
-                <img src="/caye-logo.png" alt="" aria-hidden className="w-5 h-5 rounded-full object-cover" />
+                <img src="/caye-logo-icon.png" alt="" aria-hidden className="w-5 h-5 rounded-full object-cover" />
                 <span className="font-logo font-semibold tracking-tight text-near-black text-[22px]">
                   caye
                 </span>

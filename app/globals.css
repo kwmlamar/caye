@@ -84,9 +84,9 @@
   --tc-teal:        #0f5a4e; /* Premium forest teal */
   --tc-teal-deep:   #09443a;
   --tc-teal-soft:   #e6f2f0;
-  --tc-sun:         #f6b12a; /* Amber-sun */
-  --tc-sun-soft:    #fef6e5;
-  --tc-sun-deep:    #c4830c;
+  --tc-sun:         #fedd92; /* Logo gold */
+  --tc-sun-soft:    #fcf0d8;
+  --tc-sun-deep:    #b8892e;
 
   /* Shadows — crisp warm tinted shadows */
   --tc-shadow-sm:    0 1px 3px rgba(18, 18, 18, 0.06), 0 2px 4px rgba(18, 18, 18, 0.04);
@@ -504,8 +504,8 @@
   --lp-coral-soft:  #fce8e1;
   --lp-teal:        #1e6157;
   --lp-teal-soft:   #e0eeea;
-  --lp-sun:         #f4b942;
-  --lp-sun-soft:    #fbeccb;
+  --lp-sun:         #fedd92;
+  --lp-sun-soft:    #fcf0d8;
   --lp-shadow-sm:   0 1px 2px rgba(28,22,16,0.04), 0 1px 1px rgba(28,22,16,0.03);
   --lp-shadow-md:   0 4px 10px rgba(28,22,16,0.05), 0 12px 28px -10px rgba(28,22,16,0.10);
   --lp-shadow-lg:   0 12px 24px rgba(28,22,16,0.06), 0 40px 80px -20px rgba(28,22,16,0.18);
@@ -527,7 +527,7 @@
   pointer-events: none;
   z-index: 0;
   background:
-    radial-gradient(900px 600px at 90% -10%, rgba(244,185,66,0.07), transparent 60%),
+    radial-gradient(900px 600px at 90% -10%, rgba(254,221,146,0.07), transparent 60%),
     radial-gradient(700px 500px at -10% 30%, rgba(232,90,60,0.05), transparent 60%);
 }
 .lp-page section, .lp-page .lp-marquee { position: relative; z-index: 2; }
@@ -557,7 +557,7 @@
   box-shadow: 0 0 0 4px rgba(232,90,60,0.12);
 }
 .lp-eyebrow-teal .lp-dot, .lp-dot-teal { background: var(--lp-teal); box-shadow: 0 0 0 4px rgba(30,97,87,0.12); }
-.lp-eyebrow-sun .lp-dot, .lp-dot-sun { background: var(--lp-sun); box-shadow: 0 0 0 4px rgba(244,185,66,0.14); }
+.lp-eyebrow-sun .lp-dot, .lp-dot-sun { background: var(--lp-sun); box-shadow: 0 0 0 4px rgba(254,221,146,0.14); }
 
 /* LAYOUT */
 .lp-wrap {
@@ -1065,7 +1065,7 @@
 .lp-how::before {
   content: ""; position: absolute; inset: 0;
   background:
-    radial-gradient(700px 400px at 90% 0%, rgba(244,185,66,0.12), transparent 60%),
+    radial-gradient(700px 400px at 90% 0%, rgba(254,221,146,0.12), transparent 60%),
     radial-gradient(700px 500px at 0% 100%, rgba(30,97,87,0.18), transparent 60%);
   pointer-events: none;
 }
@@ -1312,7 +1312,7 @@
 }
 .lp-price-featured::before {
   content: ""; position: absolute; inset: 0;
-  background: radial-gradient(500px 300px at 100% 0%, rgba(244,185,66,0.12), transparent 60%),
+  background: radial-gradient(500px 300px at 100% 0%, rgba(254,221,146,0.12), transparent 60%),
               radial-gradient(400px 300px at 0% 100%, rgba(232,90,60,0.12), transparent 60%);
   pointer-events: none;
 }
@@ -1344,7 +1344,7 @@
   display: inline-flex; align-items: center; justify-content: center;
   font-size: 11px; font-weight: 700; margin-top: 1px;
 }
-.lp-price-featured li::before { background: rgba(244,185,66,0.18); color: var(--lp-sun); }
+.lp-price-featured li::before { background: rgba(254,221,146,0.18); color: var(--lp-sun); }
 .lp-price-card .lp-btn { width: 100%; justify-content: center; position: relative; z-index: 2; }
 .lp-pilot-note {
   margin-top: 24px;

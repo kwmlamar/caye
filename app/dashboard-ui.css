@@ -585,7 +585,7 @@
 .caye-strip.held {
   background: var(--tc-sun-soft);
   color: var(--tc-sun-deep);
-  border-color: rgba(196, 131, 12, 0.18);
+  border-color: rgba(184, 137, 46, 0.18);
 }
 .caye-strip.drafted {
   background: var(--tc-coral-soft);
@@ -718,7 +718,7 @@
   transition: background .2s;
 }
 .reply-box textarea::placeholder { color: var(--tc-ink-faint); }
-.reply-box.note-mode { border-color: rgba(196,131,12,0.25); background: var(--tc-sun-soft); }
+.reply-box.note-mode { border-color: rgba(184,137,46,0.25); background: var(--tc-sun-soft); }
 .reply-footer {
   display: flex; align-items: center; justify-content: space-between;
   padding: 8px 12px;
@@ -775,7 +775,7 @@
   box-shadow: 0 4px 12px -4px rgba(0,0,0,0.4);
 }
 .btn-send:hover { background: #162028; transform: translateY(-1px); box-shadow: 0 6px 18px -4px rgba(0,0,0,0.45); }
-.btn-send.note { background: var(--tc-sun-deep); color: #fff; box-shadow: 0 4px 12px -4px rgba(184,127,31,0.5); }
+.btn-send.note { background: var(--tc-sun-deep); color: #fff; box-shadow: 0 4px 12px -4px rgba(184,137,46,0.5); }
 .btn-send.note:hover { background: #b8860b; transform: translateY(-1px); }
 
 /* Internal note bubble — human */
@@ -783,11 +783,11 @@
 .note-bubble {
   width: 100%;
   background: var(--tc-sun-soft);
-  border: 1px solid rgba(196, 131, 12, 0.15);
+  border: 1px solid rgba(184, 137, 46, 0.15);
   border-radius: 12px;
   padding: 12px 14px;
   font-size: 13.5px; line-height: 1.5;
-  box-shadow: 0 2px 8px rgba(196, 131, 12, 0.03);
+  box-shadow: 0 2px 8px rgba(184, 137, 46, 0.03);
 }
 /* Caye-authored note variant */
 .note-bubble.caye {
@@ -1324,7 +1324,7 @@
   padding: 1px 5px; border-radius: 3px;
 }
 .bk-status.confirmed { background: rgba(232,90,60,0.18); color: var(--tc-coral-deep); }
-.bk-status.pending { background: rgba(244,185,66,0.25); color: var(--tc-sun-deep); }
+.bk-status.pending { background: rgba(254,221,146,0.25); color: var(--tc-sun-deep); }
 .bk-card.by-caye .bk-status.confirmed { background: rgba(30,97,87,0.15); color: var(--tc-teal); }
 .bk-ship { color: var(--tc-ink-mute); }
 
@@ -2409,7 +2409,7 @@
   font-size: 12px; color: var(--tc-ink-mute);
   font-family: var(--font-mono), ui-monospace, monospace; letter-spacing: 0.04em;
 }
-.save-bar .changes .pip { width: 6px; height: 6px; border-radius: 50%; background: var(--tc-sun); box-shadow: 0 0 0 3px rgba(244,185,66,0.18); }
+.save-bar .changes .pip { width: 6px; height: 6px; border-radius: 50%; background: var(--tc-sun); box-shadow: 0 0 0 3px rgba(254,221,146,0.18); }
 
 .topic-list {
   display: flex; flex-direction: column;
@@ -2456,14 +2456,14 @@
 .caye-banner {
   display: flex; gap: 14px;
   padding: 16px 18px;
-  background: linear-gradient(135deg, var(--tc-teal-soft) 0%, rgba(244,185,66,0.15) 100%);
+  background: linear-gradient(135deg, var(--tc-teal-soft) 0%, rgba(254,221,146,0.15) 100%);
   border: 1px solid rgba(30,97,87,0.18);
   border-radius: 12px;
 }
 .caye-banner .cb-mark {
   width: 42px; height: 42px;
   border-radius: 50%;
-  background: url('/caye-logo.png') center / cover no-repeat;
+  background: url('/caye-logo-icon.png') center / cover no-repeat;
   flex-shrink: 0;
   display: inline-flex; align-items: center; justify-content: center;
   box-shadow: 0 6px 14px -4px rgba(30,97,87,0.35);
@@ -3452,7 +3452,7 @@
   background: rgba(232, 90, 60, 0.05) !important;
 }
 .caye-panel .bk-card.pending {
-  background: rgba(244, 185, 66, 0.06) !important;
+  background: rgba(254, 221, 146, 0.06) !important;
 }
 .caye-panel .bk-card.by-caye {
   background: rgba(15, 181, 161, 0.06) !important;

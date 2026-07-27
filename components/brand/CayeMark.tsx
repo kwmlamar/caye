@@ -12,7 +12,7 @@ export function CayeMark({
   void variant // kept for call-site compatibility; the logo doesn't vary by surface
   return (
     <img
-      src="/caye-logo.png"
+      src="/caye-logo-icon.png"
       role="img"
       aria-label="Caye"
       className={className}
