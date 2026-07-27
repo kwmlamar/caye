@@ -229,13 +229,20 @@ export function buildBackOfficeSystemPrompt(args: {
   if (args.voiceProfile) {
     lines.push('')
     lines.push("OPERATOR VOICE PROFILE — use this when drafting customer-facing copy")
-    lines.push("(Only applies to send_reply, send_quote, and other customer-facing tools.")
-    lines.push("When talking to the operator directly, keep your own voice — warm + quietly clever.)")
+    lines.push("(Applies to send_reply, send_quote, create_outreach_leads, and any other tool whose")
+    lines.push("output goes to a customer or prospect, not just to the operator. When talking to the")
+    lines.push("operator directly, keep your own voice — warm + quietly clever.)")
     if (args.voiceProfile.formality_level) {
       lines.push(`- Formality: ${args.voiceProfile.formality_level}`)
     }
     if (args.voiceProfile.writing_style) {
       lines.push(`- Style: ${args.voiceProfile.writing_style}`)
+    }
+    if (args.voiceProfile.greeting_style) {
+      lines.push(`- Greeting: ${args.voiceProfile.greeting_style}`)
+    }
+    if (args.voiceProfile.signoff_style) {
+      lines.push(`- Sign-off: ${args.voiceProfile.signoff_style}`)
     }
     if (args.voiceProfile.common_phrases?.length) {
       lines.push(`- Common phrases: ${args.voiceProfile.common_phrases.join(', ')}`)
