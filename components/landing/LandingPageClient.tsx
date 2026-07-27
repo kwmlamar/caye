@@ -25,11 +25,11 @@ import { FAQ_ITEMS } from '@/components/landing/faq-data'
 const PALETTE_SOFT = ['#72b9bb', '#b5d9d9', '#ffd1bd', '#ffebe0', '#8cc5b8', '#dbf4a4']
 // Caribbean Deep — Bahamian flag DNA (aqua direct, gold echoed),
 // deeper sea-pool, sand + cream + mint harmonize. RECOMMENDED.
-const PALETTE_DEEP = ['#00778B', '#7DC9CB', '#FFD68F', '#F5E8D0', '#A8DCC0', '#F4E3A0']
+const PALETTE_DEEP = ['#0766A3', '#4EBECE', '#FFE4AF', '#F5E8D0', '#7BB2BF', '#F4E3A0']
 // Sunset / golden hour — warmer, more sand/coral, less green:
-const PALETTE_SUNSET = ['#3A8B98', '#A8D5D5', '#FFC4A0', '#FFE5D0', '#FFD68F', '#FFB5A8']
+const PALETTE_SUNSET = ['#3A8B98', '#A8D5D5', '#FFC4A0', '#FFE5D0', '#FFE4AF', '#FFB5A8']
 // Reef + water — vivid snorkel palette, deepest contrast:
-const PALETTE_REEF = ['#2E7A8C', '#6DC4C9', '#FFD580', '#F5E8D0', '#A8DCC0', '#FF9B85']
+const PALETTE_REEF = ['#2E7A8C', '#6DC4C9', '#FFD580', '#F5E8D0', '#7BB2BF', '#FF9B85']
 
 const HERO_COLORS = PALETTE_DEEP
 
@@ -493,7 +493,7 @@ export default function LandingPageClient() {
             {/* Brand column */}
             <div className="col-span-2 pr-4">
               <div className="flex items-center gap-2.5">
-                <img src="/brand/caye-orb.svg" alt="" aria-hidden className="w-5 h-5" />
+                <img src="/caye-logo.png" alt="" aria-hidden className="w-5 h-5 rounded-full object-cover" />
                 <span className="font-logo font-semibold tracking-tight text-near-black text-[22px]">
                   caye
                 </span>
@@ -570,7 +570,7 @@ export default function LandingPageClient() {
           style={{
             fontSize: 'clamp(6rem, 30vw, 26rem)',
             background:
-              'linear-gradient(180deg, transparent 0%, rgba(168,220,192,0.14) 100%)',
+              'linear-gradient(180deg, transparent 0%, rgba(123,178,191,0.14) 100%)',
           }}
         >
           <span className="self-center h-px w-6 md:w-12 bg-near-black/15 flex-shrink-0" />
@@ -581,7 +581,7 @@ export default function LandingPageClient() {
               lineHeight: 1,
               paddingBottom: '0.18em',
               backgroundImage:
-                'linear-gradient(180deg, #FFD68F 0%, #F4E3A0 24%, #A8DCC0 52%, #7DC9CB 76%, #00778B 100%)',
+                'linear-gradient(180deg, #FFE4AF 0%, #F4E3A0 24%, #7BB2BF 52%, #4EBECE 76%, #0766A3 100%)',
               WebkitBackgroundClip: 'text',
               backgroundClip: 'text',
               color: 'transparent',

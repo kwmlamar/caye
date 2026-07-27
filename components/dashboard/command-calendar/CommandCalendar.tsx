@@ -8,7 +8,7 @@ import { Pill } from '@/components/dashboard/founder-home/console-ui'
 // imported since FounderHome doesn't export them (matches the pattern
 // already used by GlobalPerformance.tsx / ContactsPanel.tsx).
 const LABEL_COLOR = '#71717a'
-const GRADIENT = 'linear-gradient(90deg, #00778B, #7DC9CB, #FFD68F)'
+const GRADIENT = 'linear-gradient(90deg, #0766A3, #4EBECE, #FFE4AF)'
 
 const DAY_LABELS = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN']
 
@@ -16,8 +16,8 @@ const DAY_LABELS = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN']
 // these before this pass — every booking looked identical regardless of
 // whether the customer had actually confirmed.
 const STATUS_COLOR: Record<string, string> = {
-  confirmed: '#7DC9CB',
-  pending: '#FFD68F',
+  confirmed: '#4EBECE',
+  pending: '#FFE4AF',
   completed: '#52525b',
 }
 const STATUS_LABEL: Record<string, string> = {
@@ -109,10 +109,10 @@ export default function CommandCalendar({ bookings, weekStart, weekOffset, onWee
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 600, letterSpacing: '0.06em', color: LABEL_COLOR }}>SOURCE CALENDAR</span>
-            <Pill color="#7DC9CB" label="Synced" dot={false} />
+            <Pill color="#4EBECE" label="Synced" dot={false} />
           </div>
           <p style={{ fontSize: 12, color: 'rgba(245,245,244,0.4)', marginTop: 4 }}>
-            {fmtDayMonth(monday)} – {fmtDayMonth(sunday)}{weekOffset === 0 && <span style={{ color: '#7DC9CB' }}> · this week</span>}
+            {fmtDayMonth(monday)} – {fmtDayMonth(sunday)}{weekOffset === 0 && <span style={{ color: '#4EBECE' }}> · this week</span>}
           </p>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
@@ -140,15 +140,15 @@ export default function CommandCalendar({ bookings, weekStart, weekOffset, onWee
         {week.map((d) => (
           <div key={d.label} style={{
             position: 'relative', overflow: 'hidden', display: 'flex', flexDirection: 'column',
-            background: d.isToday ? 'rgba(125,201,203,0.07)' : 'rgba(255,255,255,0.045)',
-            border: d.isToday ? '1px solid rgba(125,201,203,0.4)' : 'none',
+            background: d.isToday ? 'rgba(78,190,206,0.07)' : 'rgba(255,255,255,0.045)',
+            border: d.isToday ? '1px solid rgba(78,190,206,0.4)' : 'none',
             borderRadius: 10, padding: d.isToday ? 10 : 8,
           }}>
             {d.isToday && <div aria-hidden style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 2, background: GRADIENT }} />}
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 6 }}>
-              <span style={{ fontSize: 9, fontFamily: 'var(--font-mono)', color: d.isToday ? '#7DC9CB' : '#71717a', letterSpacing: '0.06em' }}>{d.label}</span>
+              <span style={{ fontSize: 9, fontFamily: 'var(--font-mono)', color: d.isToday ? '#4EBECE' : '#71717a', letterSpacing: '0.06em' }}>{d.label}</span>
               <span style={{ fontSize: d.isToday ? 15 : 13, fontFamily: 'var(--font-display)', fontWeight: 600 }}>{d.date}</span>
-              {d.isToday && <span style={{ fontSize: 9, fontFamily: 'var(--font-mono)', color: '#7DC9CB', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Today</span>}
+              {d.isToday && <span style={{ fontSize: 9, fontFamily: 'var(--font-mono)', color: '#4EBECE', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Today</span>}
             </div>
 
             {d.bookings.length === 0 ? (

@@ -7,7 +7,7 @@ import { formatDistanceToNow } from '@/lib/utils'
 // Same mesh-gradient palette as the landing hero / CayeMark orb — used
 // sparingly here as accent lines and the cost bars, not painted over
 // every element (minimal, per the 2026-07-01 redesign).
-const GRADIENT = 'linear-gradient(90deg, #00778B, #7DC9CB, #FFD68F)'
+const GRADIENT = 'linear-gradient(90deg, #0766A3, #4EBECE, #FFE4AF)'
 
 // Founder-only: what Caye escalated for human judgment, and what she's
 // costing to run, for the workspace currently in view. Read-only v1 —

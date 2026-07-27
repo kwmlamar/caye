@@ -80,7 +80,7 @@ function ChannelRow({
         </div>
       </div>
       <Pill
-        color={needsReauth ? '#FFD68F' : connected ? '#34d399' : '#52525b'}
+        color={needsReauth ? '#FFE4AF' : connected ? '#34d399' : '#52525b'}
         label={needsReauth ? 'Reconnect' : connected ? 'Connected' : 'Not connected'}
       />
       {redirectHref && (
@@ -89,7 +89,7 @@ function ChannelRow({
         ) : (
           <GhostButton
             label={needsReauth ? 'Reconnect' : 'Connect'}
-            color="#7DC9CB"
+            color="#4EBECE"
             href={`${redirectHref}${redirectHref.includes('?') ? '&' : '?'}workspaceId=${workspaceId}&source=founder`}
           />
         )

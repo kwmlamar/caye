@@ -30,7 +30,7 @@ const APP_BG = '#111113'
 const CARD_BG = '#1a1a1e'
 const CARD_BORDER = '#28282d'
 const LABEL_COLOR = '#71717a' // zinc-500
-const GRADIENT = 'linear-gradient(90deg, #00778B, #7DC9CB, #FFD68F)'
+const GRADIENT = 'linear-gradient(90deg, #0766A3, #4EBECE, #FFE4AF)'
 
 // Glass treatment for chrome only (icon rail, top bar, floating buttons) —
 // not the data-dense surfaces (stat cards, lists, calendar), which stay
@@ -49,7 +49,7 @@ const STATUS_LABEL: Record<CustomerStatus, string> = {
 }
 const STATUS_COLOR: Record<CustomerStatus, string> = {
   active: '#34d399', // emerald-400
-  trial: '#FFD68F',
+  trial: '#FFE4AF',
   inactive: '#71717a',
   suspended: '#fb7185', // rose-400
 }
@@ -195,8 +195,8 @@ function RailButton({ item, active, onClick }: { item: (typeof RAIL_ITEMS)[numbe
       style={{
         width: 44, height: 44, borderRadius: 12, flexShrink: 0,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        background: active ? 'rgba(125,201,203,0.14)' : hover ? 'rgba(255,255,255,0.05)' : 'transparent',
-        color: active ? '#7DC9CB' : hover ? '#a1a1aa' : '#52525b',
+        background: active ? 'rgba(78,190,206,0.14)' : hover ? 'rgba(255,255,255,0.05)' : 'transparent',
+        color: active ? '#4EBECE' : hover ? '#a1a1aa' : '#52525b',
         cursor: 'pointer',
         transition: 'background 0.15s ease, color 0.15s ease',
       }}
@@ -389,9 +389,9 @@ export default function FounderHome() {
                     position: 'relative', width: 40, height: 40, margin: '0 auto', flexShrink: 0,
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                     borderRadius: 11, cursor: 'pointer',
-                    background: active ? 'rgba(125,201,203,0.16)' : 'rgba(255,255,255,0.045)',
+                    background: active ? 'rgba(78,190,206,0.16)' : 'rgba(255,255,255,0.045)',
                     fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-mono)',
-                    color: active ? '#7DC9CB' : '#a1a1aa',
+                    color: active ? '#4EBECE' : '#a1a1aa',
                   }}
                 >
                   {businessInitials(m.customer.business_name)}
@@ -412,7 +412,7 @@ export default function FounderHome() {
                   textAlign: 'left',
                   cursor: 'pointer', borderRadius: 12,
                   padding: '12px 14px',
-                  background: active ? 'rgba(125,201,203,0.09)' : 'transparent',
+                  background: active ? 'rgba(78,190,206,0.09)' : 'transparent',
                   ...(active ? GLASS : {}),
                 }}
               >
@@ -439,8 +439,8 @@ export default function FounderHome() {
         <div aria-hidden style={{
           position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: -1,
           background:
-            'radial-gradient(ellipse 900px 500px at 100% -10%, rgba(0,119,139,0.14), transparent 60%), ' +
-            'radial-gradient(ellipse 700px 400px at -5% 110%, rgba(255,214,143,0.05), transparent 60%)',
+            'radial-gradient(ellipse 900px 500px at 100% -10%, rgba(7,102,163,0.14), transparent 60%), ' +
+            'radial-gradient(ellipse 700px 400px at -5% 110%, rgba(255,228,175,0.05), transparent 60%)',
         }} />
         {/* Top status bar — translucent so the atmosphere gradient behind
             it (the radial-gradient div above) shows through faintly. */}

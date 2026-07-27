@@ -37,17 +37,17 @@ function OperatorRow({ op, active, onClick }: { op: Operator; active: boolean; o
         position: 'relative',
         display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left',
         border: 'none', cursor: 'pointer', borderRadius: 10, padding: '9px 10px 9px 13px', marginBottom: 2,
-        background: active ? 'rgba(125,201,203,0.09)' : hover ? 'rgba(255,255,255,0.04)' : 'transparent',
+        background: active ? 'rgba(78,190,206,0.09)' : hover ? 'rgba(255,255,255,0.04)' : 'transparent',
         transition: 'background 0.12s ease',
       }}
     >
       {active && (
-        <span aria-hidden style={{ position: 'absolute', left: 3, top: 7, bottom: 7, width: 2.5, borderRadius: 3, background: '#7DC9CB' }} />
+        <span aria-hidden style={{ position: 'absolute', left: 3, top: 7, bottom: 7, width: 2.5, borderRadius: 3, background: '#4EBECE' }} />
       )}
       <div style={{
         width: 22, height: 22, borderRadius: '50%', flexShrink: 0,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        background: 'rgba(125,201,203,0.12)', color: '#7DC9CB', fontSize: 10, fontWeight: 700, fontFamily: 'var(--font-mono)',
+        background: 'rgba(78,190,206,0.12)', color: '#4EBECE', fontSize: 10, fontWeight: 700, fontFamily: 'var(--font-mono)',
       }}>
         {label.slice(0, 1).toUpperCase()}
       </div>

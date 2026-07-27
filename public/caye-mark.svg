@@ -24,7 +24,7 @@
   <circle cx="512" cy="512" r="460" fill="url(#orbMain)" />
 
   <!-- Subtle inner glow (soften top-left) -->
-  <ellipse cx="410" cy="380" rx="260" ry="230" fill="rgba(125,201,203,0.08)" />
+  <ellipse cx="410" cy="380" rx="260" ry="230" fill="rgba(78,190,206,0.08)" />
 
   <!-- Highlight / sheen on upper-right -->
   <circle cx="700" cy="210" r="100" fill="url(#highlight)" />

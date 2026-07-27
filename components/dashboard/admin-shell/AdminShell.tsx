@@ -65,7 +65,7 @@ function QuickCommandChip({ label, onClick, disabled }: { label: string; onClick
         display: 'inline-flex', alignItems: 'center', gap: 5,
         fontSize: 11, fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap',
         color: hover && !disabled ? '#dff4f4' : '#a1a1aa',
-        background: hover && !disabled ? 'rgba(125,201,203,0.14)' : 'rgba(255,255,255,0.055)',
+        background: hover && !disabled ? 'rgba(78,190,206,0.14)' : 'rgba(255,255,255,0.055)',
         borderRadius: 999, padding: '5px 10px 5px 8px', cursor: disabled ? 'default' : 'pointer',
         transition: 'background 0.15s ease, color 0.15s ease',
       }}
@@ -84,14 +84,14 @@ function TypingIndicator() {
       <CayeMark size={20} />
       <div style={{
         display: 'flex', alignItems: 'center', gap: 3,
-        background: 'rgba(0,119,139,0.14)', border: '1px solid rgba(0,119,139,0.35)',
+        background: 'rgba(7,102,163,0.14)', border: '1px solid rgba(7,102,163,0.35)',
         borderRadius: '16px 16px 16px 4px', padding: '11px 13px',
       }}>
         {[0, 1, 2].map((i) => (
           <span
             key={i}
             style={{
-              width: 5, height: 5, borderRadius: '50%', background: '#7DC9CB',
+              width: 5, height: 5, borderRadius: '50%', background: '#4EBECE',
               animation: 'admin-shell-typing-dot 1.1s ease-in-out infinite',
               animationDelay: `${i * 0.15}s`,
             }}
@@ -126,7 +126,7 @@ function EmptyState() {
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, textAlign: 'center', padding: '0 30px' }}>
       <div style={{ position: 'relative' }}>
-        <div aria-hidden style={{ position: 'absolute', inset: -10, borderRadius: '50%', background: 'radial-gradient(circle, rgba(125,201,203,0.18), transparent 70%)' }} />
+        <div aria-hidden style={{ position: 'absolute', inset: -10, borderRadius: '50%', background: 'radial-gradient(circle, rgba(78,190,206,0.18), transparent 70%)' }} />
         <CayeMark size={40} />
       </div>
       <div>
@@ -387,7 +387,7 @@ export default function AdminShell() {
                   {isCaye && (showAvatar ? <CayeMark size={18} /> : <div style={{ width: 18, flexShrink: 0 }} />)}
                   <div style={{ maxWidth: '100%' }}>
                     {isCaye ? (
-                      <div style={{ borderLeft: '2px solid #7DC9CB', padding: '1px 0 1px 12px' }}>
+                      <div style={{ borderLeft: '2px solid #4EBECE', padding: '1px 0 1px 12px' }}>
                         <FormattedReplyText text={m.body} style={{ fontSize: 14, lineHeight: 1.6, color: '#f4f4f5' }} />
                       </div>
                     ) : (
@@ -421,7 +421,7 @@ export default function AdminShell() {
               position: 'absolute', bottom: 14, left: '50%', transform: 'translateX(-50%)',
               display: 'flex', alignItems: 'center', gap: 6,
               fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 600, color: '#0a0a0b',
-              background: '#7DC9CB', border: 'none', borderRadius: 999, padding: '6px 12px 6px 10px',
+              background: '#4EBECE', border: 'none', borderRadius: 999, padding: '6px 12px 6px 10px',
               cursor: 'pointer', boxShadow: '0 4px 16px -4px rgba(0,0,0,0.5)',
               animation: 'admin-shell-msg-in 0.2s ease-out',
             }}
@@ -483,7 +483,7 @@ export default function AdminShell() {
                 flexShrink: 0, width: 32, height: 32, borderRadius: '50%', border: 'none',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 cursor: sending || !input.trim() ? 'default' : 'pointer',
-                background: sending || !input.trim() ? 'rgba(255,255,255,0.08)' : '#7DC9CB',
+                background: sending || !input.trim() ? 'rgba(255,255,255,0.08)' : '#4EBECE',
                 transition: 'background 0.15s ease',
               }}
             >

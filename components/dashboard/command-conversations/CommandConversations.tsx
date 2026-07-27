@@ -40,9 +40,9 @@ const CHANNEL_LABEL: Record<string, string> = {
 }
 const CHANNEL_COLOR: Record<string, string> = {
   whatsapp: '#22c55e',
-  email: '#7DC9CB',
-  instagram: '#FFD68F',
-  messenger: '#7DC9CB',
+  email: '#4EBECE',
+  instagram: '#FFE4AF',
+  messenger: '#4EBECE',
   sms: 'rgba(245,245,244,0.5)',
 }
 
@@ -78,13 +78,13 @@ function ConversationRow({ c, active, onClick }: { c: ConversationSummary; activ
       style={{
         position: 'relative',
         display: 'block', width: '100%', textAlign: 'left', border: 'none', cursor: 'pointer',
-        background: active ? 'rgba(125,201,203,0.09)' : hover ? 'rgba(255,255,255,0.04)' : 'transparent',
+        background: active ? 'rgba(78,190,206,0.09)' : hover ? 'rgba(255,255,255,0.04)' : 'transparent',
         borderRadius: 10, padding: '10px 10px 10px 14px', marginBottom: 2,
         transition: 'background 0.12s ease',
       }}
     >
       {active && (
-        <span aria-hidden style={{ position: 'absolute', left: 3, top: 8, bottom: 8, width: 2.5, borderRadius: 3, background: '#7DC9CB' }} />
+        <span aria-hidden style={{ position: 'absolute', left: 3, top: 8, bottom: 8, width: 2.5, borderRadius: 3, background: '#4EBECE' }} />
       )}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
         <span style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -330,9 +330,9 @@ export default function CommandConversations({ workspaceId, conversations, selec
             placeholder="Search by name…"
             style={{
               width: '100%', background: 'rgba(255,255,255,0.05)',
-              border: `1px solid ${searchFocused ? 'rgba(125,201,203,0.5)' : 'rgba(255,255,255,0.08)'}`,
+              border: `1px solid ${searchFocused ? 'rgba(78,190,206,0.5)' : 'rgba(255,255,255,0.08)'}`,
               borderRadius: 8, padding: '7px 10px', fontSize: 12.5, color: '#f5f5f4', outline: 'none',
-              boxShadow: searchFocused ? '0 0 0 3px rgba(125,201,203,0.1)' : 'none',
+              boxShadow: searchFocused ? '0 0 0 3px rgba(78,190,206,0.1)' : 'none',
               transition: 'border-color 0.15s ease, box-shadow 0.15s ease',
             }}
           />
@@ -386,14 +386,14 @@ export default function CommandConversations({ workspaceId, conversations, selec
                     return (
                       <div key={m.id} style={{
                         alignSelf: 'stretch', display: 'flex', gap: 8, alignItems: 'flex-start',
-                        background: 'rgba(255,214,143,0.06)', border: '1px solid rgba(255,214,143,0.25)',
+                        background: 'rgba(255,228,175,0.06)', border: '1px solid rgba(255,228,175,0.25)',
                         borderRadius: 10, padding: '8px 12px',
                       }}>
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#FFD68F" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginTop: 3, flexShrink: 0 }}>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#FFE4AF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginTop: 3, flexShrink: 0 }}>
                           <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" /><line x1="4" y1="22" x2="4" y2="15" />
                         </svg>
                         <div style={{ flex: 1 }}>
-                          <div style={{ fontSize: 9, fontFamily: 'var(--font-mono)', fontWeight: 700, letterSpacing: '0.08em', color: '#FFD68F', textTransform: 'uppercase', marginBottom: 2 }}>
+                          <div style={{ fontSize: 9, fontFamily: 'var(--font-mono)', fontWeight: 700, letterSpacing: '0.08em', color: '#FFE4AF', textTransform: 'uppercase', marginBottom: 2 }}>
                             Internal note — not sent to customer
                           </div>
                           <p style={{ fontSize: 12.5, lineHeight: 1.45, whiteSpace: 'pre-wrap', color: 'rgba(245,245,244,0.7)' }}>{noteBody}</p>
@@ -412,7 +412,7 @@ export default function CommandConversations({ workspaceId, conversations, selec
                     return (
                       <div key={m.id} style={{ alignSelf: 'flex-end', maxWidth: '80%', display: 'flex', alignItems: 'flex-start', gap: 6, flexDirection: 'row-reverse' }}>
                         <div style={{ paddingTop: 2, flexShrink: 0 }}><CayeMark size={14} /></div>
-                        <div style={{ borderRight: '2px solid #7DC9CB', padding: '1px 12px 1px 0', textAlign: 'left' }}>
+                        <div style={{ borderRight: '2px solid #4EBECE', padding: '1px 12px 1px 0', textAlign: 'left' }}>
                           <FormattedReplyText text={m.content} style={{ fontSize: 13.5, lineHeight: 1.5, color: '#f4f4f5' }} />
                           <span style={{ display: 'block', textAlign: 'right', fontSize: 10, color: 'rgba(245,245,244,0.35)', marginTop: 2 }}>{formatDistanceToNow(m.sent_at)}</span>
                         </div>
@@ -452,7 +452,7 @@ export default function CommandConversations({ workspaceId, conversations, selec
                       display: 'flex', alignItems: 'center', gap: 5, marginBottom: 6,
                       border: 'none', background: 'transparent', cursor: drafting ? 'default' : 'pointer',
                       padding: '2px 4px', fontSize: 11.5, fontWeight: 600,
-                      color: drafting ? 'rgba(245,245,244,0.3)' : 'rgba(125,201,203,0.85)',
+                      color: drafting ? 'rgba(245,245,244,0.3)' : 'rgba(78,190,206,0.85)',
                     }}
                   >
                     {drafting ? <CayeLoadingPulse size={11} /> : <CayeMark size={12} />}
@@ -490,7 +490,7 @@ export default function CommandConversations({ workspaceId, conversations, selec
                       flexShrink: 0, width: 32, height: 32, borderRadius: '50%', border: 'none',
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
                       cursor: sending || !replyText.trim() ? 'default' : 'pointer',
-                      background: sending || !replyText.trim() ? 'rgba(255,255,255,0.08)' : '#7DC9CB',
+                      background: sending || !replyText.trim() ? 'rgba(255,255,255,0.08)' : '#4EBECE',
                       transition: 'background 0.15s ease',
                     }}
                   >

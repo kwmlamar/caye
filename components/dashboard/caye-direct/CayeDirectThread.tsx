@@ -73,7 +73,7 @@ function TypingIndicator() {
             key={i}
             style={{
               width: 5, height: 5, borderRadius: '50%',
-              background: 'linear-gradient(135deg, #9EE3E5, #7DC9CB)',
+              background: 'linear-gradient(135deg, #9EE3E5, #4EBECE)',
               animation: 'caye-typing-dot 1.2s ease-in-out infinite',
               animationDelay: `${i * 0.16}s`,
             }}
@@ -129,13 +129,13 @@ function CommandMenu({
           onMouseEnter={() => onHover(i)}
           style={{
             display: 'flex', alignItems: 'baseline', gap: 10, padding: '9px 12px',
-            background: i === activeIndex ? 'rgba(125,201,203,0.14)' : 'transparent',
+            background: i === activeIndex ? 'rgba(78,190,206,0.14)' : 'transparent',
             cursor: 'pointer', transition: 'background 0.1s ease',
           }}
         >
           <span style={{
             fontFamily: 'var(--font-mono)', fontSize: 12.5, fontWeight: 600,
-            color: i === activeIndex ? '#7DC9CB' : '#f4f4f5', flexShrink: 0,
+            color: i === activeIndex ? '#4EBECE' : '#f4f4f5', flexShrink: 0,
           }}>
             /{cmd.name}
           </span>
@@ -150,7 +150,7 @@ function EmptyState({ operatorLabel, readOnly }: { operatorLabel: string; readOn
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, textAlign: 'center', padding: '0 30px' }}>
       <div style={{ position: 'relative' }}>
-        <div aria-hidden style={{ position: 'absolute', inset: -10, borderRadius: '50%', background: 'radial-gradient(circle, rgba(125,201,203,0.18), transparent 70%)' }} />
+        <div aria-hidden style={{ position: 'absolute', inset: -10, borderRadius: '50%', background: 'radial-gradient(circle, rgba(78,190,206,0.18), transparent 70%)' }} />
         <CayeMark size={40} />
       </div>
       <div>
@@ -367,12 +367,12 @@ export default function CayeDirectThread({ workspaceId, operatorId, operatorLabe
         }
         .caye-direct-scroll::-webkit-scrollbar { width: 6px; }
         .caye-direct-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 3px; }
-        .caye-direct-scroll ::selection { background: rgba(125, 201, 203, 0.35); color: inherit; }
-        .caye-direct-scroll ::-moz-selection { background: rgba(125, 201, 203, 0.35); color: inherit; }
+        .caye-direct-scroll ::selection { background: rgba(78, 190, 206, 0.35); color: inherit; }
+        .caye-direct-scroll ::-moz-selection { background: rgba(78, 190, 206, 0.35); color: inherit; }
         .caye-direct-textarea::placeholder { color: rgba(244,244,245,0.32); }
         .caye-typing-bubble {
-          background: linear-gradient(155deg, rgba(0,119,139,0.20), rgba(0,119,139,0.09));
-          box-shadow: 0 1px 0 rgba(255,255,255,0.05) inset, 0 6px 16px -8px rgba(0,119,139,0.5);
+          background: linear-gradient(155deg, rgba(7,102,163,0.20), rgba(7,102,163,0.09));
+          box-shadow: 0 1px 0 rgba(255,255,255,0.05) inset, 0 6px 16px -8px rgba(7,102,163,0.5);
         }
       `}</style>
 
@@ -422,7 +422,7 @@ export default function CayeDirectThread({ workspaceId, operatorId, operatorLabe
                       // to read instead of fighting a tinted container.
                       // The operator's own words keep the bubble, so the
                       // two voices still read as visually distinct.
-                      <div style={{ borderLeft: '2px solid #7DC9CB', padding: '1px 0 1px 12px' }}>
+                      <div style={{ borderLeft: '2px solid #4EBECE', padding: '1px 0 1px 12px' }}>
                         <FormattedReplyText text={m.body} style={{ fontSize: 14, lineHeight: 1.6, color: '#f4f4f5' }} />
                       </div>
                     ) : (
@@ -456,7 +456,7 @@ export default function CayeDirectThread({ workspaceId, operatorId, operatorLabe
               position: 'absolute', bottom: 14, left: '50%', transform: 'translateX(-50%)',
               display: 'flex', alignItems: 'center', gap: 6,
               fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 600, color: '#0a0a0b',
-              background: '#7DC9CB', border: 'none', borderRadius: 999, padding: '6px 12px 6px 10px',
+              background: '#4EBECE', border: 'none', borderRadius: 999, padding: '6px 12px 6px 10px',
               cursor: 'pointer', boxShadow: '0 4px 16px -4px rgba(0,0,0,0.5)',
               animation: 'caye-msg-in 0.2s ease-out',
             }}
@@ -521,7 +521,7 @@ export default function CayeDirectThread({ workspaceId, operatorId, operatorLabe
                   flexShrink: 0, width: 32, height: 32, borderRadius: '50%', border: 'none',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                   cursor: sending || !input.trim() ? 'default' : 'pointer',
-                  background: sending || !input.trim() ? 'rgba(255,255,255,0.08)' : '#7DC9CB',
+                  background: sending || !input.trim() ? 'rgba(255,255,255,0.08)' : '#4EBECE',
                   transition: 'background 0.15s ease',
                 }}
               >

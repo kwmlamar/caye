@@ -29,7 +29,7 @@ export interface CodingSessionMessageData {
 
 const STATUS_COLOR: Record<CodingSessionStatus, string> = {
   booting: '#a1a1aa',
-  running: '#7DC9CB',
+  running: '#4EBECE',
   testing: '#e0b95c',
   pushed: '#34d399',
   failed: '#f87171',

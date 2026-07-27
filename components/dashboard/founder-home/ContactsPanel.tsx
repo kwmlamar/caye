@@ -26,8 +26,8 @@ function Avatar({ name }: { name: string }) {
     <div style={{
       width: 34, height: 34, borderRadius: '50%', flexShrink: 0,
       display: 'flex', alignItems: 'center', justifyContent: 'center',
-      background: 'rgba(125,201,203,0.12)', border: '1px solid rgba(125,201,203,0.3)',
-      color: '#7DC9CB', fontSize: 13, fontWeight: 700, fontFamily: 'var(--font-display)',
+      background: 'rgba(78,190,206,0.12)', border: '1px solid rgba(78,190,206,0.3)',
+      color: '#4EBECE', fontSize: 13, fontWeight: 700, fontFamily: 'var(--font-display)',
     }}>
       {initial}
     </div>

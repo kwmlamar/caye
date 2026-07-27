@@ -9,7 +9,7 @@ import { Pill } from '@/components/dashboard/founder-home/console-ui'
 // the established per-file pattern in this directory.
 const CARD_BG = '#1a1a1e'
 const LABEL_COLOR = '#71717a'
-const TEAL = '#7DC9CB'
+const TEAL = '#4EBECE'
 
 interface VoiceProfileState {
   writing_style: string
@@ -124,14 +124,14 @@ function PhraseTags({ phrases, onChange }: { phrases: string[]; onChange: (next:
         {phrases.map((p, i) => (
           <span key={i} style={{
             display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11.5,
-            background: 'rgba(125,201,203,0.1)', color: '#7DC9CB', borderRadius: 999,
+            background: 'rgba(78,190,206,0.1)', color: '#4EBECE', borderRadius: 999,
             padding: '3px 6px 3px 10px',
           }}>
             {p}
             <button
               type="button"
               onClick={() => onChange(phrases.filter((_, idx) => idx !== i))}
-              style={{ border: 'none', background: 'transparent', color: '#7DC9CB', cursor: 'pointer', fontSize: 13, lineHeight: 1, padding: '0 3px' }}
+              style={{ border: 'none', background: 'transparent', color: '#4EBECE', cursor: 'pointer', fontSize: 13, lineHeight: 1, padding: '0 3px' }}
             >
               ×
             </button>

@@ -73,9 +73,10 @@ export const metadata: Metadata = {
     'Caye is a WhatsApp-first AI staff member for tour operators — she answers guests, books tours, and runs your back office over chat. No app to learn.',
   icons: {
     icon: [
-      { url: '/brand/caye-orb.svg', type: 'image/svg+xml' },
+      { url: '/favicon-32.png', sizes: '32x32', type: 'image/png' },
+      { url: '/icon-192.png', sizes: '192x192', type: 'image/png' },
     ],
-    apple: '/brand/caye-orb.svg',
+    apple: '/icon-192.png',
   },
 }
 

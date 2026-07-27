@@ -17,7 +17,7 @@ const STATUS_LABEL: Record<CustomerStatus, string> = {
 }
 const STATUS_COLOR: Record<CustomerStatus, string> = {
   active: '#34d399',
-  trial: '#FFD68F',
+  trial: '#FFE4AF',
   inactive: '#71717a',
   suspended: '#fb7185',
 }
@@ -86,7 +86,7 @@ function DailyCostChart({ daily }: { daily: DailyPoint[] }) {
             style={{
               flex: 1, minWidth: 2,
               height: `${Math.max((d.cost_usd / max) * 100, d.cost_usd > 0 ? 4 : 1)}%`,
-              background: d.cost_usd > 0 ? '#7DC9CB' : 'rgba(255,255,255,0.06)',
+              background: d.cost_usd > 0 ? '#4EBECE' : 'rgba(255,255,255,0.06)',
               borderRadius: '2px 2px 0 0',
             }}
           />
@@ -126,7 +126,7 @@ function ConversionTrendChart({ daily }: { daily: DailyPoint[] }) {
         </div>
         <div>
           <div style={{ fontSize: 9, fontFamily: 'var(--font-mono)', letterSpacing: '0.06em', textTransform: 'uppercase', color: LABEL_COLOR }}>Conversion rate</div>
-          <div style={{ fontSize: 15, fontFamily: 'var(--font-display)', fontWeight: 600, color: '#FFD68F' }}>{fmtConversionRate(rate)}</div>
+          <div style={{ fontSize: 15, fontFamily: 'var(--font-display)', fontWeight: 600, color: '#FFE4AF' }}>{fmtConversionRate(rate)}</div>
         </div>
       </div>
       <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: 60 }}>
@@ -134,7 +134,7 @@ function ConversionTrendChart({ daily }: { daily: DailyPoint[] }) {
           <div key={d.day} title={`${fmtDay(d.day)} — ${d.conversations} conversation${d.conversations === 1 ? '' : 's'}, ${d.bookings} booking${d.bookings === 1 ? '' : 's'}`}
             style={{ flex: 1, minWidth: 2, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', gap: 1, height: '100%' }}>
             <div style={{ height: `${Math.max((d.conversations / max) * 100, d.conversations > 0 ? 4 : 1)}%`, background: 'rgba(255,255,255,0.12)', borderRadius: '2px 2px 0 0' }} />
-            <div style={{ height: `${Math.max((d.bookings / max) * 100, d.bookings > 0 ? 4 : 1)}%`, background: '#FFD68F', borderRadius: '2px 2px 0 0' }} />
+            <div style={{ height: `${Math.max((d.bookings / max) * 100, d.bookings > 0 ? 4 : 1)}%`, background: '#FFE4AF', borderRadius: '2px 2px 0 0' }} />
           </div>
         ))}
       </div>
@@ -147,7 +147,7 @@ function ConversionTrendChart({ daily }: { daily: DailyPoint[] }) {
           <span style={{ width: 7, height: 7, borderRadius: 2, background: 'rgba(255,255,255,0.12)' }} /> Conversations
         </span>
         <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          <span style={{ width: 7, height: 7, borderRadius: 2, background: '#FFD68F' }} /> Bookings
+          <span style={{ width: 7, height: 7, borderRadius: 2, background: '#FFE4AF' }} /> Bookings
         </span>
       </div>
       <div style={{ marginTop: 8, fontSize: 10.5, color: '#52525b', lineHeight: 1.4 }}>
@@ -265,7 +265,7 @@ export default function GlobalPerformance() {
                     style={{
                       display: 'grid', gridTemplateColumns: '20px 1fr 110px 130px 130px 110px', width: '100%',
                       padding: '11px 16px', border: 'none',
-                      background: isOpen ? 'rgba(125,201,203,0.05)' : 'transparent', cursor: 'pointer', textAlign: 'left', alignItems: 'center',
+                      background: isOpen ? 'rgba(78,190,206,0.05)' : 'transparent', cursor: 'pointer', textAlign: 'left', alignItems: 'center',
                     }}
                   >
                     <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#71717a" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
@@ -284,7 +284,7 @@ export default function GlobalPerformance() {
                     </span>
                     <span
                       title={`${r.bookings_30d} booking${r.bookings_30d === 1 ? '' : 's'} / ${r.conversations_30d} conversation${r.conversations_30d === 1 ? '' : 's'}, last 30 days`}
-                      style={{ fontSize: 13, textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 600, color: r.conversion_rate === null ? '#52525b' : '#FFD68F' }}
+                      style={{ fontSize: 13, textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 600, color: r.conversion_rate === null ? '#52525b' : '#FFE4AF' }}
                     >
                       {fmtConversionRate(r.conversion_rate)}
                     </span>

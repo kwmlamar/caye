@@ -607,7 +607,7 @@ function CayeAvatar({ size }: { size: number }) {
         width: size,
         height: size,
         background:
-          'radial-gradient(circle at 22% 22%, rgba(255,255,255,0.6), transparent 38%), radial-gradient(circle at 18% 20%, #7DC9CB 0%, transparent 48%), radial-gradient(circle at 88% 15%, #FFD68F 0%, transparent 52%), radial-gradient(circle at 82% 88%, #00778B 0%, transparent 58%), radial-gradient(circle at 12% 85%, #A8DCC0 0%, transparent 52%), #F5E8D0',
+          'radial-gradient(circle at 22% 22%, rgba(255,255,255,0.6), transparent 38%), radial-gradient(circle at 18% 20%, #4EBECE 0%, transparent 48%), radial-gradient(circle at 88% 15%, #FFE4AF 0%, transparent 52%), radial-gradient(circle at 82% 88%, #0766A3 0%, transparent 58%), radial-gradient(circle at 12% 85%, #7BB2BF 0%, transparent 52%), #F5E8D0',
         boxShadow:
           '0 1px 2px rgba(0,0,0,0.35), inset 0 0 0 1px rgba(255,255,255,0.08)',
       }}
