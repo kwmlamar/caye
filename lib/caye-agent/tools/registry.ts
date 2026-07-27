@@ -26,6 +26,7 @@ import { addVoiceSample } from './write-low/add-voice-sample'
 import { addTeamMember } from './write-low/add-team-member'
 import { createOutreachLeads } from './write-low/create-outreach-leads'
 import { updateTeamMemberPermissions } from './write-low/update-team-member-permissions'
+import { updateTeamMemberName } from './write-low/update-team-member-name'
 import { switchWorkspace } from './write-low/switch-workspace'
 import { removeTeamMember } from './write-high/remove-team-member'
 import { removeService } from './write-high/remove-service'
@@ -54,8 +55,9 @@ import { gateAdminHighRisk } from './admin/admin-high-risk-gate'
  * All tools available to the back-office agent.
  *
  * Read tools (11): #38 + #40 — autonomous execution
- * Low-risk write tools (19): #37 — autonomous execution (adds
- * add_pricing_tier, 2026-07-26 — pricing tier variant axis)
+ * Low-risk write tools (20): #37 — autonomous execution (adds
+ * update_team_member_name, 2026-07-27 — self-service display name so
+ * greetings don't fall back to full_name/legal name)
  * High-risk write tools (8): #42/#43 — gated through confirmation flow
  * (adds remove_pricing_tier, 2026-07-26)
  * Driver-mode tools (4, 2026-07-05): tagged modes: ['driver'] — never
@@ -91,6 +93,7 @@ export const TOOL_REGISTRY: AnyTool[] = [
   addVoiceSample as AnyTool,
   addTeamMember as AnyTool,
   updateTeamMemberPermissions as AnyTool,
+  updateTeamMemberName as AnyTool,
   switchWorkspace as AnyTool,
   skipHeldItem as AnyTool,
   muteCaye as AnyTool,
