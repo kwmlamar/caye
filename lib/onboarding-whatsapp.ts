@@ -277,7 +277,7 @@ export async function handleDiscoveryAnswer(
   workspaceId: string,
   answerText: string,
   normalizedPhone: string
-): Promise<{ replyText: string; completed: boolean }> {
+): Promise<{ replyText: string; completed: boolean; businessName?: string }> {
   const { data: config } = await supabase
     .from('workspace_ai_config')
     .select('onboarding_wa_answers, onboarding_wa_last_question')
@@ -392,14 +392,12 @@ export async function handleDiscoveryAnswer(
   const connectUrl = `${process.env.NEXT_PUBLIC_APP_URL || ''}/connect?ws=${workspaceId}`
   const claimUrl = `${process.env.NEXT_PUBLIC_APP_URL || ''}/login?ws=${workspaceId}`
 
-  // Fire-and-forget, same pattern as notifyFounderOfNewSignup above — a
-  // slow/failed demo-offer send must never delay or block the closing
-  // onboarding reply.
-  const { sendDemoOffer } = await import('@/lib/caye-demo')
-  sendDemoOffer(supabase, workspaceId, `+${normalizedPhone}`, businessName).catch((err) =>
-    console.error(`[onboarding-whatsapp] demo offer failed for workspace=${workspaceId}:`, err)
-  )
-
+  // businessName is returned rather than fired here — the demo offer must
+  // go out strictly after the "you're live" reply is actually sent, or the
+  // two race (both are separate outbound WhatsApp sends with no ordering
+  // guarantee) and the demo offer routinely wins, landing before the
+  // congratulations message it's supposed to follow. Caller triggers it
+  // once the reply below has been sent.
   return {
     replyText:
       "That's everything I need — I'm live and ready to represent your business. 🎉\n\n" +
@@ -407,5 +405,6 @@ export async function handleDiscoveryAnswer(
       `Want a dashboard too, for billing and settings? Sign in here anytime: ${claimUrl}\n\n` +
       "You can always come back and talk to me directly, anytime.",
     completed: true,
+    businessName,
   }
 }

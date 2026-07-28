@@ -610,7 +610,7 @@ async function handleOneInbound(
       operator_role: operator.role,
     })
 
-    const { replyText } = await handleDiscoveryAnswer(supabase, workspaceId, answerText, normalized)
+    const { replyText, completed, businessName } = await handleDiscoveryAnswer(supabase, workspaceId, answerText, normalized)
     const sendResult = await sendFreeFormWhatsApp(replyTo, replyText, `discovery-${message.id}`)
     if (sendResult.status === 'failed') {
       console.error(`[whatsapp-operator] discovery send failed for ${workspaceId}:`, sendResult.error)
@@ -625,6 +625,15 @@ async function handleOneInbound(
       operator_name: operator.name,
       operator_role: operator.role,
     })
+    // Fire-and-forget, only once the "you're live" reply above has
+    // actually been sent — see handleDiscoveryAnswer for why this can't
+    // fire from inside it (races the congratulations send and wins).
+    if (completed && businessName) {
+      const { sendDemoOffer } = await import('@/lib/caye-demo')
+      sendDemoOffer(supabase, workspaceId, replyTo, businessName).catch((err) =>
+        console.error(`[whatsapp-operator] demo offer failed for workspace=${workspaceId}:`, err)
+      )
+    }
     return
   }
 
