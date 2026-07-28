@@ -47,6 +47,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase-server'
 import { recordCronRun, checkStaleCronsAndAlert } from '@/lib/cron-run-log'
+import { checkMigrationDriftAndAlert } from '@/lib/db/migration-drift'
 import {
   ESCALATION_FOLLOWUP_HOURS,
   LOOKBACK_HOURS,
@@ -78,6 +79,13 @@ export async function GET(request: NextRequest) {
   // outbound-worker itself is the one down, same failure mode this cron
   // would otherwise miss entirely.
   await checkStaleCronsAndAlert()
+
+  // Piggybacked here for the same reason as the stale-cron check above: a
+  // watchdog with its own cron registration is a watchdog that can silently
+  // stop running. Catches migrations committed but never applied to the
+  // hosted DB — see lib/db/migration-drift.ts for the three that each sat
+  // broken for weeks before anyone noticed.
+  await checkMigrationDriftAndAlert()
 
   try {
     return NextResponse.json(await runEscalationFollowup())

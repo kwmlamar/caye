@@ -4,7 +4,9 @@
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack",
+    "prebuild": "node scripts/generate-migration-manifest.mjs",
     "build": "next build",
+    "generate:migration-manifest": "node scripts/generate-migration-manifest.mjs",
     "start": "next start",
     "lint": "next lint",
     "test": "vitest run",
