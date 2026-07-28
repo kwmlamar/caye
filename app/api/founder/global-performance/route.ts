@@ -2,18 +2,16 @@
  * GET /api/founder/global-performance
  * GET /api/founder/global-performance?detailWorkspaceId=<uuid>
  *
- * Cross-workspace cost + usage table for the founder's "Global
+ * Cross-workspace conversion + usage table for the founder's "Global
  * Performance" rail tab — one row per workspace the founder is a member
- * of (same set as the Workspaces sidebar), with real 7-day LLM API cost
- * and call volume. Deliberately no revenue/margin column: customer.plan
- * and stripe_subscription_id aren't reliably populated per workspace
- * (e.g. Bimini's actual $79/mo only exists as a Stripe Payment Link +
- * a note, not a DB field) — showing a fake number would be worse than
- * showing none. Read-only; no actions.
+ * of (same set as the Workspaces sidebar), with call volume, bookings,
+ * conversations, and conversion rate. Cost/margin moved to
+ * /api/founder/cost (2026-07-28) — this route owns conversion only, so
+ * a number doesn't show up in two places. Read-only; no actions.
  *
- * detailWorkspaceId switches to a single-workspace daily cost trend
- * (last DETAIL_WINDOW_DAYS days) for the row-expand panel, instead of
- * the cross-workspace summary.
+ * detailWorkspaceId switches to a single-workspace daily trend (last
+ * DETAIL_WINDOW_DAYS days, including a cost breakdown for context) for
+ * the row-expand panel, instead of the cross-workspace summary.
  *
  * Conversion rate (bookings ÷ conversations, CONVERSION_WINDOW_DAYS):
  * deliberately a volume ratio, not per-thread attribution. Verified
@@ -177,7 +175,7 @@ export async function GET(req: NextRequest) {
   ] = await Promise.all([
     supabase
       .from('llm_call_log')
-      .select('workspace_id, model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens')
+      .select('workspace_id')
       .in('workspace_id', workspaceIds)
       .gte('called_at', since)
       .limit(50000),
@@ -213,18 +211,9 @@ export async function GET(req: NextRequest) {
 
   if (convErr) return NextResponse.json({ error: convErr.message }, { status: 500 })
 
-  const agg = new Map<string, { calls: number; cost_usd: number }>()
+  const callCounts = new Map<string, number>()
   for (const r of llmRows ?? []) {
-    const cur = agg.get(r.workspace_id) ?? { calls: 0, cost_usd: 0 }
-    cur.calls += 1
-    cur.cost_usd += costForModel(
-      r.model,
-      r.input_tokens ?? 0,
-      r.output_tokens ?? 0,
-      r.cache_read_tokens ?? 0,
-      r.cache_creation_tokens ?? 0
-    )
-    agg.set(r.workspace_id, cur)
+    callCounts.set(r.workspace_id, (callCounts.get(r.workspace_id) ?? 0) + 1)
   }
 
   const bookingCounts = new Map<string, number>()
@@ -241,21 +230,19 @@ export async function GET(req: NextRequest) {
 
   const workspacesOut = workspaceRows
     .map((m) => {
-      const stats = agg.get(m.workspace_id) ?? { calls: 0, cost_usd: 0 }
       const conversations30d = conversationCounts.get(m.workspace_id) ?? 0
       const bookings30d = bookingCounts.get(m.workspace_id) ?? 0
       return {
         workspace_id: m.workspace_id,
         business_name: m.customer.business_name ?? 'New signup',
         status: m.customer.status,
-        call_count: stats.calls,
-        cost_usd: Number(stats.cost_usd.toFixed(4)),
+        call_count: callCounts.get(m.workspace_id) ?? 0,
         conversations_30d: conversations30d,
         bookings_30d: bookings30d,
         conversion_rate: conversations30d > 0 ? bookings30d / conversations30d : null,
       }
     })
-    .sort((a, b) => b.cost_usd - a.cost_usd)
+    .sort((a, b) => b.conversations_30d - a.conversations_30d)
 
   return NextResponse.json({ window_days: WINDOW_DAYS, conversion_window_days: CONVERSION_WINDOW_DAYS, workspaces: workspacesOut })
 }

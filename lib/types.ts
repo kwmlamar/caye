@@ -144,4 +144,4 @@ export type ActiveSection = Screen | 'settings'
 // DashboardContext, which persists across workspace switches — unlike
 // FounderHome's own state, which gets reset because switching workspaces
 // navigates to a new /dashboard/[workspaceId] route and remounts page.tsx.
-export type FounderRailId = 'dashboard' | 'contacts' | 'performance' | 'playbook' | 'risk' | 'admin'
+export type FounderRailId = 'dashboard' | 'contacts' | 'performance' | 'cost' | 'health' | 'admin'

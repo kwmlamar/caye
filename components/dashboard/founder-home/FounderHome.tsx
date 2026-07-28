@@ -15,6 +15,8 @@ import SettingsCard from '@/components/dashboard/founder-home/SettingsCard'
 import GlobalPerformance from '@/components/dashboard/global-performance/GlobalPerformance'
 import ContactsPanel from '@/components/dashboard/founder-home/ContactsPanel'
 import AdminShell from '@/components/dashboard/admin-shell/AdminShell'
+import CostPage from '@/components/dashboard/founder-home/CostPage'
+import HealthPage from '@/components/dashboard/founder-home/HealthPage'
 import { CayeLoadingPulse } from '@/components/dashboard/founder-home/CayeLoadingPulse'
 import { Pill, GhostButton } from '@/components/dashboard/founder-home/console-ui'
 import type { CustomerStatus } from '@/types/database'
@@ -173,11 +175,11 @@ const RAIL_ITEMS: { id: RailId; label: string; icon: ReactNode; stub: boolean }[
   { id: 'performance', label: 'Global Performance', stub: false, icon: (
     <path d="M2 12h4l2-7 4 14 3-9 2 4h5" />
   ) },
-  { id: 'playbook', label: 'Standard Operating Playbook', stub: true, icon: (
-    <><path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v18H6.5A2.5 2.5 0 0 0 4 22.5z" /><path d="M4 19.5V4.5" /></>
+  { id: 'cost', label: 'Cost', stub: false, icon: (
+    <><circle cx="12" cy="12" r="9" /><path d="M12 7v10M9.5 9.5c0-1.4 1.2-2.5 2.5-2.5s2.5.8 2.5 2c0 3-5 2-5 5 0 1.2 1.2 2 2.5 2s2.5-1.1 2.5-2.5" /></>
   ) },
-  { id: 'risk', label: 'Risk & Safety Audits', stub: true, icon: (
-    <path d="M12 2l8 3.5v6c0 5-3.5 8-8 10.5-4.5-2.5-8-5.5-8-10.5v-6z" />
+  { id: 'health', label: 'Health', stub: false, icon: (
+    <path d="M12 20.5s-7-4.35-9.5-8.8C.9 8.4 2.4 5 5.8 5c1.9 0 3.4 1 6.2 4 2.8-3 4.3-4 6.2-4 3.4 0 4.9 3.4 3.3 6.7-2.5 4.45-9.5 8.8-9.5 8.8z" />
   ) },
   { id: 'admin', label: 'Admin Shell', stub: false, icon: (
     <><polyline points="4 6 10 12 4 18" /><line x1="12" y1="18" x2="20" y2="18" /></>
@@ -450,6 +452,10 @@ export default function FounderHome() {
         }}>
           {railView === 'performance' ? (
             <h1 style={{ fontSize: 16, fontWeight: 600, fontFamily: 'var(--font-display)', margin: 0 }}>Global Performance — All Workspaces</h1>
+          ) : railView === 'cost' ? (
+            <h1 style={{ fontSize: 16, fontWeight: 600, fontFamily: 'var(--font-display)', margin: 0 }}>Cost — All Workspaces</h1>
+          ) : railView === 'health' ? (
+            <h1 style={{ fontSize: 16, fontWeight: 600, fontFamily: 'var(--font-display)', margin: 0 }}>Health — Caye System Status</h1>
           ) : (
             <>
               <h1 style={{ fontSize: 16, fontWeight: 600, fontFamily: 'var(--font-display)', margin: 0 }}>{workspace.business_name ?? 'New signup'}</h1>
@@ -464,6 +470,10 @@ export default function FounderHome() {
           <ContactsPanel workspaceId={workspaceId} />
         ) : railView === 'admin' ? (
           <AdminShell />
+        ) : railView === 'cost' ? (
+          <CostPage />
+        ) : railView === 'health' ? (
+          <HealthPage />
         ) : activeRailItem.stub ? (
           <StubConsole label={activeRailItem.label} />
         ) : (

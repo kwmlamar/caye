@@ -4,7 +4,6 @@ import { useState, useEffect } from 'react'
 import { getSession } from '@/lib/supabase'
 import { CayeLoadingPulse } from '@/components/dashboard/founder-home/CayeLoadingPulse'
 import { Pill } from '@/components/dashboard/founder-home/console-ui'
-import WhatsAppHealthCard from '@/components/dashboard/founder-home/WhatsAppHealthCard'
 import type { CustomerStatus } from '@/types/database'
 
 const CARD_BG = '#1a1a1e'
@@ -32,7 +31,6 @@ interface WorkspaceRow {
   business_name: string
   status: CustomerStatus
   call_count: number
-  cost_usd: number
   conversations_30d: number
   bookings_30d: number
   conversion_rate: number | null
@@ -158,14 +156,15 @@ function ConversionTrendChart({ daily }: { daily: DailyPoint[] }) {
   )
 }
 
-// Cross-workspace cost + usage monitor — one row per workspace the
-// founder has access to, real 7-day LLM API cost and call volume from
-// llm_call_log. No revenue/margin column: customers.plan and
-// stripe_subscription_id aren't reliably populated per workspace, so
-// showing a fake number would be worse than showing none. Read-only —
-// no actions here, act via Caye Direct / Command Conversations instead.
-// Clicking a row expands an inline 30-day daily-cost trend in place,
-// rather than navigating away and losing the cross-workspace table.
+// Cross-workspace conversion monitor — one row per workspace the founder
+// has access to: call volume, bookings/conversations, and conversion
+// rate. Cost/margin and WhatsApp deliverability moved out to the
+// dedicated Cost and Health rail pages (2026-07-28) — this page owns
+// the "is Caye converting conversations into bookings" question only,
+// so a number doesn't show up in three places at once. Read-only — no
+// actions here, act via Caye Direct / Command Conversations instead.
+// Clicking a row expands an inline 30-day daily trend in place, rather
+// than navigating away and losing the cross-workspace table.
 export default function GlobalPerformance() {
   const [rows, setRows] = useState<WorkspaceRow[] | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -203,12 +202,11 @@ export default function GlobalPerformance() {
     setDetailCache((prev) => ({ ...prev, [workspaceId]: res.ok ? json.daily : 'error' }))
   }
 
-  const totalCost = rows?.reduce((acc, r) => acc + r.cost_usd, 0) ?? 0
   const totalCalls = rows?.reduce((acc, r) => acc + r.call_count, 0) ?? 0
 
   return (
     <div style={{ flex: 1, overflowY: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 16, minHeight: 0 }}>
-      <div style={{ flexShrink: 0, display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+      <div style={{ flexShrink: 0, display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12 }}>
         <div style={{ background: CARD_BG, borderRadius: 18, padding: '16px 18px' }}>
           <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', textTransform: 'uppercase', color: LABEL_COLOR, marginBottom: 8 }}>
             Workspaces
@@ -225,23 +223,11 @@ export default function GlobalPerformance() {
             {rows ? totalCalls.toLocaleString() : '—'}
           </div>
         </div>
-        <div style={{ background: CARD_BG, borderRadius: 18, padding: '16px 18px' }}>
-          <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', textTransform: 'uppercase', color: LABEL_COLOR, marginBottom: 8 }}>
-            7-day cost (all workspaces)
-          </div>
-          <div style={{ fontSize: 20, fontFamily: 'var(--font-display)', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
-            {rows ? `$${totalCost.toFixed(2)}` : '—'}
-          </div>
-        </div>
-      </div>
-
-      <div style={{ flexShrink: 0 }}>
-        <WhatsAppHealthCard />
       </div>
 
       <div style={{ flex: 1, minHeight: 0, background: CARD_BG, borderRadius: 16, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         <div style={{
-          display: 'grid', gridTemplateColumns: '20px 1fr 110px 130px 130px 110px',
+          display: 'grid', gridTemplateColumns: '20px 1fr 110px 130px 110px',
           padding: '10px 16px', background: 'rgba(255,255,255,0.025)',
           fontSize: 10, fontFamily: 'var(--font-mono)', letterSpacing: '0.06em', textTransform: 'uppercase', color: LABEL_COLOR,
         }}>
@@ -249,7 +235,6 @@ export default function GlobalPerformance() {
           <span>Workspace</span>
           <span>Status</span>
           <span style={{ textAlign: 'right' }}>7-day calls</span>
-          <span style={{ textAlign: 'right' }}>7-day cost</span>
           <span style={{ textAlign: 'right' }}>Conv. rate (30d)</span>
         </div>
         <div style={{ flex: 1, overflowY: 'auto' }}>
@@ -268,7 +253,7 @@ export default function GlobalPerformance() {
                   <button
                     onClick={() => toggleRow(r.workspace_id)}
                     style={{
-                      display: 'grid', gridTemplateColumns: '20px 1fr 110px 130px 130px 110px', width: '100%',
+                      display: 'grid', gridTemplateColumns: '20px 1fr 110px 130px 110px', width: '100%',
                       padding: '11px 16px', border: 'none',
                       background: isOpen ? 'rgba(78,190,206,0.05)' : 'transparent', cursor: 'pointer', textAlign: 'left', alignItems: 'center',
                     }}
@@ -283,9 +268,6 @@ export default function GlobalPerformance() {
                     <StatusPill status={r.status} />
                     <span style={{ fontSize: 13, textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: '#a1a1aa' }}>
                       {r.call_count.toLocaleString()}
-                    </span>
-                    <span style={{ fontSize: 13, textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>
-                      ${r.cost_usd.toFixed(2)}
                     </span>
                     <span
                       title={`${r.bookings_30d} booking${r.bookings_30d === 1 ? '' : 's'} / ${r.conversations_30d} conversation${r.conversations_30d === 1 ? '' : 's'}, last 30 days`}

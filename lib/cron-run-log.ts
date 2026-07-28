@@ -78,13 +78,13 @@ export async function recordCronRun<T extends Record<string, unknown>>(
 // escalation-followup: hourly) so one going dark doesn't blind the check.
 // ---------------------------------------------------------------------------
 
-interface CronExpectation {
+export interface CronExpectation {
   cronName: string
   label: string
   maxStalenessMinutes: number
 }
 
-const MONITORED_CRONS: CronExpectation[] = [
+export const MONITORED_CRONS: CronExpectation[] = [
   { cronName: 'outbound-worker', label: 'Outbound worker', maxStalenessMinutes: 10 },
   { cronName: 'morning-digest', label: 'Morning digest', maxStalenessMinutes: 150 },
   { cronName: 'escalation-followup', label: 'Escalation follow-up', maxStalenessMinutes: 150 },
