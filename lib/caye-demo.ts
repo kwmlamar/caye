@@ -27,14 +27,31 @@ import { sendFreeFormWhatsApp, sendTemplateWhatsApp } from '@/lib/whatsapp/outbo
 const DEMO_IDLE_TIMEOUT_MS = 30 * 60 * 1000
 const DEMO_OFFER_TEMPLATE = 'caye_demo_offer'
 const DEMO_ENTRY_RE = /^demo$/i
-const DEMO_EXIT_RE = /^(stop demo|exit demo|end demo|done)$/i
+// Bare command ("stop", "done") OR any phrase containing "<verb> (the) demo"
+// ("stop demo", "how to stop demo", "exit the demo please"). Confirmed live
+// 2026-07-27: the old exact-full-string match (`/^(stop demo|exit demo|end
+// demo|done)$/i`) missed plain "Stop" and "How to stop demo" alike, so both
+// fell through to generateDemoReply — which then broke character trying to
+// answer a meta-question about the demo itself while still in the guest-
+// facing business persona ("I'm just the AI... reach out to whoever set up
+// your KWM Industries bot"). Matching on substring rather than requiring an
+// exact match means a real guest-roleplay message that merely mentions
+// "demo" mid-sentence could false-positive and end the session early — an
+// acceptable trade since this is an operator-only preview tool, not
+// customer-facing, and ending early just means typing "demo" again.
+const DEMO_EXIT_BARE_RE = /^(stop|exit|end|done|quit|cancel)$/i
+const DEMO_EXIT_PHRASE_RE = /\b(stop|exit|end|quit|cancel)\s+(the\s+)?demo\b/i
 
 export function isDemoEntryKeyword(text: string): boolean {
   return DEMO_ENTRY_RE.test(text.trim())
 }
 
 export function isDemoExitKeyword(text: string): boolean {
-  return DEMO_EXIT_RE.test(text.trim())
+  const trimmed = text.trim()
+  // Trailing punctuation only for the bare check ("Stop." / "Done!") — the
+  // phrase check doesn't need it since \b already stops at punctuation.
+  const bareNoPunct = trimmed.replace(/[.!?]+$/, '')
+  return DEMO_EXIT_BARE_RE.test(bareNoPunct) || DEMO_EXIT_PHRASE_RE.test(trimmed)
 }
 
 export const DEMO_INTRO_MESSAGE =
