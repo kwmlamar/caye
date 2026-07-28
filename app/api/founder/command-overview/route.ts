@@ -188,14 +188,17 @@ export async function GET(req: NextRequest) {
   // mute/unmute no matter what the UI did.
   //
   // Deliberately NOT also checking workspace_ai_config.ai_enabled here:
-  // verified directly against production (2026-07-12) that the column
-  // doesn't exist there — the 2026-05-24 migration adding it was never
-  // applied — so selecting it errors the whole query. Every ai_enabled
-  // read across the app (webhooks, nudge-scan, email poll, CayeAIPanel
-  // settings) is silently failing the same way and failing open. That's a
-  // separate, wider bug flagged to the user; whatsapp_muted_until is the
-  // one column confirmed to exist and to be the thing mute_caye/unmute_caye
-  // actually write.
+  // whatsapp_muted_until is what mute_caye/unmute_caye actually write, so
+  // it's the field that reflects a back-office mute. ai_enabled is a
+  // separate, coarser kill switch.
+  //
+  // History worth keeping: from 2026-05-24 to 2026-07-28 the ai_enabled
+  // column didn't exist in production at all (its migration was written
+  // but never applied), so every `.select(...ai_enabled)` across the
+  // webhooks, nudge-scan and email poll 400'd — taking system_prompt down
+  // with it and failing open. The column exists now (default true, so no
+  // workspace's behaviour changed when it landed); this exclusion is a
+  // deliberate choice about what "muted" means here, not a workaround.
   const mutedUntil = aiConfig?.whatsapp_muted_until ?? null
   const isMuted = !!mutedUntil && new Date(mutedUntil).getTime() > Date.now()
   const cayeActive = !isMuted
