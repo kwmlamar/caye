@@ -89,6 +89,10 @@ const MONITORED_CRONS: CronExpectation[] = [
   { cronName: 'morning-digest', label: 'Morning digest', maxStalenessMinutes: 150 },
   { cronName: 'escalation-followup', label: 'Escalation follow-up', maxStalenessMinutes: 150 },
   { cronName: 'eod-summary', label: 'EOD summary', maxStalenessMinutes: 150 },
+  // Added once registered on cron-job.org (2026-07-28) — omitted before
+  // that so an unregistered job didn't alert as "never run" before anyone
+  // had a chance to set it up.
+  { cronName: 'template-sync', label: 'WhatsApp template sync', maxStalenessMinutes: 150 },
 ]
 
 // Once alerted, don't re-alert for the same stall for 4h — a stuck
