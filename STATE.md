@@ -6,12 +6,12 @@ last_updated: 2026-06-01
 
 # Caye — Product State
 
-Caye is TropiTech's AI employee for Caribbean SMBs. **Caye is the brand and the agent** — one name, two internal modes:
+Caye is TropiTech's AI hire for Caribbean SMBs — one hire whose job keeps growing. **Caye is the brand and the agent** — one name, two internal modes:
 
 - **Front desk** — client-facing. Answers inbound (email now; WhatsApp/IG/Messenger wired), books customers, replies in the owner's voice, never reveals she's AI. Auth: public. *This is the wedge — every SMB has inbound.*
 - **Back office** — crew/owner-facing ops assistant. Sees job files, costs, blockers, decisions queue. Knows she's AI. Auth: per-workspace phone allowlist. *This is the expansion — built and live on WhatsApp for Bimini (owner/founder + driver dispatch mode), ~40 tools across read/low-risk/high-risk tiers, high-risk actions gated by a code-enforced confirmation step (2026-07-12). ODS still needs its own allowlist wired before it can use this mode.*
 
-Both modes live on one WhatsApp number per customer, routed by sender identity. Positioning: **"managed AI staff placed by a local operator,"** not a SaaS app. See [decisions-log 2026-05-10](../../_Ops/Brain/decisions-log.md), [2026-05-30](../../_Ops/Brain/decisions-log.md), [2026-05-31](../../_Ops/Brain/decisions-log.md).
+Both modes live on one WhatsApp number per customer, routed by sender identity. Positioning: **"an AI hire placed by a local operator,"** not a SaaS app — job-ownership language ("she runs your front desk") over generic "AI staff/receptionist." See [decisions-log 2026-05-10](../../_Ops/Brain/decisions-log.md), [2026-05-30](../../_Ops/Brain/decisions-log.md), [2026-05-31](../../_Ops/Brain/decisions-log.md), [2026-07-28](../../_Ops/Brain/decisions-log.md).
 
 ## Pricing
 - **$79/mo flat**, single tier. No founding discount. (decisions-log 2026-05-04)
@@ -44,14 +44,14 @@ Both modes live on one WhatsApp number per customer, routed by sender identity. 
 - **#1 — Meta/Facebook connection friction.** Killed the Dave onboarding entirely (3 failed reset attempts). Bimini's WhatsApp connect still pending for the same reason. **Highest-leverage fix: ship BSP Embedded Signup** so customers never touch a Facebook login.
 - **Caye over-confident autonomy.** Replied to a mailing-list blast signed "Caye" (2026-05-26); held 3 real off-menu bookings requiring manual rescue (2026-05-31). Identity guard + newsletter filter + 2B defer mode shipped. Residual fix: **load the full pricing catalog** so Caye stops deferring items she should quote directly (`service_pricing_tiers` empty for Specialty Experiences).
 - **Onboarding requires hand-holding.** Every pilot needed founder-driven setup. Embedded Signup + discovery-first onboarding reduce this; not yet self-serve.
-- **Channel coverage is Zoho-only in practice.** Email pipeline proven end-to-end on Zoho; Gmail/Google Workspace not integrated; WhatsApp/Messenger/IG have inbound webhooks but no validated full flow. Selling to a Gmail-using prospect today means winning the demo and losing on onboarding. **This is the active gate on net-new conversion.**
+- **Gmail/Google Workspace not integrated.** Zoho email and WhatsApp (front desk + back office) are both proven end-to-end; Gmail is not. Selling to a Gmail-using prospect today means winning the demo and losing on onboarding. **This is the active gate on net-new conversion.**
 - **Two sources of truth (legacy).** `bookings` table vs. Zoho Calendar — migration to Zoho-canonical (4A) designed, build deferred until Bimini converts.
 
 ## Open product threads (not yet built)
 
 **Tier 1 — gates new customer onboarding (build before/with outreach scale):**
 - **Gmail / Google Workspace integration** — inbound sync, outbound send, OAuth. Caye today is provably end-to-end only on Zoho; most Caribbean SMBs use Google. Decision already locked [2026-05-28](../../_Ops/Brain/decisions-log.md). Without this, any non-Zoho prospect can demo but can't onboard.
-- **Channel flow validation (WhatsApp / Messenger / Instagram)** — webhooks are wired, but the full flow (inbound → AI reply → book → calendar event → confirmation) has only been proven on Zoho email. Each channel needs an end-to-end live test before being sold as ready. WhatsApp is highest-priority since it's the dominant Caribbean SMB channel.
+- **Channel flow validation (Messenger / Instagram)** — webhooks are wired, but the full flow (inbound → AI reply → book → calendar event → confirmation) has only been proven on Zoho email and WhatsApp (validated 2026-07-28). Messenger/IG still need an end-to-end live test before being sold as ready.
 - **"Catch-up welcome" onboarding feature** — on first connection, Caye scans the last ~5 days of mail/messages, summarizes what happened ("48 messages, 15 actual customer threads, 2 unread quote requests, here's what needs your attention") in the owner's voice. Mirrors Lindy.ai's onboarding moment. Demo amplifier — converts the abstract pitch into a concrete "she already knows my business" experience. Builds on existing discovery-first onboarding (decisions-log 2026-05-28). Bundle with Gmail since the read-mail surface is shared.
 - **BSP Embedded Signup onboarding flow** — kills the Meta/Facebook login friction that broke Dave.
 
