@@ -6,6 +6,7 @@ import { CayeMark } from '@/components/brand/CayeMark'
 import { getSession } from '@/lib/supabase'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useCommandOverview } from '@/lib/useCommandOverview'
+import { useWorkspacesActivity } from '@/lib/useWorkspacesActivity'
 import type { FounderRailId } from '@/lib/types'
 import CommandCalendar from '@/components/dashboard/command-calendar/CommandCalendar'
 import CommandConversations from '@/components/dashboard/command-conversations/CommandConversations'
@@ -290,6 +291,7 @@ export default function FounderHome() {
     })
   }
   const { data, refetch } = useCommandOverview(workspaceId, weekOffset)
+  const { hasActivity } = useWorkspacesActivity(workspaces.map((m) => m.workspace_id), workspaceId)
   const [expanded, setExpanded] = useState<'calendar' | 'conversations' | 'cayeDirect' | 'settings' | null>(null)
   // Set by CommandCalendar on a booking click — jumps CommandConversations
   // to that customer's thread. Lives here since the two panels are
@@ -401,6 +403,13 @@ export default function FounderHome() {
                     position: 'absolute', top: -2, right: -2, width: 8, height: 8, borderRadius: '50%',
                     background: STATUS_COLOR[m.customer.status], border: `2px solid ${APP_BG}`,
                   }} />
+                  {hasActivity(m.workspace_id) && (
+                    <span aria-hidden title="New activity" style={{
+                      position: 'absolute', bottom: -2, right: -2, width: 8, height: 8, borderRadius: '50%',
+                      background: '#4EBECE', border: `2px solid ${APP_BG}`,
+                      boxShadow: '0 0 0 2px rgba(78,190,206,0.25)',
+                    }} />
+                  )}
                 </button>
               )
             }
@@ -420,11 +429,20 @@ export default function FounderHome() {
               >
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                   <span style={{
+                    display: 'flex', alignItems: 'center', gap: 6, minWidth: 0,
                     fontSize: 13, fontWeight: 600, letterSpacing: '-0.01em',
                     color: active ? '#f4f4f5' : '#a1a1aa',
                     whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
                   }}>
-                    {m.customer.business_name ?? 'New signup'}
+                    {hasActivity(m.workspace_id) && (
+                      <span aria-hidden title="New activity" style={{
+                        width: 6, height: 6, borderRadius: '50%', background: '#4EBECE', flexShrink: 0,
+                        boxShadow: '0 0 0 2px rgba(78,190,206,0.25)',
+                      }} />
+                    )}
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {m.customer.business_name ?? 'New signup'}
+                    </span>
                   </span>
                   <StatusPill status={m.customer.status} />
                 </div>
