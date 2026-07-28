@@ -329,7 +329,7 @@ export default function AdminShell() {
   })
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', flex: 1, minWidth: 0, color: '#f4f4f5' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', flex: 1, minWidth: 0, minHeight: 0, color: '#f4f4f5' }}>
       <style>{`
         @keyframes admin-shell-typing-dot {
           0%, 60%, 100% { opacity: 0.25; transform: translateY(0); }
