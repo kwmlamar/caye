@@ -28,6 +28,9 @@ import { dispatchOperatorIntent } from '@/lib/whatsapp/actions'
 import { sendFreeFormWhatsApp } from '@/lib/whatsapp/outbound'
 import { downloadWhatsAppMedia, isSupportedImageMimeType } from '@/lib/whatsapp/media'
 import { generateCayeAutoReply } from '@/lib/caye-reply'
+import { alertFounderOfDeliveryFailure } from '@/lib/whatsapp/founder-alert'
+import { emailFallbackForFailedPing } from '@/lib/whatsapp/email-fallback'
+import { OPERATOR_LOGGABLE_KINDS, EMAIL_FALLBACK_KINDS, UNREACHABLE_STREAK_THRESHOLD } from '@/app/api/caye/outbound-worker/route'
 import { cayeAgent } from '@/lib/caye-agent'
 import { persistAgentTurns } from '@/lib/caye-operator-messages'
 import {
@@ -192,6 +195,17 @@ async function processInbound(payload: Record<string, unknown>): Promise<void> {
  * — acceptable: those are reactive responses to a message the operator
  * just sent, not the "Caye pinged you unprompted" case this exists for.
  */
+/**
+ * 2026-07-27: this handler wrote the status columns and stopped — the
+ * customer-facing webhook (app/api/webhooks/whatsapp/route.ts) alerts the
+ * founder on delivery failure, this one never did. Operator pings (the
+ * "Caye pinged you unprompted" pings this function exists to confirm) go
+ * out over the platform number and land HERE, not on the customer webhook
+ * — so that asymmetry meant the exact sends most worth knowing about
+ * failing were the ones nobody heard about. Confirmed live: 93 operator
+ * pings over 14 days, zero confirmed deliveries, zero founder alerts.
+ * See briefs/whatsapp-delivery-reliability.md.
+ */
 async function handleDeliveryStatus(
   supabase: ReturnType<typeof createServiceClient>,
   s: WaStatusUpdate
@@ -201,7 +215,7 @@ async function handleDeliveryStatus(
     ? s.errors.map((e) => `${e.code ?? '?'}: ${e.title ?? e.message ?? ''}`).join('; ')
     : null
 
-  const { error } = await supabase
+  const { data: updated, error } = await supabase
     .from('caye_outbound_queue')
     .update({
       wa_delivery_status: s.status,
@@ -209,10 +223,55 @@ async function handleDeliveryStatus(
       wa_delivery_error: errorText,
     })
     .eq('wa_message_id', s.id)
+    .select('id, workspace_id, kind, payload')
+    .maybeSingle()
 
   if (error) {
     console.error('[whatsapp-operator] delivery-status update failed:', error)
+    return
   }
+  if (!updated || s.status !== 'failed') return
+
+  const workspaceId = updated.workspace_id as string
+  const kind = updated.kind as string
+  const payload = (updated.payload ?? {}) as Record<string, unknown>
+
+  if (OPERATOR_LOGGABLE_KINDS.has(kind)) {
+    await alertFounderOfDeliveryFailure({
+      workspaceId,
+      kind,
+      detail: errorText,
+      stage: 'delivery',
+    }).catch((err) => console.error('[whatsapp-operator] delivery-failure founder alert failed:', err))
+  }
+
+  if (EMAIL_FALLBACK_KINDS.has(kind)) {
+    await emailFallbackForFailedPing({
+      workspaceId,
+      kind: kind as 'urgent_hold' | 'booking_created' | 'auth_failure',
+      payload,
+    }).catch((err) => console.error('[whatsapp-operator] delivery-failure email fallback failed:', err))
+  }
+
+  // Dispatch-time failures already bump this in outbound-worker's
+  // handleResult — a send that Meta *accepted* and later failed async
+  // never went through that path, so without this the streak sits at 0
+  // through a 100%-async-failing channel (confirmed live 2026-07-27: 3/3
+  // sends today failed post-accept, streak never moved).
+  const { data: config } = await supabase
+    .from('workspace_ai_config')
+    .select('whatsapp_failure_streak')
+    .eq('workspace_id', workspaceId)
+    .maybeSingle()
+  const newStreak = ((config?.whatsapp_failure_streak as number | undefined) ?? 0) + 1
+  await supabase
+    .from('workspace_ai_config')
+    .update({
+      whatsapp_failure_streak: newStreak,
+      whatsapp_unreachable: newStreak >= UNREACHABLE_STREAK_THRESHOLD,
+      last_whatsapp_outbound_status: 'failed',
+    })
+    .eq('workspace_id', workspaceId)
 }
 
 async function handleOneInbound(
@@ -461,11 +520,23 @@ async function handleOneInbound(
   }
   const now = new Date().toISOString()
 
-  // Open the 24h free-form window regardless of message type.
+  // Workspace-level stamp — kept for the config dashboard's "last heard
+  // from operator" display, but NOT what gates free-form sends anymore
+  // (see isWhatsAppWindowOpen). A multi-operator workspace (e.g. Bimini:
+  // Lamar, Max, Mrs. Max) would otherwise have any one operator messaging
+  // Caye "open the window" for all of them, when Meta actually enforces
+  // the 24h window per recipient phone. Confirmed live 2026-07-27.
   await supabase
     .from('workspace_ai_config')
     .update({ last_whatsapp_inbound_at: now })
     .eq('workspace_id', workspaceId)
+
+  // Per-recipient stamp — this is what actually gates free-form sends to
+  // THIS operator's phone.
+  await supabase
+    .from('operator_allowlist')
+    .update({ last_inbound_at: now })
+    .eq('id', operatorId)
 
   // ── WhatsApp-native discovery grill ─────────────────────────────────
   // system_prompt is only ever set once (by handleDiscoveryAnswer /

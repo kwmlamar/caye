@@ -30,6 +30,7 @@ import { resolveOperatorByPhone } from '@/lib/operator-identity'
 import { loadScheduleConfig, nextDigestTime, localDayOfWeek } from '@/lib/whatsapp/schedule'
 import { recordCronRun, checkStaleCronsAndAlert } from '@/lib/cron-run-log'
 import { alertFounderOfDeliveryFailure } from '@/lib/whatsapp/founder-alert'
+import { sendFounderAlertEmail } from '@/lib/email/founder-mailer'
 
 // Kinds that represent Caye proactively messaging an operator about
 // something (as opposed to system plumbing like otp/welcome/ack) — these
@@ -49,7 +50,7 @@ export const OPERATOR_LOGGABLE_KINDS = new Set([
 
 const CONCURRENCY = 10
 const RETRY_DELAY_MS = 5 * 60 * 1000
-const UNREACHABLE_STREAK_THRESHOLD = 3
+export const UNREACHABLE_STREAK_THRESHOLD = 3
 
 // Kinds that always require a template (the 24h window may be closed).
 const TEMPLATE_REQUIRED_KINDS = new Set([
@@ -70,7 +71,7 @@ const TEMPLATE_REQUIRED_KINDS = new Set([
 ])
 
 // Kinds where silence is dangerous → email fallback if WhatsApp fails.
-const EMAIL_FALLBACK_KINDS = new Set(['urgent_hold', 'booking_created', 'auth_failure'])
+export const EMAIL_FALLBACK_KINDS = new Set(['urgent_hold', 'booking_created', 'auth_failure'])
 
 // Kinds that bypass the operator mute.
 const MUTE_BYPASS_KINDS = new Set(['auth_failure'])
@@ -120,6 +121,7 @@ export async function GET(request: NextRequest) {
   // for why this lives here rather than as its own cron.
   await checkStaleCronsAndAlert()
   await checkStaleDeliveryAndAlert()
+  await checkDeliveryHealthAndAlert()
 
   try {
     const summary = await recordCronRun('outbound-worker', async () => {
@@ -212,6 +214,96 @@ async function checkStaleDeliveryAndAlert(): Promise<void> {
     }
   } catch (err) {
     console.error('[outbound-worker] stale-delivery check failed:', err)
+  }
+}
+
+const HEALTH_CHECK_LOOKBACK_HOURS = 48
+
+/**
+ * Backstop, independent of any single failure/alert path above: a workspace
+ * whose operator pings are *individually* alerting fine (or not alerting
+ * at all, if some future bug reintroduces a gap like the one this whole
+ * file's alerting was built to close) can still go dark for days without
+ * anyone noticing the pattern — "no news" silently read as "fine" for 14
+ * days before this was caught. Confirmed live 2026-07-27: 93 operator
+ * pings, zero confirmed deliveries, over 2 weeks. See
+ * briefs/whatsapp-delivery-reliability.md.
+ *
+ * Runs on every tick (cheap query) but only actually alerts once/day per
+ * workspace via the same dedup table the other alert paths use.
+ */
+async function checkDeliveryHealthAndAlert(): Promise<void> {
+  try {
+    const supabase = createServiceClient()
+
+    const { data: configs } = await supabase
+      .from('workspace_ai_config')
+      .select('workspace_id')
+      .eq('whatsapp_outbound_enabled', true)
+    if (!configs?.length) return
+    const workspaceIds = configs.map((c) => c.workspace_id as string)
+
+    const cutoff = new Date(Date.now() - HEALTH_CHECK_LOOKBACK_HOURS * 60 * 60 * 1000).toISOString()
+    const { data: sends } = await supabase
+      .from('caye_outbound_queue')
+      .select('workspace_id, wa_delivery_status')
+      .eq('status', 'sent')
+      .gte('sent_at', cutoff)
+      .in('workspace_id', workspaceIds)
+      .in('kind', Array.from(OPERATOR_LOGGABLE_KINDS))
+    if (!sends?.length) return
+
+    const byWorkspace = new Map<string, { sent: number; confirmed: number }>()
+    for (const s of sends) {
+      const entry = byWorkspace.get(s.workspace_id as string) ?? { sent: 0, confirmed: 0 }
+      entry.sent += 1
+      if (s.wa_delivery_status === 'delivered' || s.wa_delivery_status === 'read') entry.confirmed += 1
+      byWorkspace.set(s.workspace_id as string, entry)
+    }
+
+    const day = new Date().toISOString().slice(0, 10)
+
+    for (const [workspaceId, counts] of byWorkspace) {
+      if (counts.confirmed > 0) continue // has at least one proof of life
+
+      const alertKey = `wa-health-silent-${workspaceId}-${day}`
+      const { error: dedupErr } = await supabase
+        .from('caye_founder_alert_log')
+        .insert({ alert_key: alertKey })
+      if (dedupErr) {
+        if (dedupErr.code === '23505') continue // already alerted today
+        console.error('[outbound-worker] health-check dedup failed:', dedupErr)
+        continue
+      }
+
+      const { data: customer } = await supabase
+        .from('customers')
+        .select('business_name')
+        .eq('id', workspaceId)
+        .maybeSingle()
+      const business = (customer?.business_name as string | null) ?? workspaceId
+
+      const { data: emailSetting } = await supabase
+        .from('platform_settings')
+        .select('value')
+        .eq('key', 'founder_email')
+        .maybeSingle()
+      const founderEmail = emailSetting?.value as string | undefined
+      if (founderEmail) {
+        await sendFounderAlertEmail({
+          to: founderEmail,
+          subject: `Caye: ${business}'s WhatsApp channel has zero confirmed deliveries in ${HEALTH_CHECK_LOOKBACK_HOURS}h`,
+          body:
+            `${business} sent ${counts.sent} operator ping(s) over the last ${HEALTH_CHECK_LOOKBACK_HOURS}h ` +
+            `and Meta never confirmed delivery on any of them. Not necessarily an outright failure — ` +
+            `could be stuck in 'timeout' or genuinely undelivered. Worth checking the dashboard.`,
+        })
+      } else {
+        console.error(`[outbound-worker] silent-channel alert for ${business} but no founder_email configured`)
+      }
+    }
+  } catch (err) {
+    console.error('[outbound-worker] delivery-health check failed:', err)
   }
 }
 
@@ -313,7 +405,7 @@ async function dispatch(row: QueueRow, config: WorkspaceConfig): Promise<{ resul
     config.operator_whatsapp_number!
   const idem = row.idempotency_key ?? `queue-${row.id}`
 
-  const windowOpen = await isWhatsAppWindowOpen(row.workspace_id)
+  const windowOpen = await isWhatsAppWindowOpen(row.workspace_id, phone)
 
   // morning_digest prefers the narrative briefing over the flat count
   // template whenever the window's open — TEMPLATE_REQUIRED_KINDS keeps

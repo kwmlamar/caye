@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { getSession } from '@/lib/supabase'
 import { CayeLoadingPulse } from '@/components/dashboard/founder-home/CayeLoadingPulse'
 import { Pill } from '@/components/dashboard/founder-home/console-ui'
+import WhatsAppHealthCard from '@/components/dashboard/founder-home/WhatsAppHealthCard'
 import type { CustomerStatus } from '@/types/database'
 
 const CARD_BG = '#1a1a1e'
@@ -232,6 +233,10 @@ export default function GlobalPerformance() {
             {rows ? `$${totalCost.toFixed(2)}` : '—'}
           </div>
         </div>
+      </div>
+
+      <div style={{ flexShrink: 0 }}>
+        <WhatsAppHealthCard />
       </div>
 
       <div style={{ flex: 1, minHeight: 0, background: CARD_BG, borderRadius: 16, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
