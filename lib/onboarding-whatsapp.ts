@@ -389,8 +389,13 @@ export async function handleDiscoveryAnswer(
     .update({ whatsapp_outbound_enabled: true })
     .eq('workspace_id', workspaceId)
 
-  const connectUrl = `${process.env.NEXT_PUBLIC_APP_URL || ''}/connect?ws=${workspaceId}`
-  const claimUrl = `${process.env.NEXT_PUBLIC_APP_URL || ''}/login?ws=${workspaceId}`
+  // Falls back to the real production domain rather than '' — an empty
+  // NEXT_PUBLIC_APP_URL would otherwise ship a relative "/connect?ws=..."
+  // link with no host at all. Matches the same fallback already used in
+  // lib/whatsapp/email-fallback.ts.
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.meetcaye.com'
+  const connectUrl = `${appUrl}/connect?ws=${workspaceId}`
+  const claimUrl = `${appUrl}/login?ws=${workspaceId}`
 
   // businessName is returned rather than fired here — the demo offer must
   // go out strictly after the "you're live" reply is actually sent, or the

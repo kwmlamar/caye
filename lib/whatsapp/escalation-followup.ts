@@ -240,10 +240,8 @@ export async function expireEscalationBookkeepingOnly(
   for (const recipient of recipients) {
     const closingNote = (
       recipient.role === 'founder'
-        ? `No further auto-follow-up on ${contactName} from me — you were already looped in, ` +
-          `still unresolved. The thread itself is still held and waiting on a reply.`
-        : `Letting the auto-nagging go on ${contactName} — it's been sitting a while now. ` +
-          `The thread is still held and still needs your call; I just won't keep bringing it up daily.`
+        ? `No more follow-up pings on ${contactName} from me — you're already looped in, still unresolved, still held.`
+        : `Backing off the daily nagging on ${contactName} — still held, still needs your call, I just won't keep bringing it up every day.`
     ).slice(0, 200)
 
     const operator = await resolveOperatorByPhone(supabase, row.workspace_id, recipient.phone)
