@@ -25,7 +25,7 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { classifyOperatorIntent } from '@/lib/whatsapp/intent'
 import { getPendingHeldItems } from '@/lib/whatsapp/pending'
 import { dispatchOperatorIntent } from '@/lib/whatsapp/actions'
-import { sendFreeFormWhatsApp } from '@/lib/whatsapp/outbound'
+import { sendFreeFormWhatsApp, deliveryFieldsFromResult, type SendResult } from '@/lib/whatsapp/outbound'
 import { downloadWhatsAppMedia, isSupportedImageMimeType } from '@/lib/whatsapp/media'
 import { generateCayeAutoReply } from '@/lib/caye-reply'
 import { alertFounderOfDeliveryFailure } from '@/lib/whatsapp/founder-alert'
@@ -264,6 +264,26 @@ async function handleDeliveryStatus(
     console.error('[whatsapp-operator] delivery-status update failed:', error)
     return
   }
+
+  // Same update, second table: caye_outbound_queue only ever has a row for
+  // the subset of sends that went through the proactive-ping queue, but
+  // every logged outbound message — queued or synchronous — carries the
+  // same real wa_message_id once dispatched (deliveryFieldsFromResult).
+  // This is what makes sent → delivered → read progress show up in Caye
+  // Direct for ordinary back-office replies, not just proactive pings. A
+  // no-op update when no row's wa_message_id matches is fine and cheap.
+  const { error: opMsgError } = await supabase
+    .from('caye_operator_messages')
+    .update({
+      wa_delivery_status: s.status,
+      wa_delivery_status_at: statusAt,
+      wa_delivery_error: errorText,
+    })
+    .eq('wa_message_id', s.id)
+  if (opMsgError) {
+    console.error('[whatsapp-operator] operator-message delivery-status update failed:', opMsgError)
+  }
+
   if (!updated || s.status !== 'failed') return
 
   const workspaceId = updated.workspace_id as string
@@ -510,17 +530,18 @@ async function handleOneInbound(
         callerPhone: driverReplyTo,
       })
 
+      let driverSendResult: SendResult | undefined
       if (agentResult.replyText) {
-        const sendResult = await sendFreeFormWhatsApp(
+        driverSendResult = await sendFreeFormWhatsApp(
           driverReplyTo,
           agentResult.replyText,
           `driver-${message.id}`
         )
-        if (sendResult.status === 'failed') {
-          console.error(`[whatsapp-operator] driver reply send failed for ${workspaceId}:`, sendResult.error)
+        if (driverSendResult.status === 'failed') {
+          console.error(`[whatsapp-operator] driver reply send failed for ${workspaceId}:`, driverSendResult.error)
         }
       }
-      await persistAgentTurns(supabase, workspaceId, agentResult.newTurns, operator)
+      await persistAgentTurns(supabase, workspaceId, agentResult.newTurns, operator, driverSendResult)
     } catch (err) {
       console.error(`[whatsapp-operator] driver agent failed for ${workspaceId}:`, err)
       // Don't leave the driver's message unanswered — a thrown error here
@@ -617,7 +638,7 @@ async function handleOneInbound(
       await supabase.from('caye_operator_messages').insert({
         workspace_id: workspaceId,
         direction: 'outbound',
-        wa_message_id: null,
+        ...deliveryFieldsFromResult(sendResult),
         body: replyText,
         intent: null,
         operator_allowlist_id: operator.id,
@@ -652,7 +673,7 @@ async function handleOneInbound(
     await supabase.from('caye_operator_messages').insert({
       workspace_id: workspaceId,
       direction: 'outbound',
-      wa_message_id: null,
+      ...deliveryFieldsFromResult(sendResult),
       body: replyText,
       intent: null,
       operator_allowlist_id: operator.id,
@@ -841,16 +862,17 @@ async function handleOneInbound(
       // below. Previously acks queued as kind='ack' and waited up to a
       // full outbound-worker tick to send (observed 4-min delays in live
       // testing, which destroys the chat flow).
+      let ackSendResult: SendResult | undefined
       if (replyTo) {
-        const sendResult = await sendFreeFormWhatsApp(
+        ackSendResult = await sendFreeFormWhatsApp(
           replyTo,
           result.ackBody,
           `ack-${message.id}`
         )
-        if (sendResult.status === 'failed') {
+        if (ackSendResult.status === 'failed') {
           console.error(
             `[whatsapp-operator] ack send failed for ${workspaceId}:`,
-            sendResult.error
+            ackSendResult.error
           )
         }
       } else {
@@ -861,7 +883,9 @@ async function handleOneInbound(
       await supabase.from('caye_operator_messages').insert({
         workspace_id: workspaceId,
         direction: 'outbound',
-        wa_message_id: null,
+        ...(ackSendResult
+          ? deliveryFieldsFromResult(ackSendResult)
+          : { wa_message_id: null, wa_delivery_status: null, wa_delivery_error: null }),
         body: result.ackBody,
         intent: null,
         claude_format: { role: 'assistant', content: result.ackBody },
@@ -895,17 +919,18 @@ async function handleOneInbound(
     // Reply destination is the CALLER (replyTo, set above), not the
     // workspace's canonical operator number — critical for founders DMing
     // on a workspace they don't own.
+    let backOfficeSendResult: SendResult | undefined
     if (replyTo) {
-      const sendResult = await sendFreeFormWhatsApp(
+      backOfficeSendResult = await sendFreeFormWhatsApp(
         replyTo,
         agentResult.replyText,
         `back-office-${message.id}`
       )
-      if (sendResult.status === 'failed') {
+      if (backOfficeSendResult.status === 'failed') {
         console.error(
           `[whatsapp-operator] Meta send failed for ${workspaceId}:`,
-          sendResult.error,
-          { transient: sendResult.transient, blocked: sendResult.blocked }
+          backOfficeSendResult.error,
+          { transient: backOfficeSendResult.transient, blocked: backOfficeSendResult.blocked }
         )
       }
     } else {
@@ -919,8 +944,9 @@ async function handleOneInbound(
     // with tool_result blocks, and the final assistant text turn) so
     // the sliding-window loader sees them on the next round. Shared with
     // the web-based Caye Direct route (app/api/founder/caye-direct) so
-    // both persist identically.
-    await persistAgentTurns(supabase, workspaceId, agentResult.newTurns, operator)
+    // both persist identically — that route never sends over WhatsApp, so
+    // it always calls this with no finalSendResult.
+    await persistAgentTurns(supabase, workspaceId, agentResult.newTurns, operator, backOfficeSendResult)
   } catch (err) {
     console.error(
       `[whatsapp-operator] back-office agent failed for ${workspaceId}:`,
@@ -1053,7 +1079,7 @@ async function handleImageInbound(
       console.error(`[whatsapp-operator] Meta send failed (image) for ${workspaceId}:`, sendResult.error)
     }
 
-    await persistAgentTurns(supabase, workspaceId, agentResult.newTurns, operator)
+    await persistAgentTurns(supabase, workspaceId, agentResult.newTurns, operator, sendResult)
   } catch (err) {
     console.error(`[whatsapp-operator] back-office agent failed (image) for ${workspaceId}:`, err)
     await sendFreeFormWhatsApp(

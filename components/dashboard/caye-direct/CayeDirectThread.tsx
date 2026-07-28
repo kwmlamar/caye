@@ -11,11 +11,50 @@ const NEAR_BOTTOM_PX = 96
 const TEXTAREA_MAX_H = 220
 const GLASS = { backdropFilter: 'blur(20px) saturate(140%)', WebkitBackdropFilter: 'blur(20px) saturate(140%)' } as const
 
+type DeliveryStatus = 'sent' | 'delivered' | 'read' | 'failed' | null
+
 interface OperatorMessage {
   id: string
   direction: 'inbound' | 'outbound'
   body: string
   created_at: string
+  wa_delivery_status?: DeliveryStatus
+  wa_delivery_error?: string | null
+}
+
+// Only outbound messages carry these — inbound is what the operator sent
+// TO Caye, and there's nothing of ours to confirm delivery on. A null
+// status (rather than missing) means the row has no real WhatsApp send
+// behind it at all (demo roleplay turns, the founder's own typed messages
+// from this same dashboard, log-only escalation closing notes) — not a
+// failure, just not applicable, so it renders nothing rather than an icon.
+function DeliveryStatusIcon({ status, error }: { status: DeliveryStatus; error?: string | null }) {
+  if (!status) return null
+
+  if (status === 'failed') {
+    return (
+      <span title={error ? `Not delivered — ${error}` : 'Not delivered'} style={{ display: 'inline-flex', color: '#f59e0b' }}>
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="10" />
+          <line x1="12" y1="8" x2="12" y2="13" />
+          <line x1="12" y1="16.5" x2="12" y2="16.51" />
+        </svg>
+      </span>
+    )
+  }
+
+  const doubleTick = status === 'delivered' || status === 'read'
+  const color = status === 'read' ? '#4EBECE' : '#71717a'
+  const label = status === 'sent' ? 'Sent' : status === 'delivered' ? 'Delivered' : 'Read'
+
+  return (
+    <span title={label} style={{ display: 'inline-flex', color }}>
+      <svg width={doubleTick ? 15 : 11} height="11" viewBox={doubleTick ? '0 0 30 24' : '0 0 24 24'} fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
+        <polyline points="1 13 7 19 17 5" />
+        {doubleTick && <polyline points="9 13 15 19 25 5" />}
+      </svg>
+    </span>
+  )
 }
 
 type GroupPos = 'single' | 'first' | 'middle' | 'last'
@@ -435,9 +474,11 @@ export default function CayeDirectThread({ workspaceId, operatorId, operatorLabe
                     )}
                     {showMeta && (
                       <div style={{
+                        display: 'flex', alignItems: 'center', gap: 5,
                         fontSize: 9.5, fontFamily: 'var(--font-mono)', color: '#52525b', marginTop: 4,
-                        textAlign: isCaye ? 'left' : 'right', padding: '0 2px',
+                        justifyContent: isCaye ? 'flex-start' : 'flex-end', padding: '0 2px',
                       }}>
+                        {isCaye && <DeliveryStatusIcon status={m.wa_delivery_status ?? null} error={m.wa_delivery_error} />}
                         {formatDistanceToNow(m.created_at)}
                       </div>
                     )}

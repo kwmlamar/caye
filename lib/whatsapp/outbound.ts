@@ -81,6 +81,27 @@ async function postToMeta(body: Record<string, unknown>): Promise<SendResult> {
   }
 }
 
+export interface OperatorMessageDeliveryFields {
+  wa_message_id: string | null
+  wa_delivery_status: 'sent' | 'failed'
+  wa_delivery_error: string | null
+}
+
+/**
+ * Maps a dispatch-time SendResult onto caye_operator_messages' delivery
+ * columns, for every call site that logs a message it just sent over
+ * WhatsApp. 'sent'/'failed' here is our own dispatch outcome — Meta's async
+ * status webhook (handleDeliveryStatus) later overwrites wa_delivery_status
+ * to 'delivered'/'read'/'failed' by matching wa_message_id, same as it
+ * already does for caye_outbound_queue.
+ */
+export function deliveryFieldsFromResult(result: SendResult): OperatorMessageDeliveryFields {
+  if (result.status === 'sent') {
+    return { wa_message_id: result.messageId, wa_delivery_status: 'sent', wa_delivery_error: null }
+  }
+  return { wa_message_id: null, wa_delivery_status: 'failed', wa_delivery_error: result.error }
+}
+
 /**
  * Send a free-form text message. Only valid when the 24h customer service
  * window is open (operator has messaged Caye within last ~23h).

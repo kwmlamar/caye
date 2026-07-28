@@ -14,7 +14,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase-server'
 import { composeEodSummary } from '@/lib/caye-agent/briefing'
-import { sendFreeFormWhatsApp } from '@/lib/whatsapp/outbound'
+import { sendFreeFormWhatsApp, deliveryFieldsFromResult } from '@/lib/whatsapp/outbound'
 import { resolveOperatorByPhone } from '@/lib/operator-identity'
 import { recordCronRun } from '@/lib/cron-run-log'
 
@@ -104,7 +104,7 @@ export async function GET(request: NextRequest) {
           await supabase.from('caye_operator_messages').insert({
             workspace_id: row.workspace_id,
             direction: 'outbound',
-            wa_message_id: null,
+            ...deliveryFieldsFromResult(sendResult),
             body: text,
             intent: null,
             claude_format: { role: 'assistant', content: text },

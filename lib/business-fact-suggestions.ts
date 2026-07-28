@@ -1,7 +1,7 @@
 import 'server-only'
 import { createServiceClient } from '@/lib/supabase-server'
 import { fetchBusinessFacts } from '@/lib/business-facts'
-import { sendFreeFormWhatsApp } from '@/lib/whatsapp/outbound'
+import { sendFreeFormWhatsApp, deliveryFieldsFromResult } from '@/lib/whatsapp/outbound'
 import { operatorPingsEnabled } from '@/lib/whatsapp/triggers'
 import {
   extractCandidateSentences,
@@ -138,17 +138,26 @@ async function proposeCandidate(
   // owner replies "yes", Caye already has the fact text in context and can
   // call add_business_fact herself. operator_allowlist_id stays null so it
   // surfaces to whichever operator opens the back-office thread next.
-  await supabase.from('caye_operator_messages').insert({
-    workspace_id: workspaceId,
-    direction: 'outbound',
-    wa_message_id: null,
-    body: proposalText,
-    intent: 'fact_suggestion',
-    claude_format: { role: 'assistant', content: proposalText },
-    operator_allowlist_id: null,
-    operator_name: null,
-    operator_role: null,
-  })
+  //
+  // Inserted before the WhatsApp nudge below (which is best-effort and
+  // conditional) rather than after, so the proposal is visible in Caye
+  // Direct even when no ping fires at all — the row's delivery fields are
+  // filled in afterward, by id, only if a send actually happens.
+  const { data: inserted } = await supabase
+    .from('caye_operator_messages')
+    .insert({
+      workspace_id: workspaceId,
+      direction: 'outbound',
+      wa_message_id: null,
+      body: proposalText,
+      intent: 'fact_suggestion',
+      claude_format: { role: 'assistant', content: proposalText },
+      operator_allowlist_id: null,
+      operator_name: null,
+      operator_role: null,
+    })
+    .select('id')
+    .single()
 
   // Best-effort live nudge. If the 24h free-form window is closed or the
   // workspace hasn't verified operator WhatsApp, the proposal still sits in
@@ -163,7 +172,13 @@ async function proposeCandidate(
       .maybeSingle()
     const phone = cfg?.operator_notification_override_phone ?? cfg?.operator_whatsapp_number
     if (!phone) return
-    await sendFreeFormWhatsApp(phone, proposalText, `fact-suggestion-${candidateId}`)
+    const result = await sendFreeFormWhatsApp(phone, proposalText, `fact-suggestion-${candidateId}`)
+    if (inserted) {
+      await supabase
+        .from('caye_operator_messages')
+        .update(deliveryFieldsFromResult(result))
+        .eq('id', inserted.id)
+    }
   } catch (err) {
     console.warn('[business-fact-suggestions] ping send failed:', err)
   }

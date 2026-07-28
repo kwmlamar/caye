@@ -69,7 +69,7 @@ export async function GET(req: NextRequest) {
 
   let query = supabase
     .from('caye_operator_messages')
-    .select('id, direction, body, created_at')
+    .select('id, direction, body, created_at, wa_delivery_status, wa_delivery_error')
     .eq('workspace_id', workspaceId)
 
   query = operatorId != null

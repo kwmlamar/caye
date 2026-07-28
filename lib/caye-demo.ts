@@ -2,7 +2,7 @@ import 'server-only'
 import Anthropic from '@anthropic-ai/sdk'
 import { createServiceClient } from '@/lib/supabase-server'
 import { loggedMessagesCreate } from '@/lib/llm-telemetry'
-import { sendFreeFormWhatsApp, sendTemplateWhatsApp } from '@/lib/whatsapp/outbound'
+import { sendFreeFormWhatsApp, sendTemplateWhatsApp, deliveryFieldsFromResult } from '@/lib/whatsapp/outbound'
 
 /**
  * Operator-initiated demo-roleplay mode (2026-07-22). Lets an
@@ -263,7 +263,7 @@ export async function sendDemoOffer(
     await supabase.from('caye_operator_messages').insert({
       workspace_id: workspaceId,
       direction: 'outbound',
-      wa_message_id: null,
+      ...deliveryFieldsFromResult(result),
       body: offerText,
       intent: null,
       operator_allowlist_id: operator.id,

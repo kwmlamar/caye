@@ -494,14 +494,26 @@ function operatorPingLogBody(kind: string, payload: Record<string, unknown>): st
   }
 }
 
-async function logOperatorPing(workspaceId: string, phone: string, kind: string, payload: Record<string, unknown>): Promise<void> {
+async function logOperatorPing(
+  workspaceId: string,
+  phone: string,
+  kind: string,
+  payload: Record<string, unknown>,
+  messageId: string | null
+): Promise<void> {
   if (!OPERATOR_LOGGABLE_KINDS.has(kind)) return
   const supabase = createServiceClient()
   const operator = await resolveOperatorByPhone(supabase, workspaceId, phone)
   await supabase.from('caye_operator_messages').insert({
     workspace_id: workspaceId,
     direction: 'outbound',
-    wa_message_id: null,
+    // Only ever called from the 'sent' branch of handleResult below, so this
+    // is always a successful dispatch — 'sent' for now, refined to
+    // delivered/read/failed by handleDeliveryStatus once Meta's status
+    // webhook arrives, matched by this same wa_message_id.
+    wa_message_id: messageId,
+    wa_delivery_status: 'sent',
+    wa_delivery_error: null,
     body: operatorPingLogBody(kind, payload),
     intent: null,
     operator_allowlist_id: operator?.id ?? null,
@@ -531,7 +543,7 @@ async function handleResult(
         last_whatsapp_outbound_status: 'sent',
       })
       .eq('workspace_id', row.workspace_id)
-    await logOperatorPing(row.workspace_id, phone, row.kind, row.payload)
+    await logOperatorPing(row.workspace_id, phone, row.kind, row.payload, result.messageId)
     return 'sent'
   }
 
