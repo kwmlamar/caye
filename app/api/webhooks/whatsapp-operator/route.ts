@@ -174,6 +174,14 @@ async function processInbound(payload: Record<string, unknown>): Promise<void> {
 
   const supabase = createServiceClient()
 
+  // entry[].id is the WhatsApp Business Account id, and the phone_number_id
+  // guard above already proved this event belongs to the Caye platform
+  // number — so this is the platform WABA. Captured because the template
+  // sync (lib/whatsapp/template-sync.ts) needs it to read template
+  // definitions back from Meta, and having it self-populate beats a manual
+  // env var that nobody remembers to set until something breaks.
+  await captureWabaId(supabase, entry?.id as string | undefined)
+
   if (value.statuses?.length) {
     for (const s of value.statuses) {
       await handleDeliveryStatus(supabase, s)
@@ -184,6 +192,32 @@ async function processInbound(payload: Record<string, unknown>): Promise<void> {
 
   for (const message of value.messages) {
     await handleOneInbound(supabase, message)
+  }
+}
+
+/**
+ * Best-effort, write-once-then-idle: only writes when the stored value is
+ * absent or has changed, so the common case is a single cheap read per
+ * webhook. Never throws — losing this must never cost us an inbound message.
+ */
+async function captureWabaId(
+  supabase: ReturnType<typeof createServiceClient>,
+  wabaId: string | undefined
+): Promise<void> {
+  if (!wabaId) return
+  try {
+    const { data } = await supabase
+      .from('platform_settings')
+      .select('value')
+      .eq('key', 'whatsapp_business_account_id')
+      .maybeSingle()
+    if (data?.value === wabaId) return
+
+    await supabase
+      .from('platform_settings')
+      .upsert({ key: 'whatsapp_business_account_id', value: wabaId }, { onConflict: 'key' })
+  } catch (err) {
+    console.error('[whatsapp-operator] WABA id capture failed:', err)
   }
 }
 

@@ -31,6 +31,8 @@ import { loadScheduleConfig, nextDigestTime, localDayOfWeek } from '@/lib/whatsa
 import { recordCronRun, checkStaleCronsAndAlert } from '@/lib/cron-run-log'
 import { alertFounderOfDeliveryFailure } from '@/lib/whatsapp/founder-alert'
 import { sendFounderAlertEmail } from '@/lib/email/founder-mailer'
+import { extractErrorCode } from '@/lib/whatsapp/delivery-errors'
+import { resyncTemplatesAfterParamMismatch } from '@/lib/whatsapp/template-sync'
 
 // Kinds that represent Caye proactively messaging an operator about
 // something (as opposed to system plumbing like otp/welcome/ack) — these
@@ -595,6 +597,17 @@ async function handleResult(
     .eq('workspace_id', row.workspace_id)
 
   if (EMAIL_FALLBACK_KINDS.has(row.kind)) await fireFallback(row)
+
+  // A 132xxx means Meta's template no longer matches what whatsapp_templates
+  // says it is — almost always a template edited in WhatsApp Manager without
+  // the table being updated. Resync so the next attempt sends the right
+  // param count instead of failing identically forever (caye_morning_digest
+  // did exactly that for a week; see lib/whatsapp/template-sync.ts).
+  const failureCode = extractErrorCode(result.error)
+  if (failureCode != null && failureCode >= 132000 && failureCode < 133000) {
+    resyncTemplatesAfterParamMismatch(`${row.kind} dispatch error ${failureCode}`)
+  }
+
   // Confirmed live 2026-07-23: without this, a permanently-failed row (the
   // morning_digest template-param mismatch) sat silent for 3 days — nobody
   // alerted, nothing retried, surfaced only when Karenda separately
