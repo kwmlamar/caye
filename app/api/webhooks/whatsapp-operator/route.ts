@@ -630,7 +630,7 @@ async function handleOneInbound(
     // fire from inside it (races the congratulations send and wins).
     if (completed && businessName) {
       const { sendDemoOffer } = await import('@/lib/caye-demo')
-      sendDemoOffer(supabase, workspaceId, replyTo, businessName).catch((err) =>
+      sendDemoOffer(supabase, workspaceId, replyTo, businessName, operator).catch((err) =>
         console.error(`[whatsapp-operator] demo offer failed for workspace=${workspaceId}:`, err)
       )
     }
@@ -682,6 +682,19 @@ async function handleOneInbound(
     }
 
     if (demoText && isDemoEntryKeyword(demoText)) {
+      // Logged like the offer that prompted it — the tap itself is a real
+      // operator action, not a roleplay turn. Everything from here on
+      // (intro message, the roleplay exchange, exit) stays unlogged.
+      await supabase.from('caye_operator_messages').insert({
+        workspace_id: workspaceId,
+        direction: 'inbound',
+        wa_message_id: message.id,
+        body: demoText,
+        intent: null,
+        operator_allowlist_id: operator.id,
+        operator_name: operator.name,
+        operator_role: operator.role,
+      })
       await startDemoSession(supabase, workspaceId, operatorId, replyTo)
       await sendFreeFormWhatsApp(replyTo, DEMO_INTRO_MESSAGE, `demo-start-${message.id}`)
       return

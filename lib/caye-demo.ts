@@ -230,7 +230,8 @@ export async function sendDemoOffer(
   supabase: ReturnType<typeof createServiceClient>,
   workspaceId: string,
   phone: string,
-  businessName: string
+  businessName: string,
+  operator: { id: number; name: string | null; role: string }
 ): Promise<void> {
   try {
     const { data } = await supabase
@@ -238,6 +239,8 @@ export async function sendDemoOffer(
       .select('status')
       .eq('name', DEMO_OFFER_TEMPLATE)
       .maybeSingle()
+
+    const offerText = `Want to see how I'll sound to your guests, ${businessName}? Reply "demo" and I'll roleplay as if you're one of your own customers.`
 
     const result =
       data?.status === 'approved'
@@ -247,15 +250,26 @@ export async function sendDemoOffer(
             [businessName],
             `demo-offer-${workspaceId}`
           )
-        : await sendFreeFormWhatsApp(
-            phone,
-            `Want to see how I'll sound to your guests, ${businessName}? Reply "demo" and I'll roleplay as if you're one of your own customers.`,
-            `demo-offer-${workspaceId}`
-          )
+        : await sendFreeFormWhatsApp(phone, offerText, `demo-offer-${workspaceId}`)
 
     if (result.status === 'failed') {
       console.error(`[caye-demo] demo offer send failed for workspace=${workspaceId}:`, result.error)
     }
+
+    // Logged like any other onboarding message — this is a real message
+    // Caye sent the operator, not a roleplay turn (those stay excluded,
+    // see the block comment above route.ts's demo-mode branch), so it
+    // belongs in the same back-office transcript as the rest of onboarding.
+    await supabase.from('caye_operator_messages').insert({
+      workspace_id: workspaceId,
+      direction: 'outbound',
+      wa_message_id: null,
+      body: offerText,
+      intent: null,
+      operator_allowlist_id: operator.id,
+      operator_name: operator.name,
+      operator_role: operator.role,
+    })
   } catch (err) {
     console.error(`[caye-demo] demo offer send threw for workspace=${workspaceId}:`, err)
   }
