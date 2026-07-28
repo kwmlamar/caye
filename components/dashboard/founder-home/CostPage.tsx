@@ -35,6 +35,8 @@ interface CostRow {
   llm_calls_30d: number
   meta_cost_30d_usd: number | null
   monthly_price_usd: number | null
+  revenue_source: 'stripe' | 'manual' | 'none'
+  subscription_status: string | null
   margin_usd: number | null
 }
 
@@ -48,9 +50,10 @@ function fmtUsd(n: number): string {
 // page. Meta/WhatsApp conversation-based cost isn't tracked anywhere in
 // the codebase yet (no credentials, no sync job) — shown as an explicit
 // "not tracked yet" rather than a fabricated $0, so margin isn't
-// overstated. Monthly price comes from a manually-maintained map
-// (lib/workspace-pricing.ts), not a synced billing system — there is no
-// Stripe integration in this repo. Read-only; no actions.
+// overstated. Monthly price is a live Stripe lookup for any workspace
+// mapped in lib/workspace-pricing.ts, falling back to a manually-typed
+// figure otherwise (or if the Stripe call fails) — the "Stripe"/"manual"
+// pill below each price says which. Read-only; no actions.
 export default function CostPage() {
   const [rows, setRows] = useState<CostRow[] | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -106,7 +109,7 @@ export default function CostPage() {
       </div>
 
       <div style={{ fontSize: 11.5, color: '#52525b', lineHeight: 1.5, flexShrink: 0 }}>
-        Meta/WhatsApp conversation-based cost isn&apos;t tracked yet — margin above reflects LLM cost only. Revenue is a manually-maintained figure (no billing sync exists), so it only covers workspaces in lib/workspace-pricing.ts.
+        Meta/WhatsApp conversation-based cost isn&apos;t tracked yet — margin above reflects LLM cost only. Price/mo is a live Stripe lookup where a customer ID is on file (dot = ●), otherwise a manually-typed fallback (dot = ○) — see lib/workspace-pricing.ts.
       </div>
 
       <div style={{ flex: 1, minHeight: 0, background: CARD_BG, borderRadius: 16, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
@@ -153,7 +156,25 @@ export default function CostPage() {
                 <span title="Meta/WhatsApp conversation cost isn't tracked yet" style={{ fontSize: 13, textAlign: 'right', color: '#52525b' }}>
                   —
                 </span>
-                <span style={{ fontSize: 13, textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: r.monthly_price_usd === null ? '#52525b' : '#f4f4f5' }}>
+                <span
+                  title={
+                    r.revenue_source === 'stripe'
+                      ? `Live from Stripe — subscription ${r.subscription_status}`
+                      : r.revenue_source === 'manual'
+                        ? 'Manually-typed fallback (lib/workspace-pricing.ts) — no Stripe customer ID on file, or the live lookup failed'
+                        : 'No price on file'
+                  }
+                  style={{
+                    fontSize: 13, textAlign: 'right', fontVariantNumeric: 'tabular-nums',
+                    color: r.monthly_price_usd === null ? '#52525b' : '#f4f4f5',
+                    display: 'flex', alignItems: 'baseline', justifyContent: 'flex-end', gap: 4,
+                  }}
+                >
+                  {r.revenue_source !== 'none' && (
+                    <span aria-hidden style={{ fontSize: 9, color: r.revenue_source === 'stripe' ? '#4EBECE' : '#52525b' }}>
+                      {r.revenue_source === 'stripe' ? '●' : '○'}
+                    </span>
+                  )}
                   {r.monthly_price_usd === null ? '—' : fmtUsd(r.monthly_price_usd)}
                 </span>
                 <span

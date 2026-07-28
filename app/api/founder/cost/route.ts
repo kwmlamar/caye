@@ -6,11 +6,18 @@
  * workspace the founder is a member of (same set as the Workspaces
  * sidebar and /api/founder/global-performance).
  *
- * Phase 1 (this route): real LLM/Anthropic cost (7-day and 30-day) from
- * llm_call_log, same costForModel pricing table used everywhere else
- * (lib/llm-pricing.ts). Monthly price comes from the manually-maintained
- * lib/workspace-pricing.ts map — no Stripe sync exists in this repo, so
- * margin is only as good as that map being kept current.
+ * Real LLM/Anthropic cost (7-day and 30-day) from llm_call_log, same
+ * costForModel pricing table used everywhere else (lib/llm-pricing.ts).
+ *
+ * Monthly price is a live Stripe lookup (lib/stripe.ts's
+ * getActiveSubscriptionSummary) for any workspace with a customer ID
+ * mapped in lib/workspace-pricing.ts (WORKSPACE_STRIPE_CUSTOMER_ID) — no
+ * webhook, no synced table, just an on-demand API call per page load
+ * (2026-07-28 decision: proportionate to the handful of paying
+ * workspaces today). Falls back to the manually-maintained
+ * WORKSPACE_MONTHLY_PRICE_USD map if there's no Stripe customer ID
+ * mapped, or if the Stripe call itself fails (bad ID, network) — a
+ * failed lookup degrades to "—", it never fails the whole page.
  *
  * Phase 2 (not yet built): Meta/WhatsApp conversation-based pricing.
  * Nothing in this repo tracks that today — no credentials, no sync job,
@@ -28,7 +35,30 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase-server'
 import { requireFounder } from '@/lib/founder'
 import { costForModel } from '@/lib/llm-pricing'
-import { monthlyPriceForWorkspace } from '@/lib/workspace-pricing'
+import { monthlyPriceForWorkspace, stripeCustomerIdForWorkspace } from '@/lib/workspace-pricing'
+import { getActiveSubscriptionSummary } from '@/lib/stripe'
+
+interface RevenueInfo {
+  monthly_price_usd: number | null
+  revenue_source: 'stripe' | 'manual' | 'none'
+  subscription_status: string | null
+}
+
+async function resolveRevenue(workspaceId: string): Promise<RevenueInfo> {
+  const stripeCustomerId = stripeCustomerIdForWorkspace(workspaceId)
+  if (stripeCustomerId) {
+    try {
+      const summary = await getActiveSubscriptionSummary(stripeCustomerId)
+      if (summary) {
+        return { monthly_price_usd: summary.monthly_price_usd, revenue_source: 'stripe', subscription_status: summary.status }
+      }
+    } catch (err) {
+      console.error(`[cost] Stripe lookup failed for workspace ${workspaceId}:`, err)
+    }
+  }
+  const manual = monthlyPriceForWorkspace(workspaceId)
+  return { monthly_price_usd: manual, revenue_source: manual === null ? 'none' : 'manual', subscription_status: null }
+}
 
 const SHORT_WINDOW_DAYS = 7
 const LONG_WINDOW_DAYS = 30
@@ -86,10 +116,16 @@ export async function GET(req: NextRequest) {
     agg.set(r.workspace_id, cur)
   }
 
+  const revenueByWorkspace = new Map(
+    await Promise.all(
+      workspaceRows.map(async (m) => [m.workspace_id, await resolveRevenue(m.workspace_id)] as const)
+    )
+  )
+
   const workspacesOut = workspaceRows
     .map((m) => {
       const stats = agg.get(m.workspace_id) ?? { cost7d: 0, cost30d: 0, calls7d: 0, calls30d: 0 }
-      const monthlyPrice = monthlyPriceForWorkspace(m.workspace_id)
+      const revenue = revenueByWorkspace.get(m.workspace_id)!
       const llmCost30d = Number(stats.cost30d.toFixed(4))
       return {
         workspace_id: m.workspace_id,
@@ -99,8 +135,10 @@ export async function GET(req: NextRequest) {
         llm_cost_30d_usd: llmCost30d,
         llm_calls_30d: stats.calls30d,
         meta_cost_30d_usd: null, // not tracked yet — see route comment
-        monthly_price_usd: monthlyPrice,
-        margin_usd: monthlyPrice === null ? null : Number((monthlyPrice - llmCost30d).toFixed(2)),
+        monthly_price_usd: revenue.monthly_price_usd,
+        revenue_source: revenue.revenue_source,
+        subscription_status: revenue.subscription_status,
+        margin_usd: revenue.monthly_price_usd === null ? null : Number((revenue.monthly_price_usd - llmCost30d).toFixed(2)),
       }
     })
     .sort((a, b) => (b.monthly_price_usd ?? 0) - (a.monthly_price_usd ?? 0))
