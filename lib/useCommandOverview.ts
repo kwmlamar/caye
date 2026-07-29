@@ -61,8 +61,27 @@ export interface CommandOverview {
 // weekOffset (0 = this week) lets CommandCalendar page through
 // weeks — CommandScreen doesn't pass it and keeps its old "this week only"
 // behavior.
+// Last good response per workspace+week, kept at module scope so it
+// outlives the component. Switching workspaces navigates to a new
+// /dashboard/[workspaceId] route, which remounts FounderHome and resets
+// this hook to `data: null` — which blanked the whole console (stat cards
+// to "—", calendar and conversations to empty boxes) on every switch,
+// even when returning to a workspace viewed seconds earlier.
+//
+// Seeding from the cache means a return trip paints the previous view
+// immediately and revalidates underneath, so the switch reads as instant.
+// Same instinct as workspacesRef in app/dashboard/[workspaceId]/layout.tsx,
+// which already does this for the workspace record itself.
+const overviewCache = new Map<string, CommandOverview>()
+
+function cacheKey(workspaceId: string, weekOffset: number): string {
+  return `${workspaceId}:${weekOffset}`
+}
+
 export function useCommandOverview(workspaceId: string | null, weekOffset = 0) {
-  const [data, setData] = useState<CommandOverview | null>(null)
+  const [data, setData] = useState<CommandOverview | null>(
+    () => (workspaceId ? overviewCache.get(cacheKey(workspaceId, weekOffset)) ?? null : null)
+  )
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -82,6 +101,7 @@ export function useCommandOverview(workspaceId: string | null, weekOffset = 0) {
       })
       const json = await res.json()
       if (!res.ok) throw new Error(json.error || 'Failed to load')
+      overviewCache.set(cacheKey(workspaceId, weekOffset), json)
       setData(json)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load')
@@ -94,5 +114,8 @@ export function useCommandOverview(workspaceId: string | null, weekOffset = 0) {
     load()
   }, [load])
 
-  return { data, loading, error, refetch: load }
+  // `loading` is true for both a cold load and a background revalidate;
+  // callers that already have something on screen want to tell those
+  // apart so they dim rather than blank.
+  return { data, loading, revalidating: loading && data !== null, error, refetch: load }
 }
