@@ -60,8 +60,19 @@ export const createOutreachLeads: Tool<CreateOutreachLeadsInput> = {
     "for every lead just with the business details swapped in. That sameness is exactly what makes " +
     "outreach read as bulk-generated instead of individually written, even when each one is factually " +
     "personalized. " +
-    "Otherwise: lead with their specific situation/pain point if known, ask who catches their messages " +
-    "when they're busy, don't pitch Caye by name yet (that's the follow-up conversation). Pass the " +
+    "STRUCTURE (2026-07-29 — direct-pitch, live A/B test, replaces the older 'ask a pain-point question " +
+    "and defer the pitch' opener): state what Caye is and the ask plainly in the first email, don't make " +
+    "them guess where you're going. In order: (a) self-intro (rule 1 above), (b) one sentence naming " +
+    "their specific situation, (c) one sentence stating what Caye is and does BY NAME — she answers " +
+    "WhatsApp messages and books customers even while they're busy, (d) the proof point: one tour " +
+    "operator in the Bahamas already using her (never overclaim more than the one real paying customer), " +
+    "(e) one direct ask — 'Want to try it free?' or the self-serve meetcaye.com link. Never both, and " +
+    "never a rhetorical question standing in for a real ask. " +
+    "LENGTH (not optional, same standard as any real first-contact email): 3-4 sentences max, one clear " +
+    "ask. A cold prospect gives this about 5 seconds — no founder-story preamble ('looking for a few " +
+    "businesses to try it and help shape the product'), no explaining the product at length before the " +
+    "ask. One CTA only: the direct ask in (e) above or the self-serve demo link — never stack both " +
+    "in the same email. If you can't say it in 3-4 sentences, cut, don't add a paragraph break. Pass the " +
     "subject as `subject` and the body as `draft`. This tool ONLY creates the lead + a held thread with " +
     "your draft sitting in the dashboard's Review tab for the operator to read, edit, and send " +
     "themselves — it never sends anything and never will, regardless of how many leads are in the list " +

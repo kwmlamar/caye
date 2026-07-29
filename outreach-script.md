@@ -23,7 +23,14 @@ Sell the **outcome** (you stop missing bookings; you get your evenings/Fridays/S
 
 ---
 
-## 1. Cold opener (WhatsApp / IG DM — keep it short, voice-note friendly)
+## 1. Cold email opener (2026-07-29 — direct-pitch structure, live A/B test)
+State what Caye is and the ask plainly in the first email — don't make them guess where you're going. Superseded the pain-point-question opener below (kept for the WhatsApp/DM channel and as a fallback if this loses the A/B test). Structure: (a) self-intro first, always, (b) one sentence naming their specific situation, (c) one sentence stating what Caye is and does by name, (d) the proof point — one tour operator in the Bahamas already using her, (e) one direct ask, never a rhetorical question in its place. 3-4 sentences max, no founder-story preamble.
+
+> Hey [name], I'm Lamar with TropiTech, a Bahamian tech company. I built something called Caye — she answers your WhatsApp messages and books customers for you, even when you're busy. One tour operator in the Bahamas is already using her. Want to try it free?
+
+*This is the tool `create_outreach_leads` (lib/caye-agent/tools/write-low/create-outreach-leads.ts) actually follows as of 2026-07-29 — keep that file and this section in sync if either changes.*
+
+## 1a. Pain-point opener (pre-2026-07-29 default — parked pending the A/B result; still the live approach for WhatsApp / IG DM, keep it short, voice-note friendly)
 > Hey [name] — I run TropiTech, a Bahamian tech company. I saw [specific: your tours / your reservations are "DM to book"]. Quick question: who handles all your messages when you're [on the boat / in the kitchen / with a client]?
 
 *Goal: start a conversation, surface the bottleneck. Don't pitch yet. Let them tell you the pain.*
