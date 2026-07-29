@@ -362,6 +362,14 @@ export default function FounderHome() {
     })
   }
   const activeRailItem = RAIL_ITEMS.find((r) => r.id === railView)!
+  // Performance/Cost/Health are explicit "all workspaces" aggregates and
+  // Admin Shell doesn't take a workspaceId at all (see AdminShell.tsx) —
+  // on all four, clicking an entry in the workspace list changed the URL's
+  // workspaceId param without changing anything on screen. That reads as a
+  // scoping control that silently does nothing, which is worse than no
+  // control at all. Command and Contacts are the only two views that
+  // actually key off the selected workspace.
+  const showWorkspaceSidebar = railView === 'dashboard' || railView === 'contacts'
 
   // Optimistic: highlight the workspace being navigated to, falling back to
   // the real one the moment the route commits.
@@ -431,7 +439,9 @@ export default function FounderHome() {
         ))}
       </nav>
 
-      {/* ── Workspaces sidebar (real cross-workspace list) ── */}
+      {/* ── Workspaces sidebar — only on the two views it actually scopes,
+          see showWorkspaceSidebar above ── */}
+      {showWorkspaceSidebar && (
       <aside style={{
         width: sidebarCollapsed ? SIDEBAR_WIDTH_COLLAPSED : SIDEBAR_WIDTH_EXPANDED,
         flexShrink: 0, borderRight: `1px solid ${CARD_BORDER}`,
@@ -532,6 +542,7 @@ export default function FounderHome() {
           })}
         </div>
       </aside>
+      )}
 
       {/* ── Main ── */}
       <div style={{ position: 'relative', flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0 }}>
@@ -569,6 +580,8 @@ export default function FounderHome() {
             <h1 style={{ fontSize: 16, fontWeight: 600, fontFamily: 'var(--font-display)', margin: 0 }}>Cost — All Workspaces</h1>
           ) : railView === 'health' ? (
             <h1 style={{ fontSize: 16, fontWeight: 600, fontFamily: 'var(--font-display)', margin: 0 }}>Health — Caye System Status</h1>
+          ) : railView === 'admin' ? (
+            <h1 style={{ fontSize: 16, fontWeight: 600, fontFamily: 'var(--font-display)', margin: 0 }}>Admin Shell — Back Office</h1>
           ) : (
             <>
               <h1 style={{ fontSize: 16, fontWeight: 600, fontFamily: 'var(--font-display)', margin: 0 }}>{workspace.business_name ?? 'New signup'}</h1>
