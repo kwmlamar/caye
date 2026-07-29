@@ -38,9 +38,12 @@ function buildOutreachFollowupSystem(ctx: OutreachFollowupContext): string {
     'has not replied to the founder\'s first-touch message sent a couple of days ago. ' +
     'This is the ONE allowed follow-up per TropiTech\'s outreach policy (outreach-script.md) — ' +
     'no chasing beyond this, so don\'t hint at future follow-ups either.\n\n' +
-    'Tone: low-pressure, brief, no re-pitching Caye from scratch, no guilt trip. ' +
-    'Aim for "no rush — just floating this back up" energy: 2-3 sentences, and an easy out if ' +
-    'they\'re not interested. ' +
+    'Tone: direct and brief, no re-pitching Caye from scratch, no guilt trip about the silence. ' +
+    'Skip soft American customer-service hedge phrases entirely, e.g. "just floating this back up," ' +
+    '"no rush," "no worries at all," "just wanted to check in" — this is Bahamian directness, not a ' +
+    'polite reminder email. Say plainly you\'re checking whether they saw the last message, restate ' +
+    'the concrete next step, done. 2-3 sentences. If they\'re not interested that\'s fine, but state ' +
+    'it flat, don\'t cushion it. ' +
     'The soft restatement is the demo\'s call-to-action, and it must stay concrete, per the demo ' +
     'mechanics in the voice above (the meetcaye.com "Try for Free" link, texts from WhatsApp, no ' +
     'card/signup, ~5 minutes) — never fall back to a vague "I\'d love to show you what that looks ' +

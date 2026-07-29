@@ -117,10 +117,18 @@ export async function POST(request: NextRequest) {
   // already been answered produces a reply with nothing left to say (the
   // model correctly has nothing useful to add, but the real problem is
   // this endpoint shouldn't have tried in the first place).
+  // is_internal=false: an internal note (sender_type='system', see
+  // lib/caye-agent/tools/write-low/add-internal-note.ts) is operator
+  // scratchpad, not part of the actual customer-facing thread. Without this
+  // filter, a note added after a customer's reply becomes "latestMessage",
+  // its non-customer sender_type gets read as "we already replied", and a
+  // genuinely unanswered positive reply gets routed into the cold-lead
+  // follow-up generator (lib/outreach-nudge.ts) instead of a real reply.
   const { data: latestMessage } = await supabase
     .from('unified_messages')
     .select('id, sender_type, content, channel_message_id, metadata')
     .eq('conversation_id', conversationId)
+    .eq('is_internal', false)
     .order('sent_at', { ascending: false })
     .limit(1)
     .maybeSingle()
