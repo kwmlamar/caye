@@ -49,49 +49,55 @@ export const createOutreachLeads: Tool<CreateOutreachLeadsInput> = {
     "Create draft-and-hold cold-outreach threads from a pasted list of leads (emails, optionally " +
     "with business/contact names or context the operator shared). For EACH lead, write a short, plain " +
     "subject line (e.g. 'Quick question about your booking messages' — no clickbait, no emoji) and a " +
-    "cold-opener email body following outreach-script.md's opener template. Structural rules that are " +
-    "NOT optional and NOT covered by your voice profile (grilled 2026-07-23 and 2026-07-29, real batches " +
-    "violated all of these): " +
-    "(1) The self-intro is sentence ONE, full stop — 'I'm Lamar with TropiTech, a Bahamian tech company.' " +
-    "or 'I run TropiTech, a Bahamian tech company.' — complete and standalone, BEFORE any observation " +
-    "about their business. Never attach it to an observation in the same sentence with a dash or comma. " +
-    "Confirmed live 2026-07-29: 'I spotted Buccaneer Club in Governor's Harbour -- I'm Lamar with " +
-    "TropiTech...' is wrong even though the self-intro is present — it trails the observation instead of " +
-    "leading. Also wrong: jumping straight into 'I was researching X and came across your business' with " +
-    "no self-intro at all. " +
-    "(2) When writing multiple leads in the same batch, actively VARY the opening structure/verbs " +
-    "between them — do not reuse the same 'I was looking into/researching X and came across Y' shape " +
-    "for every lead just with the business details swapped in. That sameness is exactly what makes " +
-    "outreach read as bulk-generated instead of individually written, even when each one is factually " +
-    "personalized. This applies just as much to the SITUATION sentence in the STRUCTURE below: a generic " +
-    "category truism ('Restaurant teams are usually too busy running the floor to stay on top of every " +
-    "reservation message that comes in' — confirmed live 2026-07-29, could paste into any restaurant's " +
-    "email unchanged) is not personalization even when the business's actual name appears elsewhere in " +
-    "the email. Reference something concretely specific to THIS lead instead — their location, what they " +
-    "actually serve/offer, a detail from their listing. " +
-    "(3) No em dashes, and no manual '--' standing in for one — comma or period only, per the voice " +
-    "profile. The same live draft above used '--' specifically to bolt the self-intro onto the opening " +
-    "observation, which is both a rule-1 and a rule-3 violation in one stroke. " +
-    "(4) Sign-off is 'Lamar' alone on a first-touch cold email — never a second line with the company " +
-    "name. Confirmed live 2026-07-29: a draft signed 'Lamar / TropiTech Solutions', which the voice " +
-    "profile explicitly rules out for first-touch/cold messages (that's for warmer, later correspondence, " +
-    "not the opener). " +
-    "STRUCTURE (2026-07-29 — direct-pitch, live A/B test, replaces the older 'ask a pain-point question " +
-    "and defer the pitch' opener): state what Caye is and the ask plainly in the first email, don't make " +
-    "them guess where you're going. In order: (a) self-intro (rule 1), (b) one concretely specific " +
-    "situation sentence (rule 2), (c) one sentence stating what Caye is and does BY NAME — she answers " +
-    "WhatsApp messages and books customers even while they're busy, (d) the proof point: one tour " +
-    "operator in the Bahamas already using her (never overclaim more than the one real paying customer), " +
-    "(e) one direct ask, written as ONE clean sentence — either 'Want to try it free?' with the link woven " +
-    "in naturally ('Want to try it free at meetcaye.com?'), or the link as its own invitation ('Head to " +
-    "meetcaye.com and hit Try for Free.'). Never bolt a bare domain onto the end of a question as an " +
-    "afterthought ('Want to try it free? meetcaye.com' is wrong), and never ask the question AND give the " +
-    "link as two separate moves. " +
-    "LENGTH (not optional, same standard as any real first-contact email): 3-4 sentences max, one clear " +
-    "ask — that means (a) through (e) above compress into 4 sentences, not 5; merge (c) and (d) into one " +
-    "sentence if needed rather than dropping either. A cold prospect gives this about 5 seconds — no " +
-    "founder-story preamble ('looking for a few businesses to try it and help shape the product'), no " +
-    "explaining the product at length before the ask. Count your sentences before finalizing each draft. " +
+    "cold-opener email body following outreach-script.md's opener template. " +
+    "STRUCTURE (2026-07-29, converged over several real batches — problem-first, not intro-first, " +
+    "replaces every earlier version of this rule): exactly 4 beats, in order: " +
+    "(1) HOOK — one sentence, personalized (see PERSONALIZATION below): name the business, then state a " +
+    "confident, un-hedged truth about their situation. Never guess or soften with 'probably', 'likely', " +
+    "'I'd guess' — 'While you're busy running [Business], WhatsApp messages keep coming in' is right; " +
+    "'Customers messaging [Business] probably wait a while' is wrong, it invites 'actually, maybe not'. " +
+    "(2) SELF-ID + WHAT CAYE DOES — 'I'm Lamar, founder of TropiTech, a Bahamian tech company. I built " +
+    "Caye.' Never say 'AI', 'automation', or 'LLM' anywhere in this email — describe the job, not the " +
+    "category, and let them ask how it works once they've replied. Say what her job is, in JOB-DESCRIPTION " +
+    "language, never a bare label: never 'an assistant', 'a chatbot', 'an AI employee/teammate', 'a " +
+    "receptionist' — those are categories, not jobs. Keep it short and visual: 'She lives in WhatsApp, " +
+    "making sure every customer gets a reply before they give up and move on.' Living inside WhatsApp " +
+    "itself is the single most distinctive true thing about her — it pre-answers 'do I need another app?' " +
+    "before they ask, so it belongs in this sentence, not buried later. Never promise a specific business " +
+    "outcome you can't verify (not 'turns every message into a sale' — 'gets a reply' describes the job, " +
+    "not a guaranteed result). " +
+    "(3) PROOF — one real business in the Bahamas already using her (never overclaim more than the one " +
+    "real paying customer). Don't claim an industry match that isn't true: for a non-tour-operator lead, " +
+    "'one tour operator in the Bahamas' reads as 'not my situation' — say 'She's already working alongside " +
+    "another Bahamian business every day' instead. Once a same-industry customer exists, switch to naming " +
+    "that match ('another restaurant...') — not before it's actually true. " +
+    "(4) CTA — one short, conversational close: 'Want to see it in action?' (default) or 'Worth a look?' / " +
+    "'Can I show you?' as alternates to test — never the flatter 'Interested?', never a bare link bolted " +
+    "onto a question as an afterthought. " +
+    "CLARITY — write at an 8th-grade reading level. Every sentence should be understandable in under two " +
+    "seconds. Cut any word that doesn't change the meaning; cold email rewards brutal simplicity over " +
+    "elegant phrasing. " +
+    "PERSONALIZATION — exactly ONE sentence (the HOOK) is personalized to this lead; beats (2)-(4) should " +
+    "be the SAME wording across a whole batch, not just 'near-identical' — that sameness is intentional " +
+    "now, not a bulk-generated tell, because the personalization signal lives entirely in the HOOK. Still " +
+    "vary the " +
+    "HOOK's opening structure/verb between leads in the same batch (don't reuse 'While you're busy running " +
+    "X' verbatim for every lead) — but never pad it into a generic category truism ('Restaurant teams are " +
+    "usually too busy running the floor...' could paste into any restaurant's email unchanged — confirmed " +
+    "live 2026-07-29 — that is not personalization even with the business's real name elsewhere in the " +
+    "email). Name the business, state the universal truth, move on. " +
+    "OTHER RULES (grilled/confirmed live across 2026-07-23 and 2026-07-29 — real batches violated all of " +
+    "these): " +
+    "No em dashes, and no manual '--' standing in for one — comma or period only, per the voice profile " +
+    "(confirmed live: a draft used '--' to bolt a self-intro onto an opening observation). " +
+    "Sign-off is 'Lamar' alone on a first-touch cold email — never a second line with the company name; " +
+    "the founder/company identification already happened in beat (2), don't repeat it in the signature " +
+    "(confirmed live: a draft signed 'Lamar / TropiTech Solutions'). " +
+    "Never invent scarcity — no fabricated beta-spot counts, deadlines, or limited-slot claims that aren't " +
+    "real; the self-serve demo (meetcaye.com, 'Try for Free') is always available, describe it as such. " +
+    "LENGTH — word count, not sentence count: target 50-70 words total, hard cap 90. Counting sentences " +
+    "instead of words previously pushed drafts toward comma-spliced run-ons just to hit a sentence quota — " +
+    "don't do that; split into a normal short sentence instead if a beat needs two clauses. " +
     "Pass the " +
     "subject as `subject` and the body as `draft`. This tool ONLY creates the lead + a held thread with " +
     "your draft sitting in the dashboard's Review tab for the operator to read, edit, and send " +

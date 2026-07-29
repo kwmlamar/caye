@@ -23,14 +23,19 @@ Sell the **outcome** (you stop missing bookings; you get your evenings/Fridays/S
 
 ---
 
-## 1. Cold email opener (2026-07-29 — direct-pitch structure, live A/B test)
-State what Caye is and the ask plainly in the first email — don't make them guess where you're going. Superseded the pain-point-question opener below (kept for the WhatsApp/DM channel and as a fallback if this loses the A/B test). Structure: (a) self-intro first, always, (b) one sentence naming their specific situation, (c) one sentence stating what Caye is and does by name, (d) the proof point — one tour operator in the Bahamas already using her, (e) one direct ask, never a rhetorical question in its place. 3-4 sentences max, no founder-story preamble.
+## 1. Cold email opener (2026-07-29 — problem-first, job-description positioning; fourth and current revision of the live A/B test)
+Personalize exactly ONE sentence (the hook — name the business, state a confident un-hedged truth about their situation, never "probably"). Everything after it is the SAME wording across a whole batch, on purpose: self-id ("I'm Lamar, founder of TropiTech, a Bahamian tech company. I built Caye."), then what Caye's JOB is — never a bare label ("assistant"/"AI employee"/"chatbot"/"receptionist" are categories, not jobs, and never say "AI"/"automation"/"LLM" at all) — kept short and visual, working in that she lives inside WhatsApp itself, then proof ("working alongside another Bahamian business" unless the lead is actually a tour operator), then a short conversational CTA ("Want to see it in action?", not the flatter "Interested?"). Write at an 8th-grade reading level — cut any word that doesn't change the meaning. Target 50-70 words, hard cap 90 — word count, not sentence count. Supersedes the earlier "direct-pitch" and "pain-point-question" openers below (both kept for reference / the WhatsApp-DM channel).
 
-> Hey [name], I'm Lamar with TropiTech, a Bahamian tech company. I built something called Caye — she answers your WhatsApp messages and books customers for you, even when you're busy. One tour operator in the Bahamas is already using her. Want to try it free?
+> While you're busy running [Business], WhatsApp messages keep coming in. I'm Lamar, founder of TropiTech, a Bahamian tech company. I built Caye. She lives in WhatsApp, making sure every customer gets a reply before they give up and move on. She's already working alongside another Bahamian business every day. Want to see it in action?
 
 *This is the tool `create_outreach_leads` (lib/caye-agent/tools/write-low/create-outreach-leads.ts) actually follows as of 2026-07-29 — keep that file and this section in sync if either changes.*
 
-## 1a. Pain-point opener (pre-2026-07-29 default — parked pending the A/B result; still the live approach for WhatsApp / IG DM, keep it short, voice-note friendly)
+## 1a. Direct-pitch opener (2026-07-29, first revision — superseded by section 1 above same day)
+Self-intro first, always, then situation/what Caye does/proof/ask, one sentence each, 3-4 sentences max. Superseded because it still spent too much of the email proving research instead of naming the reader's problem.
+
+> Hey [name], I'm Lamar with TropiTech, a Bahamian tech company. I built something called Caye — she answers your WhatsApp messages and books customers for you, even when you're busy. One tour operator in the Bahamas is already using her. Want to try it free?
+
+## 1b. Pain-point opener (pre-2026-07-29 default — parked pending the A/B result; still the live approach for WhatsApp / IG DM, keep it short, voice-note friendly)
 > Hey [name] — I run TropiTech, a Bahamian tech company. I saw [specific: your tours / your reservations are "DM to book"]. Quick question: who handles all your messages when you're [on the boat / in the kitchen / with a client]?
 
 *Goal: start a conversation, surface the bottleneck. Don't pitch yet. Let them tell you the pain.*
