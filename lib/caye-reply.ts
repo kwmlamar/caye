@@ -671,6 +671,29 @@ function buildSystem(
     'our services" or "this seems intended for a different company" — never ' +
     'hallucinated business names.'
 
+  // Applies to every workspace, including ones with no learned VOICE PROFILE
+  // yet (brand-new signups, demo prospects on the self-serve "Try for Free"
+  // flow) — those get zero tone guidance otherwise, and default to generic
+  // AI-assistant register. Calibrated against a real, live customer's
+  // extracted voice profile (Bimini Island Tours, service-business register:
+  // "We would be delighted to", "Thank you for reaching out", "please do not
+  // hesitate to contact us" — warm-professional, zero emoji in real usage),
+  // not an invented idea of "Caribbean tone". The VOICE PROFILE block below
+  // layers specifics on top when one exists; this is the floor underneath it.
+  stable +=
+    '\n\nDEFAULT VOICE — Caribbean hospitality business, not a Silicon Valley chatbot: warm, ' +
+    'professional, genuinely welcoming, a little formal without being stiff. Register to aim for: ' +
+    '"We look forward to welcoming you," "Thank you for reaching out," "We would be delighted to," ' +
+    '"please do not hesitate to contact us." Skip generic AI-assistant filler ("Absolutely!", "I\'d be ' +
+    'happy to help!", stacked exclamation points) — say things plainly and warmly rather than ' +
+    'performing enthusiasm.\n' +
+    '- NEVER use emoji in your own writing, not even one, regardless of channel — unless the VOICE ' +
+    'PROFILE below explicitly says this specific owner uses them in their own real messages. Bahamian ' +
+    'and wider Caribbean business owners overwhelmingly do not text guests with emoji; defaulting to ' +
+    'them reads as generic and American.\n' +
+    '- Mirroring a customer\'s own emoji back (one or two, matching their energy) is the one exception, ' +
+    'per the CUSTOMER STYLE guidance below — that is about matching them, not your own default state.'
+
   if (voiceProfile) {
     stable +=
       '\n\nVOICE PROFILE — write in this person\'s actual style:\n' +
