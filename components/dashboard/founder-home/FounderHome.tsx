@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, type ReactNode, type CSSProperties } from 'react'
+import { useState, useEffect, useTransition, type ReactNode, type CSSProperties } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { CayeMark } from '@/components/brand/CayeMark'
 import { getSession } from '@/lib/supabase'
@@ -111,6 +111,27 @@ function StatCard({ label, value, valueColor = '#f4f4f5', action }: { label: str
         </div>
         {action}
       </div>
+    </div>
+  )
+}
+
+// Holds a panel's shape during a cold load. Previously these panels
+// rendered nothing at all until data arrived, so the console collapsed to
+// empty boxes and then reflowed — the single most jarring part of a
+// workspace switch. Only reachable on a genuine first visit now that
+// useCommandOverview seeds from its module cache; a return trip already
+// has data on the first frame.
+function PanelSkeleton() {
+  return (
+    <div aria-hidden style={{ position: 'absolute', inset: 0, padding: 18, display: 'flex', flexDirection: 'column', gap: 11 }}>
+      {[68, 45, 57, 39, 62, 48].map((w, i) => (
+        <div key={i} style={{
+          height: 13, width: `${w}%`, borderRadius: 6,
+          background: 'rgba(255,255,255,0.06)',
+          animation: 'caye-skeleton-pulse 1.5s ease-in-out infinite',
+          animationDelay: `${i * 0.09}s`,
+        }} />
+      ))}
     </div>
   )
 }
@@ -290,31 +311,61 @@ export default function FounderHome() {
       return next
     })
   }
-  const { data, refetch } = useCommandOverview(workspaceId, weekOffset)
+  const { data, revalidating, refetch } = useCommandOverview(workspaceId, weekOffset)
+  const [isPending, startTransition] = useTransition()
+  // The workspace we're navigating TO. Held so the sidebar highlight moves
+  // on click instead of waiting for the route to commit — the click used to
+  // register as nothing at all for a beat, which is most of what made
+  // switching feel broken rather than merely slow.
+  const [pendingWorkspaceId, setPendingWorkspaceId] = useState<string | null>(null)
   const { hasActivity } = useWorkspacesActivity(workspaces.map((m) => m.workspace_id), workspaceId)
   const [expanded, setExpanded] = useState<'calendar' | 'conversations' | 'cayeDirect' | 'settings' | null>(null)
   // Set by CommandCalendar on a booking click — jumps CommandConversations
   // to that customer's thread. Lives here since the two panels are
   // siblings with no coordination of their own.
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null)
-  // Read from the URL (?rail=), not local state — switching workspaces
-  // navigates to a new /dashboard/[workspaceId] route, which remounts this
+  // The URL (?rail=) owns rail state ACROSS remounts — switching workspaces
+  // navigates to a new /dashboard/[workspaceId] route and remounts this
   // component (confirmed: even lifting this to a persistent layout-level
   // context still reset, so the whole [workspaceId] layout subtree remounts
-  // on param change here). The URL survives any remount since it's re-read
-  // fresh on every render.
+  // on param change). Local state owns it WITHIN a render pass, seeded from
+  // the URL on mount so the remount behaviour is unchanged.
+  //
+  // The split exists because routing the click through router.replace and
+  // waiting to read the param back meant every rail click paid a navigation
+  // round trip before anything moved. Now the view swaps on the same tick
+  // and the URL catches up behind it.
   const rawRail = searchParams.get('rail')
-  const railView: FounderRailId = (rawRail && RAIL_IDS.includes(rawRail as FounderRailId))
+  const urlRail: FounderRailId = (rawRail && RAIL_IDS.includes(rawRail as FounderRailId))
     ? (rawRail as FounderRailId)
     : 'dashboard'
+  const [railView, setRailViewState] = useState<FounderRailId>(urlRail)
+  // Keeps browser back/forward working: an externally-driven URL change
+  // pulls the view along with it. Setting the same value is a no-op render.
+  //
+  // Skipped mid-transition, otherwise clicking two rail items in quick
+  // succession snaps back — the first click's URL lands while the second is
+  // still in flight and would overwrite it. Once the last transition
+  // settles this runs against the final URL, so it always converges.
+  useEffect(() => {
+    if (!isPending) setRailViewState(urlRail)
+  }, [urlRail, isPending])
+
   const setRailView = (id: FounderRailId) => {
+    setRailViewState(id)
     const params = new URLSearchParams(searchParams.toString())
     if (id === 'dashboard') params.delete('rail')
     else params.set('rail', id)
     const qs = params.toString()
-    router.replace(`/dashboard/${workspaceId}${qs ? `?${qs}` : ''}`, { scroll: false })
+    startTransition(() => {
+      router.replace(`/dashboard/${workspaceId}${qs ? `?${qs}` : ''}`, { scroll: false })
+    })
   }
   const activeRailItem = RAIL_ITEMS.find((r) => r.id === railView)!
+
+  // Optimistic: highlight the workspace being navigated to, falling back to
+  // the real one the moment the route commits.
+  const highlightedWorkspaceId = (isPending && pendingWorkspaceId) || workspaceId
 
   return (
     <div className="caye-founder" style={{ display: 'flex', height: '100%', background: APP_BG, color: '#f4f4f5', overflow: 'hidden', fontFamily: 'var(--font-sans)' }}>
@@ -324,6 +375,30 @@ export default function FounderHome() {
           one root, so one rule covers all of them instead of restyling
           each panel's overflow container individually. */}
       <style>{`
+        /* Rail/workspace view swap. Short and translation-light on purpose:
+           this fires on every navigation, and anything slower than ~200ms
+           or moving more than a few px starts to feel like waiting. */
+        @keyframes caye-view-in {
+          from { opacity: 0; transform: translateY(4px); }
+          to   { opacity: 1; transform: none; }
+        }
+        @keyframes caye-skeleton-pulse {
+          0%, 100% { opacity: 0.45; }
+          50% { opacity: 0.75; }
+        }
+        @keyframes caye-progress-slide {
+          0%   { transform: translateX(-100%); }
+          100% { transform: translateX(360%); }
+        }
+        /* Navigation in flight. Holds the OLD view on screen, slightly
+           receded, instead of blanking it — the switch reads as a
+           transition rather than a teardown. */
+        .caye-nav-pending { opacity: 0.62; transition: opacity 0.16s ease; }
+        .caye-nav-idle { opacity: 1; transition: opacity 0.16s ease; }
+        @media (prefers-reduced-motion: reduce) {
+          .caye-view-swap { animation: none !important; }
+          .caye-nav-pending, .caye-nav-idle { transition: none; }
+        }
         .caye-founder * { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.15) transparent; }
         .caye-founder *::-webkit-scrollbar { width: 6px; height: 6px; }
         .caye-founder *::-webkit-scrollbar-track { background: transparent; }
@@ -379,10 +454,16 @@ export default function FounderHome() {
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: sidebarCollapsed ? 8 : 4 }}>
           {workspaces.map((m) => {
-            const active = m.workspace_id === workspaceId
-            const goTo = () => router.push(
-              `/dashboard/${m.workspace_id}${railView !== 'dashboard' ? `?rail=${railView}` : ''}`
-            )
+            const active = m.workspace_id === highlightedWorkspaceId
+            const goTo = () => {
+              if (m.workspace_id === workspaceId) return
+              setPendingWorkspaceId(m.workspace_id)
+              startTransition(() => {
+                router.push(
+                  `/dashboard/${m.workspace_id}${railView !== 'dashboard' ? `?rail=${railView}` : ''}`
+                )
+              })
+            }
             if (sidebarCollapsed) {
               return (
                 <button
@@ -465,9 +546,23 @@ export default function FounderHome() {
         {/* Top status bar — translucent so the atmosphere gradient behind
             it (the radial-gradient div above) shows through faintly. */}
         <div style={{
+          position: 'relative',
           padding: '16px 24px', borderBottom: `1px solid ${CARD_BORDER}`, display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0,
           background: 'rgba(17,17,19,0.55)', ...GLASS,
         }}>
+          {/* Work-in-progress line, sitting on the bottom border. Replaces
+              the old signal for "something is loading", which was the
+              content disappearing. */}
+          {(isPending || revalidating) && (
+            <div aria-hidden style={{
+              position: 'absolute', left: 0, right: 0, bottom: -1, height: 2, overflow: 'hidden',
+            }}>
+              <div style={{
+                width: '38%', height: '100%', borderRadius: 2, background: GRADIENT,
+                animation: 'caye-progress-slide 0.9s ease-in-out infinite',
+              }} />
+            </div>
+          )}
           {railView === 'performance' ? (
             <h1 style={{ fontSize: 16, fontWeight: 600, fontFamily: 'var(--font-display)', margin: 0 }}>Global Performance — All Workspaces</h1>
           ) : railView === 'cost' ? (
@@ -482,6 +577,17 @@ export default function FounderHome() {
           )}
         </div>
 
+        {/* Keyed on railView so each destination animates in on arrival.
+            Every rail page roots at flex:1, so this wrapper reproduces the
+            flex column they were direct children of. */}
+        <div
+          key={railView}
+          className={`caye-view-swap ${isPending ? 'caye-nav-pending' : 'caye-nav-idle'}`}
+          style={{
+            flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column',
+            animation: 'caye-view-in 0.2s ease-out',
+          }}
+        >
         {railView === 'performance' ? (
           <GlobalPerformance />
         ) : railView === 'contacts' ? (
@@ -536,7 +642,7 @@ export default function FounderHome() {
                 borderRadius: 16, overflow: 'hidden', background: CARD_BG,
               }}>
                 <ExpandButton expanded={expanded === 'conversations'} onClick={() => setExpanded(expanded === 'conversations' ? null : 'conversations')} />
-                {data && (
+                {data ? (
                   <CommandConversations
                     workspaceId={workspaceId}
                     conversations={data.conversations}
@@ -544,7 +650,7 @@ export default function FounderHome() {
                     onSent={refetch}
                     compact={expanded !== 'conversations'}
                   />
-                )}
+                ) : <PanelSkeleton />}
               </div>
               <div style={{
                 display: expanded === 'conversations' ? 'none' : 'block',
@@ -552,7 +658,7 @@ export default function FounderHome() {
                 borderRadius: 16, overflow: 'hidden', background: CARD_BG,
               }}>
                 <ExpandButton expanded={expanded === 'calendar'} onClick={() => setExpanded(expanded === 'calendar' ? null : 'calendar')} />
-                {data && (
+                {data ? (
                   <CommandCalendar
                     bookings={data.bookings}
                     weekStart={data.week_start}
@@ -560,7 +666,7 @@ export default function FounderHome() {
                     onWeekOffsetChange={setWeekOffset}
                     onSelectConversation={setSelectedConversationId}
                   />
-                )}
+                ) : <PanelSkeleton />}
               </div>
             </div>
 
@@ -603,6 +709,7 @@ export default function FounderHome() {
             <div aria-hidden style={{ display: expanded ? 'none' : 'block', flexShrink: 0, height: 3, borderRadius: 3, background: GRADIENT, opacity: 0.4 }} />
           </div>
         )}
+        </div>
       </div>
     </div>
   )
