@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { getSession } from '@/lib/supabase'
 import { formatDistanceToNow } from '@/lib/utils'
 import { CayeMark } from '@/components/brand/CayeMark'
@@ -65,6 +65,33 @@ interface SlashCommand { name: string; description: string }
 const SLASH_COMMANDS: SlashCommand[] = [
   { name: 'clear', description: "Wipe this conversation — Caye won't remember it after" },
 ]
+
+// Turns that are still running, keyed by workspace+operator. Deliberately
+// module scope rather than state, a ref, or context.
+//
+// Clicking another workspace navigates to a new /dashboard/[workspaceId]
+// route, which remounts this whole subtree — and per the note in
+// FounderHome.tsx, even hoisting to a layout-level context still reset on
+// param change, so there is no in-tree place to keep this. Losing it on
+// remount had two effects: the typing indicator vanished, and (the real
+// bug) the in-flight fetch was orphaned, so when Caye's reply finally
+// landed nothing was listening and the thread never updated — it looked
+// like she'd stopped mid-thought.
+//
+// The turn itself was always fine. Nothing aborts it (no AbortController
+// in this path), so the request runs to completion and the POST handler
+// persists the reply either way; it just had no live listener.
+//
+// A module-scope Map lives in the JS module registry, not the component
+// tree, so remounts can't touch it and a returning thread can find its own
+// still-running turn. It clears on hard reload, which is the right
+// behaviour: by then the reply is in the DB and the history fetch on mount
+// picks it up.
+const inFlightRuns = new Map<string, Promise<void>>()
+
+function runKey(workspaceId: string, operatorId: number): string {
+  return `${workspaceId}:${operatorId}`
+}
 
 function dayLabel(iso: string): string {
   const d = new Date(iso)
@@ -226,7 +253,10 @@ export default function CayeDirectThread({ workspaceId, operatorId, operatorLabe
   const [messages, setMessages] = useState<OperatorMessage[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(true)
-  const [sending, setSending] = useState(false)
+  // Seeded from the registry rather than plain `false` so a thread that
+  // remounts onto a running turn shows the typing indicator (and keeps the
+  // composer disabled) from its very first render, with no flicker.
+  const [sending, setSending] = useState(() => inFlightRuns.has(runKey(workspaceId, operatorId)))
   const [showJump, setShowJump] = useState(false)
   const [clearing, setClearing] = useState(false)
   const [commandIndex, setCommandIndex] = useState(0)
@@ -249,22 +279,49 @@ export default function CayeDirectThread({ workspaceId, operatorId, operatorLabe
     textareaRef.current?.focus()
   }
 
+  // Returns the thread rather than setting it, so callers keep control of
+  // their own cancellation and loading state — the initial load wants the
+  // skeleton, the re-attach below explicitly does not.
+  const fetchMessages = useCallback(async (): Promise<OperatorMessage[] | null> => {
+    const { session } = await getSession()
+    if (!session) return null
+    const res = await fetch(`/api/founder/caye-direct?workspaceId=${workspaceId}&operatorId=${operatorId}`, {
+      headers: { Authorization: `Bearer ${session.access_token}` },
+    })
+    const json = await res.json()
+    return res.ok ? (json.messages as OperatorMessage[]) : null
+  }, [workspaceId, operatorId])
+
   useEffect(() => {
     let cancelled = false
     async function load() {
       setLoading(true)
-      const { session } = await getSession()
-      if (!session) { setLoading(false); return }
-      const res = await fetch(`/api/founder/caye-direct?workspaceId=${workspaceId}&operatorId=${operatorId}`, {
-        headers: { Authorization: `Bearer ${session.access_token}` },
-      })
-      const json = await res.json()
-      if (!cancelled && res.ok) setMessages(json.messages)
-      if (!cancelled) setLoading(false)
+      const msgs = await fetchMessages()
+      if (cancelled) return
+      if (msgs) setMessages(msgs)
+      setLoading(false)
     }
     load()
     return () => { cancelled = true }
-  }, [workspaceId, operatorId])
+  }, [fetchMessages])
+
+  // Re-attach to a turn left running by an earlier mount (see inFlightRuns).
+  // Refetches the thread on settle instead of appending the resolved reply:
+  // the turn can finish while the initial history load is still in flight,
+  // in which case that load already returned the reply and appending would
+  // show it twice. Refetching is idempotent either way.
+  useEffect(() => {
+    const run = inFlightRuns.get(runKey(workspaceId, operatorId))
+    if (!run) return
+    let cancelled = false
+    run.then(async () => {
+      const msgs = await fetchMessages()
+      if (cancelled) return
+      if (msgs) setMessages(msgs)
+      setSending(false)
+    })
+    return () => { cancelled = true }
+  }, [workspaceId, operatorId, fetchMessages])
 
   // Jump to the bottom instantly once history has finished loading —
   // no scroll animation on first paint.
@@ -343,25 +400,43 @@ export default function CayeDirectThread({ workspaceId, operatorId, operatorLabe
     }
     setMessages((prev) => [...prev, optimistic])
 
-    const { session } = await getSession()
-    if (!session) { setSending(false); return }
+    // The whole round trip lives in a registered promise, not in this
+    // component, so switching workspaces mid-turn doesn't orphan it — a
+    // remounted thread picks it back up from inFlightRuns. Errors are
+    // swallowed rather than thrown: this promise is awaited by any number
+    // of remounts, and the operator's message is already persisted
+    // server-side, so a refetch recovers the thread regardless.
+    const key = runKey(workspaceId, operatorId)
+    const run = (async () => {
+      try {
+        const { session } = await getSession()
+        if (!session) return
+        const res = await fetch('/api/founder/caye-direct', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+          body: JSON.stringify({ workspaceId, message: trimmed }),
+        })
+        const json = await res.json()
+        if (res.ok && json.replyText) {
+          setMessages((prev) => [...prev, {
+            id: `reply-${Date.now()}`,
+            direction: 'outbound',
+            body: json.replyText,
+            created_at: new Date().toISOString(),
+          }])
+        }
+      } catch {
+        // Nothing to surface here — see above.
+      }
+    })()
+    inFlightRuns.set(key, run)
 
     try {
-      const res = await fetch('/api/founder/caye-direct', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
-        body: JSON.stringify({ workspaceId, message: trimmed }),
-      })
-      const json = await res.json()
-      if (res.ok && json.replyText) {
-        setMessages((prev) => [...prev, {
-          id: `reply-${Date.now()}`,
-          direction: 'outbound',
-          body: json.replyText,
-          created_at: new Date().toISOString(),
-        }])
-      }
+      await run
     } finally {
+      // Runs even if this component unmounted mid-turn: the async function
+      // isn't tied to the React tree, so the entry is always cleaned up.
+      inFlightRuns.delete(key)
       setSending(false)
     }
   }
