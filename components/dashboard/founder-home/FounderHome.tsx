@@ -658,7 +658,6 @@ export default function FounderHome() {
                 {data ? (
                   <CommandConversations
                     workspaceId={workspaceId}
-                    conversations={data.conversations}
                     selectedConversationId={selectedConversationId}
                     onSent={refetch}
                     compact={expanded !== 'conversations'}

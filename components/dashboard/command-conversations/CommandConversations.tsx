@@ -7,7 +7,7 @@ import { CayeMark } from '@/components/brand/CayeMark'
 import { FormattedReplyText } from '@/components/ui/FormattedReplyText'
 import { CayeLoadingPulse } from '@/components/dashboard/founder-home/CayeLoadingPulse'
 import { Pill } from '@/components/dashboard/founder-home/console-ui'
-import type { ConversationSummary } from '@/lib/useCommandOverview'
+import { useFounderConversations, fetchConversationById, type ConversationSummary } from '@/lib/useFounderConversations'
 
 const GLASS = { backdropFilter: 'blur(20px) saturate(140%)', WebkitBackdropFilter: 'blur(20px) saturate(140%)' } as const
 
@@ -107,14 +107,13 @@ function ConversationRow({ c, active, onClick }: { c: ConversationSummary; activ
 
 interface Props {
   workspaceId: string
-  conversations: ConversationSummary[]
   /** Set by a sibling panel (CommandCalendar's booking click-through) to
    *  jump this panel to a specific conversation without owning its
    *  internal selection/search/tab state. */
   selectedConversationId?: string | null
-  /** Called after a manual send succeeds so the parent's conversations
-   *  list (human_agent_enabled, last_message_preview) can refetch — this
-   *  panel doesn't own that data, useCommandOverview upstream does. */
+  /** Called after a manual send succeeds so the parent's overview stats
+   *  (pending escalation count, etc.) can refetch — this panel patches
+   *  its own conversation list locally via useFounderConversations. */
   onSent?: () => void
   /** True in the small grid-card layout (unexpanded dashboard tile) —
    *  hides the compose box there since a two-line textarea + send button
@@ -124,10 +123,18 @@ interface Props {
   compact?: boolean
 }
 
-export default function CommandConversations({ workspaceId, conversations, selectedConversationId, onSent, compact = false }: Props) {
+// Search re-queries the server (it covers every conversation, not just
+// whatever page is loaded), so it's debounced rather than firing on
+// every keystroke.
+const SEARCH_DEBOUNCE_MS = 300
+// Pixels from the bottom of the list column at which the next page loads.
+const LOAD_MORE_THRESHOLD_PX = 120
+
+export default function CommandConversations({ workspaceId, selectedConversationId, onSent, compact = false }: Props) {
   const [tab, setTab] = useState<'all' | 'review'>('all')
   const [query, setQuery] = useState('')
-  const [activeId, setActiveId] = useState<string | null>(conversations[0]?.id ?? null)
+  const [debouncedQuery, setDebouncedQuery] = useState('')
+  const [activeId, setActiveId] = useState<string | null>(null)
   const [thread, setThread] = useState<{ customer_name: string | null; messages: ThreadMessage[] } | null>(null)
   const [threadLoading, setThreadLoading] = useState(false)
   const [searchFocused, setSearchFocused] = useState(false)
@@ -142,20 +149,41 @@ export default function CommandConversations({ workspaceId, conversations, selec
   // drafted, since replyText was a single flat value reset on every switch.
   const draftsRef = useRef<Map<string, string>>(new Map())
   const prevActiveIdRef = useRef<string | null>(null)
+  // Only auto-select the first row once — otherwise every background
+  // refetch (tab switch, search, loadMore) would yank the founder back to
+  // the top row mid-read.
+  const hasSetInitialActiveRef = useRef(false)
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQuery(query), SEARCH_DEBOUNCE_MS)
+    return () => clearTimeout(t)
+  }, [query])
+
+  const { items: list, nextCursor, reviewCount, loading: listLoading, loadingMore, loadMore, upsert, remove } =
+    useFounderConversations(workspaceId, tab, debouncedQuery)
 
   // A booking click in CommandCalendar routes here — jump straight to that
   // customer's thread, clearing any tab/search filter that would hide it.
+  // The target conversation can be arbitrarily old, so it isn't assumed to
+  // already be in the loaded page — fetch it directly and merge it in.
   useEffect(() => {
     if (!selectedConversationId) return
+    let cancelled = false
     setActiveId(selectedConversationId)
     setTab('all')
     setQuery('')
-  }, [selectedConversationId])
+    fetchConversationById(workspaceId, selectedConversationId).then((conv) => {
+      if (!cancelled && conv) upsert(conv)
+    })
+    return () => { cancelled = true }
+  }, [selectedConversationId, workspaceId, upsert])
 
-  const reviewCount = conversations.filter((c) => c.human_agent_enabled).length
-  const list = conversations
-    .filter((c) => (tab === 'review' ? c.human_agent_enabled : true))
-    .filter((c) => (c.customer_name ?? '').toLowerCase().includes(query.toLowerCase()))
+  // Default to the first conversation once the initial page loads.
+  useEffect(() => {
+    if (hasSetInitialActiveRef.current || selectedConversationId || list.length === 0) return
+    hasSetInitialActiveRef.current = true
+    setActiveId(list[0].id)
+  }, [list, selectedConversationId])
 
   useEffect(() => {
     if (!activeId) { setThread(null); return }
@@ -180,7 +208,7 @@ export default function CommandConversations({ workspaceId, conversations, selec
     return () => { cancelled = true }
   }, [activeId, workspaceId])
 
-  const activeSummary = conversations.find((c) => c.id === activeId)
+  const activeSummary = list.find((c) => c.id === activeId)
 
   // Auto-fill is scoped narrowly to AUTO_FILL_HOLD_KINDS — the repeatable,
   // policy-constrained cold-outreach cases (outreach-script.md's opener
@@ -208,7 +236,7 @@ export default function CommandConversations({ workspaceId, conversations, selec
     } else if (draftsRef.current.has(activeId)) {
       setReplyText(draftsRef.current.get(activeId) ?? '')
     } else {
-      const entering = conversations.find((c) => c.id === activeId)
+      const entering = list.find((c) => c.id === activeId)
       const autoFill =
         entering?.human_agent_enabled && AUTO_FILL_HOLD_KINDS.has(entering.metadata?.hold_kind ?? '')
           ? entering.metadata?.proposed_reply ?? ''
@@ -292,6 +320,20 @@ export default function CommandConversations({ workspaceId, conversations, selec
       setReplyText('')
       if (activeId) draftsRef.current.delete(activeId)
       onSent?.()
+      // /api/messages/send clears human_agent_enabled and updates the
+      // preview server-side — patch the row in place rather than a full
+      // list refetch so scroll position and the loaded page survive. If
+      // that clears it out of the Review tab's filter, drop it locally
+      // too instead of leaving it visible until the next refetch.
+      const sentId = activeId
+      fetchConversationById(workspaceId, sentId).then((conv) => {
+        if (!conv) return
+        if (tab === 'review' && !conv.human_agent_enabled) {
+          remove(sentId)
+        } else {
+          upsert(conv)
+        }
+      })
     } catch {
       setSendError('Failed to send')
     } finally {
@@ -337,13 +379,27 @@ export default function CommandConversations({ workspaceId, conversations, selec
             }}
           />
         </div>
-        <div style={{ flex: 1, overflowY: 'auto', padding: '0 8px 8px' }}>
-          {list.length === 0 ? (
+        <div
+          style={{ flex: 1, overflowY: 'auto', padding: '0 8px 8px' }}
+          onScroll={(e) => {
+            const el = e.currentTarget
+            if (!nextCursor || loadingMore) return
+            if (el.scrollHeight - el.scrollTop - el.clientHeight < LOAD_MORE_THRESHOLD_PX) loadMore()
+          }}
+        >
+          {listLoading && list.length === 0 ? (
+            <div style={{ padding: '8px 10px' }}><CayeLoadingPulse size={14} /></div>
+          ) : list.length === 0 ? (
             <div style={{ fontSize: 12.5, color: 'rgba(245,245,244,0.35)', padding: '8px 10px' }}>No conversations.</div>
           ) : (
-            list.map((c) => (
-              <ConversationRow key={c.id} c={c} active={activeId === c.id} onClick={() => setActiveId(c.id)} />
-            ))
+            <>
+              {list.map((c) => (
+                <ConversationRow key={c.id} c={c} active={activeId === c.id} onClick={() => setActiveId(c.id)} />
+              ))}
+              {loadingMore && (
+                <div style={{ padding: '8px 10px' }}><CayeLoadingPulse size={12} /></div>
+              )}
+            </>
           )}
         </div>
       </div>

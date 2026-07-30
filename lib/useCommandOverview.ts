@@ -27,20 +27,6 @@ export interface Booking {
   has_open_escalation: boolean
 }
 
-export interface ConversationSummary {
-  id: string
-  channel_type: string
-  customer_name: string | null
-  last_message_preview: string | null
-  last_message_at: string
-  human_agent_enabled: boolean
-  human_agent_reason: string | null
-  /** hold_kind==='outreach_followup' + proposed_reply is what lets the
-   *  compose box auto-fill — scoped to this one narrow, policy-constrained
-   *  follow-up case, not held items generally (see CommandConversations). */
-  metadata?: { hold_kind?: string; proposed_reply?: string } | null
-}
-
 export interface CommandOverview {
   escalations: Escalation[]
   pending_escalation_count: number
@@ -50,7 +36,6 @@ export interface CommandOverview {
   bookings: Booking[]
   week_start: string
   week_offset: number
-  conversations: ConversationSummary[]
   caye_active: boolean
   caye_muted_until: string | null
 }

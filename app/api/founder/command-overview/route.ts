@@ -2,11 +2,14 @@
  * GET /api/founder/command-overview?workspaceId=<uuid>
  *
  * Founder-only per-workspace overview: escalations, a 7-day LLM cost
- * trend, this week's real bookings, and recent front-desk conversations
- * (unified_conversations/unified_messages, joined through
- * connected_accounts). Backs FounderHome's stat strip, CommandCalendar,
- * and CommandConversations (2026-07-02 data-wiring pass — those two
- * were frontend-first with mock data until now).
+ * trend, and this week's real bookings. Backs FounderHome's stat strip
+ * and CommandCalendar.
+ *
+ * Conversations used to be fetched here too, capped at a flat N most
+ * recent — that silently hid older held conversations and made the
+ * founder-facing search/Review tab operate on a partial window. They
+ * now live behind their own paginated, searchable route:
+ * GET /api/founder/conversations (2026-07-30).
  *
  * All of this goes through a single service-role route rather than
  * direct client queries: caye_escalations and llm_call_log have RLS
@@ -60,17 +63,10 @@ export async function GET(req: NextRequest) {
   const nextMonday = new Date(monday)
   nextMonday.setDate(monday.getDate() + 7)
 
-  const connectedAccountIds = await supabase
-    .from('connected_accounts')
-    .select('id')
-    .eq('user_id', workspaceId)
-    .then((r) => (r.data ?? []).map((a) => a.id))
-
   const [
     { data: escalations, error: escErr },
     { data: llmRows, error: llmErr },
     { data: bookingsRows, error: bookingsErr },
-    { data: conversationsRows, error: convErr },
     { data: aiConfig },
   ] = await Promise.all([
     supabase
@@ -93,14 +89,6 @@ export async function GET(req: NextRequest) {
       .lt('booking_date', nextMonday.toISOString().slice(0, 10))
       .neq('status', 'cancelled')
       .order('booking_date', { ascending: true }),
-    connectedAccountIds.length
-      ? supabase
-          .from('unified_conversations')
-          .select('id, channel_type, customer_name, last_message_preview, last_message_at, human_agent_enabled, human_agent_reason, metadata')
-          .in('connected_account_id', connectedAccountIds)
-          .order('last_message_at', { ascending: false })
-          .limit(30)
-      : Promise.resolve({ data: [], error: null }),
     supabase
       .from('workspace_ai_config')
       .select('whatsapp_muted_until')
@@ -111,7 +99,6 @@ export async function GET(req: NextRequest) {
   if (escErr) return NextResponse.json({ error: escErr.message }, { status: 500 })
   if (llmErr) return NextResponse.json({ error: llmErr.message }, { status: 500 })
   if (bookingsErr) return NextResponse.json({ error: bookingsErr.message }, { status: 500 })
-  if (convErr) return NextResponse.json({ error: convErr.message }, { status: 500 })
 
   // Bucket cost by day (UTC date) for a 7-point trend, oldest first.
   const dayBuckets = new Map<string, number>()
@@ -212,7 +199,6 @@ export async function GET(req: NextRequest) {
     bookings,
     week_start: monday.toISOString().slice(0, 10),
     week_offset: weekOffset,
-    conversations: conversationsRows ?? [],
     caye_active: cayeActive,
     caye_muted_until: isMuted ? mutedUntil : null,
   })
