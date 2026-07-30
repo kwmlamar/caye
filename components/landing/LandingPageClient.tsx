@@ -282,7 +282,7 @@ export default function LandingPageClient() {
               href={CAYE_SIGNUP_WA_HREF}
               target="_blank"
               rel="noopener noreferrer"
-              className="hidden sm:inline-flex items-center gap-1.5 bg-near-black text-cream font-medium px-5 py-2 rounded-full text-[13px] hover:bg-near-black/90 transition-all shadow-[0_4px_14px_-6px_rgba(14,26,26,0.35)] hover:-translate-y-px active:translate-y-0"
+              className="hidden sm:inline-flex items-center gap-1.5 bg-near-black text-cream font-logo font-semibold px-5 py-2 rounded-full text-[14px] hover:bg-near-black/90 transition-all shadow-[0_4px_14px_-6px_rgba(14,26,26,0.35)] hover:-translate-y-px active:translate-y-0"
             >
               Hire Caye
             </a>
@@ -327,7 +327,7 @@ export default function LandingPageClient() {
                 target="_blank"
                 rel="noopener noreferrer"
                 onClick={() => setMobileMenuOpen(false)}
-                className="block mt-1 px-4 py-3 rounded-2xl text-[15px] font-medium bg-near-black text-cream text-center"
+                className="block mt-1 px-4 py-3 rounded-2xl text-[16px] font-logo font-semibold bg-near-black text-cream text-center"
               >
                 Hire Caye
               </a>
@@ -343,27 +343,28 @@ export default function LandingPageClient() {
             {/* Headline — trial #4: Geist, at black weight, one short
                 line. Trials #2 (Bricolage) and #3 (Bodoni Moda) both hit
                 a legibility ceiling that isn't about weight or size —
-                it's stroke contrast and line count. A uniform-stroke
-                grotesque (no thin hairlines, unlike Bodoni Moda's
-                high-contrast serif strokes) reads as instantly bold, and
-                a single short line reads as calmer than three stacked
-                ones, no matter how good the font is. Geist is already
-                loaded as this app's default sans (product UI + nav) —
-                reusing it here instead of a new import.
+                it's stroke contrast and line count.
+
+                Trial #5: swapped Geist (font-sans) for Fraunces
+                (font-logo) per feedback that the text's edges read too
+                sharp/geometric at this weight. Fraunces has soft, round
+                bowls and ball terminals — same family already used for
+                the "caye" wordmark in the nav, so the headline (which
+                literally says "Caye") now renders in the same face as
+                the logo itself instead of a harder technical grotesque.
 
                 Copy: user's own pick, simplified — name-first ("Meet
                 Caye.") only, one tier, not stacked with a second
                 supporting line ("too many subheadings" per feedback).
-                Weight stepped down from black to extrabold ("a little
-                too bold" per feedback). The dropped supporting line
-                ("The teammate your business has been waiting for.")
-                moved to its own big-statement section further down the
-                page instead — same beat Viktor uses (hero, then a
-                second bold reinforcing statement later in the scroll),
-                just not stacked in the hero itself. */}
+                The dropped supporting line ("The teammate your business
+                has been waiting for.") moved to its own big-statement
+                section further down the page instead — same beat Viktor
+                uses (hero, then a second bold reinforcing statement
+                later in the scroll), just not stacked in the hero
+                itself. */}
             <motion.h1
               {...heroItem(0.18)}
-              className="font-sans text-[3rem] sm:text-6xl md:text-[5.5rem] lg:text-[6.5rem] font-extrabold tracking-[-0.03em] text-near-black leading-[1.05]"
+              className="font-logo text-[3rem] sm:text-6xl md:text-[5.5rem] lg:text-[6.5rem] font-extrabold tracking-[-0.03em] text-near-black leading-[1.05]"
             >
               Meet <span className="text-caribbean-teal-deep">Caye.</span>
             </motion.h1>
@@ -386,7 +387,7 @@ export default function LandingPageClient() {
                 href={CAYE_SIGNUP_WA_HREF}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="group relative inline-flex items-center gap-2.5 bg-near-black text-cream font-medium px-9 py-4 rounded-full text-[15px] hover:bg-near-black/90 transition-all shadow-[0_4px_20px_-6px_rgba(14,26,26,0.25)] hover:shadow-[0_8px_28px_-8px_rgba(14,26,26,0.35)] hover:-translate-y-[1px] active:translate-y-0"
+                className="group relative inline-flex items-center gap-2.5 bg-near-black text-cream font-logo font-semibold px-9 py-4 rounded-full text-[16px] hover:bg-near-black/90 transition-all shadow-[0_4px_20px_-6px_rgba(14,26,26,0.25)] hover:shadow-[0_8px_28px_-8px_rgba(14,26,26,0.35)] hover:-translate-y-[1px] active:translate-y-0"
               >
                 <span>Try Caye free</span>
                 <svg
@@ -485,7 +486,7 @@ export default function LandingPageClient() {
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true, margin: '-100px' }}
           transition={{ duration: 0.7, ease: heroEase }}
-          className="font-sans text-[2rem] sm:text-4xl md:text-[3.25rem] font-extrabold tracking-[-0.02em] leading-[1.15] text-near-black max-w-3xl mx-auto"
+          className="font-logo text-[2rem] sm:text-4xl md:text-[3.25rem] font-extrabold tracking-[-0.02em] leading-[1.15] text-near-black max-w-3xl mx-auto"
         >
           Caye is the teammate your business
           <br />
@@ -502,7 +503,7 @@ export default function LandingPageClient() {
             href={CAYE_SIGNUP_WA_HREF}
             target="_blank"
             rel="noopener noreferrer"
-            className="group inline-flex items-center gap-2.5 bg-near-black text-cream font-medium px-9 py-4 rounded-full text-[15px] hover:bg-near-black/90 transition-all shadow-[0_4px_20px_-6px_rgba(14,26,26,0.25)] hover:-translate-y-[1px] active:translate-y-0"
+            className="group inline-flex items-center gap-2.5 bg-near-black text-cream font-logo font-semibold px-9 py-4 rounded-full text-[16px] hover:bg-near-black/90 transition-all shadow-[0_4px_20px_-6px_rgba(14,26,26,0.25)] hover:-translate-y-[1px] active:translate-y-0"
           >
             <span>Try Caye free</span>
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none" className="transition-transform group-hover:translate-x-1">
