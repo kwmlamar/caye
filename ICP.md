@@ -17,7 +17,7 @@ The product is no longer "omnichannel inbox." It's a **front-desk AI receptionis
 - **ODS = the wrong wedge (for now).** Construction inbound is *status questions about live jobs* ("when's my house done?"), which Caye can't answer without a job-data layer. Project/state-based businesses are a **back-office expansion play with a long cycle — not the front-desk wedge.**
 
 ## Fits (target these)
-Businesses whose inbound is answerable from a **stable catalog** (services + prices + hours + availability):
+Businesses whose inbound is answerable from a **stable catalog** (services + prices + hours + availability). As of 2026-07-28 this is no longer a closed list of verticals — the actual filter is **any small business that runs on WhatsApp and can't keep up with messages**, stable-catalog and owner-operated as before. The list below is illustrative, proven-fit examples, not an exhaustive gate:
 - Tour / excursion operators
 - Restaurants & cafés (reservations, hours, menu, catering inquiries)
 - Salons, spas, barbershops, nail techs (appointments)
@@ -26,7 +26,7 @@ Businesses whose inbound is answerable from a **stable catalog** (services + pri
 - Rentals — car, scooter, jet ski, equipment
 
 ## Firmographics
-- **Geography:** Caribbean-rooted. **Bahamas first** (founder's warm network + pilot proof). Never US-mainland outreach (anti-goal).
+- **Geography (updated 2026-07-28 — see decisions-log):** global, including US-mainland. Superseded the prior "Bahamas first, never US-mainland" anti-goal — sourcing yield in the Caribbean-only pool couldn't sustain outreach volume, and the founder now needs US customers for personal reasons. Caribbean identity stays the *marketing/brand* story (still a Bahamian company); it's no longer the *targeting* constraint. **Self-intro is geography-conditional, not dropped:** Caribbean leads still get "I run TropiTech, a Bahamian tech company" (proven trust lever there — see Davia Smith and Michael Frank threads). Non-Caribbean leads get "I'm Lamar with TropiTech," no geography claim leading the pitch.
 - **Size:** owner-operated or husband-wife; 0–10 staff. No internal tech team.
 - **Channels:** inbound scattered across WhatsApp / IG / Messenger / email; the owner is the bottleneck.
 - **Offering:** stable enough that a price/service list rarely changes week to week.
@@ -50,11 +50,11 @@ The buyer is **whoever feels the pain of answering messages** — often NOT the 
 If #3 is "no, every job is custom/quoted" → it's a back-office/longer-cycle prospect, not the wedge. If #4 is "no / I don't know" → onboarding will stall unless you can run BSP Embedded Signup for them.
 
 ## Anti-ICP (do not chase)
-- **US-mainland** anything (anti-goal — accept inbound, don't outreach).
+- ~~US-mainland anything~~ — **reversed 2026-07-28, see decisions-log.** No longer an anti-goal.
 - **Project/status-based businesses** (construction, contractors, custom fabrication) as a *front-desk* sale — they need the back-office/ops layer first.
 - **Owners not personally drowning in comms** — no pain, no urgency, no $79.
 - **Price-shoppers** who want the cheapest tool, or anyone who wants to *own the code* (non-negotiable).
-- **Anyone you can't reach through trust** — Caribbean SMBs buy from a known local, not a cold pitch deck (decisions-log 2026-05-10). Cold works best warmed by a referral.
+- **Anyone you can't reach through trust** — this was written when the ICP was Caribbean-only, where trust runs through a known local (decisions-log 2026-05-10). For non-Caribbean leads there's no equivalent trust shortcut yet; expect colder response rates there until one exists, don't mistake that for a targeting or copy problem.
 
-## Why $79 fits this ICP
-One saved booking (a tour, a table for 8, a weekend villa night) is $100–500+. At $79/mo, Caye pays for itself on ~1 saved booking every 1–2 months. The math only lands for businesses where a *single missed message = real money* — which is exactly this ICP.
+## Pricing (updated 2026-07-28)
+**$79/mo flat holds through the first 10 paying customers** (1 as of this update), regardless of geography, no separate US price yet. One saved booking (a tour, a table for 8, a weekend villa night) is $100–500+, so at $79/mo Caye pays for itself on ~1 saved booking every 1–2 months — the math lands for any business where a *single missed message = real money*. After customer #10, re-price to a tiered structure (~$99 floor, ~$399 ceiling) informed by actual usage/support patterns across those 10 — not decided in advance. Watch whether US customers convert easily at $79 with no pushback; if so the re-price may be overdue for that segment specifically.

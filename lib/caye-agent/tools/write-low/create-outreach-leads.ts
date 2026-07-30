@@ -56,8 +56,13 @@ export const createOutreachLeads: Tool<CreateOutreachLeadsInput> = {
     "confident, un-hedged truth about their situation. Never guess or soften with 'probably', 'likely', " +
     "'I'd guess' — 'While you're busy running [Business], WhatsApp messages keep coming in' is right; " +
     "'Customers messaging [Business] probably wait a while' is wrong, it invites 'actually, maybe not'. " +
-    "(2) SELF-ID + WHAT CAYE DOES — 'I'm Lamar, founder of TropiTech, a Bahamian tech company. I built " +
-    "Caye.' Never say 'AI', 'automation', or 'LLM' anywhere in this email — describe the job, not the " +
+    "(2) SELF-ID + WHAT CAYE DOES — geography-conditional (2026-07-28, ICP widened to global + US, see " +
+    "decisions-log): for a CARIBBEAN lead, 'I'm Lamar, founder of TropiTech, a Bahamian tech company. I " +
+    "built Caye.' — the Bahamian mention is a real trust lever there (confirmed: Davia Smith and Michael " +
+    "Frank both engaged partly on shared-island credibility), keep it. For a NON-Caribbean lead (US, " +
+    "Mexico, anywhere else), drop the geography claim entirely: 'I'm Lamar, founder of TropiTech. I built " +
+    "Caye.' Selling on what the product does, not where it's from, same reason horizontal SaaS tools don't " +
+    "lead with their HQ city. Never say 'AI', 'automation', or 'LLM' anywhere in this email — describe the job, not the " +
     "category, and let them ask how it works once they've replied. Say what her job is, in JOB-DESCRIPTION " +
     "language, never a bare label: never 'an assistant', 'a chatbot', 'an AI employee/teammate', 'a " +
     "receptionist' — those are categories, not jobs. Keep it short and visual: 'She lives in WhatsApp, " +
@@ -66,11 +71,14 @@ export const createOutreachLeads: Tool<CreateOutreachLeadsInput> = {
     "before they ask, so it belongs in this sentence, not buried later. Never promise a specific business " +
     "outcome you can't verify (not 'turns every message into a sale' — 'gets a reply' describes the job, " +
     "not a guaranteed result). " +
-    "(3) PROOF — one real business in the Bahamas already using her (never overclaim more than the one " +
-    "real paying customer). Don't claim an industry match that isn't true: for a non-tour-operator lead, " +
-    "'one tour operator in the Bahamas' reads as 'not my situation' — say 'She's already working alongside " +
-    "another Bahamian business every day' instead. Once a same-industry customer exists, switch to naming " +
-    "that match ('another restaurant...') — not before it's actually true. " +
+    "(3) PROOF — one real business already using her (never overclaim more than the one real paying " +
+    "customer). Don't claim an industry match that isn't true: for a non-tour-operator lead, 'one tour " +
+    "operator' reads as 'not my situation' — say 'She's already working alongside another small business " +
+    "every day' instead. Geography-conditional too: for a CARIBBEAN lead, naming the proof customer as " +
+    "Bahamian is fine and adds credibility ('another Bahamian business'). For a NON-Caribbean lead, drop " +
+    "'Bahamian' from this beat as well, same reasoning as beat (2) — naming the Bahamas to a Mexican or US " +
+    "lead undercuts the point of not leading with geography. Once a same-industry customer exists, switch " +
+    "to naming that match ('another restaurant...') — not before it's actually true. " +
     "(4) CTA — one short, conversational close: 'Want to see it in action?' (default) or 'Worth a look?' / " +
     "'Can I show you?' as alternates to test — never the flatter 'Interested?', never a bare link bolted " +
     "onto a question as an afterthought. " +
