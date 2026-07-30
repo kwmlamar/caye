@@ -10,24 +10,9 @@
   --font-instrument: var(--font-instrument);
   --font-dm: var(--font-dm);
   --font-newsreader: var(--font-newsreader);
+  --font-bricolage: var(--font-bricolage);
+  --font-bodoni: var(--font-bodoni);
   --animate-aurora: aurora 60s linear infinite;
-}
-
-/* Font trial (2026-07-25): Cambria for headers/display registers, Tahoma
-   for data/body registers — forced here at the variable level (with
-   !important to beat the next/font-generated classes in layout.tsx) so
-   every font-serif/font-logo/font-dm/font-instrument/font-sans/font-mono/
-   font-display/font-newsreader utility and every raw var(--font-*)
-   reference picks it up app-wide, without editing every component. */
-:root {
-  --font-serif: 'Cambria', Georgia, serif !important;
-  --font-logo: 'Cambria', Georgia, serif !important;
-  --font-dm: 'Cambria', Georgia, serif !important;
-  --font-instrument: 'Cambria', Georgia, serif !important;
-  --font-sans: 'Tahoma', Verdana, sans-serif !important;
-  --font-mono: 'Tahoma', Verdana, sans-serif !important;
-  --font-display: 'Tahoma', Verdana, sans-serif !important;
-  --font-newsreader: 'Tahoma', Verdana, sans-serif !important;
 }
 
 @keyframes aurora {
@@ -108,14 +93,6 @@
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;
     overflow: hidden;
-  }
-
-  /* Font trial (2026-07-25): Cambria for headers, Tahoma for data/body.
-     Neither is a Google Font, so they're loaded as system stacks here
-     rather than through next/font — falls back to the existing
-     next/font families when the system font isn't installed. */
-  h1, h2, h3, h4, h5, h6 {
-    font-family: 'Cambria', Georgia, var(--font-serif), serif;
   }
 
   button {

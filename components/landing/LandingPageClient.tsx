@@ -2,9 +2,9 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { motion } from 'framer-motion'
+import { motion, AnimatePresence } from 'framer-motion'
 import { MeshGradient } from '@paper-design/shaders-react'
-import { WhatsappLogoIcon, InstagramLogoIcon, MessengerLogoIcon } from '@phosphor-icons/react'
+import { WhatsappLogoIcon, ListIcon, XIcon } from '@phosphor-icons/react'
 import WhatsAppMockup from '@/components/landing/WhatsAppMockup'
 import { FAQ_ITEMS } from '@/components/landing/faq-data'
 
@@ -46,38 +46,39 @@ const FOOTER_COLUMNS: {
   title: string
   links: { label: string; href: string; external?: boolean }[]
 }[] = [
-  {
-    title: 'Product',
-    links: [
-      { label: 'Try Caye free', href: CAYE_SIGNUP_WA_HREF, external: true },
-      { label: 'Log in', href: '/login' },
-      { label: 'How she works', href: '#channels' },
-    ],
-  },
-  {
-    title: 'Company',
-    links: [
-      { label: 'Contact', href: 'mailto:lamar@tropitech.org?subject=Caye' },
-    ],
-  },
-  {
-    title: 'Legal',
-    links: [
-      { label: 'Terms', href: '/terms' },
-      { label: 'Privacy', href: '/privacy' },
-      { label: 'Data deletion', href: '/data-deletion' },
-    ],
-  },
-]
+    {
+      title: 'Product',
+      links: [
+        { label: 'Try Caye free', href: CAYE_SIGNUP_WA_HREF, external: true },
+        { label: 'Log in', href: '/login' },
+        { label: 'How she works', href: '#channels' },
+      ],
+    },
+    {
+      title: 'Company',
+      links: [
+        { label: 'Contact', href: 'mailto:lamar@tropitech.org?subject=Caye' },
+      ],
+    },
+    {
+      title: 'Legal',
+      links: [
+        { label: 'Terms', href: '/terms' },
+        { label: 'Privacy', href: '/privacy' },
+        { label: 'Data deletion', href: '/data-deletion' },
+      ],
+    },
+  ]
 
-// Front desk — the channels Caye actually talks to customers through.
-// Zoho Mail / Gmail / Google Calendar are back-office reads/writes, not
-// conversation surfaces, so they get quiet secondary treatment instead
-// of equal billing in this row (see the channel-strip section below).
+// Front desk — the channel Caye actually talks to customers through
+// end-to-end, proven and live. Instagram/Messenger webhooks are built
+// but not yet proven end-to-end (per PRODUCT.md), so they're named as
+// "rolling out next" below rather than given equal billing here —
+// impeccable critique 2026-07-29 flagged the prior three-way row as an
+// overclaim. Zoho Mail / calendar are back-office reads/writes, not
+// conversation surfaces, so they get quiet secondary treatment too.
 const FRONT_DESK_CHANNELS = [
   { label: 'WhatsApp', Icon: WhatsappLogoIcon, bg: '#DFF5E4', color: '#1F9D55' },
-  { label: 'Instagram', Icon: InstagramLogoIcon, bg: '#FCE4EC', color: '#C13584' },
-  { label: 'Messenger', Icon: MessengerLogoIcon, bg: '#E3F2FD', color: '#0084FF' },
 ]
 
 // Hero load choreography — one staggered settle on page load (eyebrow →
@@ -108,6 +109,8 @@ const TESTIMONIAL = {
 export default function LandingPageClient() {
   const [dimensions, setDimensions] = useState({ width: 1920, height: 1080 })
   const [mounted, setMounted] = useState(false)
+  const [scrolled, setScrolled] = useState(false)
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
   // Phone dock's top offset — floor keeps it clear of the CTA block (now
   // including the WhatsApp badge, which lives in normal document flow
@@ -160,6 +163,16 @@ export default function LandingPageClient() {
     }
   }, [])
 
+  // Floating nav — nudges to a slightly more opaque/closer shadow once
+  // the page scrolls past the hero, so it stays legible over whatever
+  // section is underneath it (mesh gradient vs. flat cream).
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 8)
+    onScroll()
+    window.addEventListener('scroll', onScroll, { passive: true })
+    return () => window.removeEventListener('scroll', onScroll)
+  }, [])
+
   return (
     <div className="min-h-screen bg-cream text-near-black font-sans selection:bg-caribbean-teal selection:text-white">
       {/* ── Hero ─────────────────────────────────────────────────── */}
@@ -183,6 +196,21 @@ export default function LandingPageClient() {
                 offsetX={0.08}
               />
               <div className="absolute inset-0 pointer-events-none bg-cream/10" />
+              {/* Contrast scrim — a soft radial lightening behind the
+                  text column specifically (not the whole mesh), so the
+                  headline/subhead/caption sit on a calmer, more uniform
+                  patch instead of directly on whatever hue the moving
+                  mesh happens to be at that moment. Fixes legibility
+                  without touching font size or weight. Mesh stays fully
+                  vivid at the edges (behind the phone mock, corners). */}
+              <div
+                aria-hidden
+                className="absolute inset-x-0 top-0 h-[620px] pointer-events-none"
+                style={{
+                  background:
+                    'radial-gradient(720px 460px at 50% 26%, rgba(250,247,242,0.62), rgba(250,247,242,0.28) 55%, transparent 78%)',
+                }}
+              />
               {/* Top fade — the page's very first pixel row is solid
                   cream, matching the themeColor that mobile Safari paints
                   its status-bar chrome with, so browser chrome dissolves
@@ -212,53 +240,141 @@ export default function LandingPageClient() {
           )}
         </div>
 
-        {/* Top bar — logo only. No Log in link: nobody logs into the app
-            itself, they talk to Caye in WhatsApp; login lives in the
-            footer for the rare operator who needs the dashboard. */}
-        <header className="relative z-10 max-w-7xl w-full mx-auto px-6 md:px-12 py-7 flex items-center justify-center">
-          <Link href="/" className="flex items-center select-none">
-            <span className="font-logo font-semibold tracking-tight text-[#0E1A1A]" style={{ fontSize: 22 }}>
+        {/* Top bar — floating glass pill, same visual language as the
+            "Live, right now, in WhatsApp" chip below (rounded-full,
+            white/60, backdrop-blur, soft shadow). Scoped to what this
+            single-scroll page actually has: two real section anchors and
+            one action, not a Viktor-style mega-nav with Solution/
+            Resources/Customers dropdowns — that implies a multi-page
+            site Caye doesn't have. Still no "Log in": nobody logs into
+            the app itself, they talk to Caye in WhatsApp; login stays in
+            the footer for the rare operator who needs the dashboard. */}
+        <header
+          className={`fixed inset-x-4 top-4 z-50 mx-auto flex max-w-2xl items-center justify-between gap-3 rounded-full border border-near-black/10 bg-white/70 px-4 py-2.5 backdrop-blur-md transition-shadow duration-300 md:inset-x-8 md:top-6 md:max-w-3xl md:px-5 md:py-3 ${
+            scrolled
+              ? 'shadow-[0_10px_32px_-10px_rgba(14,26,26,0.24)] bg-white/85'
+              : 'shadow-[0_6px_20px_-10px_rgba(14,26,26,0.15)]'
+          }`}
+        >
+          <Link href="/" className="flex items-center select-none pl-1.5">
+            <span className="font-logo font-semibold tracking-tight text-[#0E1A1A]" style={{ fontSize: 19 }}>
               caye
             </span>
           </Link>
+
+          <nav className="hidden md:flex items-center gap-1">
+            <a
+              href="#channels"
+              className="px-4 py-2 rounded-full text-[13.5px] font-medium text-near-black/65 hover:text-near-black hover:bg-near-black/5 transition-colors"
+            >
+              How she works
+            </a>
+            <a
+              href="#faq"
+              className="px-4 py-2 rounded-full text-[13.5px] font-medium text-near-black/65 hover:text-near-black hover:bg-near-black/5 transition-colors"
+            >
+              FAQ
+            </a>
+          </nav>
+
+          <div className="flex items-center gap-1.5">
+            <a
+              href={CAYE_SIGNUP_WA_HREF}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hidden sm:inline-flex items-center gap-1.5 bg-near-black text-cream font-medium px-5 py-2 rounded-full text-[13px] hover:bg-near-black/90 transition-all shadow-[0_4px_14px_-6px_rgba(14,26,26,0.35)] hover:-translate-y-px active:translate-y-0"
+            >
+              Hire Caye
+            </a>
+            <button
+              type="button"
+              onClick={() => setMobileMenuOpen((v) => !v)}
+              aria-label={mobileMenuOpen ? 'Close menu' : 'Open menu'}
+              aria-expanded={mobileMenuOpen}
+              className="md:hidden inline-flex items-center justify-center w-10 h-10 rounded-full text-near-black/80 hover:bg-near-black/5 transition-colors cursor-pointer"
+            >
+              {mobileMenuOpen ? <XIcon size={19} weight="bold" /> : <ListIcon size={19} weight="bold" />}
+            </button>
+          </div>
         </header>
 
-        {/* Hero content */}
-        <div className="relative z-10 flex-1 flex flex-col items-center px-6 pt-2 md:pt-6">
-          <div className="max-w-3xl mx-auto text-center">
-            {/* Eyebrow — editorial dateline */}
+        {/* Mobile menu sheet — anchors + CTA, dismisses on tap */}
+        <AnimatePresence>
+          {mobileMenuOpen && (
             <motion.div
-              {...heroItem(0.05)}
-              className="flex items-center justify-center gap-3 mb-8"
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.18, ease: heroEase }}
+              className="fixed inset-x-4 top-[68px] z-40 rounded-3xl border border-near-black/10 bg-white/95 backdrop-blur-md shadow-[0_16px_40px_-12px_rgba(14,26,26,0.25)] p-2 md:hidden"
             >
-              <span className="h-px w-8 bg-near-black/30" />
-              <span className="font-mono text-[10.5px] uppercase tracking-[0.22em] text-near-black/60 font-medium">
-                Not a tool. A hire.
-              </span>
-              <span className="h-px w-8 bg-near-black/30" />
+              <a
+                href="#channels"
+                onClick={() => setMobileMenuOpen(false)}
+                className="block px-4 py-3 rounded-2xl text-[15px] font-medium text-near-black/80 hover:bg-near-black/5"
+              >
+                How she works
+              </a>
+              <a
+                href="#faq"
+                onClick={() => setMobileMenuOpen(false)}
+                className="block px-4 py-3 rounded-2xl text-[15px] font-medium text-near-black/80 hover:bg-near-black/5"
+              >
+                FAQ
+              </a>
+              <a
+                href={CAYE_SIGNUP_WA_HREF}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={() => setMobileMenuOpen(false)}
+                className="block mt-1 px-4 py-3 rounded-2xl text-[15px] font-medium bg-near-black text-cream text-center"
+              >
+                Hire Caye
+              </a>
             </motion.div>
+          )}
+        </AnimatePresence>
 
-            {/* Headline */}
+        {/* Hero content — top padding compensates for the nav now being
+            `fixed` (out of flow) instead of sitting in-line above this,
+            so it clears the floating pill instead of sliding under it. */}
+        <div className="relative z-10 flex-1 flex flex-col items-center px-6 pt-28 md:pt-32">
+          <div className="max-w-3xl mx-auto text-center">
+            {/* Headline — trial #4: Geist, at black weight, one short
+                line. Trials #2 (Bricolage) and #3 (Bodoni Moda) both hit
+                a legibility ceiling that isn't about weight or size —
+                it's stroke contrast and line count. A uniform-stroke
+                grotesque (no thin hairlines, unlike Bodoni Moda's
+                high-contrast serif strokes) reads as instantly bold, and
+                a single short line reads as calmer than three stacked
+                ones, no matter how good the font is. Geist is already
+                loaded as this app's default sans (product UI + nav) —
+                reusing it here instead of a new import.
+
+                Copy: user's own pick, simplified — name-first ("Meet
+                Caye.") only, one tier, not stacked with a second
+                supporting line ("too many subheadings" per feedback).
+                Weight stepped down from black to extrabold ("a little
+                too bold" per feedback). The dropped supporting line
+                ("The teammate your business has been waiting for.")
+                moved to its own big-statement section further down the
+                page instead — same beat Viktor uses (hero, then a
+                second bold reinforcing statement later in the scroll),
+                just not stacked in the hero itself. */}
             <motion.h1
               {...heroItem(0.18)}
-              className="font-instrument text-[2.75rem] sm:text-5xl md:text-[4.25rem] lg:text-[5rem] font-normal tracking-[-0.026em] text-near-black leading-[1.02]"
-              style={{ WebkitTextStroke: '0.4px currentColor' }}
+              className="font-sans text-[3rem] sm:text-6xl md:text-[5.5rem] lg:text-[6.5rem] font-extrabold tracking-[-0.03em] text-near-black leading-[1.05]"
             >
-              She handles your DMs.
-              <br />
-              <span className="italic text-caribbean-teal-deep">
-                You handle your business.
-              </span>
+              Meet <span className="text-caribbean-teal-deep">Caye.</span>
             </motion.h1>
 
             {/* Subhead — Newsreader editorial deck */}
             <motion.p
               {...heroItem(0.34)}
-              className="mt-8 font-newsreader text-[1.2rem] md:text-[1.35rem] leading-[1.45] text-near-black/75 max-w-2xl mx-auto font-light"
+              className="mt-8 font-newsreader text-[1.2rem] md:text-[1.35rem] leading-[1.45] text-near-black/85 max-w-2xl mx-auto font-light"
               style={{ fontStyle: 'normal' }}
             >
-              Caye answers, quotes, and books. The AI staff member that lives
-              in your WhatsApp.
+              Talk to Caye in WhatsApp. She answers customers, manages operations, and gets work done across your business.
             </motion.p>
 
             {/* Primary CTA */}
@@ -289,7 +405,7 @@ export default function LandingPageClient() {
                   />
                 </svg>
               </a>
-              <p className="font-mono text-[10.5px] uppercase tracking-[0.16em] text-near-black/55">
+              <p className="font-mono text-[10.5px] uppercase tracking-[0.16em] text-near-black/70">
                 Free for 7 days · No credit card
               </p>
 
@@ -315,7 +431,7 @@ export default function LandingPageClient() {
                     />
                   </svg>
                 </span>
-                <span className="font-mono text-[10.5px] uppercase tracking-[0.14em] text-near-black/70 font-medium">
+                <span className="font-mono text-[10.5px] uppercase tracking-[0.14em] text-near-black/80 font-medium">
                   Live, right now, in WhatsApp
                 </span>
               </div>
@@ -356,8 +472,48 @@ export default function LandingPageClient() {
         />
       </section>
 
+      {/* ── Reinforcing statement — the beat Viktor uses right after
+          its hero/logo bar: a second, bigger bold statement further
+          down the scroll instead of stacking a supporting line under
+          the hero headline. No logo bar precedes this one (one real
+          customer, no fabricated "used by" claim), so it follows the
+          hero directly. Self-contained sentence (names Caye) since it
+          no longer sits right under the hero for context. ── */}
+      <section className="relative py-24 md:py-32 px-6 bg-cream text-center">
+        <motion.p
+          initial={{ opacity: 0, y: 16 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true, margin: '-100px' }}
+          transition={{ duration: 0.7, ease: heroEase }}
+          className="font-sans text-[2rem] sm:text-4xl md:text-[3.25rem] font-extrabold tracking-[-0.02em] leading-[1.15] text-near-black max-w-3xl mx-auto"
+        >
+          Caye is the teammate your business
+          <br />
+          <span className="text-caribbean-teal-deep">has been waiting for.</span>
+        </motion.p>
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true, margin: '-100px' }}
+          transition={{ duration: 0.6, ease: heroEase, delay: 0.15 }}
+          className="mt-9"
+        >
+          <a
+            href={CAYE_SIGNUP_WA_HREF}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="group inline-flex items-center gap-2.5 bg-near-black text-cream font-medium px-9 py-4 rounded-full text-[15px] hover:bg-near-black/90 transition-all shadow-[0_4px_20px_-6px_rgba(14,26,26,0.25)] hover:-translate-y-[1px] active:translate-y-0"
+          >
+            <span>Try Caye free</span>
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" className="transition-transform group-hover:translate-x-1">
+              <path d="M3 7h8m0 0L7.5 3.5M11 7l-3.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </a>
+        </motion.div>
+      </section>
+
       {/* ── Channel strip — front desk vs. back office ────────────── */}
-      <section id="channels" className="relative py-20 px-6 bg-cream border-y border-near-black/[0.06]">
+      <section id="channels" className="relative py-20 px-6 bg-cream border-y border-near-black/[0.06] scroll-mt-24">
         <div className="max-w-2xl mx-auto text-center">
           <motion.div
             initial={{ opacity: 0, y: 10 }}
@@ -399,18 +555,33 @@ export default function LandingPageClient() {
             ))}
           </div>
 
+          {/* Rolling out — Instagram/Messenger webhooks are built but not
+              yet proven end-to-end, so they're named honestly as "next"
+              rather than given equal billing with WhatsApp above. */}
+          <motion.p
+            initial={{ opacity: 0 }}
+            whileInView={{ opacity: 1 }}
+            viewport={{ once: true, margin: '-80px' }}
+            transition={{ duration: 0.6, ease: heroEase, delay: 0.3 }}
+            className="mt-6 font-newsreader italic text-[14px] text-near-black/40"
+          >
+            Instagram and Messenger are rolling out next.
+          </motion.p>
+
           {/* Back office — quiet on purpose. She reads and writes here;
               she doesn't hold a conversation through them, so they don't
-              compete visually with the front-desk row above. */}
+              compete visually with the front-desk row above. Zoho Mail
+              is the one proven email channel today — kept channel-
+              agnostic on calendar rather than naming Gmail/Google
+              Calendar, since neither is confirmed live yet. */}
           <motion.p
             initial={{ opacity: 0 }}
             whileInView={{ opacity: 1 }}
             viewport={{ once: true, margin: '-80px' }}
             transition={{ duration: 0.6, ease: heroEase, delay: 0.4 }}
-            className="mt-9 font-newsreader italic text-[14px] text-near-black/40"
+            className="mt-3 font-newsreader italic text-[14px] text-near-black/40"
           >
-            Quietly reads and writes to Zoho Mail, Gmail, and Google
-            Calendar too.
+            Quietly reads and writes to Zoho Mail and your calendar too.
           </motion.p>
         </div>
       </section>
@@ -419,7 +590,7 @@ export default function LandingPageClient() {
           initial HTML for crawlers and AI answer engines, not hidden
           behind a click. Copy is mirrored into FAQPage JSON-LD in
           app/page.tsx; keep FAQ_ITEMS as the single source of truth. ── */}
-      <section className="relative py-20 px-6 bg-cream">
+      <section id="faq" className="relative py-20 px-6 bg-cream scroll-mt-24">
         <div className="max-w-2xl mx-auto">
           <motion.div
             initial={{ opacity: 0, y: 10 }}
@@ -459,16 +630,64 @@ export default function LandingPageClient() {
       {/* ── Proof — first paid-customer quote goes here ──────────────
           Slot is built and styled; flip `SHOW_TESTIMONIAL` to true and
           drop in the real quote + attribution once a pilot converts to
-          paid. No fabricated praise before then. */}
+          paid. No fabricated praise before then.
+
+          Visual device borrowed from Viktor's case-study page: a glass
+          card physically overlapping a saturated gradient band into the
+          flat page below it. Kept Caye's own palette rather than
+          Viktor's violet — this reuses the exact same mesh gradient as
+          the hero, just condensed, so it reads as this brand's own
+          bookend (opens on the mesh, closes on it) instead of a
+          borrowed look. */}
       {SHOW_TESTIMONIAL && (
-        <section className="relative py-24 px-6 bg-cream">
+        <section className="relative overflow-hidden bg-cream">
+          <div className="relative h-[240px] md:h-[300px] overflow-hidden">
+            {mounted && (
+              <div className="absolute inset-0">
+                <MeshGradient
+                  width={dimensions.width}
+                  height={320}
+                  colors={HERO_COLORS}
+                  distortion={0.6}
+                  swirl={0.45}
+                  grainMixer={0}
+                  grainOverlay={0}
+                  speed={0.3}
+                  offsetX={0.2}
+                />
+                <div className="absolute inset-0 bg-cream/10" />
+              </div>
+            )}
+            {/* Dissolve into the cream below — the card overlaps this
+                fade, same trick as the hero's own bottom fade. */}
+            <div
+              aria-hidden
+              className="absolute inset-x-0 bottom-0 h-2/3 pointer-events-none"
+              style={{
+                background:
+                  'linear-gradient(to bottom, rgba(250,247,242,0) 0%, rgba(250,247,242,0.6) 60%, rgba(250,247,242,1) 100%)',
+              }}
+            />
+          </div>
+
           <motion.figure
-            initial={{ opacity: 0, y: 16 }}
+            initial={{ opacity: 0, y: 24 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true, margin: '-100px' }}
             transition={{ duration: 0.7, ease: heroEase }}
-            className="max-w-2xl mx-auto text-center"
+            className="relative z-10 max-w-2xl mx-auto px-6 md:px-10 py-12 md:py-14 -mt-[100px] md:-mt-[140px] pb-16 md:pb-24 rounded-[2.25rem] border border-near-black/[0.06] bg-cream/95 backdrop-blur-md shadow-[0_30px_70px_-24px_rgba(14,26,26,0.28)] text-center"
           >
+            {/* Ambient glow bleeding out from behind the card — echoes
+                the gradient band above instead of a flat drop shadow */}
+            <span
+              aria-hidden
+              className="absolute -inset-8 -z-10 rounded-[3rem] opacity-60 blur-3xl"
+              style={{
+                background:
+                  'radial-gradient(60% 60% at 30% 0%, rgba(7,102,163,0.28), transparent 70%), radial-gradient(50% 50% at 80% 10%, rgba(255,228,175,0.4), transparent 70%)',
+              }}
+            />
+
             <div className="flex items-center justify-center gap-3 mb-8">
               <span className="h-px w-8 bg-near-black/25" />
               <span className="font-mono text-[10.5px] uppercase tracking-[0.22em] text-near-black/60 font-medium">
@@ -499,8 +718,8 @@ export default function LandingPageClient() {
                 </span>
               </div>
               <p className="mt-4 font-newsreader text-[15px] leading-relaxed text-near-black/60 max-w-[240px]">
-                Not a tool. A hire. The AI staff member that lives in your
-                WhatsApp.
+                Not a tool. A hire. The one who runs your front desk from
+                your own WhatsApp.
               </p>
               <div className="mt-5 flex items-center gap-2">
                 <span className="relative flex h-[7px] w-[7px]">

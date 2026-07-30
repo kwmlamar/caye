@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from 'next'
-import { Geist, IBM_Plex_Mono, Playfair_Display, Fraunces, Instrument_Serif, DM_Serif_Display, Newsreader, Space_Grotesk } from 'next/font/google'
+import { Geist, IBM_Plex_Mono, Playfair_Display, Fraunces, Instrument_Serif, DM_Serif_Display, Newsreader, Space_Grotesk, Bricolage_Grotesque, Bodoni_Moda } from 'next/font/google'
 import { Toaster } from 'sonner'
 import GoogleAnalyticsGate from '@/components/analytics/GoogleAnalyticsGate'
 import './globals.css'
@@ -31,7 +31,7 @@ const fraunces = Fraunces({
   variable: '--font-logo',
   subsets: ['latin'],
   style: ['normal', 'italic'],
-  weight: ['400', '500', '600', '700'],
+  weight: ['400', '500', '600', '700', '900'],
 })
 
 const instrumentSerif = Instrument_Serif({
@@ -63,6 +63,34 @@ const spaceGrotesk = Space_Grotesk({
   weight: ['500', '600', '700'],
 })
 
+// Landing hero headline, trial #2 (2026-07-29) — a quirky variable
+// grotesque with real display personality, tried alongside Fraunces
+// (trial #1) to see which "stands out" treatment the hero wants.
+// Register-different from Fraunces on purpose: this is a sans, not
+// another romantic/bold serif, so the two trials read as genuinely
+// different directions rather than variations on one idea.
+// Kept loaded (unused on the hero now) in case the sans direction
+// gets revisited later — see trial #3 below for why it lost out.
+const bricolage = Bricolage_Grotesque({
+  variable: '--font-bricolage',
+  subsets: ['latin'],
+  weight: ['400', '500', '600', '700', '800'],
+})
+
+// Landing hero headline, trial #3 (2026-07-29) — a bolder serif than
+// Fraunces, staying in the register the rest of the hero already
+// speaks (Newsreader subhead, mono eyebrow, serif wordmark). Trial #2
+// (Bricolage, a sans) broke that register and produced a real mixed-
+// voice mismatch, not just a "needs a bolder font" problem — so this
+// stays serif on purpose. High-contrast, dramatic strokes for real
+// display weight instead of Fraunces' warmer, softer character.
+const bodoniModa = Bodoni_Moda({
+  variable: '--font-bodoni',
+  subsets: ['latin'],
+  style: ['normal', 'italic'],
+  weight: ['400', '500', '600', '700', '800', '900'],
+})
+
 export const metadata: Metadata = {
   metadataBase: new URL('https://www.meetcaye.com'),
   title: {
@@ -70,7 +98,7 @@ export const metadata: Metadata = {
     template: '%s · Caye',
   },
   description:
-    'Caye is a WhatsApp-first AI staff member for tour operators — she answers guests, books tours, and runs your back office over chat. No app to learn.',
+    'Caye is the hire who runs your front desk from your own WhatsApp — she answers guests, books tours, and runs your back office over chat. No app to learn.',
   icons: {
     icon: [
       { url: '/favicon-32.png', sizes: '32x32', type: 'image/png' },
@@ -90,7 +118,7 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body className={`${geist.variable} ${ibmPlexMono.variable} ${playfair.variable} ${fraunces.variable} ${instrumentSerif.variable} ${dmSerif.variable} ${newsreader.variable} ${spaceGrotesk.variable}`}>
+      <body className={`${geist.variable} ${ibmPlexMono.variable} ${playfair.variable} ${fraunces.variable} ${instrumentSerif.variable} ${dmSerif.variable} ${newsreader.variable} ${spaceGrotesk.variable} ${bricolage.variable} ${bodoniModa.variable}`}>
         {children}
         <Toaster position="bottom-right" richColors />
         <GoogleAnalyticsGate />
