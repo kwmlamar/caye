@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { getSession } from '@/lib/supabase'
+import { useFreshness, useRevalidateOnFocus } from '@/lib/founder-freshness'
 
 export interface Escalation {
   id: string
@@ -98,6 +99,13 @@ export function useCommandOverview(workspaceId: string | null, weekOffset = 0) {
   useEffect(() => {
     load()
   }, [load])
+
+  // This one response backs the stat cards, the calendar and the spend
+  // chart, so it cares about every topic that isn't purely conversation
+  // list state. Callers keep painting the previous data while it reloads
+  // (see `revalidating` below), so a refetch here is visually quiet.
+  useFreshness(workspaceId, ['bookings', 'escalations', 'cost'], load)
+  useRevalidateOnFocus(load)
 
   // `loading` is true for both a cold load and a background revalidate;
   // callers that already have something on screen want to tell those

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { getSession } from '@/lib/supabase'
+import { useFreshness, useRevalidateOnFocus } from '@/lib/founder-freshness'
 
 export interface ConversationSummary {
   id: string
@@ -112,6 +113,53 @@ export function useFounderConversations(
     fetchPage(state.nextCursor, true)
   }, [fetchPage, state.nextCursor, state.loadingMore, state.loading])
 
+  // Background refresh: pulls the newest page and merges it over what's
+  // loaded, without touching `loading`.
+  //
+  // Deliberately not fetchPage(null, false), which is the obvious move and
+  // wrong twice over — it flips `loading`, blanking the list to a skeleton
+  // under a founder who's reading it, and it throws away every page loaded
+  // past the first, silently scrolling them back to the top. Merging keeps
+  // deeper pages and scroll position intact; new conversations (the case
+  // this exists for — Caye drafting a batch of outreach leads) arrive at
+  // the top in server order.
+  //
+  // Unlike fetchPage this does NOT claim requestIdRef, so it can't cancel a
+  // real fetch in flight; it just declines to write if one has started
+  // since. A refresh losing a race to a filter switch is correct.
+  const refresh = useCallback(async () => {
+    if (!workspaceId) return
+    const issuedAt = requestIdRef.current
+
+    const { session } = await getSession()
+    if (!session || issuedAt !== requestIdRef.current) return
+
+    const params = new URLSearchParams({ workspaceId, filter })
+    if (q) params.set('q', q)
+
+    try {
+      const res = await fetch(`/api/founder/conversations?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      })
+      const json = await res.json()
+      if (!res.ok || issuedAt !== requestIdRef.current) return
+      const fresh = json.conversations as ConversationSummary[]
+      const freshIds = new Set(fresh.map((c) => c.id))
+      setState((s) => ({
+        ...s,
+        items: [...fresh, ...s.items.filter((c) => !freshIds.has(c.id))],
+        reviewCount: json.reviewCount,
+        error: null,
+      }))
+    } catch {
+      // Silent. A dropped background refresh shouldn't replace a list the
+      // founder is reading with an error state — the next one will land.
+    }
+  }, [workspaceId, filter, q])
+
+  useFreshness(workspaceId, ['conversations'], refresh)
+  useRevalidateOnFocus(refresh)
+
   // Patches or prepends a single conversation without disturbing scroll
   // position or the rest of the loaded page — used after a manual send
   // (which flips human_agent_enabled server-side) and for the booking
@@ -134,5 +182,5 @@ export function useFounderConversations(
     setState((s) => ({ ...s, items: s.items.filter((c) => c.id !== id) }))
   }, [])
 
-  return { ...state, loadMore, upsert, remove }
+  return { ...state, loadMore, upsert, remove, refresh }
 }

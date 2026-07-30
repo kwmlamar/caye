@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef, useLayoutEffect } from 'react'
+import { useState, useEffect, useRef, useLayoutEffect, useCallback } from 'react'
 import { getSession } from '@/lib/supabase'
 import { formatDistanceToNow } from '@/lib/utils'
 import { CayeMark } from '@/components/brand/CayeMark'
@@ -8,6 +8,7 @@ import { FormattedReplyText } from '@/components/ui/FormattedReplyText'
 import { CayeLoadingPulse } from '@/components/dashboard/founder-home/CayeLoadingPulse'
 import { Pill } from '@/components/dashboard/founder-home/console-ui'
 import { useFounderConversations, fetchConversationById, type ConversationSummary } from '@/lib/useFounderConversations'
+import { useFreshness, useRevalidateOnFocus } from '@/lib/founder-freshness'
 
 const GLASS = { backdropFilter: 'blur(20px) saturate(140%)', WebkitBackdropFilter: 'blur(20px) saturate(140%)' } as const
 
@@ -153,6 +154,9 @@ export default function CommandConversations({ workspaceId, selectedConversation
   // refetch (tab switch, search, loadMore) would yank the founder back to
   // the top row mid-read.
   const hasSetInitialActiveRef = useRef(false)
+  // Only the newest thread fetch may write — a background refresh must not
+  // land on top of the thread you switched to while it was in flight.
+  const threadRequestIdRef = useRef(0)
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedQuery(query), SEARCH_DEBOUNCE_MS)
@@ -185,28 +189,37 @@ export default function CommandConversations({ workspaceId, selectedConversation
     setActiveId(list[0].id)
   }, [list, selectedConversationId])
 
+  // `quiet` skips the loading flag so a background refresh swaps the
+  // messages in place instead of collapsing the open thread to a skeleton
+  // under whoever's reading it.
+  const loadThread = useCallback(async (quiet = false) => {
+    if (!activeId) return
+    const requestId = ++threadRequestIdRef.current
+    if (!quiet) setThreadLoading(true)
+    const { session } = await getSession()
+    if (!session) { if (!quiet) setThreadLoading(false); return }
+    try {
+      const res = await fetch(`/api/founder/conversation-messages?workspaceId=${workspaceId}&conversationId=${activeId}`, {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      })
+      const json = await res.json()
+      if (requestId === threadRequestIdRef.current && res.ok) setThread(json)
+    } finally {
+      if (requestId === threadRequestIdRef.current && !quiet) setThreadLoading(false)
+    }
+  }, [activeId, workspaceId])
+
   useEffect(() => {
     if (!activeId) { setThread(null); return }
-    let cancelled = false
-
-    async function loadThread() {
-      setThreadLoading(true)
-      const { session } = await getSession()
-      if (!session) { setThreadLoading(false); return }
-      try {
-        const res = await fetch(`/api/founder/conversation-messages?workspaceId=${workspaceId}&conversationId=${activeId}`, {
-          headers: { Authorization: `Bearer ${session.access_token}` },
-        })
-        const json = await res.json()
-        if (!cancelled && res.ok) setThread(json)
-      } finally {
-        if (!cancelled) setThreadLoading(false)
-      }
-    }
-
     loadThread()
-    return () => { cancelled = true }
-  }, [activeId, workspaceId])
+  }, [activeId, loadThread])
+
+  // The open thread is stale for the same reasons the list is — Caye can
+  // append to the conversation you're looking at (a drafted first touch, an
+  // auto-reply) without this pane hearing about it.
+  const refreshThread = useCallback(() => { loadThread(true) }, [loadThread])
+  useFreshness(workspaceId, ['conversations'], refreshThread)
+  useRevalidateOnFocus(refreshThread)
 
   const activeSummary = list.find((c) => c.id === activeId)
 

@@ -6,6 +6,7 @@ import { formatDistanceToNow } from '@/lib/utils'
 import { CayeMark } from '@/components/brand/CayeMark'
 import { FormattedReplyText } from '@/components/ui/FormattedReplyText'
 import { Pill } from '@/components/dashboard/founder-home/console-ui'
+import { emitStale, ALL_TOPICS } from '@/lib/founder-freshness'
 
 const NEAR_BOTTOM_PX = 96
 const TEXTAREA_MAX_H = 220
@@ -425,6 +426,15 @@ export default function CayeDirectThread({ workspaceId, operatorId, operatorLabe
             created_at: new Date().toISOString(),
           }])
         }
+        // A settled turn is the console's single biggest source of
+        // silently-stale panels: Caye writes leads, drafts, bookings and
+        // contacts as tool calls, and until now told only this thread
+        // about it — the rest of the console kept showing pre-turn state
+        // until a full page reload. Emitted inside the run promise rather
+        // than in send()'s finally so it fires once per turn no matter how
+        // many mounts are awaiting it, and still fires if this component
+        // unmounted mid-turn (the whole point of inFlightRuns).
+        if (res.ok) emitStale(workspaceId, ALL_TOPICS)
       } catch {
         // Nothing to surface here — see above.
       }
