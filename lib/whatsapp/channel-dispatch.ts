@@ -57,6 +57,11 @@ export async function dispatchOperatorReply(
   if (!trimmed) throw new Error('empty reply')
   let outboundBody = trimmed
   const meta = (conv.metadata ?? {}) as Record<string, unknown>
+  // Zoho's own id for the message we're about to send. Persisted below so a
+  // later message on this thread (typically a follow-up nudge to a lead who
+  // never replied) can reply against it and thread correctly — see
+  // findReplyTargetZohoMessageId in lib/email-ai.ts.
+  let zohoMessageId: string | null = null
 
   switch (conv.channel_type) {
     case 'messenger':
@@ -80,7 +85,8 @@ export async function dispatchOperatorReply(
         // prefix and no tagline — those are reply-thread conventions that
         // don't apply to a cold open.
         const subject = (meta.subject as string) || 'Quick question'
-        await sendZohoEmail(conv.customer_id, subject, trimmed, account.user_id)
+        const sent = await sendZohoEmail(conv.customer_id, subject, trimmed, account.user_id)
+        zohoMessageId = sent.messageId
         break
       }
       const subj = (meta.subject as string) || '(no subject)'
@@ -98,13 +104,14 @@ export async function dispatchOperatorReply(
         trimmed,
         (workspaceRow?.ai_voice_profile ?? undefined) as VoiceProfile | undefined
       )
-      await sendZohoReply(
+      const replySent = await sendZohoReply(
         conv.customer_id,
         replySubject,
         outboundBody,
         conv.channel_conversation_id,
         account.user_id
       )
+      zohoMessageId = replySent.messageId
       break
     }
     default:
@@ -133,6 +140,7 @@ export async function dispatchOperatorReply(
       sent_by: senderLabel,
       generated_by: 'caye',
       operator_approved: true,
+      ...(zohoMessageId ? { zoho_message_id: zohoMessageId } : {}),
     },
   })
 

@@ -13,14 +13,24 @@ function mailBase(apiDomain: string): string {
 }
 
 /**
- * Look up the most recent inbound (customer) Zoho message-id for a given
- * conversation thread, so we can POST to Zoho's reply endpoint and have it
- * set RFC 5322 In-Reply-To / References headers automatically.
+ * Look up a Zoho message-id to reply against for a given conversation
+ * thread, so we can POST to Zoho's reply endpoint and have it set RFC 5322
+ * In-Reply-To / References headers automatically.
  *
- * Returns null if no inbound message is found — caller falls back to a
- * standalone send (no threading).
+ * Prefers the most recent INBOUND (customer) message. Falls back to our own
+ * most recent OUTBOUND send when the customer has never written back —
+ * without that fallback, cold-outreach follow-ups could never thread at
+ * all: a follow-up nudge exists precisely BECAUSE the lead stayed silent,
+ * so an inbound-only lookup is guaranteed to miss and silently degrade to a
+ * headerless standalone send that lands as a brand-new thread in the
+ * recipient's inbox (2026-08-01 — found after a 32-message follow-up batch
+ * went out unthreaded). Threading off our own first-touch is correct here:
+ * that message carries the Message-ID already sitting in their inbox.
+ *
+ * Returns null only when there's nothing on either side to reply to —
+ * caller falls back to a standalone send (no threading).
  */
-async function findLatestInboundZohoMessageId(
+async function findReplyTargetZohoMessageId(
   workspaceId: string,
   threadId: string
 ): Promise<string | null> {
@@ -60,7 +70,33 @@ async function findLatestInboundZohoMessageId(
     .limit(1)
     .maybeSingle()
 
-  return byConv?.channel_message_id ?? null
+  if (byConv?.channel_message_id) return byConv.channel_message_id
+
+  // No inbound anywhere — reply against our own last send instead. Only
+  // rows carrying a real Zoho id qualify; the synthetic ids the send paths
+  // stamp on channel_message_id (`manual_*`, `op-wa-*`) are local
+  // bookkeeping and mean nothing to Zoho, so metadata.zoho_message_id is
+  // the only trustworthy source here.
+  //
+  // Filtered in JS rather than via a PostgREST `metadata->>...` predicate:
+  // this lookup silently degrades to an unthreaded send when it returns
+  // null, so it must not depend on JSON-filter semantics being exactly
+  // right. Fetching a handful of recent rows and checking them here is
+  // cheap and unambiguous.
+  const { data: outbound } = await supabase
+    .from('unified_messages')
+    .select('metadata, sent_at')
+    .eq('conversation_id', conv.id)
+    .eq('sender_type', 'business')
+    .order('sent_at', { ascending: false })
+    .limit(10)
+
+  for (const row of outbound ?? []) {
+    const id = (row.metadata as Record<string, unknown> | null)?.zoho_message_id
+    if (typeof id === 'string' && id.length > 0) return id
+  }
+
+  return null
 }
 
 /**
@@ -68,17 +104,21 @@ async function findLatestInboundZohoMessageId(
  * Automatically refreshes the access token if it's expiring within 5 minutes.
  *
  * THREADING: Uses Zoho's dedicated reply endpoint POST /messages/{originalMessageId}
- * with action='reply' when a previous inbound message exists for the thread. Zoho
- * sets In-Reply-To / References headers automatically. Falls back to a standalone
- * send only when no inbound message is found (e.g. operator initiating a brand-new
- * outbound). The Stallings 2026-05-29 case surfaced this: replies posted to the
- * generic /messages endpoint appear as new threads in Proton Mail / Apple Mail.
+ * with action='reply' when a prior message exists for the thread — the customer's
+ * last inbound if there is one, otherwise our own last outbound (see
+ * findReplyTargetZohoMessageId). Zoho sets In-Reply-To / References headers
+ * automatically. Falls back to a standalone send only when the thread has no
+ * usable prior message at all. The Stallings 2026-05-29 case surfaced this:
+ * replies posted to the generic /messages endpoint appear as new threads in
+ * Proton Mail / Apple Mail.
  *
  * @param to          - Recipient email address
  * @param subject     - Email subject (already prefixed with "Re: " by caller)
  * @param body        - Plain-text reply body
  * @param threadId    - Zoho thread ID, used to find the original message for threading
  * @param workspaceId - The customer/workspace UUID whose Zoho account to send from
+ * @returns the sent message's Zoho id, so callers can persist it as the
+ *          reply target for any later message on the same thread
  */
 export async function sendZohoReply(
   to: string,
@@ -86,11 +126,11 @@ export async function sendZohoReply(
   body: string,
   threadId: string,
   workspaceId: string
-): Promise<void> {
+): Promise<{ messageId: string | null }> {
   const { accountRow, accessToken, apiDomain, zohoAccountId } = await getZohoContext(workspaceId)
   const base = mailBase(apiDomain)
 
-  const replyTargetId = await findLatestInboundZohoMessageId(workspaceId, threadId)
+  const replyTargetId = await findReplyTargetZohoMessageId(workspaceId, threadId)
 
   const url = replyTargetId
     ? `${base}/api/accounts/${zohoAccountId}/messages/${replyTargetId}`
@@ -127,6 +167,8 @@ export async function sendZohoReply(
     `replyTarget=${replyTargetId ?? 'none (standalone send)'}, ` +
     `zohoMsgId=${data.data?.messageId ?? 'unknown'}`
   )
+
+  return { messageId: data.data?.messageId ?? null }
 }
 
 /**
@@ -211,7 +253,7 @@ export async function createZohoReplyDraft(
   const { accountRow, accessToken, apiDomain, zohoAccountId } = await getZohoContext(workspaceId)
   const base = mailBase(apiDomain)
 
-  const replyTargetId = await findLatestInboundZohoMessageId(workspaceId, threadId)
+  const replyTargetId = await findReplyTargetZohoMessageId(workspaceId, threadId)
 
   const url = replyTargetId
     ? `${base}/api/accounts/${zohoAccountId}/messages/${replyTargetId}`

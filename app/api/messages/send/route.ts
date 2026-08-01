@@ -94,6 +94,10 @@ export async function POST(request: NextRequest) {
 
   const text = content.trim()
   const now = new Date().toISOString()
+  // Zoho's own id for this send, persisted below so a later message on the
+  // same thread (e.g. a follow-up to a lead who never replied) can reply
+  // against it — see findReplyTargetZohoMessageId in lib/email-ai.ts.
+  let zohoMessageId: string | null = null
 
   // ── Dispatch to channel ─────────────────────────────────────────────────────
   try {
@@ -124,20 +128,22 @@ export async function POST(request: NextRequest) {
           // email with the subject the draft was created with. Using
           // sendZohoReply here produced "Re: (no subject)" in practice.
           const subject = meta.subject || 'Quick question'
-          await sendZohoEmail(conv.customer_id, subject, text, account.user_id)
+          const sent = await sendZohoEmail(conv.customer_id, subject, text, account.user_id)
+          zohoMessageId = sent.messageId
         } else {
           const originalSubject = meta.subject || '(no subject)'
           const replySubject = originalSubject.startsWith('Re:')
             ? originalSubject
             : `Re: ${originalSubject}`
           // customer_id = sender email address, channel_conversation_id = Zoho thread ID
-          await sendZohoReply(
+          const replySent = await sendZohoReply(
             conv.customer_id,
             replySubject,
             text,
             conv.channel_conversation_id,
             account.user_id
           )
+          zohoMessageId = replySent.messageId
         }
         break
       }
@@ -166,7 +172,11 @@ export async function POST(request: NextRequest) {
       sent_at: now,
       status: 'sent',
       is_internal: false,
-      metadata: { sent_by: 'human', user_id: user.id },
+      metadata: {
+        sent_by: 'human',
+        user_id: user.id,
+        ...(zohoMessageId ? { zoho_message_id: zohoMessageId } : {}),
+      },
     })
     .select()
     .single()

@@ -39,7 +39,11 @@ export async function emailFallbackForFailedPing(input: FallbackInput): Promise<
   const { subject, body } = composeFallback(kind, payload)
 
   try {
-    // threadId is only used for logging inside sendZohoReply — a synthetic id is fine.
+    // threadId drives sendZohoReply's reply-target lookup. This synthetic,
+    // timestamped id deliberately matches no conversation, so the lookup
+    // finds nothing and the alert goes out as its own standalone email —
+    // which is what an operator-facing fallback alert should be. Don't
+    // swap in a real thread id here unless you want it threaded.
     await sendZohoReply(
       customer.contact_email,
       subject,
