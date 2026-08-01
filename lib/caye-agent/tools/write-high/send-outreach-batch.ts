@@ -3,6 +3,7 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { dispatchOperatorReply } from '@/lib/whatsapp/channel-dispatch'
 import type { Tool } from '../types'
 import { assertConversationOwnedByWorkspace } from '../write-low/_guards'
+import { findOutreachDraftIssues, describeDraftIssues } from '@/lib/outreach-draft-guard'
 
 interface SendOutreachBatchItem {
   conversation_id: string
@@ -123,6 +124,17 @@ export const sendOutreachBatch: Tool<SendOutreachBatchInput> = {
       const draft = typeof meta.proposed_reply === 'string' ? meta.proposed_reply : ''
       if (!draft.trim()) {
         failed.push({ email: item.email, error: 'no draft stored on this thread' })
+        continue
+      }
+
+      // Content gate. The generator is an LLM and demonstrably ignores its
+      // own prompt rules at volume (2026-08-01: 7/31 shipped banned hedge
+      // phrases, 1 shipped a literal "[First Name]"). Cold email can't be
+      // recalled, so a suspect draft is held back for a rewrite rather
+      // than sent on the assumption it's probably fine.
+      const issues = findOutreachDraftIssues(draft)
+      if (issues.length > 0) {
+        failed.push({ email: item.email, error: describeDraftIssues(issues) })
         continue
       }
 

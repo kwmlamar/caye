@@ -3,6 +3,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { detectIdentityLeak } from './caye-identity-guard'
 import { sanitizeDashes } from './sanitize-dashes'
 import { loggedMessagesCreate } from '@/lib/llm-telemetry'
+import { BANNED_HEDGE_PHRASES } from './outreach-draft-guard'
 
 /**
  * Drafts the single allowed follow-up nudge for a cold-outreach lead in
@@ -39,8 +40,14 @@ function buildOutreachFollowupSystem(ctx: OutreachFollowupContext): string {
     'This is the ONE allowed follow-up per TropiTech\'s outreach policy (outreach-script.md) — ' +
     'no chasing beyond this, so don\'t hint at future follow-ups either.\n\n' +
     'Tone: direct and brief, no re-pitching Caye from scratch, no guilt trip about the silence. ' +
-    'Skip soft American customer-service hedge phrases entirely, e.g. "just floating this back up," ' +
-    '"no rush," "no worries at all," "just wanted to check in" — this is Bahamian directness, not a ' +
+    // Built from the shared ban list rather than restated inline, so the
+    // instruction here and the pre-send check that enforces it (see
+    // lib/outreach-draft-guard.ts) can never drift apart. A draft using any
+    // of these is refused at send time, not silently shipped.
+    'Skip soft American customer-service hedge phrases entirely — these exact phrases are BANNED and ' +
+    'a draft containing any of them will be rejected before it sends: ' +
+    BANNED_HEDGE_PHRASES.map((p) => `"${p}"`).join(', ') +
+    '. This is Bahamian directness, not a ' +
     'polite reminder email. Say plainly you\'re checking whether they saw the last message, restate ' +
     'the concrete next step, done. 2-3 sentences. If they\'re not interested that\'s fine, but state ' +
     'it flat, don\'t cushion it. ' +
