@@ -190,7 +190,7 @@ export function buildBackOfficeSystemPrompt(args: {
     `    • get_customer_history — past bookings + recent messages. Pass contact_id (full profile) OR conversation_id (thread-only customers)`,
     `    • get_recent_activity — feed of new bookings + status changes + holds in last N hours`,
     `    • get_recent_bookings — bookings created in the last N days`,
-    `    • get_pending_quotes — drafts you prepared on held threads, waiting on ${operator}'s approval`,
+    `    • get_pending_quotes — drafts you prepared on held threads, waiting on ${operator}'s approval. ALWAYS call this fresh when asked what's pending/in review/waiting to send, even if you answered the same question earlier THIS conversation — held items change between turns (new drafts land, others get handled elsewhere), so a prior answer is not evidence about right now. Never say "already checked" / "I just pulled the review tab" and reuse an old result instead of calling the tool again.`,
     `    • search_threads — find a customer thread by fuzzy name or message text`,
     `    • get_services — list the full service catalog with pricing tiers, visibility, capacity, duration. Call this BEFORE update_service_price / set_service_visibility / remove_service so you know the exact tier names.`,
     '',

@@ -58,6 +58,60 @@ function DeliveryStatusIcon({ status, error }: { status: DeliveryStatus; error?:
   )
 }
 
+function CopyIcon() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="9" y="9" width="12" height="12" rx="2" />
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    </svg>
+  )
+}
+
+function CheckIcon() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="20 6 9 17 4 12" />
+    </svg>
+  )
+}
+
+// Hover-revealed rather than always-visible — a Copy control sitting under
+// every single bubble at full opacity would be more visual noise than the
+// thread itself. `active` (hovered) keeps the layout slot reserved via
+// opacity/pointerEvents instead of conditional mounting, so nothing shifts
+// when it appears. Stays visible through `copied` even after the mouse
+// leaves, so the "Copied" confirmation isn't cut off mid-flash.
+function CopyButton({
+  onCopy, active, copied, align,
+}: {
+  onCopy: () => void
+  active: boolean
+  copied: boolean
+  align: 'flex-start' | 'flex-end'
+}) {
+  const visible = active || copied
+  return (
+    <button
+      type="button"
+      onClick={onCopy}
+      title={copied ? 'Copied' : 'Copy message'}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 4, alignSelf: align,
+        marginTop: 3, padding: '2px 6px', border: 'none', borderRadius: 6,
+        background: 'transparent', cursor: 'pointer',
+        color: copied ? '#4EBECE' : '#71717a',
+        fontSize: 9.5, fontFamily: 'var(--font-mono)',
+        opacity: visible ? 1 : 0,
+        pointerEvents: visible ? 'auto' : 'none',
+        transition: 'opacity 0.12s ease, color 0.12s ease',
+      }}
+    >
+      {copied ? <CheckIcon /> : <CopyIcon />}
+      {copied ? 'Copied' : 'Copy'}
+    </button>
+  )
+}
+
 type GroupPos = 'single' | 'first' | 'middle' | 'last'
 
 // Local slash commands, handled client-side in send() rather than sent to
@@ -261,6 +315,8 @@ export default function CayeDirectThread({ workspaceId, operatorId, operatorLabe
   const [showJump, setShowJump] = useState(false)
   const [clearing, setClearing] = useState(false)
   const [commandIndex, setCommandIndex] = useState(0)
+  const [hoveredKey, setHoveredKey] = useState<string | null>(null)
+  const [copiedKey, setCopiedKey] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const atBottomRef = useRef(true)
@@ -278,6 +334,18 @@ export default function CayeDirectThread({ workspaceId, operatorId, operatorLabe
     setInput(`/${cmd.name} `)
     setCommandIndex(0)
     textareaRef.current?.focus()
+  }
+
+  async function handleCopy(key: string, text: string) {
+    try {
+      await navigator.clipboard.writeText(text)
+    } catch {
+      // Clipboard permission denied/unavailable — nothing to escalate to
+      // the operator over a copy button, just skip the "Copied" feedback.
+      return
+    }
+    setCopiedKey(key)
+    setTimeout(() => setCopiedKey((k) => (k === key ? null : k)), 1500)
   }
 
   // Returns the thread rather than setting it, so callers keep control of
@@ -529,6 +597,8 @@ export default function CayeDirectThread({ workspaceId, operatorId, operatorLabe
               return (
                 <div
                   key={item.key}
+                  onMouseEnter={() => setHoveredKey(item.key)}
+                  onMouseLeave={() => setHoveredKey((k) => (k === item.key ? null : k))}
                   style={{
                     display: 'flex', alignItems: 'flex-end', gap: 8,
                     alignSelf: isCaye ? 'flex-start' : 'flex-end',
@@ -567,6 +637,12 @@ export default function CayeDirectThread({ workspaceId, operatorId, operatorLabe
                         {formatDistanceToNow(m.created_at)}
                       </div>
                     )}
+                    <CopyButton
+                      onCopy={() => handleCopy(item.key, m.body)}
+                      active={hoveredKey === item.key}
+                      copied={copiedKey === item.key}
+                      align={isCaye ? 'flex-start' : 'flex-end'}
+                    />
                   </div>
                 </div>
               )
