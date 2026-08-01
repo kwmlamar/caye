@@ -55,7 +55,7 @@ function describePendingAction(toolName: string, args: Record<string, unknown>):
         .map((it) => `${it.email ?? '?'} — "${it.subject ?? ''}"`)
         .join('; ')
       const overflow = items.length > 10 ? ` and ${items.length - 10} more` : ''
-      return `Send ${items.length} first-touch cold email${items.length === 1 ? '' : 's'}: ${list}${overflow}`
+      return `Send ${items.length} cold-outreach email${items.length === 1 ? '' : 's'}: ${list}${overflow}`
     }
     default:
       return `Run ${toolName}`

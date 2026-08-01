@@ -14,11 +14,21 @@ interface SendOutreachBatchInput {
   items: SendOutreachBatchItem[]
 }
 
+/** hold_kind values eligible for batch send — first-touch opens (roadmap
+ *  step 3) and their one allowed follow-up nudge (roadmap step 2, which
+ *  decisions-log called "graduated to autosend" but was never actually
+ *  wired to send — outreach-nudge-scan only ever holds it, same as
+ *  first-touch). Both are a single Caye-drafted message the operator
+ *  reviews once before it ships; neither is the permanently-gated step-4
+ *  "zero review" case. */
+const BATCHABLE_HOLD_KINDS = new Set(['outreach_first_touch', 'outreach_followup'])
+
 /**
- * Batch-approved first-touch cold-outreach sends — step 3 of the 2026-07-21
- * staged-autonomy roadmap (decisions-log): the operator approves a list
- * once, Caye sends all of them, instead of per-message review. Step 4
- * (fully autonomous first-touch with no review at all) stays permanently
+ * Batch-approved cold-outreach sends — first-touch opens (roadmap step 3)
+ * and their one allowed follow-up nudge (roadmap step 2) — from the
+ * 2026-07-21 staged-autonomy roadmap (decisions-log): the operator approves
+ * a list once, Caye sends all of them, instead of per-message review. Step
+ * 4 (fully autonomous first-touch with no review at all) stays permanently
  * off the roadmap — this tool never runs without the code-enforced
  * gateHighRisk confirmation round-trip (see registry.ts), same mechanism
  * as send_reply/cancel_booking/etc.
@@ -34,16 +44,17 @@ interface SendOutreachBatchInput {
 export const sendOutreachBatch: Tool<SendOutreachBatchInput> = {
   name: 'send_outreach_batch',
   description:
-    "Send a batch of held first-touch cold-outreach emails the operator has already reviewed via " +
-    "get_pending_quotes (items with hold_kind 'outreach_first_touch'). HIGH-RISK — ships real, " +
-    "non-opted-in cold email; only ever call with conversation_ids that came from get_pending_quotes. " +
-    "CONFIRMATION IS ENFORCED IN CODE, not just by this text — the first call with a given item list " +
-    "only stages it and returns un-executed, nothing is sent yet. Relay the staged summary (count + " +
-    "recipient/subject list) to the operator and ask them to confirm. Once they reply affirmatively in " +
-    "a NEW message, call this again with the EXACT SAME items to actually send. The email/subject " +
-    "fields are for the confirmation summary only — the tool always sends the exact draft text stored " +
-    "on the thread at create_outreach_leads time, never text regenerated in this turn. This tool " +
-    "refuses any conversation_id that isn't a held 'outreach_first_touch' thread.",
+    "Send a batch of held cold-outreach emails the operator has already reviewed via get_pending_quotes " +
+    "— first-touch opens (hold_kind 'outreach_first_touch') and/or their one allowed follow-up nudge " +
+    "(hold_kind 'outreach_followup'). HIGH-RISK — ships real, non-opted-in cold email; only ever call " +
+    "with conversation_ids that came from get_pending_quotes. CONFIRMATION IS ENFORCED IN CODE, not " +
+    "just by this text — the first call with a given item list only stages it and returns un-executed, " +
+    "nothing is sent yet. Relay the staged summary (count + recipient/subject list) to the operator and " +
+    "ask them to confirm. Once they reply affirmatively in a NEW message, call this again with the " +
+    "EXACT SAME items to actually send. The email/subject fields are for the confirmation summary " +
+    "only — the tool always sends the exact draft text stored on the thread, never text regenerated in " +
+    "this turn. This tool refuses any conversation_id that isn't a held outreach thread of one of those " +
+    "two kinds — it will never send anything with zero prior human review.",
   risk: 'high',
   roles: ['owner', 'founder'],
   modes: ['back-office'],
@@ -105,8 +116,8 @@ export const sendOutreachBatch: Tool<SendOutreachBatchInput> = {
       }
 
       const meta = (conv.metadata ?? {}) as Record<string, unknown>
-      if (meta.hold_kind !== 'outreach_first_touch') {
-        failed.push({ email: item.email, error: 'not a held first-touch outreach thread' })
+      if (typeof meta.hold_kind !== 'string' || !BATCHABLE_HOLD_KINDS.has(meta.hold_kind)) {
+        failed.push({ email: item.email, error: 'not a held outreach thread eligible for batch send' })
         continue
       }
       const draft = typeof meta.proposed_reply === 'string' ? meta.proposed_reply : ''
