@@ -2,7 +2,7 @@ import 'server-only'
 import { createServiceClient } from '@/lib/supabase-server'
 import { sendMetaMessage } from '@/lib/meta-reply'
 import { sendWhatsAppMessage } from '@/lib/whatsapp'
-import { sendZohoReply } from '@/lib/email-ai'
+import { sendZohoReply, sendZohoEmail } from '@/lib/email-ai'
 import type { VoiceProfile } from '@/lib/voice-profile'
 import { ensureTagline } from '@/lib/voice-profile'
 import { resolveOpenEscalations } from '@/lib/caye-agent/tools/write-low/resolve-open-escalations'
@@ -56,6 +56,7 @@ export async function dispatchOperatorReply(
   const trimmed = text.trim()
   if (!trimmed) throw new Error('empty reply')
   let outboundBody = trimmed
+  const meta = (conv.metadata ?? {}) as Record<string, unknown>
 
   switch (conv.channel_type) {
     case 'messenger':
@@ -71,8 +72,18 @@ export async function dispatchOperatorReply(
       )
       break
     case 'email': {
-      const meta = (conv.metadata ?? {}) as Record<string, string>
-      const subj = meta.subject || '(no subject)'
+      if (meta.hold_kind === 'outreach_first_touch') {
+        // First-touch cold outreach — no real prior thread to reply into and
+        // no inbound subject to inherit, so send a clean standalone email
+        // with the subject the draft was created with (mirrors
+        // app/api/messages/send/route.ts's outreach branch). No "Re:"
+        // prefix and no tagline — those are reply-thread conventions that
+        // don't apply to a cold open.
+        const subject = (meta.subject as string) || 'Quick question'
+        await sendZohoEmail(conv.customer_id, subject, trimmed, account.user_id)
+        break
+      }
+      const subj = (meta.subject as string) || '(no subject)'
       const replySubject = subj.startsWith('Re:') ? subj : `Re: ${subj}`
       // The body here is Caye-composed (operator approved/revised the draft),
       // so the outbound-email tagline guarantee applies just like the
@@ -146,6 +157,20 @@ export async function dispatchOperatorReply(
   // forever and the "Needs review" stat card keeps counting a thread the
   // operator already replied to.
   await resolveOpenEscalations(supabase, conversationId)
+
+  // First-touch cold-outreach send (create_outreach_leads / send_outreach_batch)
+  // — flips the lead from 'draft' to 'sent' and stamps first_touch_sent_at
+  // (mirrors app/api/messages/send/route.ts), which is what makes
+  // outreach-nudge-scan's cron correctly find this lead 2 days later if it
+  // goes quiet. .is('first_touch_sent_at', null) guards against a later
+  // reply on the same thread re-stamping the timestamp.
+  if (meta.source === 'outreach_leads' && meta.lead_id) {
+    await supabase
+      .from('outreach_leads')
+      .update({ status: 'sent', first_touch_sent_at: now })
+      .eq('id', meta.lead_id as string)
+      .is('first_touch_sent_at', null)
+  }
 
   return { success: true, channelType: conv.channel_type, messageId }
 }

@@ -43,6 +43,7 @@ import { sendPaymentLink } from './write-high/send-payment-link'
 import { confirmBooking } from './write-high/confirm-booking'
 import { rescheduleBooking } from './write-high/reschedule-booking'
 import { cancelBooking } from './write-high/cancel-booking'
+import { sendOutreachBatch } from './write-high/send-outreach-batch'
 import { notifyDriver } from './write-low/notify-driver'
 import { getMyAssignments } from './read/get-my-assignments'
 import { getLogisticsFacts } from './read/get-logistics-facts'
@@ -58,8 +59,10 @@ import { gateAdminHighRisk } from './admin/admin-high-risk-gate'
  * Low-risk write tools (20): #37 — autonomous execution (adds
  * update_team_member_name, 2026-07-27 — self-service display name so
  * greetings don't fall back to full_name/legal name)
- * High-risk write tools (8): #42/#43 — gated through confirmation flow
- * (adds remove_pricing_tier, 2026-07-26)
+ * High-risk write tools (9): #42/#43 — gated through confirmation flow
+ * (adds remove_pricing_tier, 2026-07-26; send_outreach_batch, 2026-08-01 —
+ * step 3 of the 2026-07-21 staged-autonomy roadmap, batch-approved
+ * first-touch outreach sends)
  * Driver-mode tools (4, 2026-07-05): tagged modes: ['driver'] — never
  * shipped to back-office/front-desk requests, see execute.ts mode filter.
  */
@@ -114,6 +117,13 @@ export const TOOL_REGISTRY: AnyTool[] = [
   gateHighRisk(removePricingTier) as AnyTool,
   gateHighRisk(removeBlackoutDate) as AnyTool,
   gateHighRisk(removeTeamMember) as AnyTool,
+  // Batch-approved first-touch outreach sends (2026-08-01) — step 3 of the
+  // 2026-07-21 staged-autonomy roadmap. Step 4 (fully autonomous, no
+  // review) stays permanently off; this only ever sends threads the
+  // operator already reviewed via get_pending_quotes, and only after the
+  // same code-enforced confirmation round-trip as every other high-risk
+  // tool above.
+  gateHighRisk(sendOutreachBatch) as AnyTool,
   // Driver mode
   getMyAssignments as AnyTool,
   getLogisticsFacts as AnyTool,

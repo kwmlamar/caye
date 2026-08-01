@@ -48,6 +48,15 @@ function describePendingAction(toolName: string, args: Record<string, unknown>):
       return `Remove closure matching "${args.match}"`
     case 'remove_team_member':
       return `Remove teammate "${args.phone_or_name}"`
+    case 'send_outreach_batch': {
+      const items = Array.isArray(args.items) ? (args.items as Record<string, unknown>[]) : []
+      const list = items
+        .slice(0, 10)
+        .map((it) => `${it.email ?? '?'} — "${it.subject ?? ''}"`)
+        .join('; ')
+      const overflow = items.length > 10 ? ` and ${items.length - 10} more` : ''
+      return `Send ${items.length} first-touch cold email${items.length === 1 ? '' : 's'}: ${list}${overflow}`
+    }
     default:
       return `Run ${toolName}`
   }
