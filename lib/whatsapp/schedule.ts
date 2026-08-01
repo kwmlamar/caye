@@ -119,6 +119,45 @@ export function localDayOfWeek(date: Date, timezone: string): number {
   return new Date(`${formatter.format(date)}T00:00:00Z`).getUTCDay()
 }
 
+/** Today's calendar date in the workspace's timezone, as YYYY-MM-DD. The
+ *  server clock is UTC, so `new Date().toISOString().slice(0, 10)` is already
+ *  "tomorrow" for the last 4-5 hours of every Caribbean day — anything doing
+ *  date arithmetic against what the owner considers "today" must go through
+ *  here instead. */
+export function localDateISO(date: Date, timezone: string): string {
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  })
+  return formatter.format(date)
+}
+
+/** How far behind UTC `timezone` is at a given instant, in ms (positive west
+ *  of Greenwich). Formats the SAME instant through both zones and subtracts,
+ *  so whatever timezone the host process happens to be in cancels out —
+ *  unlike a one-sided `toLocaleString` probe, which silently assumes the
+ *  server clock is UTC and only behaves correctly in deployment. DST comes
+ *  from Intl rather than a hardcoded offset. */
+function tzOffsetMs(at: Date, timezone: string): number {
+  const asUTC = new Date(at.toLocaleString('en-US', { timeZone: 'UTC' }))
+  const asLocal = new Date(at.toLocaleString('en-US', { timeZone: timezone }))
+  return asUTC.getTime() - asLocal.getTime()
+}
+
+/**
+ * The instant a local calendar day ENDS, for a YYYY-MM-DD the owner named.
+ *
+ * "Expires on the 15th" means end of the 15th in the owner's own timezone,
+ * not 00:00Z on the 15th — which in America/Nassau (UTC-4) is 8pm on the
+ * 14th, i.e. the thing dies the evening BEFORE the date they said.
+ */
+export function endOfLocalDayUTC(dateISO: string, timezone: string): Date {
+  const naive = new Date(`${dateISO}T23:59:59.999Z`)
+  return new Date(naive.getTime() + tzOffsetMs(naive, timezone))
+}
+
 /**
  * Is `now` within ±30 minutes of 7am local, AND is today one of this
  * workspace's enabled digest_days? Used by the morning-digest cron (which

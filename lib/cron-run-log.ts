@@ -93,6 +93,13 @@ export const MONITORED_CRONS: CronExpectation[] = [
   // that so an unregistered job didn't alert as "never run" before anyone
   // had a chance to set it up.
   { cronName: 'template-sync', label: 'WhatsApp template sync', maxStalenessMinutes: 150 },
+  // Opportunity Scan + Business Insights (2026-07-28). Hourly tick /
+  // weekly tick respectively — staleness thresholds sized to each cron's
+  // own cadence, not copy-pasted from the hourly crons above.
+  { cronName: 'opportunity-scan', label: 'Opportunity scan', maxStalenessMinutes: 150 },
+  // 12600 = 8.75 days — pads a week-cadence job so ordinary tick jitter
+  // doesn't false-positive right at the 7-day boundary.
+  { cronName: 'business-insights', label: 'Business insights', maxStalenessMinutes: 12600 },
 ]
 
 // Once alerted, don't re-alert for the same stall for 4h — a stuck

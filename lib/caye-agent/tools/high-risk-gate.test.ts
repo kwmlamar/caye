@@ -162,6 +162,35 @@ describe('gateHighRisk (#64 — code-enforced confirmation gate)', () => {
     expect((result.data as { pending?: boolean }).pending).toBe(true)
   })
 
+  it('opportunity-scan (2026-07-28): a second scan run never auto-executes a proposal it staged itself', async () => {
+    const mutate = vi.fn<Tool<FakeArgs>['execute']>(async () => ({ ok: true, data: { mutated: true } }))
+    const gated = gateHighRisk(makeRealTool(mutate))
+    const wsId = 'ws-scan-1'
+
+    await gated.execute({ target: 'alpha' }, ctx({ workspaceId: wsId, requestId: 'scan-req-1', origin: 'scan' }))
+    // A later, independent scan run reasons its way to the same proposal —
+    // different requestId, same args, still origin: 'scan'. Must NOT read
+    // as human confirmation.
+    const secondScan = await gated.execute(
+      { target: 'alpha' },
+      ctx({ workspaceId: wsId, requestId: 'scan-req-2', origin: 'scan' })
+    )
+
+    expect(mutate).not.toHaveBeenCalled()
+    expect((secondScan.data as { pending?: boolean }).pending).toBe(true)
+
+    // A real inbound message (origin unset) DOES confirm the still-staged
+    // proposal — the gate isn't broken, only scan-origin calls are barred
+    // from supplying the confirming half.
+    const realConfirm = await gated.execute(
+      { target: 'alpha' },
+      ctx({ workspaceId: wsId, requestId: 'chat-req-1' })
+    )
+
+    expect(mutate).toHaveBeenCalledTimes(1)
+    expect(realConfirm).toEqual({ ok: true, data: { mutated: true } })
+  })
+
   it('scopes staged actions per operator — a different operator cannot confirm someone else\'s stage', async () => {
     const mutate = vi.fn<Tool<FakeArgs>['execute']>(async () => ({ ok: true, data: { mutated: true } }))
     const gated = gateHighRisk(makeRealTool(mutate))

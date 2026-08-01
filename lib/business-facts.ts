@@ -21,7 +21,7 @@ export async function fetchBusinessFacts(workspaceId: string): Promise<BusinessF
   const supabase = createServiceClient()
   const { data, error } = await supabase
     .from('business_facts')
-    .select('id, category, fact')
+    .select('id, category, fact, expires_at')
     .eq('workspace_id', workspaceId)
     .order('created_at', { ascending: true })
     .limit(150)
@@ -29,7 +29,10 @@ export async function fetchBusinessFacts(workspaceId: string): Promise<BusinessF
     console.error('[business-facts] fetch failed:', error)
     return []
   }
-  return (data ?? []) as BusinessFactRow[]
+  const now = Date.now()
+  return ((data ?? []) as Array<BusinessFactRow & { expires_at: string | null }>)
+    .filter((f) => !f.expires_at || new Date(f.expires_at).getTime() > now)
+    .map(({ id, category, fact }) => ({ id, category, fact }))
 }
 
 /**

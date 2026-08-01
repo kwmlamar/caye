@@ -72,6 +72,14 @@ export interface CayeAgentInput {
    * this rather than an operator identity concept.
    */
   callerPhone?: string | null
+  /**
+   * Set to 'scan' by the opportunity-scan cron (2026-07-28) — a
+   * system-generated periodic invocation, not a real inbound message.
+   * Threaded into ToolContext.origin, which gateHighRisk uses to refuse
+   * treating a scan-origin call as human confirmation of a staged
+   * high-risk action. Undefined (real chat) everywhere else.
+   */
+  origin?: 'chat' | 'scan'
 }
 
 export interface CayeAgentResult {
@@ -240,6 +248,7 @@ export async function cayeAgent(input: CayeAgentInput): Promise<CayeAgentResult>
       callerRole: input.callerRole,
       operatorId: input.operatorId,
       requestId: randomUUID(),
+      origin: input.origin,
     },
     mode: 'back-office',
   })

@@ -23,6 +23,7 @@ import { resolveOpenEscalations } from '@/lib/caye-agent/tools/write-low/resolve
 import { htmlToPlainText } from '@/lib/email-text'
 import { maybeRefreshOwnerVoiceProfile } from '@/lib/owner-voice-learning'
 import { maybeSuggestBusinessFacts } from '@/lib/business-fact-suggestions'
+import { clearStaleOutreachAutofill } from '@/lib/outreach-autofill'
 import { detectOwnerCorrection } from '@/lib/owner-correction'
 import { isNoReplySender, isCalendarInvite, isPaymentReceipt, isOutOfOffice } from '@/lib/sender-classifier'
 import {
@@ -1378,6 +1379,16 @@ async function processMessage(
   })
 
   if (decision.action === 'hold') {
+    // Same guard the zoho-email webhook and recordEscalation already apply
+    // before THEY re-hold a thread: a leftover outreach hold_kind/
+    // proposed_reply from before the prospect replied would otherwise keep
+    // satisfying every "is there a draft waiting?" check. That's not just
+    // the cosmetic autofill bug from 2026-07-26 anymore — get_pending_quotes
+    // seeds from conversation metadata FIRST (ahead of the fresh internal-
+    // note draft), and send_outreach_batch accepts anything still carrying a
+    // batchable hold_kind, so a stale cold-open could be re-approved and
+    // re-sent to someone who has already written back.
+    await clearStaleOutreachAutofill(conversation.id)
     await supabase
       .from('unified_conversations')
       .update({

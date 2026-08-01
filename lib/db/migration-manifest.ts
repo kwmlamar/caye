@@ -68,4 +68,8 @@ export const REPO_MIGRATIONS: readonly string[] = [
   '20260727_operator_allowlist_last_inbound',
   '20260728_ensure_founder_in_workspace_members',
   '20260728b_applied_migration_names_rpc',
+  '20260728c_operator_messages_delivery_status',
+  '20260728d_customer_status_inactive_not_cancelled',
+  '20260728e_opportunity_scan_business_insights',
+  '20260730_business_facts_expiry',
 ]

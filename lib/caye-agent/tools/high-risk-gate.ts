@@ -91,8 +91,20 @@ function describePendingAction(toolName: string, args: Record<string, unknown>):
  * matched the args passed to the tool. Now the summary shown IS derived
  * from the staged args, and the confirming call must supply the exact
  * same args to execute — what's shown and what runs can't drift apart.
+ *
+ * ctx.origin (opportunity-scan, 2026-07-28): requestId alone assumed
+ * every fresh top-level request meant a real human turn happened. That
+ * broke once a periodic system-generated scan became a caller — two
+ * independent scan runs each produce a fresh requestId with zero human
+ * involved, and without a check here the second run's proposal would
+ * read as "confirming" the first and auto-execute. A scan-origin call
+ * may only ever stage; only a chat-origin (real inbound message) call
+ * may confirm. ttlMinutes is overridable for the same reason — a scan
+ * proposal is notify-then-wait-for-a-reply-later, not synchronous chat,
+ * so the default 15-minute window would expire before the owner even
+ * sees the WhatsApp ping.
  */
-export function gateHighRisk<T>(tool: Tool<T>): Tool<T> {
+export function gateHighRisk<T>(tool: Tool<T>, ttlMinutes: number = PENDING_TTL_MINUTES): Tool<T> {
   return {
     ...tool,
     async execute(args, ctx: ToolContext): Promise<ToolResult> {
@@ -123,10 +135,15 @@ export function gateHighRisk<T>(tool: Tool<T>): Tool<T> {
       const summary = describePendingAction(tool.name, args as Record<string, unknown>)
 
       if (existing) {
-        if (existing.created_in_request_id !== ctx.requestId) {
+        if (existing.created_in_request_id !== ctx.requestId && ctx.origin !== 'scan') {
           // Staged in a PRIOR, separate request — a fresh inbound message
           // arrived and the model called this again with the same args.
           // That's the human confirmation. Run it for real.
+          //
+          // ctx.origin !== 'scan' guard: a scan-origin call can never
+          // supply this confirming half, regardless of requestId — see
+          // the doc comment above gateHighRisk. Falls through to the
+          // "still staged" branch below instead.
           const result = await tool.execute(args, ctx)
           await supabase
             .from('caye_pending_actions')
@@ -134,14 +151,20 @@ export function gateHighRisk<T>(tool: Tool<T>): Tool<T> {
             .eq('id', existing.id)
           return result
         }
-        // Same request retrying the same call — do not execute twice in
-        // one turn no matter how many tool-loop iterations remain.
+        // Either the same request retrying the same call (do not execute
+        // twice in one turn no matter how many tool-loop iterations
+        // remain), or a scan-origin call re-proposing something already
+        // staged (it structurally cannot confirm — see gateHighRisk doc
+        // comment). Either way: still pending, don't execute.
         return {
           ok: true,
           data: {
             pending: true,
             summary,
-            note: 'Already staged this turn — relay the summary to the operator and stop. Do not call this tool again until they reply in a new message.',
+            note:
+              ctx.origin === 'scan'
+                ? 'Already staged (possibly from an earlier scan) — do not re-propose unless the situation has materially changed. This cannot be confirmed by a scan; only a real reply from the operator confirms it.'
+                : 'Already staged this turn — relay the summary to the operator and stop. Do not call this tool again until they reply in a new message.',
           },
         }
       }
@@ -155,7 +178,7 @@ export function gateHighRisk<T>(tool: Tool<T>): Tool<T> {
         args_key: argsKey,
         summary,
         created_in_request_id: ctx.requestId,
-        expires_at: new Date(Date.now() + PENDING_TTL_MINUTES * 60 * 1000).toISOString(),
+        expires_at: new Date(Date.now() + ttlMinutes * 60 * 1000).toISOString(),
       })
       if (error) {
         return { ok: false, error: `Could not stage this action: ${error.message}` }
@@ -166,7 +189,7 @@ export function gateHighRisk<T>(tool: Tool<T>): Tool<T> {
         data: {
           pending: true,
           summary,
-          expires_in_minutes: PENDING_TTL_MINUTES,
+          expires_in_minutes: ttlMinutes,
           note: 'Staged, not executed yet. Relay the summary to the operator and ask them to confirm. Once they reply affirmatively in a NEW message, call this same tool with the same arguments again to actually run it.',
         },
       }

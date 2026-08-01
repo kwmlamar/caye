@@ -126,6 +126,30 @@ export const sendOutreachBatch: Tool<SendOutreachBatchInput> = {
         continue
       }
 
+      // Never ship a held outreach draft to someone who has already written
+      // back. Both batchable kinds are pre-reply by definition — a first
+      // touch goes to a silent prospect, and a follow-up nudge only exists
+      // BECAUSE they stayed silent — so any inbound customer message means
+      // this draft was overtaken by events. Cheap, irreversible-path guard
+      // that holds even if some future hold path forgets to clear the stale
+      // metadata (see clearStaleOutreachAutofill and its call sites).
+      const { count: inboundCount, error: inboundErr } = await supabase
+        .from('unified_messages')
+        .select('id', { count: 'exact', head: true })
+        .eq('conversation_id', item.conversation_id)
+        .eq('sender_type', 'customer')
+      if (inboundErr) {
+        failed.push({ email: item.email, error: `could not verify reply state: ${inboundErr.message}` })
+        continue
+      }
+      if ((inboundCount ?? 0) > 0) {
+        failed.push({
+          email: item.email,
+          error: 'prospect has already replied on this thread — draft is stale, reply to them directly instead',
+        })
+        continue
+      }
+
       try {
         await dispatchOperatorReply(item.conversation_id, draft, 'caye-dashboard')
         sent.push(item.email)

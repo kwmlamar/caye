@@ -4,6 +4,7 @@ import { getCalendar } from './read/get-calendar'
 import { getHeldQueue } from './read/get-held-queue'
 import { getTodaySummary } from './read/get-today-summary'
 import { getRevenue } from './read/get-revenue'
+import { getTourTypePerformance } from './read/get-tour-type-performance'
 import { getCustomer } from './read/get-customer'
 import { getCustomerHistory } from './read/get-customer-history'
 import { getRecentActivity } from './read/get-recent-activity'
@@ -15,6 +16,7 @@ import { getServices } from './read/get-services'
 import { getTeamMembers } from './read/get-team-members'
 import { markHandled } from './write-low/mark-handled'
 import { addBusinessFact } from './write-low/add-business-fact'
+import { removeBusinessFact } from './write-low/remove-business-fact'
 import { updateServicePrice } from './write-low/update-service-price'
 import { addService } from './write-low/add-service'
 import { addPricingTier } from './write-low/add-pricing-tier'
@@ -49,14 +51,18 @@ import { getMyAssignments } from './read/get-my-assignments'
 import { getLogisticsFacts } from './read/get-logistics-facts'
 import { escalateDriverQuestion } from './write-low/escalate-driver-question'
 import { getCronHealth } from './admin/read/get-cron-health'
+import { getWorkspaceAutonomy } from './admin/read/get-workspace-autonomy'
 import { triggerCron } from './admin/write-high/trigger-cron'
+import { setWorkspaceAutonomy } from './admin/write-high/set-workspace-autonomy'
 import { gateAdminHighRisk } from './admin/admin-high-risk-gate'
 
 /**
  * All tools available to the back-office agent.
  *
  * Read tools (11): #38 + #40 — autonomous execution
- * Low-risk write tools (20): #37 — autonomous execution (adds
+ * Low-risk write tools (21): #37 — autonomous execution (adds
+ * remove_business_fact, 2026-07-30 — mirrors add_business_fact so
+ * temporary notes like a vacation closure can be retired once stale;
  * update_team_member_name, 2026-07-27 — self-service display name so
  * greetings don't fall back to full_name/legal name)
  * High-risk write tools (9): #42/#43 — gated through confirmation flow
@@ -74,6 +80,7 @@ export const TOOL_REGISTRY: AnyTool[] = [
   getHeldQueue as AnyTool,
   getTodaySummary as AnyTool,
   getRevenue as AnyTool,
+  getTourTypePerformance as AnyTool,
   getCustomer as AnyTool,
   getCustomerHistory as AnyTool,
   getRecentActivity as AnyTool,
@@ -86,6 +93,7 @@ export const TOOL_REGISTRY: AnyTool[] = [
   // Low-risk write
   markHandled as AnyTool,
   addBusinessFact as AnyTool,
+  removeBusinessFact as AnyTool,
   updateServicePrice as AnyTool,
   addService as AnyTool,
   addPricingTier as AnyTool,
@@ -133,7 +141,14 @@ export const TOOL_REGISTRY: AnyTool[] = [
   // mechanism from gateHighRisk above, backed by caye_admin_pending_actions
   // rather than caye_pending_actions — see admin-high-risk-gate.ts).
   getCronHealth as AnyTool,
+  getWorkspaceAutonomy as AnyTool,
   gateAdminHighRisk(triggerCron) as AnyTool,
+  // set_workspace_autonomy is the only way to switch on the opportunity-scan
+  // and business-insights crons (both default false in the migration, and
+  // nothing in the customer dashboard touches them by design). Gated because
+  // enabling a scan points unprompted, recurring WhatsApp traffic at a paying
+  // customer's owner — see the tool's own doc comment.
+  gateAdminHighRisk(setWorkspaceAutonomy) as AnyTool,
 ]
 
 export function findTool(name: string): AnyTool | undefined {

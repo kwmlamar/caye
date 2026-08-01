@@ -83,6 +83,25 @@ export interface ToolContext {
    * lib/caye-agent/tools/high-risk-gate.ts.
    */
   requestId: string
+  /**
+   * Marks this invocation as a system-generated periodic scan (the
+   * opportunity-scan and business-insights crons) rather than a real
+   * inbound message. Undefined everywhere else — fully backward
+   * compatible. business-insights is read-only by design and shouldn't
+   * ever call a gated tool, but it's tagged 'scan' anyway as defense in
+   * depth: cheap, and it means NO periodic system-generated caller can
+   * ever be mistaken for a human confirming a staged action.
+   *
+   * Load-bearing for gateHighRisk: requestId alone can't distinguish "a
+   * human sent a new message" from "the scan ran again," since both
+   * produce a fresh requestId. Two independent scan runs could otherwise
+   * each stage the same tool+args and the second would read as
+   * confirming the first, auto-executing a high-risk action with zero
+   * human involved. gateHighRisk refuses to treat origin: 'scan' as a
+   * confirming call — a scan can stage a proposal but only a real
+   * chat-origin invocation can confirm it.
+   */
+  origin?: 'chat' | 'scan'
 }
 
 /**
