@@ -13,7 +13,15 @@ import { runBusinessInsights } from '@/app/api/caye/business-insights/cron/route
  * another cron here means writing the code, not something a founder can
  * do from chat.
  */
-export const CRON_JOBS: Record<string, { label: string; run: () => Promise<Record<string, unknown>> }> = {
+// `force` is only meaningful to opportunity-scan/business-insights (bypasses
+// their cadence gate — see the doc comment on runOpportunityScan). The other
+// four jobs' run() signatures take no params, which TS allows here since a
+// function accepting fewer args satisfies a type expecting more — trigger_cron
+// passes force uniformly and jobs that don't use it just ignore it.
+export const CRON_JOBS: Record<
+  string,
+  { label: string; run: (opts?: { force?: boolean }) => Promise<Record<string, unknown>> }
+> = {
   'morning-digest': { label: 'Morning digest + aging escalations', run: runMorningDigest },
   'escalation-followup': { label: 'Escalation follow-up sweep', run: runEscalationFollowup },
   'gmail-poll': { label: 'Gmail inbox poll', run: runGmailPoll },

@@ -73,8 +73,15 @@ export async function GET(request: NextRequest) {
 /** Extracted from GET so Admin Shell's trigger_cron can run this on demand
  *  (lib/caye-agent/tools/admin/cron-registry.ts) without going back through
  *  HTTP + CRON_SECRET. Same recordCronRun wrapper either way, so a manual
- *  run updates the health row exactly like a scheduled one. */
-export async function runOpportunityScan() {
+ *  run updates the health row exactly like a scheduled one.
+ *
+ *  opts.force (2026-08-01, admin-shell manual trigger only — the real GET
+ *  cron never passes this): bypasses the target-hour/already-ran cadence
+ *  gate so a founder testing this doesn't have to wait for 10/14/18 local.
+ *  Deliberately does NOT bypass muted/quiet_hours — those are the owner's
+ *  own do-not-disturb preference, and a founder choosing to force a test
+ *  run shouldn't be able to override that for a live paying customer. */
+export async function runOpportunityScan(opts?: { force?: boolean }) {
   return recordCronRun('opportunity-scan', async () => {
     const supabase = createServiceClient()
     const now = new Date()
@@ -94,7 +101,7 @@ export async function runOpportunityScan() {
 
     for (const row of (rows ?? []) as unknown as WorkspaceRow[]) {
       try {
-        const result = await processWorkspace(supabase, row, now)
+        const result = await processWorkspace(supabase, row, now, opts?.force ?? false)
         results.push({ workspace_id: row.workspace_id, ...result })
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
@@ -110,12 +117,13 @@ export async function runOpportunityScan() {
 async function processWorkspace(
   supabase: ReturnType<typeof createServiceClient>,
   row: WorkspaceRow,
-  now: Date
+  now: Date,
+  force = false
 ): Promise<{ status: string; detail?: string }> {
   if (!row.operator_whatsapp_number) return { status: 'skip', detail: 'no operator phone' }
 
   const cfg = await loadScheduleConfig(row.workspace_id)
-  const skip = shouldSkip({ now, cfg, lastScanAtISO: row.last_opportunity_scan_at })
+  const skip = shouldSkip({ now, cfg, lastScanAtISO: row.last_opportunity_scan_at, force })
   if (skip) return { status: 'skip', detail: skip }
 
   const operator = await resolveOperatorByPhone(supabase, row.workspace_id, row.operator_whatsapp_number)
@@ -195,14 +203,20 @@ function shouldSkip(args: {
   now: Date
   cfg: WorkspaceScheduleConfig
   lastScanAtISO: string | null
+  force?: boolean
 }): string | null {
   const { now, cfg } = args
   if (cfg.mutedUntil && cfg.mutedUntil > now) return 'muted'
   if (inQuietHours(now, cfg)) return 'quiet_hours'
+  if (args.force) return null
 
   const hour = localHour(now, cfg.timezone)
   if (!TARGET_LOCAL_HOURS.includes(hour)) {
-    return `not a scan hour (now=${hour}, targets=${TARGET_LOCAL_HOURS.join(',')})`
+    // Explicitly labeled "local" — cayeAgent narrates this string verbatim to
+    // the founder, and without a label it's guessed "UTC" once already
+    // (2026-08-01 manual trigger_cron test), which is wrong and would read
+    // as a timezone bug that doesn't actually exist.
+    return `not a scan hour (now=${hour} ${cfg.timezone} local, targets=${TARGET_LOCAL_HOURS.join(',')} local)`
   }
 
   if (args.lastScanAtISO) {

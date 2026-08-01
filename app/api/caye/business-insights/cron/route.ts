@@ -75,8 +75,12 @@ export async function GET(request: NextRequest) {
 /** Extracted from GET so Admin Shell's trigger_cron can run this on demand
  *  (lib/caye-agent/tools/admin/cron-registry.ts) without going back through
  *  HTTP + CRON_SECRET. Same recordCronRun wrapper either way, so a manual
- *  run updates the health row exactly like a scheduled one. */
-export async function runBusinessInsights() {
+ *  run updates the health row exactly like a scheduled one.
+ *
+ *  opts.force (2026-08-01, admin-shell manual trigger only): bypasses the
+ *  Monday-9am/MIN_GAP_DAYS cadence gate, not muted/quiet_hours — see the
+ *  matching comment on runOpportunityScan for why those stay enforced. */
+export async function runBusinessInsights(opts?: { force?: boolean }) {
   return recordCronRun('business-insights', async () => {
     const supabase = createServiceClient()
     const now = new Date()
@@ -94,7 +98,7 @@ export async function runBusinessInsights() {
 
     for (const row of (rows ?? []) as unknown as WorkspaceRow[]) {
       try {
-        const result = await processWorkspace(supabase, row, now)
+        const result = await processWorkspace(supabase, row, now, opts?.force ?? false)
         results.push({ workspace_id: row.workspace_id, ...result })
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
@@ -110,12 +114,13 @@ export async function runBusinessInsights() {
 async function processWorkspace(
   supabase: ReturnType<typeof createServiceClient>,
   row: WorkspaceRow,
-  now: Date
+  now: Date,
+  force = false
 ): Promise<{ status: string; detail?: string }> {
   if (!row.operator_whatsapp_number) return { status: 'skip', detail: 'no operator phone' }
 
   const cfg = await loadScheduleConfig(row.workspace_id)
-  const skip = shouldSkip({ now, cfg, lastSentAtISO: row.last_business_insights_sent_at })
+  const skip = shouldSkip({ now, cfg, lastSentAtISO: row.last_business_insights_sent_at, force })
   if (skip) return { status: 'skip', detail: skip }
 
   const operator = await resolveOperatorByPhone(supabase, row.workspace_id, row.operator_whatsapp_number)
@@ -175,10 +180,12 @@ function shouldSkip(args: {
   now: Date
   cfg: WorkspaceScheduleConfig
   lastSentAtISO: string | null
+  force?: boolean
 }): string | null {
   const { now, cfg } = args
   if (cfg.mutedUntil && cfg.mutedUntil > now) return 'muted'
   if (inQuietHours(now, cfg)) return 'quiet_hours'
+  if (args.force) return null
 
   if (localDayOfWeek(now, cfg.timezone) !== TARGET_WEEKDAY) return 'not target weekday'
   if (localHour(now, cfg.timezone) !== TARGET_LOCAL_HOUR) return 'not target hour'

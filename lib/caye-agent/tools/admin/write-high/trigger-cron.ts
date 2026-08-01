@@ -4,6 +4,7 @@ import { CRON_JOBS } from '../cron-registry'
 
 interface TriggerCronInput {
   cron_name: string
+  force?: boolean
 }
 
 /**
@@ -18,7 +19,10 @@ interface TriggerCronInput {
 export const triggerCron: Tool<TriggerCronInput> = {
   name: 'trigger_cron',
   description:
-    'Manually run one of the known Caye crons right now, instead of waiting for its schedule. Use when the founder asks to "run the X cron" / "trigger X" / "kick off X now".',
+    'Manually run one of the known Caye crons right now, instead of waiting for its schedule. Use when the founder asks to "run the X cron" / "trigger X" / "kick off X now". ' +
+    'By default this still respects each cron\'s own cadence gate — e.g. opportunity-scan only actually does anything inside its 10am/2pm/6pm local windows, so running it outside those hours will just report "skip". ' +
+    'Pass force: true to bypass that cadence gate (opportunity-scan and business-insights only — the others ignore it) when the founder specifically wants to see a real run right now for testing. ' +
+    'force does NOT bypass a workspace\'s muted/quiet-hours setting — those are the owner\'s own do-not-disturb preference and stay enforced even when forcing.',
   risk: 'high',
   roles: ['founder'],
   modes: ['admin-shell'],
@@ -30,6 +34,11 @@ export const triggerCron: Tool<TriggerCronInput> = {
         enum: Object.keys(CRON_JOBS),
         description: 'Which cron to run. One of: ' + Object.keys(CRON_JOBS).join(', '),
       },
+      force: {
+        type: 'boolean',
+        description:
+          "Bypass the cron's cadence gate (opportunity-scan/business-insights only) so it runs for real right now instead of reporting 'skip'. Still respects muted/quiet-hours.",
+      },
     },
     required: ['cron_name'],
   },
@@ -40,7 +49,7 @@ export const triggerCron: Tool<TriggerCronInput> = {
       return { ok: false, error: `Unknown cron_name "${args.cron_name}". Valid options: ${Object.keys(CRON_JOBS).join(', ')}` }
     }
     try {
-      const result = await job.run()
+      const result = await job.run(args.force ? { force: true } : undefined)
       return { ok: true, data: { cron_name: args.cron_name, label: job.label, result } }
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : `${args.cron_name} run failed` }
