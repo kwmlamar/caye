@@ -91,24 +91,32 @@ function CopyButton({
 }) {
   const visible = active || copied
   return (
-    <button
-      type="button"
-      onClick={onCopy}
-      title={copied ? 'Copied' : 'Copy message'}
-      style={{
-        display: 'flex', alignItems: 'center', gap: 4, alignSelf: align,
-        marginTop: 3, padding: '2px 6px', border: 'none', borderRadius: 6,
-        background: 'transparent', cursor: 'pointer',
-        color: copied ? '#4EBECE' : '#71717a',
-        fontSize: 9.5, fontFamily: 'var(--font-mono)',
-        opacity: visible ? 1 : 0,
-        pointerEvents: visible ? 'auto' : 'none',
-        transition: 'opacity 0.12s ease, color 0.12s ease',
-      }}
-    >
-      {copied ? <CheckIcon /> : <CopyIcon />}
-      {copied ? 'Copied' : 'Copy'}
-    </button>
+    // The parent (content column) isn't a flex container, so alignSelf on
+    // the button itself would be a no-op — a plain block/inline element
+    // always sits at the container's left edge regardless. Wrapping in an
+    // explicit flex row with justifyContent is what actually moves it to
+    // the right for the operator's own (right-aligned) messages, same
+    // technique the meta/timestamp row above it already uses.
+    <div style={{ display: 'flex', justifyContent: align, marginTop: 3 }}>
+      <button
+        type="button"
+        onClick={onCopy}
+        title={copied ? 'Copied' : 'Copy message'}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 4,
+          padding: '2px 6px', border: 'none', borderRadius: 6,
+          background: 'transparent', cursor: 'pointer',
+          color: copied ? '#4EBECE' : '#71717a',
+          fontSize: 9.5, fontFamily: 'var(--font-mono)',
+          opacity: visible ? 1 : 0,
+          pointerEvents: visible ? 'auto' : 'none',
+          transition: 'opacity 0.12s ease, color 0.12s ease',
+        }}
+      >
+        {copied ? <CheckIcon /> : <CopyIcon />}
+        {copied ? 'Copied' : 'Copy'}
+      </button>
+    </div>
   )
 }
 
