@@ -909,9 +909,30 @@ async function handleOneInbound(
     })
 
     if (!agentResult.replyText) {
+      // Same failure mode as the catch block below: the model finished its
+      // turn with no text and no tool_use (seen live on terse messages like
+      // "Yo" dropped into a long tool-heavy history — 2026-08-04, 2026-08-06).
+      // Previously this just warned server-side and returned, leaving the
+      // operator with silence indistinguishable from "ignored." Always
+      // surface something.
       console.warn(
         `[whatsapp-operator] empty reply from back-office agent for ${workspaceId}`
       )
+      let emptyReplySendResult: SendResult | undefined
+      if (replyTo) {
+        emptyReplySendResult = await sendFreeFormWhatsApp(
+          replyTo,
+          "Didn't quite catch what you need there — can you say a bit more?",
+          `back-office-empty-${message.id}`
+        )
+        if (emptyReplySendResult.status === 'failed') {
+          console.error(
+            `[whatsapp-operator] empty-reply fallback send failed for ${workspaceId}:`,
+            emptyReplySendResult.error
+          )
+        }
+      }
+      await persistAgentTurns(supabase, workspaceId, agentResult.newTurns, operator, emptyReplySendResult)
       return
     }
 
