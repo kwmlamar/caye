@@ -50,22 +50,34 @@ export function isInternalOnlyBody(body: string): boolean {
  * Applied to the LAST assistant-role turn specifically, not just the last
  * array element, since a turn loop's trailing entries are always
  * assistant-authored but this is more robust to that shifting.
+ *
+ * notSentReason is for callers that deliberately chose NOT to attempt a
+ * real send this turn (e.g. the scan crons skipping because the operator's
+ * 24h window is closed) — distinct from the null case above, where there
+ * was never any WhatsApp send to report on at all. Mutually exclusive with
+ * finalSendResult; ignored if both are passed. Renders in Caye Direct as an
+ * explicit "not sent" warning rather than no icon, and the reason string
+ * becomes the tooltip. See 20260805_operator_messages_not_sent_status.sql.
  */
 export async function persistAgentTurns(
   supabase: ReturnType<typeof createServiceClient>,
   workspaceId: string,
   turns: Anthropic.MessageParam[],
   operator: OperatorIdentity | null,
-  finalSendResult?: SendResult
+  finalSendResult?: SendResult,
+  notSentReason?: string
 ): Promise<void> {
   const lastAssistantIndex = turns.map((t) => t.role).lastIndexOf('assistant')
   for (let i = 0; i < turns.length; i++) {
     const turn = turns[i]
     const direction = turn.role === 'assistant' ? 'outbound' : 'inbound'
+    const isLastAssistant = i === lastAssistantIndex
     const delivery =
-      finalSendResult && i === lastAssistantIndex
+      finalSendResult && isLastAssistant
         ? deliveryFieldsFromResult(finalSendResult)
-        : { wa_message_id: null, wa_delivery_status: null, wa_delivery_error: null }
+        : notSentReason && isLastAssistant
+          ? { wa_message_id: null, wa_delivery_status: 'not_sent' as const, wa_delivery_error: notSentReason }
+          : { wa_message_id: null, wa_delivery_status: null, wa_delivery_error: null }
     await supabase.from('caye_operator_messages').insert({
       workspace_id: workspaceId,
       direction,

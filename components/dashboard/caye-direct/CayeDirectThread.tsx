@@ -12,7 +12,7 @@ const NEAR_BOTTOM_PX = 96
 const TEXTAREA_MAX_H = 220
 const GLASS = { backdropFilter: 'blur(20px) saturate(140%)', WebkitBackdropFilter: 'blur(20px) saturate(140%)' } as const
 
-type DeliveryStatus = 'sent' | 'delivered' | 'read' | 'failed' | null
+type DeliveryStatus = 'sent' | 'delivered' | 'read' | 'failed' | 'not_sent' | null
 
 interface OperatorMessage {
   id: string
@@ -29,12 +29,18 @@ interface OperatorMessage {
 // behind it at all (demo roleplay turns, the founder's own typed messages
 // from this same dashboard, log-only escalation closing notes) — not a
 // failure, just not applicable, so it renders nothing rather than an icon.
+// 'not_sent' is different from null: it means a send WAS relevant here but
+// was deliberately skipped (e.g. a scan cron declining because the
+// operator's 24h window is closed) — that must stay visibly distinct from
+// "nothing to report" or a message the operator never actually saw reads
+// as delivered commentary. See 20260805_operator_messages_not_sent_status.sql.
 function DeliveryStatusIcon({ status, error }: { status: DeliveryStatus; error?: string | null }) {
   if (!status) return null
 
-  if (status === 'failed') {
+  if (status === 'failed' || status === 'not_sent') {
+    const title = status === 'not_sent' ? (error ?? 'Not sent') : error ? `Not delivered — ${error}` : 'Not delivered'
     return (
-      <span title={error ? `Not delivered — ${error}` : 'Not delivered'} style={{ display: 'inline-flex', color: '#f59e0b' }}>
+      <span title={title} style={{ display: 'inline-flex', color: '#f59e0b' }}>
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
           <circle cx="12" cy="12" r="10" />
           <line x1="12" y1="8" x2="12" y2="13" />

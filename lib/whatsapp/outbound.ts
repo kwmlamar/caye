@@ -172,6 +172,14 @@ export type OutboundKind =
   | 'ack'
   | 'escalation'
   | 'escalation_followup'
+  // Window-closed notify-only ping for the scan crons (opportunity-scan,
+  // business-insights) — see the matching case in TEMPLATE_REQUIRED_KINDS
+  // and templateForKind in app/api/caye/outbound-worker/route.ts. Never
+  // carries the actual analysis text; that stays in caye_operator_messages
+  // via persistAgentTurns, marked wa_delivery_status='not_sent'. This kind
+  // only tells the operator something is waiting.
+  | 'opportunity_scan'
+  | 'business_insights'
 
 export interface EnqueueOutboundInput {
   workspaceId: string

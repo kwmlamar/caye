@@ -30,8 +30,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase-server'
 import { cayeAgent } from '@/lib/caye-agent'
-import { sendFreeFormWhatsApp, deliveryFieldsFromResult } from '@/lib/whatsapp/outbound'
+import { sendFreeFormWhatsApp, deliveryFieldsFromResult, enqueueOutbound } from '@/lib/whatsapp/outbound'
 import { isWhatsAppWindowOpen } from '@/lib/whatsapp/window'
+import { alertFounderOfDeliveryFailure } from '@/lib/whatsapp/founder-alert'
 import { loadScheduleConfig, inQuietHours, type WorkspaceScheduleConfig } from '@/lib/whatsapp/schedule'
 import { resolveOperatorByPhone } from '@/lib/operator-identity'
 import { persistAgentTurns } from '@/lib/caye-operator-messages'
@@ -157,8 +158,32 @@ async function processWorkspace(
   if (!windowOpen) {
     // Don't hard-fail — the pending action (if any) and the persisted
     // turns still exist and will surface next time the owner opens a
-    // real conversation with Caye.
-    await persistAgentTurns(supabase, row.workspace_id, agentResult.newTurns, operator)
+    // real conversation with Caye. But mark it as not-sent (not null) so
+    // Caye Direct shows an explicit warning instead of looking identical
+    // to a demo/log-only row, and tell the founder — a scan recommendation
+    // that never reaches the operator is otherwise silently invisible.
+    const notSentReason = `Not sent — ${row.operator_whatsapp_number}'s 24h WhatsApp window is closed`
+    await persistAgentTurns(supabase, row.workspace_id, agentResult.newTurns, operator, undefined, notSentReason)
+    await alertFounderOfDeliveryFailure({
+      workspaceId: row.workspace_id,
+      kind: 'opportunity_scan',
+      detail: notSentReason,
+      stage: 'skipped',
+    })
+    // Queue a short template-based "something's waiting" ping through the
+    // normal outbound pipeline — inherits retries/template fallback/delivery
+    // correlation for free. Never carries the real analysis (Meta blocks
+    // free-form text outside the window regardless of pipeline); that stays
+    // in the persistAgentTurns row above, marked not_sent. Stable per-hour
+    // idempotency key: shouldSkip's "already scanned this hour" gate means
+    // this branch only runs once per target hour, but a stable key is cheap
+    // insurance against a duplicate row if that ever changes.
+    await enqueueOutbound({
+      workspaceId: row.workspace_id,
+      kind: 'opportunity_scan',
+      payload: {},
+      idempotencyKey: `opportunity-scan-notify-${row.workspace_id}-${now.toISOString().slice(0, 13)}`,
+    })
     return { status: 'skipped_window_closed' }
   }
 

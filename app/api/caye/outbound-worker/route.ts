@@ -48,6 +48,14 @@ export const OPERATOR_LOGGABLE_KINDS = new Set([
   'booking_created',
   'morning_digest',
   'auth_failure',
+  // Scan-crons' window-closed notify ping — see TEMPLATE_REQUIRED_KINDS
+  // below. Logged here so it shows up in Caye Direct with a real delivery
+  // status, distinct from the reasoning-transcript row persistAgentTurns
+  // already wrote with wa_delivery_status='not_sent'. Two rows per skipped
+  // scan is accepted, not a bug — correlation between them is only by
+  // proximity in the thread, since wa_message_id isn't known until dispatch.
+  'opportunity_scan',
+  'business_insights',
 ])
 
 const CONCURRENCY = 10
@@ -70,6 +78,11 @@ const TEMPLATE_REQUIRED_KINDS = new Set([
   // workspace's Caye number. Always template — match urgent_hold's shape.
   'escalation',
   'escalation_followup',
+  // Notify-only pings enqueued by the scan crons specifically because the
+  // window was closed at enqueue time — always template, same reasoning
+  // as booking_created (no free-form body composer for these kinds either).
+  'opportunity_scan',
+  'business_insights',
 ])
 
 // Kinds where silence is dangerous → email fallback if WhatsApp fails.
@@ -489,6 +502,10 @@ function operatorPingLogBody(kind: string, payload: Record<string, unknown>): st
     }
     case 'auth_failure':
       return `${str('service', 'A connected service')} needs reconnecting — I can't see new messages there until you do. Want me to walk you through it?`
+    case 'opportunity_scan':
+      return `Heads up — I found something during my workspace scan but your window was closed so I couldn't send the full write-up. It's waiting for you above.`
+    case 'business_insights':
+      return `Heads up — this week's business insights are ready but your window was closed so I couldn't send the full write-up. It's waiting for you above.`
     default:
       return `[${kind}]`
   }
@@ -766,6 +783,21 @@ async function templateForKind(
         placeholders: [str('contactName', 'A guest'), `still waiting — ${baseSummary}`],
       }
     }
+    // No dedicated template (same "reuse caye_urgent_hold" fallback as
+    // booking_created/escalation above) — this only ever fires when the
+    // window was closed at enqueue time, so it never carries the actual
+    // scan write-up. That stays in caye_operator_messages via
+    // persistAgentTurns; this is purely "something's waiting, come look."
+    case 'opportunity_scan':
+      return {
+        name: 'caye_urgent_hold',
+        placeholders: ['Caye', 'spotted something during her workspace scan — check Caye Direct'],
+      }
+    case 'business_insights':
+      return {
+        name: 'caye_urgent_hold',
+        placeholders: ['Caye', "has this week's business insights ready — check Caye Direct"],
+      }
     default:
       return null
   }

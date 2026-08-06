@@ -234,3 +234,68 @@ A deliberately-broken send (bad template param, or a test number with the window
 produce, within one cron tick: a `failed` row with the real Meta code, a founder alert that
 arrives **by email**, an email fallback to the operator for `urgent_hold`, and a bumped failure
 streak. Verify against `caye_founder_alert_log` — not by reading logs.
+
+---
+
+## P5 — Bug D: a send that's never attempted looks identical to one that worked (fixed 2026-08-05)
+
+Everything above is about sends that were *attempted* and failed. This one is a send that's
+never attempted at all — and it slipped past every check above because there's no failure to
+alert on.
+
+**Trigger:** `opportunity-scan` and `business-insights` (added 2026-07-28/08-01, after this
+brief was written) skip the WhatsApp send outright when the operator's 24h window is closed,
+but persisted the turn with `wa_delivery_status: null` — the same value as a demo turn, a
+founder-typed dashboard message, or a log-only escalation closing note. Caye Direct's
+`DeliveryStatusIcon` renders all of those as "no icon, nothing to see." Confirmed live
+2026-08-05: an opportunity-scan recommendation about NBC van capacity sat unsent in Bimini's
+thread with no visible warning and no founder alert — indistinguishable from a message that was
+actually delivered and just hadn't picked up a read receipt yet.
+
+### Fix (shipped)
+
+1. New `wa_delivery_status` value `'not_sent'` (migration
+   `20260805_operator_messages_not_sent_status.sql`) — distinct from null ("no send was ever
+   relevant") and `'failed'` ("we tried and Meta rejected it"). Means "a send was relevant here
+   and we deliberately chose not to attempt it."
+2. `persistAgentTurns` (`lib/caye-operator-messages.ts`) takes an optional `notSentReason` and
+   stamps it on the last assistant turn when passed.
+3. Both scan crons pass a reason on the window-closed branch and call
+   `alertFounderOfDeliveryFailure({ ..., stage: 'skipped' })` — new stage on that function,
+   labeled "not sent." Classifies as `transient` by default (no Meta code to extract), which is
+   fine: this only changes account_fatal's email escalation, and a closed window never is one.
+4. `DeliveryStatusIcon` renders `not_sent` with the same amber warning glyph as `failed`, tooltip
+   showing the reason.
+
+### Follow-up (shipped 2026-08-05): notify-only template ping
+
+P1 (per-recipient window tracking, `lib/whatsapp/window.ts`) was already live by the time this
+was scoped — it's what correctly identifies the window as closed here, not a gap. What remained
+was: a scan recommendation that gets skipped still never reaches the operator by any channel
+except the founder alert above and whatever they later see in Caye Direct.
+
+Scoped routing the scan crons through `caye_outbound_queue` for real template fallback and found
+it can't ever deliver the actual analysis regardless of architecture — Meta rejects free-form
+text outside the 24h window no matter which code path sends it, and no generic template exists
+for arbitrary scan content (only `caye_urgent_hold`'s 2-placeholder shape is available, same
+`{{1}} needs your call — {{2}}. Tap to see the draft.` copy already reused imperfectly for
+`booking_created`/`escalation`/`escalation_followup`).
+
+So the fix is notify-only: `opportunity_scan`/`business_insights` are now `OutboundKind`s
+(`lib/whatsapp/outbound.ts`), always template-required
+(`app/api/caye/outbound-worker/route.ts`'s `TEMPLATE_REQUIRED_KINDS`), reusing
+`caye_urgent_hold`. The window-closed branch in both crons now also calls `enqueueOutbound` right
+after the founder alert — a short "Caye has something for you, check Caye Direct" ping goes out
+through the real queue (inheriting retries/dead-lettering/delivery correlation), while the actual
+write-up stays exactly where it was: the `persistAgentTurns` row, `wa_delivery_status='not_sent'`.
+
+**Known, accepted quirk:** this produces two `caye_operator_messages` rows per skipped scan — the
+reasoning-transcript row (no delivery status, has the real content) and a separate notification-
+ping row written later by `logOperatorPing`/`operatorPingLogBody` (has a real delivery status,
+generic text). They correlate only by proximity in the thread, not by any shared key — `wa_message_id`
+isn't known until the queue actually dispatches, well after the transcript row is written.
+Documented behavior, not a bug to chase.
+
+Migration: `20260805b_extend_outbound_kind_for_scan_notify.sql` (DB-level `kind` CHECK on
+`caye_outbound_queue`, same bug class as `20260626_extend_outbound_kind_for_escalations.sql` —
+the TS type and the SQL CHECK have to move together or `enqueueOutbound` fails outright).

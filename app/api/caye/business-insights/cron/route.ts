@@ -25,8 +25,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase-server'
 import { cayeAgent } from '@/lib/caye-agent'
-import { sendFreeFormWhatsApp } from '@/lib/whatsapp/outbound'
+import { sendFreeFormWhatsApp, enqueueOutbound } from '@/lib/whatsapp/outbound'
 import { isWhatsAppWindowOpen } from '@/lib/whatsapp/window'
+import { alertFounderOfDeliveryFailure } from '@/lib/whatsapp/founder-alert'
 import { loadScheduleConfig, inQuietHours, localDayOfWeek, type WorkspaceScheduleConfig } from '@/lib/whatsapp/schedule'
 import { resolveOperatorByPhone } from '@/lib/operator-identity'
 import { persistAgentTurns } from '@/lib/caye-operator-messages'
@@ -147,7 +148,29 @@ async function processWorkspace(
 
   const windowOpen = await isWhatsAppWindowOpen(row.workspace_id, row.operator_whatsapp_number)
   if (!windowOpen) {
-    await persistAgentTurns(supabase, row.workspace_id, agentResult.newTurns, operator)
+    // Mark as not-sent (not null) so Caye Direct shows an explicit warning
+    // instead of looking identical to a demo/log-only row, and tell the
+    // founder — see the matching comment on runOpportunityScan.
+    const notSentReason = `Not sent — ${row.operator_whatsapp_number}'s 24h WhatsApp window is closed`
+    await persistAgentTurns(supabase, row.workspace_id, agentResult.newTurns, operator, undefined, notSentReason)
+    await alertFounderOfDeliveryFailure({
+      workspaceId: row.workspace_id,
+      kind: 'business_insights',
+      detail: notSentReason,
+      stage: 'skipped',
+    })
+    // Queue a short template-based "something's waiting" ping — see the
+    // matching comment on runOpportunityScan. Idempotency key is keyed by
+    // day, not by tick, since (unlike opportunity-scan) this branch doesn't
+    // mark itself done and legitimately re-runs every tick within the
+    // target hour until the window opens — enqueueOutbound's unique
+    // idempotency_key constraint absorbs the repeats into a no-op.
+    await enqueueOutbound({
+      workspaceId: row.workspace_id,
+      kind: 'business_insights',
+      payload: {},
+      idempotencyKey: `business-insights-notify-${row.workspace_id}-${now.toISOString().slice(0, 10)}`,
+    })
     // Don't mark as sent — try again next tick within the same target
     // hour rather than silently losing this week's insight entirely.
     return { status: 'skipped_window_closed' }
