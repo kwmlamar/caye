@@ -241,7 +241,7 @@ export default function WhatsAppMockup() {
                 {/* Messages — over WhatsApp doodle wallpaper */}
                 <div
                   ref={scrollAreaRef}
-                  className="relative flex-1 overflow-y-auto px-3 py-3 space-y-1.5"
+                  className="lp-phone-scroll relative flex-1 overflow-y-auto px-3 py-3 space-y-1.5"
                 >
                   <DoodleWallpaper />
                   <div className="relative z-10 space-y-1.5">
@@ -285,8 +285,12 @@ export default function WhatsAppMockup() {
                       className="border-t border-white/10 px-3 py-2.5 space-y-1.5"
                       style={{ background: 'rgba(17,27,33,0.95)' }}
                     >
-                      <div className="text-center font-mono text-[8.5px] uppercase tracking-[0.18em] text-white/35 mb-1.5">
-                        Tap to reply
+                      <div className="flex items-center justify-center gap-1.5 mb-2">
+                        <span className="h-px w-3 bg-[#0FB5A1]/40" />
+                        <span className="font-mono text-[8.5px] uppercase tracking-[0.18em] text-[#0FB5A1]/70">
+                          Tap to reply
+                        </span>
+                        <span className="h-px w-3 bg-[#0FB5A1]/40" />
                       </div>
                       {availableOptions.map((opt, idx) => (
                         <motion.button
@@ -302,21 +306,22 @@ export default function WhatsAppMockup() {
                           }}
                           whileHover={{ y: -1 }}
                           whileTap={{ scale: 0.985 }}
-                          className={`block w-full text-left text-white/85 text-[12px] px-3 py-1.5 rounded-full disabled:opacity-50 disabled:cursor-not-allowed transition-shadow ${
+                          className={`group relative flex items-center justify-between gap-3 w-full text-left rounded-2xl pl-3.5 pr-2 py-2 border transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed border-[#0FB5A1]/25 bg-[linear-gradient(180deg,rgba(15,181,161,0.14)_0%,rgba(15,181,161,0.05)_100%)] hover:border-[#0FB5A1]/45 hover:bg-[linear-gradient(180deg,rgba(15,181,161,0.22)_0%,rgba(15,181,161,0.09)_100%)] ${
                             firstTapNotYet && idx === 0
                               ? 'animate-[bubble-invite_2.4s_ease-in-out_infinite]'
                               : ''
                           }`}
                           style={{
-                            background: 'rgba(0,92,75,0.4)',
                             boxShadow:
-                              '0 1px 0 rgba(255,255,255,0.06) inset, 0 1px 1.5px rgba(0,0,0,0.2)',
+                              '0 1px 0 rgba(255,255,255,0.05) inset, 0 2px 10px -6px rgba(0,0,0,0.4)',
                           }}
                         >
-                          <div className="flex items-center justify-between gap-2">
-                            <span>{opt.prompt}</span>
+                          <span className="text-white/90 text-[12.5px] font-medium leading-snug">
+                            {opt.prompt}
+                          </span>
+                          <span className="flex items-center justify-center w-6 h-6 rounded-full flex-shrink-0 bg-[#0FB5A1] transition-transform duration-200 group-hover:scale-110">
                             <SendIcon />
-                          </div>
+                          </span>
                         </motion.button>
                       ))}
                     </motion.div>

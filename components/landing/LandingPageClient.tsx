@@ -4,7 +4,19 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { motion, AnimatePresence } from 'framer-motion'
 import { MeshGradient } from '@paper-design/shaders-react'
-import { WhatsappLogoIcon, ListIcon, XIcon } from '@phosphor-icons/react'
+import {
+  WhatsappLogoIcon,
+  ListIcon,
+  XIcon,
+  ClockCountdownIcon,
+  CalendarCheckIcon,
+  InstagramLogoIcon,
+  MessengerLogoIcon,
+  EnvelopeSimpleIcon,
+  CalendarBlankIcon,
+  SparkleIcon,
+  CaretDownIcon,
+} from '@phosphor-icons/react'
 import { sendGAEvent } from '@next/third-parties/google'
 import WhatsAppMockup from '@/components/landing/WhatsAppMockup'
 import { FAQ_ITEMS } from '@/components/landing/faq-data'
@@ -81,15 +93,21 @@ const FOOTER_COLUMNS: {
     },
   ]
 
-// Front desk — the channel Caye actually talks to customers through
-// end-to-end, proven and live. Instagram/Messenger webhooks are built
-// but not yet proven end-to-end (per PRODUCT.md), so they're named as
-// "rolling out next" below rather than given equal billing here —
-// impeccable critique 2026-07-29 flagged the prior three-way row as an
-// overclaim. Zoho Mail / calendar are back-office reads/writes, not
-// conversation surfaces, so they get quiet secondary treatment too.
-const FRONT_DESK_CHANNELS = [
-  { label: 'WhatsApp', Icon: WhatsappLogoIcon, bg: '#DFF5E4', color: '#1F9D55' },
+// Ask-AI banner — the beat Viktor uses right before its FAQ: invite
+// visitors to verify the pitch with a third party instead of trusting
+// ad copy. Implemented as copy-the-prompt + open-the-tool rather than
+// a "?q=" deep link: none of ChatGPT/Perplexity/Claude's query-prefill
+// URL params are documented, stable, first-party behavior, and
+// Claude's (claude.ai/new?q=) was confirmed removed in Oct 2025 after
+// a prompt-injection disclosure — a broken or flagged deep link would
+// undercut the trust this section exists to build.
+const CAYE_AI_PROMPT =
+  "I'm evaluating Caye, a WhatsApp AI hire for Caribbean tour and hospitality businesses (meetcaye.com). What does it do, what are its strengths and weaknesses, and who is it for?"
+
+const AI_ASK_TARGETS = [
+  { label: 'ChatGPT', href: 'https://chatgpt.com/' },
+  { label: 'Perplexity', href: 'https://www.perplexity.ai/' },
+  { label: 'Claude', href: 'https://claude.ai/new' },
 ]
 
 // Hero load choreography — one staggered settle on page load (eyebrow →
@@ -109,12 +127,22 @@ void PALETTE_REEF
 
 // Testimonial slot — OFF until a pilot converts to paid. When Karenda
 // (or whoever pays first) gives a real quote, drop it in and flip the
-// flag. The section is fully styled and reveals on scroll.
+// flag. Shape mirrors Viktor's case-study card (gradient stat panel +
+// white detail panel with two stat pills) — fill every field with real
+// numbers/quotes from the first paying customer, never placeholders.
 const SHOW_TESTIMONIAL = false
 const TESTIMONIAL = {
-  quote: '', // e.g. “Caye booked three tours while I was out on the water.”
+  statHeadline: '', // e.g. "40 fewer calls a week. One Caye."
+  avatarSrc: '', // e.g. /clients/karenda.jpg
   name: '', // e.g. Karenda R.
-  business: '', // e.g. Tour operator, Bimini
+  role: '', // e.g. Owner, Bimini Island Tours
+  eyebrow: '', // e.g. Tour operator · Bimini
+  headline: '', // e.g. "From missed messages to a run front desk"
+  description: '', // 1-2 sentences, specific over adjective-heavy
+  stats: [
+    { value: '', label: '', Icon: ClockCountdownIcon }, // e.g. "< 2 min", "Avg. reply time"
+    { value: '', label: '', Icon: CalendarCheckIcon }, // e.g. "18", "Bookings via Caye"
+  ],
 }
 
 export default function LandingPageClient() {
@@ -122,6 +150,22 @@ export default function LandingPageClient() {
   const [mounted, setMounted] = useState(false)
   const [scrolled, setScrolled] = useState(false)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const [copiedAiTarget, setCopiedAiTarget] = useState<string | null>(null)
+
+  // Copies the suggested prompt then opens the tool in a new tab — see
+  // the AI_ASK_TARGETS comment for why this isn't a "?q=" deep link.
+  async function handleAskAi(label: string, href: string) {
+    try {
+      await navigator.clipboard.writeText(CAYE_AI_PROMPT)
+      setCopiedAiTarget(label)
+      setTimeout(() => setCopiedAiTarget((v) => (v === label ? null : v)), 2000)
+    } catch {
+      // Clipboard API unavailable (permissions, insecure context) —
+      // still open the tool so the click isn't a dead end.
+    }
+    sendGAEvent('event', 'ask_ai_click', { location: label })
+    window.open(href, '_blank', 'noopener,noreferrer')
+  }
 
   // Phone dock's top offset — floor keeps it clear of the CTA block (now
   // including the WhatsApp badge, which lives in normal document flow
@@ -132,7 +176,13 @@ export default function LandingPageClient() {
   const phoneTopOffset = Math.max(620, dimensions.height * 0.6)
 
   // Phone grows a bit on wider screens — purely a size choice now, not
-  // constrained by a crop budget (see heroMinHeight below).
+  // constrained by a crop budget (see heroMinHeight below). Mobile tier
+  // bumped from 0.75 → 0.95 per feedback that the phone read too small
+  // to comfortably read the demo conversation or tap the reply chips on
+  // an actual phone screen — safe to push this close to 1 since
+  // PhoneFrame's own width is already clamped to `100vw - 40px` before
+  // this scale is applied, so a 20px gutter on each side is guaranteed
+  // regardless of how close to 1 this gets.
   const phoneScale =
     dimensions.width >= 1024
       ? 1.05
@@ -140,7 +190,7 @@ export default function LandingPageClient() {
         ? 0.95
         : dimensions.width >= 640
           ? 0.85
-          : 0.75
+          : 0.95
 
   // Full rendered height of the phone frame (bezel + screen) at this scale.
   const estimatedPhoneHeight = 700 * phoneScale
@@ -530,86 +580,21 @@ export default function LandingPageClient() {
         </motion.div>
       </section>
 
-      {/* ── Channel strip — front desk vs. back office ────────────── */}
-      <section id="channels" className="relative py-20 px-6 bg-cream border-y border-near-black/[0.06] scroll-mt-24">
-        <div className="max-w-2xl mx-auto text-center">
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true, margin: '-80px' }}
-            transition={{ duration: 0.6, ease: heroEase }}
-            className="flex items-center justify-center gap-3 mb-8"
-          >
-            <span className="h-px w-8 bg-near-black/30" />
-            <h2 className="font-mono text-[10.5px] uppercase tracking-[0.22em] text-near-black/60 font-medium">
-              Where she works
-            </h2>
-            <span className="h-px w-8 bg-near-black/30" />
-          </motion.div>
-
-          {/* Front desk — the surfaces she actually talks to customers
-              through. Real brand marks, small and grouped as chips, so
-              they read as proof rather than a decorative row. */}
-          <div className="flex flex-wrap items-center justify-center gap-3">
-            {FRONT_DESK_CHANNELS.map(({ label, Icon, bg, color }, i) => (
-              <motion.span
-                key={label}
-                initial={{ opacity: 0, y: 10 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true, margin: '-80px' }}
-                transition={{ duration: 0.5, ease: heroEase, delay: 0.1 + i * 0.08 }}
-                className="inline-flex items-center gap-2 rounded-full pl-2.5 pr-4 py-2 border border-near-black/[0.08] bg-white/50 backdrop-blur-sm"
-              >
-                <span
-                  className="flex items-center justify-center w-6 h-6 rounded-full flex-shrink-0"
-                  style={{ background: bg }}
-                >
-                  <Icon size={14} weight="fill" color={color} />
-                </span>
-                <span className="font-newsreader text-[15px] text-near-black/80">
-                  {label}
-                </span>
-              </motion.span>
-            ))}
-          </div>
-
-          {/* Rolling out — Instagram/Messenger webhooks are built but not
-              yet proven end-to-end, so they're named honestly as "next"
-              rather than given equal billing with WhatsApp above. */}
-          <motion.p
-            initial={{ opacity: 0 }}
-            whileInView={{ opacity: 1 }}
-            viewport={{ once: true, margin: '-80px' }}
-            transition={{ duration: 0.6, ease: heroEase, delay: 0.3 }}
-            className="mt-6 font-newsreader italic text-[14px] text-near-black/40"
-          >
-            Instagram and Messenger are rolling out next.
-          </motion.p>
-
-          {/* Back office — quiet on purpose. She reads and writes here;
-              she doesn't hold a conversation through them, so they don't
-              compete visually with the front-desk row above. Zoho Mail
-              is the one proven email channel today — kept channel-
-              agnostic on calendar rather than naming Gmail/Google
-              Calendar, since neither is confirmed live yet. */}
-          <motion.p
-            initial={{ opacity: 0 }}
-            whileInView={{ opacity: 1 }}
-            viewport={{ once: true, margin: '-80px' }}
-            transition={{ duration: 0.6, ease: heroEase, delay: 0.4 }}
-            className="mt-3 font-newsreader italic text-[14px] text-near-black/40"
-          >
-            Quietly reads and writes to Zoho Mail and your calendar too.
-          </motion.p>
-        </div>
-      </section>
-
-      {/* ── FAQ — static (no accordion) so the full text is in the
-          initial HTML for crawlers and AI answer engines, not hidden
-          behind a click. Copy is mirrored into FAQPage JSON-LD in
-          app/page.tsx; keep FAQ_ITEMS as the single source of truth. ── */}
-      <section id="faq" className="relative py-20 px-6 bg-cream scroll-mt-24">
-        <div className="max-w-2xl mx-auto">
+      {/* ── Channel strip — front desk vs. back office ─────────────
+          Bento of two card weights: one live gradient card (the
+          gradient reuses the exact hero-mesh / testimonial-panel
+          stops, teal → gold, so it reads as this brand's own visual
+          system rather than a borrowed Viktor-violet card) plus two
+          quiet outline cards. Instagram/Messenger webhooks are built
+          but not yet proven end-to-end (per PRODUCT.md), so they stay
+          named honestly as "next" rather than given equal billing with
+          WhatsApp — impeccable critique 2026-07-29 flagged the prior
+          three-way row as an overclaim; that constraint carries over
+          into card weight, not just copy. Zoho Mail / calendar are
+          back-office reads/writes, not conversation surfaces, so they
+          get the same quiet treatment. ── */}
+      <section id="channels" className="relative py-24 md:py-28 px-6 bg-cream border-y border-near-black/[0.06] scroll-mt-24">
+        <div className="max-w-5xl mx-auto">
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             whileInView={{ opacity: 1, y: 0 }}
@@ -619,107 +604,327 @@ export default function LandingPageClient() {
           >
             <span className="h-px w-8 bg-near-black/30" />
             <h2 className="font-mono text-[10.5px] uppercase tracking-[0.22em] text-near-black/60 font-medium">
-              Questions
+              Where she works
             </h2>
             <span className="h-px w-8 bg-near-black/30" />
           </motion.div>
 
-          <div className="space-y-10">
-            {FAQ_ITEMS.map((item, i) => (
+          <div className="grid gap-5 md:grid-cols-5">
+            {/* Primary — WhatsApp, the live front desk */}
+            <motion.div
+              initial={{ opacity: 0, y: 18 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true, margin: '-80px' }}
+              transition={{ duration: 0.65, ease: heroEase, delay: 0.05 }}
+              className="md:col-span-3 relative rounded-[2rem] overflow-hidden border border-near-black/[0.06] bg-white shadow-[0_30px_70px_-28px_rgba(14,26,26,0.26)]"
+            >
+              <div
+                className="relative flex flex-col items-center justify-center h-52 md:h-64 overflow-hidden"
+                style={{
+                  backgroundImage:
+                    'linear-gradient(160deg, #0766A3 0%, #2E7A8C 34%, #4EBECE 64%, #FFE4AF 100%)',
+                }}
+              >
+                <span aria-hidden className="absolute -top-14 -left-10 w-56 h-56 rounded-full bg-white/10 blur-3xl" />
+                <span aria-hidden className="absolute -bottom-16 -right-12 w-64 h-64 rounded-full bg-[#FFE4AF]/25 blur-3xl" />
+
+                <span className="absolute top-5 left-5 inline-flex items-center gap-1.5 rounded-full bg-white/15 border border-white/25 backdrop-blur-sm px-3 py-1.5">
+                  <span className="relative flex h-[6px] w-[6px]">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-white opacity-70" />
+                    <span className="relative inline-flex h-[6px] w-[6px] rounded-full bg-white" />
+                  </span>
+                  <span className="font-mono text-[9.5px] uppercase tracking-[0.16em] text-white font-medium">
+                    Live now
+                  </span>
+                </span>
+
+                <span className="relative flex items-center justify-center w-16 h-16 rounded-full bg-white/95 shadow-[0_10px_30px_-8px_rgba(7,102,163,0.5)]">
+                  <WhatsappLogoIcon size={30} weight="fill" color="#0FB5A1" />
+                </span>
+              </div>
+
+              <div className="p-6 md:p-8">
+                <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-near-black/45 font-medium">
+                  Front desk
+                </p>
+                <h3 className="mt-2 font-instrument text-[1.6rem] md:text-[1.85rem] tracking-[-0.01em] text-near-black">
+                  WhatsApp
+                </h3>
+                <p className="mt-2.5 font-newsreader text-[15px] leading-[1.6] text-near-black/65 max-w-md">
+                  Guests message the number you already have. Caye answers from inside that conversation — no app to install, no new number to learn.
+                </p>
+              </div>
+            </motion.div>
+
+            {/* Secondary — quiet outline cards, no gradient fill, so
+                they don't compete visually with the live card above */}
+            <div className="md:col-span-2 grid gap-5">
               <motion.div
+                initial={{ opacity: 0, y: 18 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true, margin: '-80px' }}
+                transition={{ duration: 0.6, ease: heroEase, delay: 0.16 }}
+                className="rounded-[1.5rem] border border-near-black/[0.08] bg-white/60 backdrop-blur-sm p-6"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="flex items-center justify-center w-9 h-9 rounded-full bg-near-black/[0.05] flex-shrink-0">
+                    <InstagramLogoIcon size={16} weight="bold" color="#0E1A1A" />
+                  </span>
+                  <span className="flex items-center justify-center w-9 h-9 rounded-full bg-near-black/[0.05] flex-shrink-0 -ml-3">
+                    <MessengerLogoIcon size={16} weight="bold" color="#0E1A1A" />
+                  </span>
+                  <span className="ml-1 font-mono text-[9.5px] uppercase tracking-[0.16em] text-near-black/45 font-medium">
+                    Rolling out next
+                  </span>
+                </div>
+                <h3 className="mt-3.5 font-newsreader text-[1.05rem] text-near-black/85">
+                  Instagram &amp; Messenger
+                </h3>
+                <p className="mt-1.5 font-newsreader text-[13.5px] leading-[1.55] text-near-black/55">
+                  Same Caye, same front desk — coming to your other inboxes next.
+                </p>
+              </motion.div>
+
+              <motion.div
+                initial={{ opacity: 0, y: 18 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true, margin: '-80px' }}
+                transition={{ duration: 0.6, ease: heroEase, delay: 0.24 }}
+                className="rounded-[1.5rem] border border-near-black/[0.08] bg-white/60 backdrop-blur-sm p-6"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="flex items-center justify-center w-9 h-9 rounded-full bg-near-black/[0.05] flex-shrink-0">
+                    <EnvelopeSimpleIcon size={16} weight="bold" color="#0E1A1A" />
+                  </span>
+                  <span className="flex items-center justify-center w-9 h-9 rounded-full bg-near-black/[0.05] flex-shrink-0 -ml-3">
+                    <CalendarBlankIcon size={16} weight="bold" color="#0E1A1A" />
+                  </span>
+                  <span className="ml-1 font-mono text-[9.5px] uppercase tracking-[0.16em] text-near-black/45 font-medium">
+                    Back office
+                  </span>
+                </div>
+                <h3 className="mt-3.5 font-newsreader text-[1.05rem] text-near-black/85">
+                  Zoho Mail &amp; your calendar
+                </h3>
+                <p className="mt-1.5 font-newsreader text-[13.5px] leading-[1.55] text-near-black/55">
+                  She quietly reads and writes here too — no conversation, just the work getting done.
+                </p>
+              </motion.div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ── Ask AI — see AI_ASK_TARGETS comment above for why this is
+          copy-prompt + open-tool rather than a deep link. Same gradient
+          system as the channel-strip WhatsApp card and testimonial
+          panel (teal → gold), not Viktor's violet. ── */}
+      <section className="relative py-20 md:py-24 px-6 bg-cream">
+        <div className="max-w-4xl mx-auto">
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true, margin: '-100px' }}
+            transition={{ duration: 0.7, ease: heroEase }}
+            className="relative overflow-hidden rounded-[2.25rem] px-7 py-10 md:px-12 md:py-14"
+            style={{
+              backgroundImage:
+                'linear-gradient(155deg, #0766A3 0%, #2E7A8C 30%, #4EBECE 58%, #7BB2BF 78%, #FFE4AF 100%)',
+            }}
+          >
+            <span aria-hidden className="absolute -top-20 -right-16 w-72 h-72 rounded-full bg-white/10 blur-3xl" />
+            <span aria-hidden className="absolute -bottom-24 -left-20 w-80 h-80 rounded-full bg-[#FFE4AF]/20 blur-3xl" />
+
+            <div className="relative grid md:grid-cols-[1.1fr_1fr] gap-9 md:gap-10 items-center">
+              <div>
+                <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-white/70 font-medium">
+                  No script, no spin
+                </p>
+                <h2 className="mt-3 font-logo text-[2.1rem] md:text-[2.6rem] font-extrabold tracking-[-0.02em] leading-[1.08] text-white">
+                  Ask AI about Caye.
+                </h2>
+                <p className="mt-4 font-newsreader text-[15.5px] leading-[1.6] text-white/85 max-w-sm">
+                  Don&rsquo;t take our word for it. Copy the prompt and ask ChatGPT, Perplexity, or Claude what they think.
+                </p>
+
+                <div className="mt-6 flex flex-wrap gap-2.5">
+                  {AI_ASK_TARGETS.map(({ label, href }) => (
+                    <button
+                      key={label}
+                      type="button"
+                      onClick={() => handleAskAi(label, href)}
+                      className="inline-flex items-center gap-2 rounded-full bg-white/95 hover:bg-white text-near-black font-medium text-[13.5px] px-4 py-2.5 transition-all hover:-translate-y-px shadow-[0_6px_20px_-8px_rgba(7,26,26,0.35)]"
+                    >
+                      <SparkleIcon size={13} weight="fill" color="#0D9C8B" />
+                      {copiedAiTarget === label ? 'Copied — opening…' : label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="relative rounded-2xl bg-white/12 border border-white/25 backdrop-blur-sm px-6 py-6">
+                <span aria-hidden className="font-logo text-[2.5rem] leading-none text-white/30">&ldquo;</span>
+                <p className="-mt-3 font-newsreader italic text-[14.5px] md:text-[15px] leading-[1.55] text-white">
+                  {CAYE_AI_PROMPT}
+                </p>
+              </div>
+            </div>
+          </motion.div>
+        </div>
+      </section>
+
+      {/* ── FAQ — simplified into a Viktor-style two-column accordion
+          (title left, rows right, first one open). Still fully static:
+          native <details>/<summary> keeps every answer's full text in
+          the server-rendered HTML even while collapsed, so crawlers
+          and AI answer engines see the same content a click would
+          reveal — the constraint from the old plain-list version
+          carries over, just with a simpler look. Copy is mirrored into
+          FAQPage JSON-LD in app/page.tsx; keep FAQ_ITEMS as the single
+          source of truth. ── */}
+      <section id="faq" className="relative py-20 md:py-28 px-6 bg-cream scroll-mt-24">
+        <div className="max-w-5xl mx-auto grid md:grid-cols-[minmax(0,1fr)_minmax(0,1.7fr)] gap-8 md:gap-16">
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true, margin: '-80px' }}
+            transition={{ duration: 0.6, ease: heroEase }}
+            className="md:sticky md:top-32 md:self-start"
+          >
+            <h2 className="font-logo text-[2.5rem] md:text-[3rem] font-extrabold tracking-[-0.02em] text-near-black leading-none">
+              Questions
+            </h2>
+            <span className="mt-4 block h-[3px] w-14 bg-caribbean-teal rounded-full" />
+          </motion.div>
+
+          <div className="space-y-3">
+            {FAQ_ITEMS.map((item, i) => (
+              <motion.details
                 key={item.q}
+                open={i === 0}
                 initial={{ opacity: 0, y: 12 }}
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true, margin: '-80px' }}
-                transition={{ duration: 0.5, ease: heroEase, delay: i * 0.06 }}
+                transition={{ duration: 0.5, ease: heroEase, delay: i * 0.05 }}
+                className="group rounded-2xl border border-near-black/[0.08] bg-white px-6 py-5 md:px-7 md:py-5.5 [&_summary::-webkit-details-marker]:hidden"
               >
-                <h3 className="font-instrument text-[1.3rem] md:text-[1.45rem] tracking-[-0.01em] text-near-black leading-snug">
-                  {item.q}
-                </h3>
-                <p className="mt-2.5 font-newsreader text-[15.5px] leading-[1.6] text-near-black/70">
+                <summary className="flex items-center justify-between gap-4 cursor-pointer list-none">
+                  <span className="font-newsreader text-[1.05rem] md:text-[1.12rem] text-near-black group-open:text-caribbean-teal-hover transition-colors">
+                    {item.q}
+                  </span>
+                  <CaretDownIcon
+                    size={15}
+                    weight="bold"
+                    className="flex-shrink-0 text-near-black/35 transition-transform duration-300 group-open:rotate-180 group-open:text-caribbean-teal-hover"
+                  />
+                </summary>
+                <p className="mt-3 font-newsreader text-[15px] leading-[1.6] text-near-black/65 pr-6">
                   {item.a}
                 </p>
-              </motion.div>
+              </motion.details>
             ))}
           </div>
         </div>
       </section>
 
-      {/* ── Proof — first paid-customer quote goes here ──────────────
+      {/* ── Proof — first paid-customer story goes here ──────────────
           Slot is built and styled; flip `SHOW_TESTIMONIAL` to true and
-          drop in the real quote + attribution once a pilot converts to
-          paid. No fabricated praise before then.
+          fill in every TESTIMONIAL field with real numbers/quotes once
+          a pilot converts to paid. No fabricated praise before then.
 
-          Visual device borrowed from Viktor's case-study page: a glass
-          card physically overlapping a saturated gradient band into the
-          flat page below it. Kept Caye's own palette rather than
-          Viktor's violet — this reuses the exact same mesh gradient as
-          the hero, just condensed, so it reads as this brand's own
-          bookend (opens on the mesh, closes on it) instead of a
-          borrowed look. */}
+          Layout borrowed directly from Viktor's case-study card: a
+          split panel, saturated gradient stat-block on one side (photo
+          + one bold sentence of proof) and a plain white detail panel
+          on the other (eyebrow, headline, description, two stat
+          pills). Gradient reuses the same stops as the footer wordmark
+          and hero mesh — teal → gold, Caye's own palette, not
+          Viktor's violet — so it reads as this brand's bookend rather
+          than a borrowed look. */}
       {SHOW_TESTIMONIAL && (
-        <section className="relative overflow-hidden bg-cream">
-          <div className="relative h-[240px] md:h-[300px] overflow-hidden">
-            {mounted && (
-              <div className="absolute inset-0">
-                <MeshGradient
-                  width={dimensions.width}
-                  height={320}
-                  colors={HERO_COLORS}
-                  distortion={0.6}
-                  swirl={0.45}
-                  grainMixer={0}
-                  grainOverlay={0}
-                  speed={0.3}
-                  offsetX={0.2}
+        <section className="relative py-20 md:py-28 px-6 bg-cream">
+          <div className="max-w-5xl mx-auto">
+            <motion.div
+              initial={{ opacity: 0, y: 28 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true, margin: '-100px' }}
+              transition={{ duration: 0.7, ease: heroEase }}
+              className="grid md:grid-cols-2 rounded-[2.5rem] overflow-hidden border border-near-black/[0.06] bg-white shadow-[0_40px_90px_-30px_rgba(14,26,26,0.32)]"
+            >
+              {/* Left — gradient stat panel */}
+              <div
+                className="relative flex flex-col justify-between p-8 md:p-10 min-h-[320px] md:min-h-[460px] overflow-hidden"
+                style={{
+                  backgroundImage:
+                    'linear-gradient(160deg, #0766A3 0%, #2E7A8C 34%, #4EBECE 64%, #FFE4AF 100%)',
+                }}
+              >
+                <span
+                  aria-hidden
+                  className="absolute -top-16 -right-10 w-64 h-64 rounded-full bg-white/10 blur-3xl"
                 />
-                <div className="absolute inset-0 bg-cream/10" />
+                <span
+                  aria-hidden
+                  className="absolute -bottom-20 -left-16 w-72 h-72 rounded-full bg-[#FFE4AF]/25 blur-3xl"
+                />
+
+                <p className="relative font-logo text-[1.9rem] md:text-[2.3rem] font-extrabold leading-[1.12] tracking-[-0.02em] text-white">
+                  {TESTIMONIAL.statHeadline}
+                </p>
+
+                <div className="relative mt-8 flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-full bg-white/20 border border-white/40 overflow-hidden flex-shrink-0">
+                    {TESTIMONIAL.avatarSrc && (
+                      <img
+                        src={TESTIMONIAL.avatarSrc}
+                        alt=""
+                        className="w-full h-full object-cover"
+                      />
+                    )}
+                  </div>
+                  <div>
+                    <p className="font-newsreader text-[15px] text-white">{TESTIMONIAL.name}</p>
+                    <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-white/75">
+                      {TESTIMONIAL.role}
+                    </p>
+                  </div>
+                </div>
               </div>
-            )}
-            {/* Dissolve into the cream below — the card overlaps this
-                fade, same trick as the hero's own bottom fade. */}
-            <div
-              aria-hidden
-              className="absolute inset-x-0 bottom-0 h-2/3 pointer-events-none"
-              style={{
-                background:
-                  'linear-gradient(to bottom, rgba(250,247,242,0) 0%, rgba(250,247,242,0.6) 60%, rgba(250,247,242,1) 100%)',
-              }}
-            />
+
+              {/* Right — white detail panel */}
+              <div className="flex flex-col justify-center p-8 md:p-12">
+                <p className="font-mono text-[10.5px] uppercase tracking-[0.2em] text-near-black/50 font-medium">
+                  {TESTIMONIAL.eyebrow}
+                </p>
+                <h3 className="mt-3 font-logo text-[1.7rem] md:text-[2.1rem] font-extrabold tracking-[-0.02em] leading-[1.12] text-near-black">
+                  {TESTIMONIAL.headline}
+                </h3>
+                <p className="mt-4 font-newsreader text-[15.5px] leading-[1.65] text-near-black/70">
+                  {TESTIMONIAL.description}
+                </p>
+
+                <div className="mt-8 grid grid-cols-2 gap-3">
+                  {TESTIMONIAL.stats.map(({ value, label, Icon }) => (
+                    <div
+                      key={label}
+                      className="rounded-2xl border border-near-black/[0.07] bg-[#FFF6E9] px-4 py-4"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-logo text-[1.6rem] font-extrabold text-near-black">
+                          {value}
+                        </span>
+                        <span className="flex items-center justify-center w-8 h-8 rounded-full bg-caribbean-teal/[0.12] flex-shrink-0">
+                          <Icon size={15} weight="bold" color="#0D9C8B" />
+                        </span>
+                      </div>
+                      <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.12em] text-near-black/55">
+                        {label}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </motion.div>
           </div>
-
-          <motion.figure
-            initial={{ opacity: 0, y: 24 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true, margin: '-100px' }}
-            transition={{ duration: 0.7, ease: heroEase }}
-            className="relative z-10 max-w-2xl mx-auto px-6 md:px-10 py-12 md:py-14 -mt-[100px] md:-mt-[140px] pb-16 md:pb-24 rounded-[2.25rem] border border-near-black/[0.06] bg-cream/95 backdrop-blur-md shadow-[0_30px_70px_-24px_rgba(14,26,26,0.28)] text-center"
-          >
-            {/* Ambient glow bleeding out from behind the card — echoes
-                the gradient band above instead of a flat drop shadow */}
-            <span
-              aria-hidden
-              className="absolute -inset-8 -z-10 rounded-[3rem] opacity-60 blur-3xl"
-              style={{
-                background:
-                  'radial-gradient(60% 60% at 30% 0%, rgba(7,102,163,0.28), transparent 70%), radial-gradient(50% 50% at 80% 10%, rgba(255,228,175,0.4), transparent 70%)',
-              }}
-            />
-
-            <div className="flex items-center justify-center gap-3 mb-8">
-              <span className="h-px w-8 bg-near-black/25" />
-              <span className="font-mono text-[10.5px] uppercase tracking-[0.22em] text-near-black/60 font-medium">
-                From the dock
-              </span>
-              <span className="h-px w-8 bg-near-black/25" />
-            </div>
-            <blockquote className="font-instrument text-[1.7rem] md:text-[2.1rem] leading-[1.18] tracking-[-0.015em] text-near-black">
-              “{TESTIMONIAL.quote}”
-            </blockquote>
-            <figcaption className="mt-7 font-mono text-[10.5px] uppercase tracking-[0.18em] text-near-black/55">
-              {TESTIMONIAL.name} · {TESTIMONIAL.business}
-            </figcaption>
-          </motion.figure>
         </section>
       )}
 
