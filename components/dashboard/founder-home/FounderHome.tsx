@@ -18,6 +18,7 @@ import ContactsPanel from '@/components/dashboard/founder-home/ContactsPanel'
 import AdminShell from '@/components/dashboard/admin-shell/AdminShell'
 import CostPage from '@/components/dashboard/founder-home/CostPage'
 import HealthPage from '@/components/dashboard/founder-home/HealthPage'
+import ToolsPage from '@/components/dashboard/founder-home/ToolsPage'
 import { CayeLoadingPulse } from '@/components/dashboard/founder-home/CayeLoadingPulse'
 import { Pill, GhostButton } from '@/components/dashboard/founder-home/console-ui'
 import type { CustomerStatus } from '@/types/database'
@@ -202,6 +203,9 @@ const RAIL_ITEMS: { id: RailId; label: string; icon: ReactNode; stub: boolean }[
   ) },
   { id: 'health', label: 'Health', stub: false, icon: (
     <path d="M12 20.5s-7-4.35-9.5-8.8C.9 8.4 2.4 5 5.8 5c1.9 0 3.4 1 6.2 4 2.8-3 4.3-4 6.2-4 3.4 0 4.9 3.4 3.3 6.7-2.5 4.45-9.5 8.8-9.5 8.8z" />
+  ) },
+  { id: 'tools', label: 'Tools', stub: false, icon: (
+    <path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.65 2.65a1.6 1.6 0 0 1-2.26-2.26L14.7 6.3z" />
   ) },
   { id: 'admin', label: 'Admin Shell', stub: false, icon: (
     <><polyline points="4 6 10 12 4 18" /><line x1="12" y1="18" x2="20" y2="18" /></>
@@ -580,6 +584,8 @@ export default function FounderHome() {
             <h1 style={{ fontSize: 16, fontWeight: 600, fontFamily: 'var(--font-display)', margin: 0 }}>Cost — All Workspaces</h1>
           ) : railView === 'health' ? (
             <h1 style={{ fontSize: 16, fontWeight: 600, fontFamily: 'var(--font-display)', margin: 0 }}>Health — Caye System Status</h1>
+          ) : railView === 'tools' ? (
+            <h1 style={{ fontSize: 16, fontWeight: 600, fontFamily: 'var(--font-display)', margin: 0 }}>Tools — Caye's Capabilities</h1>
           ) : railView === 'admin' ? (
             <h1 style={{ fontSize: 16, fontWeight: 600, fontFamily: 'var(--font-display)', margin: 0 }}>Admin Shell — Back Office</h1>
           ) : (
@@ -611,6 +617,8 @@ export default function FounderHome() {
           <CostPage />
         ) : railView === 'health' ? (
           <HealthPage />
+        ) : railView === 'tools' ? (
+          <ToolsPage />
         ) : activeRailItem.stub ? (
           <StubConsole label={activeRailItem.label} />
         ) : (
