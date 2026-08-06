@@ -15,6 +15,11 @@ export async function GET(req: NextRequest) {
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL!
   const mobileUrl = `${appUrl}/m/${workspaceId}`
+  // 'wa' = tapped a link Caye texted. There's no dashboard to return to —
+  // the next step is back in WhatsApp, where her follow-up is already
+  // waiting by the time they close the tab.
+  const isWa = sourceVal === 'wa'
+  const waUrl = (param: string) => `${appUrl}/connect/done?channel=gmail&${param}`
   // 'founder' = connected from Caye Command's Channels card — send them
   // back there instead of a settings tab they never navigated from.
   const desktopUrl = sourceVal === 'founder'
@@ -22,8 +27,10 @@ export async function GET(req: NextRequest) {
     : `${appUrl}/dashboard/${workspaceId}/settings?tab=channels`
   const desktopSep = desktopUrl.includes('?') ? '&' : '?'
 
-  const ok = (param: string) => isMobile ? mobileUrl : `${desktopUrl}${desktopSep}${param}`
-  const fail = (param: string) => isMobile ? mobileUrl : `${desktopUrl}${desktopSep}${param}`
+  const land = (param: string) =>
+    isWa ? waUrl(param) : isMobile ? mobileUrl : `${desktopUrl}${desktopSep}${param}`
+  const ok = land
+  const fail = land
 
   if (googleError || !code || !workspaceId) {
     console.error('[gmail/callback] Access denied or missing params:', { googleError, code: !!code, workspaceId })
@@ -122,6 +129,14 @@ export async function GET(req: NextRequest) {
     console.error('[gmail/callback] DB upsert error:', upsertError)
     return NextResponse.redirect(fail('gmail_error=db_save'))
   }
+
+  // Tell the owner it landed and offer the next channel, so closing the
+  // tab drops them back into a conversation that has already moved on.
+  // Fire-and-forget — a slow send must not hold up the redirect.
+  const { announceConnection } = await import('@/lib/channels/connect-progress')
+  announceConnection(supabase, workspaceId, 'gmail').catch((err) =>
+    console.error('[gmail/callback] connect-progress failed:', err)
+  )
 
   // Fire discovery so Caye learns the business from sent mail. Fire-and-forget.
   try {

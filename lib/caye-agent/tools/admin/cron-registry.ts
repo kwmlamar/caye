@@ -5,6 +5,7 @@ import { runGmailPoll } from '@/app/api/email/gmail-poll/route'
 import { runTemplateSync } from '@/app/api/caye/template-sync/cron/route'
 import { runOpportunityScan } from '@/app/api/caye/opportunity-scan/cron/route'
 import { runBusinessInsights } from '@/app/api/caye/business-insights/cron/route'
+import { runActivationScan } from '@/app/api/caye/activation-scan/cron/route'
 
 /**
  * Fixed, hardcoded map of the crons Admin Shell can report on / manually
@@ -32,4 +33,8 @@ export const CRON_JOBS: Record<
   // schedule — it still only touches workspaces the founder has enabled.
   'opportunity-scan': { label: 'Proactive workspace scan (3x/day, opted-in workspaces)', run: runOpportunityScan },
   'business-insights': { label: 'Weekly business-insights read-out (opted-in workspaces)', run: runBusinessInsights },
+  // Alerts the founder about signups that connected nothing at all. Safe
+  // to trigger by hand — it dedupes per workspace forever, so a manual run
+  // can't re-alert anyone already flagged.
+  'activation-scan': { label: 'Zero-channel signups (alerts founder, once per workspace)', run: runActivationScan },
 }

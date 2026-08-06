@@ -163,10 +163,31 @@ export async function GET(req: NextRequest) {
     ? `${appUrl}/dashboard/${workspaceId}`
     : `${appUrl}/dashboard/${workspaceId}/settings?tab=channels`
   const desktopSep = desktopUrl.includes('?') ? '&' : '?'
+  // 'wa' = tapped a link Caye texted; there's no dashboard to go back to.
+  const isWa = sourceVal === 'wa'
 
   // Mobile gets a clean redirect — mobile app reads state from Supabase, not query params
-  const ok = (param: string) => isMobile ? mobileUrl : `${desktopUrl}${desktopSep}${param}`
-  const fail = (param: string) => isMobile ? mobileUrl : `${desktopUrl}${desktopSep}${param}`
+  const land = (param: string) =>
+    isWa
+      ? `${appUrl}/connect/done?channel=${channel}&${param}`
+      : isMobile
+        ? mobileUrl
+        : `${desktopUrl}${desktopSep}${param}`
+  const ok = land
+  const fail = land
+
+  // Advances the connect walkthrough: tells the owner it landed and offers
+  // the next channel. Fired on every successful connect regardless of
+  // source — the walkthrough moves on connection events wherever they
+  // happen, and it no-ops for workspaces that predate it. Fire-and-forget
+  // so a slow WhatsApp send never holds up the redirect.
+  const announce = (channelType: string) => {
+    import('@/lib/channels/connect-progress')
+      .then(({ announceConnection }) =>
+        announceConnection(createServiceClient(), workspaceId, channelType)
+      )
+      .catch((err) => console.error('[meta/callback] connect-progress failed:', err))
+  }
 
   if (metaError || !code || !workspaceId) {
     console.error('[meta/callback] Denied or missing params:', { metaError, hasCode: !!code, workspaceId })
@@ -249,6 +270,7 @@ export async function GET(req: NextRequest) {
         console.error('[meta/callback] DB upsert failed:', dbErr)
         return NextResponse.redirect(fail('whatsapp_error=db_save'))
       }
+      announce('whatsapp')
       return NextResponse.redirect(ok('whatsapp_connected=1'))
     }
 
@@ -300,6 +322,7 @@ export async function GET(req: NextRequest) {
         console.error('[meta/callback] DB upsert failed:', dbErr)
         return NextResponse.redirect(fail('instagram_error=db_save'))
       }
+      announce('instagram')
       return NextResponse.redirect(ok('instagram_connected=1'))
     }
 
@@ -321,6 +344,7 @@ export async function GET(req: NextRequest) {
       console.error('[meta/callback] DB upsert failed:', dbErr)
       return NextResponse.redirect(fail('messenger_error=db_save'))
     }
+    announce('messenger')
     return NextResponse.redirect(ok('messenger_connected=1'))
   }
 

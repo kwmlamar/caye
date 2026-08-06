@@ -72,4 +72,7 @@ export const REPO_MIGRATIONS: readonly string[] = [
   '20260728d_customer_status_inactive_not_cancelled',
   '20260728e_opportunity_scan_business_insights',
   '20260730_business_facts_expiry',
+  '20260805_operator_messages_not_sent_status',
+  '20260805b_extend_outbound_kind_for_scan_notify',
+  '20260806_workspace_channel_intake',
 ]

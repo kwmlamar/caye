@@ -2,6 +2,8 @@
 
 import { useState } from 'react'
 import { getSession } from '@/lib/supabase'
+import { startConnectFlow } from '@/lib/channels/connect-link-client'
+import type { ConnectChannel } from '@/lib/channels/channel-types'
 import { useWorkspaceChannels, type ChannelAccount } from '@/lib/useWorkspaceChannels'
 import { CayeLoadingPulse } from '@/components/dashboard/founder-home/CayeLoadingPulse'
 import { Pill, GhostButton } from '@/components/dashboard/founder-home/console-ui'
@@ -25,11 +27,15 @@ const CHANNEL_ORDER = ['whatsapp', 'instagram', 'messenger', 'email', 'gmail', '
 // JS SDK + popup flow) — already completed during onboarding, so it's
 // shown status-only here rather than re-implementing that flow. SMS has
 // no connect flow anywhere in the app yet.
-const REDIRECT_CONNECT: Record<string, string> = {
-  email: '/api/auth/zoho',
-  gmail: '/api/auth/gmail',
-  messenger: '/api/auth/meta?channel=messenger',
-  instagram: '/api/auth/meta?channel=instagram',
+// Maps the stored channel_type onto the OAuth provider name the signed
+// connect token is issued for ('email' rows are Zoho). The links are
+// minted rather than hand-built — the initiators no longer accept a bare
+// workspace id. See lib/channels/connect-token.
+const REDIRECT_CONNECT: Record<string, ConnectChannel> = {
+  email: 'zoho',
+  gmail: 'gmail',
+  messenger: 'messenger',
+  instagram: 'instagram',
 }
 
 function ChannelRow({
@@ -41,11 +47,12 @@ function ChannelRow({
   onDisconnected: () => void
 }) {
   const [busy, setBusy] = useState(false)
+  const [connectErr, setConnectErr] = useState<string | null>(null)
   const meta = CHANNEL_META[type]
   const connected = account?.is_active === true
   const needsReauth = account?.needs_reauth === true
   const handle = account ? (account.channel_username || account.channel_account_name || account.channel_account_id) : null
-  const redirectHref = REDIRECT_CONNECT[type]
+  const connectChannel = REDIRECT_CONNECT[type]
 
   async function handleDisconnect() {
     if (!account || busy) return
@@ -76,21 +83,33 @@ function ChannelRow({
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 13, fontWeight: 600, color: '#f4f4f5' }}>{meta.name}</div>
         <div style={{ fontSize: 11, color: LABEL_COLOR, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-          {handle ?? (redirectHref ? 'Not connected' : 'Managed via onboarding')}
+          {connectErr ?? handle ?? (connectChannel ? 'Not connected' : 'Managed via onboarding')}
         </div>
       </div>
       <Pill
         color={needsReauth ? '#FFE4AF' : connected ? '#34d399' : '#52525b'}
         label={needsReauth ? 'Reconnect' : connected ? 'Connected' : 'Not connected'}
       />
-      {redirectHref && (
+      {connectChannel && (
         connected && !needsReauth ? (
           <GhostButton label="Disconnect" color="#fca5a5" onClick={handleDisconnect} disabled={busy} busy={busy} />
         ) : (
           <GhostButton
             label={needsReauth ? 'Reconnect' : 'Connect'}
             color="#4EBECE"
-            href={`${redirectHref}${redirectHref.includes('?') ? '&' : '?'}workspaceId=${workspaceId}&source=founder`}
+            disabled={busy}
+            busy={busy}
+            onClick={async () => {
+              setBusy(true)
+              setConnectErr(null)
+              const err = await startConnectFlow(workspaceId, connectChannel, 'founder')
+              // On success the browser is already navigating away; only a
+              // failure lands back here, so busy stays true until then.
+              if (err) {
+                setBusy(false)
+                setConnectErr(err)
+              }
+            }}
           />
         )
       )}

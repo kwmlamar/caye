@@ -26,10 +26,18 @@ export async function GET(req: NextRequest) {
     ? `${appUrl}/dashboard/${workspaceId}`
     : `${appUrl}/dashboard/${workspaceId}/settings?tab=channels`
   const desktopSep = desktopUrl.includes('?') ? '&' : '?'
+  // 'wa' = tapped a link Caye texted; there's no dashboard to go back to.
+  const isWa = sourceVal === 'wa'
 
   // Mobile gets a clean redirect — the mobile app reads state from Supabase, not query params
-  const ok = (param: string) => isMobile ? mobileUrl : `${desktopUrl}${desktopSep}${param}`
-  const fail = (param: string) => isMobile ? mobileUrl : `${desktopUrl}${desktopSep}${param}`
+  const land = (param: string) =>
+    isWa
+      ? `${appUrl}/connect/done?channel=zoho&${param}`
+      : isMobile
+        ? mobileUrl
+        : `${desktopUrl}${desktopSep}${param}`
+  const ok = land
+  const fail = land
 
   if (zohoError || !code || !workspaceId) {
     console.error('[zoho/callback] Access denied or missing params:', { zohoError, code: !!code, workspaceId })
@@ -155,6 +163,13 @@ export async function GET(req: NextRequest) {
     console.error('[zoho/callback] DB upsert error:', upsertError)
     return NextResponse.redirect(fail('zoho_error=db_save'))
   }
+
+  // Tell the owner it landed and offer the next channel — fire-and-forget,
+  // same reason as discovery below. See lib/channels/connect-progress.
+  const { announceConnection } = await import('@/lib/channels/connect-progress')
+  announceConnection(supabase, workspaceId, 'email').catch((err) =>
+    console.error('[zoho/callback] connect-progress failed:', err)
+  )
 
   // Fire discovery job (fire-and-forget — don't block the redirect)
   try {

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { getSupabase } from '@/lib/supabase'
+import { startConnectFlow } from '@/lib/channels/connect-link-client'
 import MIcon from './MIcon'
 
 interface ChannelDef {
@@ -48,11 +49,15 @@ export default function MobileChannelsSheet({
       })
   }, [workspaceId])
 
-  const connectEmail = () => {
-    window.location.href = `/api/auth/zoho?workspaceId=${workspaceId}&source=mobile`
+  // Signed connect links — the OAuth initiators no longer accept a bare
+  // workspace id. See lib/channels/connect-token.
+  const connectEmail = async () => {
+    const err = await startConnectFlow(workspaceId, 'zoho', 'mobile')
+    if (err) toast.error(err)
   }
-  const connectMessenger = () => {
-    window.location.href = `/api/auth/meta?workspaceId=${workspaceId}&source=mobile`
+  const connectMessenger = async () => {
+    const err = await startConnectFlow(workspaceId, 'messenger', 'mobile')
+    if (err) toast.error(err)
   }
 
   const connectWhatsApp = async () => {

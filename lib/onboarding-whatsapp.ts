@@ -315,7 +315,7 @@ export async function handleDiscoveryAnswer(
 
   const { data: customer } = await supabase
     .from('customers')
-    .select('business_name, full_name')
+    .select('business_name, full_name, contact_email')
     .eq('id', workspaceId)
     .maybeSingle()
   const businessName = customer?.business_name || 'your business'
@@ -384,32 +384,46 @@ export async function handleDiscoveryAnswer(
     }
   }
 
+  // Detect who runs their email from the address they already gave us,
+  // rather than asking. Writing channel_intake here is also what makes
+  // this workspace eligible for the connect walkthrough at all — every
+  // workspace created before it stays NULL and is left alone (see
+  // supabase/migrations/20260806_workspace_channel_intake.sql).
+  const { detectEmailProvider } = await import('@/lib/channels/email-provider')
+  const emailProvider = await detectEmailProvider(customer?.contact_email)
+
   await supabase
     .from('workspace_ai_config')
-    .update({ whatsapp_outbound_enabled: true })
+    .update({
+      whatsapp_outbound_enabled: true,
+      channel_intake: { emailProvider, inventory: {}, whatsappLine: null },
+    })
     .eq('workspace_id', workspaceId)
 
-  // Falls back to the real production domain rather than '' — an empty
-  // NEXT_PUBLIC_APP_URL would otherwise ship a relative "/connect?ws=..."
-  // link with no host at all. Matches the same fallback already used in
-  // lib/whatsapp/email-fallback.ts.
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.meetcaye.com'
-  const connectUrl = `${appUrl}/connect?ws=${workspaceId}`
-  const claimUrl = `${appUrl}/login?ws=${workspaceId}`
+  // No "I'm live 🎉" here. With nothing connected she is watching nothing
+  // and cannot receive a single guest message — the celebration belongs on
+  // the first successful connection, which is where connect-progress puts
+  // it. This message is a handoff, and it carries exactly one call to
+  // action: a second link (the dashboard) halves the first one, and
+  // billing can wait.
+  const { buildConnectUrl } = await import('@/lib/channels/connect-token')
+  const inboxChannel =
+    emailProvider === 'google' ? 'gmail' : emailProvider === 'zoho' ? 'zoho' : null
+
+  const replyText = inboxChannel
+    ? `Got it — I know ${businessName} now.\n\n` +
+      `Last thing: let me start catching your messages. Looks like your email runs through ` +
+      `${emailProvider === 'google' ? 'Google' : 'Zoho'} — tap here and I'll watch that inbox: ` +
+      `${buildConnectUrl(workspaceId, inboxChannel, { source: 'wa' })}`
+    : `Got it — I know ${businessName} now.\n\n` +
+      `Last thing: let me start catching your messages. Which email do you run the business ` +
+      `on — Gmail or Zoho?`
 
   // businessName is returned rather than fired here — the demo offer must
-  // go out strictly after the "you're live" reply is actually sent, or the
-  // two race (both are separate outbound WhatsApp sends with no ordering
-  // guarantee) and the demo offer routinely wins, landing before the
-  // congratulations message it's supposed to follow. Caller triggers it
-  // once the reply below has been sent.
-  return {
-    replyText:
-      "That's everything I need — I'm live and ready to represent your business. 🎉\n\n" +
-      `One more step: connect the channels your customers message you on (WhatsApp, email, Instagram) here: ${connectUrl}\n\n` +
-      `Want a dashboard too, for billing and settings? Sign in here anytime: ${claimUrl}\n\n` +
-      "You can always come back and talk to me directly, anytime.",
-    completed: true,
-    businessName,
-  }
+  // go out strictly after this reply is actually sent, or the two race
+  // (both are separate outbound WhatsApp sends with no ordering guarantee)
+  // and the demo offer routinely wins, landing before the message it's
+  // supposed to follow. Caller triggers it once the reply below has been
+  // sent.
+  return { replyText, completed: true, businessName }
 }

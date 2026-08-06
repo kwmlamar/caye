@@ -78,6 +78,17 @@ export async function POST(req: NextRequest) {
   if (phoneNumbers.length === 1) {
     const saved = await savePhone(workspaceId, phoneNumbers[0])
     if (saved) return NextResponse.json({ error: saved }, { status: 500 })
+
+    // Embedded Signup is the one connect path that never touches an OAuth
+    // callback, so the walkthrough has to be advanced from here or it
+    // stalls after the highest-value channel. Fire-and-forget, same as the
+    // callbacks — see lib/channels/connect-progress.
+    const { createServiceClient } = await import('@/lib/supabase-server')
+    const { announceConnection } = await import('@/lib/channels/connect-progress')
+    announceConnection(createServiceClient(), workspaceId, 'whatsapp').catch((err) =>
+      console.error('[whatsapp-embedded] connect-progress failed:', err)
+    )
+
     return NextResponse.json({ success: true, phoneNumbers })
   }
 

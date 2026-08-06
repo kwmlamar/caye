@@ -24,6 +24,8 @@ import { toast } from 'sonner'
 import SIcon from './SIcon'
 import { useWorkspaceOptional } from '@/lib/workspace-context'
 import { getSupabase } from '@/lib/supabase'
+import { startConnectFlow } from '@/lib/channels/connect-link-client'
+import type { ConnectChannel } from '@/lib/channels/channel-types'
 
 interface ConnectedAccount {
   id: string
@@ -86,7 +88,16 @@ function pickBest(rows: ConnectedAccount[]): ConnectedAccount {
   return pool.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0]
 }
 
-export default function ChannelsPanel({ workspaceId: propWorkspaceId, variant = 'settings' }: { workspaceId?: string; variant?: 'settings' | 'onboarding' } = {}) {
+export default function ChannelsPanel({
+  workspaceId: propWorkspaceId,
+  variant = 'settings',
+  only = null,
+}: {
+  workspaceId?: string
+  variant?: 'settings' | 'onboarding'
+  /** Onboarding variant only: render just this one channel. */
+  only?: string | null
+} = {}) {
   const params = useParams()
   const urlWorkspaceId = params?.workspaceId as string | undefined
   const ctxWorkspaceId = useWorkspaceOptional()?.workspaceId
@@ -333,25 +344,43 @@ export default function ChannelsPanel({ workspaceId: propWorkspaceId, variant = 
     fetchAccounts()
   }
 
-  const handleConnectClick = (type: string) => {
-    if (type === 'email') {
-      window.location.href = `/api/auth/zoho?workspaceId=${workspaceId}`
-    } else if (type === 'gmail') {
-      window.location.href = `/api/auth/gmail?workspaceId=${workspaceId}`
-    } else if (type === 'whatsapp') {
+  // channel_type 'email' is Zoho; the connect-token channel name matches
+  // the OAuth provider rather than the stored channel_type.
+  const CONNECT_CHANNEL: Record<string, ConnectChannel> = {
+    email: 'zoho',
+    gmail: 'gmail',
+    messenger: 'messenger',
+    instagram: 'instagram',
+  }
+
+  const handleConnectClick = async (type: string) => {
+    if (type === 'whatsapp') {
       launchWhatsAppSignup()
-    } else if (type === 'messenger') {
-      window.location.href = `/api/auth/meta?workspaceId=${workspaceId}&channel=messenger`
-    } else if (type === 'instagram') {
-      window.location.href = `/api/auth/meta?workspaceId=${workspaceId}&channel=instagram`
+      return
     }
+    const channel = CONNECT_CHANNEL[type]
+    if (!channel) return
+    if (!workspaceId) {
+      toast.error('No workspace selected — reload and try again.')
+      return
+    }
+    // Signed links now — the button mints one against the user's session
+    // instead of navigating to a bare workspace id.
+    const err = await startConnectFlow(workspaceId, channel)
+    if (err) toast.error(err)
   }
 
   if (variant === 'onboarding') {
+    // `only` turns this into a single-channel executor. Caye deep-links
+    // every other channel straight to its OAuth initiator, so the one
+    // reason to render this page at all is WhatsApp's Embedded Signup —
+    // and showing a menu there re-introduces the choice the walkthrough
+    // deliberately removed.
+    const rows = only ? CHANNEL_ORDER.filter((t) => t === only) : CHANNEL_ORDER
     return (
       <>
         <div className="cx-list">
-          {CHANNEL_ORDER.map((type) => {
+          {rows.map((type) => {
             const meta = CHANNEL_META[type]
             const account = byType[type] ?? null
             const isConnected = account?.is_active === true

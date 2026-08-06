@@ -14,6 +14,9 @@ import { searchThreads } from './read/search-threads'
 import { queryBusinessKnowledge } from './read/query-business-knowledge'
 import { getServices } from './read/get-services'
 import { getTeamMembers } from './read/get-team-members'
+import { getChannelStatus } from './read/get-channel-status'
+import { getConnectLink } from './write-low/get-connect-link'
+import { recordChannelIntake } from './write-low/record-channel-intake'
 import { markHandled } from './write-low/mark-handled'
 import { addBusinessFact } from './write-low/add-business-fact'
 import { removeBusinessFact } from './write-low/remove-business-fact'
@@ -59,12 +62,17 @@ import { gateAdminHighRisk } from './admin/admin-high-risk-gate'
 /**
  * All tools available to the back-office agent.
  *
- * Read tools (11): #38 + #40 — autonomous execution
+ * Read tools (11): #38 + #40 — autonomous execution (adds
+ * get_channel_status, 2026-08-06 — connect-walkthrough state, derived
+ * from connected_accounts rather than stored)
  * Low-risk write tools (21): #37 — autonomous execution (adds
  * remove_business_fact, 2026-07-30 — mirrors add_business_fact so
  * temporary notes like a vacation closure can be retired once stale;
  * update_team_member_name, 2026-07-27 — self-service display name so
- * greetings don't fall back to full_name/legal name)
+ * greetings don't fall back to full_name/legal name; get_connect_link,
+ * 2026-08-06 — mints signed channel connect links and hard-refuses
+ * WhatsApp when the owner's number is their personal phone, since that
+ * migration is destructive and can't be left to prompt text)
  * High-risk write tools (9): #42/#43 — gated through confirmation flow
  * (adds remove_pricing_tier, 2026-07-26; send_outreach_batch, 2026-08-01 —
  * step 3 of the 2026-07-21 staged-autonomy roadmap, batch-approved
@@ -90,7 +98,10 @@ export const TOOL_REGISTRY: AnyTool[] = [
   queryBusinessKnowledge as AnyTool,
   getServices as AnyTool,
   getTeamMembers as AnyTool,
+  getChannelStatus as AnyTool,
   // Low-risk write
+  getConnectLink as AnyTool,
+  recordChannelIntake as AnyTool,
   markHandled as AnyTool,
   addBusinessFact as AnyTool,
   removeBusinessFact as AnyTool,

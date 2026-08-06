@@ -46,8 +46,17 @@ The buyer is **whoever feels the pain of answering messages** — often NOT the 
 2. **Have you ever lost a booking because a message got missed?** (surfaces the pain in their words)
 3. **Do your services and prices stay mostly the same week to week?** (catalog-stability test — separates front-desk fits from ODS-shape)
 4. **Can you log into your own Facebook / WhatsApp Business right now?** (the Dave filter — access friction kills onboarding)
+5. **Is the number guests WhatsApp you on a separate business line, or the same phone you use yourself?** (the Karenda filter — see below. **Not** a disqualifier; it routes onboarding.)
 
 If #3 is "no, every job is custom/quoted" → it's a back-office/longer-cycle prospect, not the wedge. If #4 is "no / I don't know" → onboarding will stall unless you can run BSP Embedded Signup for them.
+
+**On #5 — this does not disqualify anyone, and must not be used to.** Connecting a number to the WhatsApp Cloud API *migrates* it, and the WhatsApp app then stops working on that handset. An owner running the business off their personal phone cannot give that up, so guest-facing WhatsApp is simply off the table for them — they still get email + Instagram + Messenger, and they still talk to Caye on the back-office number. Answers:
+
+- **"Separate business line"** → guest-facing WhatsApp is available; lead with it.
+- **"Same phone as mine"** → never send them an Embedded Signup link. Pitch email + IG. Don't promise WhatsApp front desk.
+- **A landline** → fully available, and *better* than a mobile: landlines register by voice verification with nothing lost, since nobody runs the app on a landline.
+
+**Log every answer.** This is the only reliable instrument for the personal-phone base rate — an attempt to infer it from carrier line-type data on 2026-08-06 was inconclusive (see decisions-log 2026-08-06). The base rate decides whether guest-facing WhatsApp is a viable headline for this market at all.
 
 ## Anti-ICP (do not chase)
 - ~~US-mainland anything~~ — **reversed 2026-07-28, see decisions-log.** No longer an anti-goal.

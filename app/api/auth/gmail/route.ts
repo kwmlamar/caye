@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { verifyConnectToken } from '@/lib/channels/connect-token'
 
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
 // Scopes:
@@ -16,9 +17,28 @@ const SCOPES = [
 ].join(' ')
 
 export async function GET(req: NextRequest) {
-  const workspaceId = req.nextUrl.searchParams.get('workspaceId')
-  if (!workspaceId) {
-    return NextResponse.json({ error: 'Missing workspaceId' }, { status: 400 })
+  // Signed token rather than a bare workspace id: Caye texts these links,
+  // so they live in forwardable messages. See lib/channels/connect-token.
+  const verified = verifyConnectToken(req.nextUrl.searchParams.get('t'), 'gmail')
+  if (!verified.ok) {
+    // A JSON 400 is useless to someone who just tapped a link in WhatsApp.
+    // Send them somewhere that can say "ask Caye for a fresh one".
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.meetcaye.com'
+    return NextResponse.redirect(`${appUrl}/connect?link_error=${verified.reason}`)
+  }
+  const workspaceId = verified.workspaceId
+
+  // Google refuses OAuth inside embedded WebViews, which is what a tap
+  // from WhatsApp opens on Android. Divert those to an interstitial that
+  // can escape to a real browser; everyone else goes straight through.
+  // `ext=1` is set by that page and prevents a loop.
+  if (!req.nextUrl.searchParams.get('ext')) {
+    const { isEmbeddedBrowser } = await import('@/lib/channels/embedded-browser')
+    if (isEmbeddedBrowser(req.headers.get('user-agent'))) {
+      const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.meetcaye.com'
+      const t = encodeURIComponent(req.nextUrl.searchParams.get('t') ?? '')
+      return NextResponse.redirect(`${appUrl}/connect/open?channel=gmail&t=${t}`)
+    }
   }
 
   const redirectUri = `${process.env.NEXT_PUBLIC_APP_URL}/api/auth/gmail/callback`
