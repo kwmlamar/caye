@@ -24,7 +24,15 @@ export const FAQ_ITEMS = [
   },
   {
     q: 'What else does Caye handle besides WhatsApp messages?',
-    a: 'She quotes and books tours directly in chat, and quietly reads and writes to Zoho Mail, Gmail, and Google Calendar in the back office.',
+    a: 'She quotes and books tours directly in chat, reads and writes to Zoho Mail, Gmail, and Google Calendar in the back office, and matches incoming payment receipts to bookings to send the confirmation herself. Owners and staff also message her directly to check job files, costs, and what needs a decision — she runs the back office, not just the inbox.',
+  },
+  {
+    q: 'Is Caye a platform I configure myself, or a managed service?',
+    a: "Managed, not configured. There's no prompt editor, workflow builder, or knowledge-base upload screen — TropiTech sets her up and maintains her. You run your business through WhatsApp conversations with Caye, the same way you'd manage a team member, not software settings.",
+  },
+  {
+    q: "How does Caye learn my business before I've set anything up?",
+    a: "She reads your existing sent mail and builds your voice and service knowledge from it directly. There's no blank form or setup wizard to fill out before she's useful.",
   },
   {
     q: 'How much does Caye cost?',

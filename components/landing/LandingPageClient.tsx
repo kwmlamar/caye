@@ -5,8 +5,19 @@ import Link from 'next/link'
 import { motion, AnimatePresence } from 'framer-motion'
 import { MeshGradient } from '@paper-design/shaders-react'
 import { WhatsappLogoIcon, ListIcon, XIcon } from '@phosphor-icons/react'
+import { sendGAEvent } from '@next/third-parties/google'
 import WhatsAppMockup from '@/components/landing/WhatsAppMockup'
 import { FAQ_ITEMS } from '@/components/landing/faq-data'
+
+// Fires whenever a visitor clicks through to the WhatsApp signup — the
+// only real conversion action on this page. Named `qualify_lead` (not
+// something WhatsApp-specific) to match the Key Event already configured
+// in GA4 — it was starred as a key event with no code ever sending it.
+// `location` marks which of the five CTA instances (nav, mobile menu,
+// hero, mid-page, footer) so GA can tell which placement converts.
+function trackSignupClick(location: string) {
+  sendGAEvent('event', 'qualify_lead', { location })
+}
 
 // Simplified landing — credibility surface, not a conversion engine.
 // Primary CTA goes straight to a demo request (lamar@tropitech.org).
@@ -282,6 +293,7 @@ export default function LandingPageClient() {
               href={CAYE_SIGNUP_WA_HREF}
               target="_blank"
               rel="noopener noreferrer"
+              onClick={() => trackSignupClick('nav')}
               className="hidden sm:inline-flex items-center gap-1.5 bg-near-black text-cream font-logo font-semibold px-5 py-2 rounded-full text-[14px] hover:bg-near-black/90 transition-all shadow-[0_4px_14px_-6px_rgba(14,26,26,0.35)] hover:-translate-y-px active:translate-y-0"
             >
               Hire Caye
@@ -326,7 +338,10 @@ export default function LandingPageClient() {
                 href={CAYE_SIGNUP_WA_HREF}
                 target="_blank"
                 rel="noopener noreferrer"
-                onClick={() => setMobileMenuOpen(false)}
+                onClick={() => {
+                  trackSignupClick('mobile_menu')
+                  setMobileMenuOpen(false)
+                }}
                 className="block mt-1 px-4 py-3 rounded-2xl text-[16px] font-logo font-semibold bg-near-black text-cream text-center"
               >
                 Hire Caye
@@ -387,6 +402,7 @@ export default function LandingPageClient() {
                 href={CAYE_SIGNUP_WA_HREF}
                 target="_blank"
                 rel="noopener noreferrer"
+                onClick={() => trackSignupClick('hero')}
                 className="group relative inline-flex items-center gap-2.5 bg-near-black text-cream font-logo font-semibold px-9 py-4 rounded-full text-[16px] hover:bg-near-black/90 transition-all shadow-[0_4px_20px_-6px_rgba(14,26,26,0.25)] hover:shadow-[0_8px_28px_-8px_rgba(14,26,26,0.35)] hover:-translate-y-[1px] active:translate-y-0"
               >
                 <span>Try Caye free</span>
@@ -503,6 +519,7 @@ export default function LandingPageClient() {
             href={CAYE_SIGNUP_WA_HREF}
             target="_blank"
             rel="noopener noreferrer"
+            onClick={() => trackSignupClick('mid_page')}
             className="group inline-flex items-center gap-2.5 bg-near-black text-cream font-logo font-semibold px-9 py-4 rounded-full text-[16px] hover:bg-near-black/90 transition-all shadow-[0_4px_20px_-6px_rgba(14,26,26,0.25)] hover:-translate-y-[1px] active:translate-y-0"
           >
             <span>Try Caye free</span>
@@ -757,6 +774,7 @@ export default function LandingPageClient() {
                           {...(link.external
                             ? { target: '_blank', rel: 'noopener noreferrer' }
                             : {})}
+                          onClick={link.href === CAYE_SIGNUP_WA_HREF ? () => trackSignupClick('footer') : undefined}
                           className="text-[14px] text-near-black/65 underline decoration-caribbean-teal/30 decoration-[1.5px] underline-offset-4 hover:text-near-black hover:decoration-near-black/40 transition-colors"
                         >
                           {link.label}

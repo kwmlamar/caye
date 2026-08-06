@@ -13,9 +13,24 @@
   business accounts, not a separate Caye-branded number.
 - Reads and writes to the operator's Zoho Mail, Gmail, and Google Calendar
   in the back office.
+- Runs the back office, not just the inbox — owners and staff message her
+  directly to check job files, costs, blockers, and what needs a decision.
+- Learns the business from the owner's existing sent mail during setup —
+  no blank-slate form or knowledge base to fill in first.
+- Matches incoming payment receipts to bookings and sends the confirmation
+  herself.
 - Back-office control (the operator managing Caye's settings, seeing
   bookings, etc.) also happens by messaging Caye directly on WhatsApp,
   not through a settings dashboard.
+
+## What Caye is not
+
+- Not a configurable AI platform — no prompt editor, workflow builder, or
+  knowledge-base upload screen for the operator to manage.
+- Not something operators integrate themselves via API, MCP, or webhooks —
+  TropiTech builds and manages the integration.
+- Not self-serve software administered through settings. Operators manage
+  Caye like staff, over WhatsApp, not through a configuration panel.
 
 ## Who it's for
 
