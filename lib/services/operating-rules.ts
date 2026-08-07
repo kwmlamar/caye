@@ -63,6 +63,18 @@ function matchesBlackout(dateISO: string, range: BlackoutRange): boolean {
 }
 
 /**
+ * Find the blackout range (if any) covering a 'YYYY-MM-DD' date. Used when a
+ * caller needs the range's details (label, end date for a reopen hint) rather
+ * than just the open/closed verdict from evaluateOperatingDate.
+ */
+export function findMatchingBlackout(
+  dateISO: string,
+  ranges: BlackoutRange[]
+): BlackoutRange | null {
+  return ranges.find((range) => matchesBlackout(dateISO, range)) ?? null
+}
+
+/**
  * Evaluate a single 'YYYY-MM-DD' date against the workspace's operating rules.
  *
  * Precedence: a full closure (blackout) wins over owner_only — a customer

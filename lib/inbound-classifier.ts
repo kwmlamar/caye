@@ -43,7 +43,12 @@ const PATTERNS: Pattern[] = [
     category: 'complaint',
     priority: 100,
     test: text =>
-      /\b(disappointed|unacceptable|terrible|awful|horrible|never again|worst|complaint|complain|refund|demand|angry|upset|furious|ridiculous|unhappy|let down|frustrating|frustrated|rude|unprofessional|appalling|disgusted)\b/i.exec(text)?.[0] ?? null,
+      // NOTE: bare "refund" deliberately excluded — plenty of ordinary questions
+      // ("is a refund offered if the port stop is cancelled?") use the word with
+      // zero complaint sentiment. Genuine refund asks/demands are caught by
+      // forced-escalation.ts's own REFUND_PATTERN (routed to the neutral refund
+      // template, not this empathy one) or by "demand" / "want my money" here.
+      /\b(disappointed|unacceptable|terrible|awful|horrible|never again|worst|complaint|complain|demand|angry|upset|furious|ridiculous|unhappy|let down|frustrating|frustrated|rude|unprofessional|appalling|disgusted)\b/i.exec(text)?.[0] ?? null,
   },
 
   // ── CANCELLATION_REQUEST ────────────────────────────────────────────

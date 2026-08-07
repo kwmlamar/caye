@@ -64,6 +64,18 @@ describe('classifyInbound', () => {
     )
     expect(result.category).toBe('complaint')
   })
+
+  it('does NOT classify a plain refund-policy question as a complaint', () => {
+    // Regression: Karin Roberts thread (2026-08-06) — a bare "refund" mention in
+    // a neutral question ("is a refund offered if the port stop is cancelled?")
+    // was firing the complaint pattern and triggering the empathy-deflection
+    // template instead of letting Caye actually answer the question.
+    const result = classifyInbound(
+      "I will need to check with my companion. When will full payment be required? Also, we arrive " +
+        "on the Star Princess and I'm curious if a refund is offered when the port stop is cancelled?"
+    )
+    expect(result.category).not.toBe('complaint')
+  })
 })
 
 describe('toneHintFor', () => {

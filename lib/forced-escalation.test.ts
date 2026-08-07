@@ -72,6 +72,51 @@ describe('detectForcedEscalation', () => {
     expect(result).toBeNull()
   })
 
+  it('does not fire refund trigger on a plain refund-policy question', () => {
+    // Regression: Karin Roberts thread (2026-08-06) — bare "refund" in a policy
+    // question ("is a refund offered when the port stop is cancelled?") used to
+    // match REFUND_PATTERN even with no request/demand shape to it.
+    const result = detectForcedEscalation(
+      "I'm curious if a refund is offered when the port stop is cancelled?",
+      'general_question'
+    )
+    expect(result).toBeNull()
+  })
+
+  it('appends a customer recap to the locked template for a web-form submission', () => {
+    // Regression for the Robert booking (2026-08-06): a custom-request
+    // trigger firing on a Web3Forms submission used to send the customer
+    // ONLY the locked stem ("Thanks for the details...") with no sign any
+    // of their nine form fields were actually read.
+    const body = [
+      'Name: Robert',
+      'Email: robert@example.com',
+      'Phone: 5551234567',
+      'Guests: 5',
+      'Date: Monday, August 31, 2026',
+      'DateISO: 2026-08-31',
+      'Tour: Private VIP Custom Tour',
+      'Notes: Traveling with my mother who is limited in walking.',
+    ].join('\n')
+    const result = detectForcedEscalation(body, 'booking_inquiry')
+    expect(result?.trigger).toBe('custom_request')
+    // Locked stem still present, unedited.
+    expect(result?.customerFacingMessage).toMatch(/Thanks for the details/)
+    // Plus the deterministic recap, quoting the note verbatim.
+    expect(result?.customerFacingMessage).toContain('Monday, August 31')
+    expect(result?.customerFacingMessage).toContain('limited in walking')
+  })
+
+  it('leaves the locked template untouched for ordinary prose (no recap to add)', () => {
+    const result = detectForcedEscalation(
+      'Looking for a private charter with a custom itinerary for our family',
+      'booking_inquiry'
+    )
+    expect(result?.customerFacingMessage).toBe(
+      "Thanks for the details — let me check on this with the team and circle back shortly."
+    )
+  })
+
   it('pingSummary is plain-language, not internal classifier jargon', () => {
     // Regression test: pingSummary is what ends up in the operator's WhatsApp
     // ping. internalContext ("Forced escalation — b2b_partnership (inbound

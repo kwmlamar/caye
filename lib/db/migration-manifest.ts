@@ -75,4 +75,6 @@ export const REPO_MIGRATIONS: readonly string[] = [
   '20260805_operator_messages_not_sent_status',
   '20260805b_extend_outbound_kind_for_scan_notify',
   '20260806_workspace_channel_intake',
+  '20260807_caye_escalations_brief',
+  '20260807b_enable_rls_service_role_only_tables',
 ]

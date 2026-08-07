@@ -5,6 +5,7 @@ import { stripWrappingQuotes } from '@/lib/voice-profile'
 import type { ContactStyleProfile } from '@/types/database'
 import { createServiceClient } from './supabase-server'
 import { detectIdentityLeak } from './caye-identity-guard'
+import { detectUnverifiedPaymentFigure } from './policy-figure-guard'
 import { sanitizeDashes } from './sanitize-dashes'
 import { formatHistoryBlock } from './conversation-history'
 import { checkBookingAutonomy, AUTONOMY_WINDOW_HOURS } from './booking-policy'
@@ -12,11 +13,13 @@ import { syncBookingToCalendar } from './calendar-sync'
 import { resolveTier, type PricingTier } from './services/resolve-tier'
 import {
   evaluateOperatingDate,
+  findMatchingBlackout,
   type BlackoutRange,
 } from './services/operating-rules'
 import {
   matchServiceByName,
   extractCustomerTourName,
+  extractCustomerRequestedDate,
   buildMatchHintBlock,
   type ServiceMatchResult,
 } from './services/match-service'
@@ -39,6 +42,7 @@ import {
   detectSubtleComplaint,
   buildSubtleComplaintEscalation,
   type ForcedEscalation,
+  type ForcedTrigger,
 } from './forced-escalation'
 import { applyAutosendGate } from './autosend-gate'
 
@@ -63,6 +67,26 @@ export type CayeAutoReply =
        *  Forced escalations always supply one; when absent, the ping falls
        *  back to deriving from category + internalContext. */
       pingSummary?: string
+      /** Set only for Layer 1 forced escalations (lib/forced-escalation.ts) —
+       *  the exact keyword trigger, distinct from the coarser `category`.
+       *  recordEscalation uses this to pick the right opening line + closing
+       *  ask in buildOperatorBrief. Undefined for LLM-driven escalate_to_team
+       *  calls, which fall back to the prose brief. */
+      triggerHint?: ForcedTrigger
+      /**
+       * When false, recordEscalation still writes the caye_escalations row
+       * and still pings the operator, but does NOT set the conversation's
+       * human_agent_enabled — the thread stays out of the held queue.
+       * Defaults to true (undefined behaves the same as true) everywhere
+       * except the Layer 2 self-review branch below, which sets this
+       * explicitly false: Caye already sent the reply, the customer isn't
+       * blocked on anything, so there's nothing to "hold." Before this flag
+       * (2026-08-07), a medium-confidence self-review parked an
+       * already-answered thread in the held queue for a ~6 day average —
+       * confirmed live 2026-08-03: Laney confirmed the answer was correct
+       * within 2 minutes, and the thread still sat held 3 more days.
+       */
+      holdConversation?: boolean
     }
   | {
       action: 'reply'
@@ -254,16 +278,22 @@ const TOOLS: Anthropic.Tool[] = [
         high_stakes_claim: {
           type: 'boolean',
           description:
-            'Set true when this reply makes a specific factual claim about physical ' +
-            'safety, accessibility, or health/medical/allergy accommodation — e.g. ' +
-            '"the vehicle is wheelchair accessible," "there are no stairs," "minimal ' +
-            'walking involved," "safe for someone with a heart condition." Leave false ' +
-            'or omit for ordinary scheduling, pricing, or itinerary questions.\n\n' +
+            'Set true when this reply makes a specific factual claim about EITHER (a) physical ' +
+            'safety, accessibility, or health/medical/allergy accommodation — e.g. "the vehicle is ' +
+            'wheelchair accessible," "there are no stairs," "safe for someone with a heart ' +
+            'condition" — OR (b) a specific financial/policy commitment: a deposit percentage or ' +
+            'dollar amount, a refund/rebooking policy, or cancellation terms. Leave false or omit ' +
+            'for ordinary scheduling, availability, or itinerary questions, and for prices that ' +
+            'came verbatim from lookup_price (those are grounded by definition).\n\n' +
             'When high_stakes_claim=true AND confidence is medium or low, the reply is ' +
             'held for the owner instead of being sent automatically — an unverified ' +
-            'guess about someone\'s safety or accessibility needs risks real harm, not ' +
+            'guess about someone\'s safety/accessibility needs, or an invented payment/refund ' +
+            'term, risks real harm (physical, or a wrong promise the owner has to honor), not ' +
             'just an annoyed customer, so this case skips the normal "ship now, ' +
-            'escalate after" path.',
+            'escalate after" path. In practice: you should almost never have a financial/policy ' +
+            'claim at medium/low confidence in the first place — if you don\'t have the fact from ' +
+            'query_business_knowledge, don\'t state a number at all (see PAYMENT COPY above); this ' +
+            'flag is the backstop for when you do anyway.',
         },
       },
       required: ['content', 'confidence'],
@@ -799,6 +829,14 @@ function buildSystem(
     'a specific timeline for the payment link, (e) NOT invent a payment URL. One short paragraph for ' +
     'the held confirmation, one short paragraph for the "payment to follow" note. Example tone: ' +
     '"Your spot is held for [date]. We\'ll send payment details over shortly to lock it in."\n' +
+    '- NEVER state a deposit percentage, a deposit dollar amount, or any refund/rebooking policy for ' +
+    'external cancellations (e.g. "if the cruise can\'t make port") unless query_business_knowledge ' +
+    'returned that exact fact this turn — quote it verbatim, don\'t paraphrase or round it. If it ' +
+    'returns nothing, say plainly that the owner will confirm the details — do NOT guess a number or ' +
+    'invent a policy to sound helpful. This applies even if the customer asks directly or a prior ' +
+    'message in the thread already (wrongly) stated one — do not repeat or build on an unconfirmed ' +
+    'figure. (Regression: Karin Roberts thread, 2026-08-06 — Caye invented "25% deposit ($99.50)" and ' +
+    'a full-refund-or-rebook port-cancellation policy with zero supporting business_facts row.)\n' +
     `- If they want to CANCEL: call find_bookings → cancel_booking. The tool enforces a ${AUTONOMY_WINDOW_HOURS}h policy ` +
     'window — bookings inside that window return an error and you must hold_for_human (Karenda\'s decision). ' +
     'After a successful cancel, send_reply with: confirmation of the cancel, mention that they\'re eligible ' +
@@ -1885,13 +1923,52 @@ async function generateCayeAutoReplyCore(
       }
     }
     if (forced) {
+      // Forced escalations (custom/VIP requests especially) skip the LLM
+      // entirely, so they'd otherwise never mention an active blackout —
+      // the customer gets a content-free "let me check with the team" even
+      // when the requested date is one Caye already knows is closed. Layer
+      // that closure context on top of the controlled template deterministically
+      // (no LLM call) when the intake form gives us a parseable date.
+      const requestedDate = extractCustomerRequestedDate(inbound.body)
+      let customerFacingMessage = forced.customerFacingMessage
+      let internalContext = forced.internalContext
+      if (requestedDate) {
+        const { data: cfg } = await createServiceClient()
+          .from('workspace_ai_config')
+          .select('blackout_dates')
+          .eq('workspace_id', inbound.workspaceId)
+          .maybeSingle()
+        const blackoutDates = (cfg?.blackout_dates as BlackoutRange[] | null) ?? []
+        const verdict = evaluateOperatingDate(requestedDate, {
+          blackout_dates: blackoutDates,
+          owner_only_weekdays: [],
+        })
+        if (verdict.status === 'closed') {
+          const range = findMatchingBlackout(requestedDate, blackoutDates)
+          let reopenLabel: string | null = null
+          if (range && !range.recurring_annually) {
+            const reopen = new Date(`${range.end}T00:00:00Z`)
+            reopen.setUTCDate(reopen.getUTCDate() + 1)
+            reopenLabel = reopen.toLocaleDateString('en-US', {
+              month: 'long',
+              day: 'numeric',
+              timeZone: 'UTC',
+            })
+          }
+          customerFacingMessage +=
+            ` Quick note — ${requestedDate} falls during our closure (${verdict.label})` +
+            (reopenLabel ? `, we're back ${reopenLabel} and will follow up on this then.` : '.')
+          internalContext += ` Requested date ${requestedDate} is inside an active blackout (${verdict.label}) — customer was told.`
+        }
+      }
       return {
         action: 'escalate',
-        content: sanitizeDashes(forced.customerFacingMessage),
+        content: sanitizeDashes(customerFacingMessage),
         category: forced.category,
         routeTo: forced.routeTo,
-        internalContext: forced.internalContext,
+        internalContext,
         pingSummary: forced.pingSummary,
+        triggerHint: forced.trigger,
       }
     }
   }
@@ -1913,6 +1990,21 @@ async function generateCayeAutoReplyCore(
   }
 
   const businessFacts = isSalesWorkspace ? [] : await fetchBusinessFacts(inbound.workspaceId)
+
+  // Grounding text for the payment-figure guard. Every business fact is
+  // already in the system prompt, so a deposit rate absent from here was read
+  // from nowhere — see lib/policy-figure-guard.ts for the Karin Roberts
+  // regression that made this a code check rather than a prompt rule.
+  const factsGrounding = businessFacts.map(f => f.fact).join('\n')
+
+  /** Both pre-send guards in one call. Returns a reason to hold, or null. */
+  const guardDraft = (content: string): string | null => {
+    const leak = detectIdentityLeak(content)
+    if (leak) return `Identity guard: ${leak}`
+    const figure = detectUnverifiedPaymentFigure(content, factsGrounding)
+    if (figure) return `Payment-figure guard: ${figure}`
+    return null
+  }
 
   const { stable: systemStable, dynamic: systemDynamic } = isSalesWorkspace
     ? buildSalesSystem(systemPrompt, effectiveVoiceProfile, todayISO)
@@ -1983,14 +2075,14 @@ async function generateCayeAutoReplyCore(
     if (toolUses.length === 0) {
       const textBlock = response.content.find(b => b.type === 'text')
       if (textBlock && textBlock.type === 'text' && textBlock.text.trim()) {
-        const leak = detectIdentityLeak(textBlock.text)
-        if (leak) {
-          console.warn(`[caye-reply] Identity guard blocked freeform reply: ${leak}`)
+        const blocked = guardDraft(textBlock.text)
+        if (blocked) {
+          console.warn(`[caye-reply] Guard blocked freeform reply: ${blocked}`)
           return {
             action: 'hold',
-            reason: `Identity guard: ${leak}`,
+            reason: blocked,
             note:
-              `Caye drafted a reply (no tool call) but the identity guard blocked it (${leak}). ` +
+              `Caye drafted a reply (no tool call) but a pre-send guard blocked it (${blocked}). ` +
               `Review the draft below and send manually if appropriate.\n\n---\n\n${textBlock.text}`,
           }
         }
@@ -2011,16 +2103,16 @@ async function generateCayeAutoReplyCore(
           confidence?: 'high' | 'medium' | 'low'
           high_stakes_claim?: boolean
         }
-        const leak = detectIdentityLeak(input.content)
-        if (leak) {
-          // Identity guard tripped — don't ship the reply. Hand to the owner
+        const blocked = guardDraft(input.content)
+        if (blocked) {
+          // A pre-send guard tripped — don't ship the reply. Hand to the owner
           // with the draft attached so they can decide.
-          console.warn(`[caye-reply] Identity guard blocked reply: ${leak}`)
+          console.warn(`[caye-reply] Guard blocked reply: ${blocked}`)
           terminal = {
             action: 'hold',
-            reason: `Identity guard: ${leak}`,
+            reason: blocked,
             note:
-              `Caye drafted a reply but the identity guard blocked it (${leak}). ` +
+              `Caye drafted a reply but a pre-send guard blocked it (${blocked}). ` +
               `Review the draft below and send manually if appropriate.\n\n---\n\n${input.content}`,
           }
         } else if (input.high_stakes_claim && input.confidence && input.confidence !== 'high') {
@@ -2051,11 +2143,18 @@ async function generateCayeAutoReplyCore(
           // follow up before the customer hears back again. Category defaults
           // to 'knowledge' since send_reply confidence ≠ high typically means
           // Caye is unsure of a fact she stated.
+          //
+          // holdConversation: false (2026-08-07) — the customer already got
+          // an answer and isn't blocked on anything, so this shouldn't enter
+          // the held queue. It used to, which meant an already-resolved
+          // thread sat in "needs review" for a ~6 day average — see the
+          // holdConversation doc comment on CayeAutoReply above.
           terminal = {
             action: 'escalate',
             content: sanitizeDashes(input.content),
             category: 'knowledge',
             routeTo: 'owner',
+            holdConversation: false,
             internalContext:
               `Caye self-rated confidence=${input.confidence} on her reply. ` +
               `She sent it (per the Layer 2 spec, drafts ship even at medium/low) but the ` +
@@ -2107,17 +2206,18 @@ async function generateCayeAutoReplyCore(
           customer_facing_message: string
           internal_context: string
         }
-        // Same identity guard as send_reply — the customer-facing message
-        // ships verbatim, so it must clear the AI-identity sniff.
-        const leak = detectIdentityLeak(input.customer_facing_message)
-        if (leak) {
-          console.warn(`[caye-reply] Identity guard blocked escalation: ${leak}`)
+        // Same pre-send guards as send_reply — the customer-facing message
+        // ships verbatim, so it must clear both the AI-identity sniff and the
+        // payment-figure check.
+        const blocked = guardDraft(input.customer_facing_message)
+        if (blocked) {
+          console.warn(`[caye-reply] Guard blocked escalation: ${blocked}`)
           terminal = {
             action: 'hold',
-            reason: `Identity guard: ${leak}`,
+            reason: blocked,
             note:
-              `Caye tried to escalate (${input.category} → ${input.route_to}) but the ` +
-              `identity guard blocked the customer message (${leak}). Review the draft ` +
+              `Caye tried to escalate (${input.category} → ${input.route_to}) but a ` +
+              `pre-send guard blocked the customer message (${blocked}). Review the draft ` +
               `below and send manually if appropriate.\n\n---\n\nCustomer-facing draft:\n` +
               `${input.customer_facing_message}\n\n---\n\nInternal context:\n${input.internal_context}`,
           }
@@ -2148,10 +2248,14 @@ async function generateCayeAutoReplyCore(
         // while the held thread waits on the operator. Same identity
         // guard as the proposed draft — if it leaks Caye's AI identity
         // it gets dropped silently rather than sent.
+        // The ack is auto-sent, so it clears both guards. The proposed draft
+        // above is identity-only on purpose: it's shown to the operator rather
+        // than sent, and dropping it over a figure would hide the very draft
+        // they need to correct.
         const ackRaw = input.customer_acknowledgement?.trim()
         const ack = ackRaw && ackRaw.length > 0 ? ackRaw : undefined
-        const ackLeak = ack ? detectIdentityLeak(ack) : null
-        const safeAck = ackLeak ? undefined : ack
+        const ackBlocked = ack ? guardDraft(ack) : null
+        const safeAck = ackBlocked ? undefined : ack
 
         terminal = {
           action: 'hold',

@@ -261,6 +261,18 @@ export function extractCustomerTourName(body: string): string | null {
 }
 
 /**
+ * Extract a customer-requested date from an inbound message body. Only
+ * handles the intake-form structured field ("DateISO: 2026-08-01") — the
+ * strongest signal, same shape as extractCustomerTourName above. Returns
+ * null when absent; callers should not attempt free-text date parsing here.
+ */
+export function extractCustomerRequestedDate(body: string): string | null {
+  if (!body) return null
+  const match = body.match(/^\s*DateISO\s*:\s*(\d{4}-\d{2}-\d{2})\s*$/im)
+  return match ? match[1] : null
+}
+
+/**
  * Build a system-prompt block that surfaces the match result to the LLM.
  * Designed to be appended to the existing AVAILABLE SERVICES block.
  * Empty string when nothing useful to add — caller should append unconditionally.

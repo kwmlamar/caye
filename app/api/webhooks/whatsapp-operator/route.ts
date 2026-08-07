@@ -793,21 +793,22 @@ async function handleOneInbound(
   // Classify against current pending state.
   const pending = await getPendingHeldItems(workspaceId)
 
-  let lastOutboundBody: string | null = null
-  if (message.context?.id) {
-    // Operator used reply-to. The quoted message id is Meta's — we don't store it
-    // directly, so fetch our most recent outbound to this operator for context.
-    const { data: lastRow } = await supabase
-      .from('caye_operator_messages')
-      .select('body')
-      .eq('workspace_id', workspaceId)
-      .eq('operator_allowlist_id', operatorId)
-      .eq('direction', 'outbound')
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle()
-    lastOutboundBody = lastRow?.body ?? null
-  }
+  // Always fetch what Caye last said to this operator — not just when they
+  // used WhatsApp's reply-to. Gating this on message.context?.id meant a bare
+  // "yes please" typed normally reached the classifier with no idea Caye had
+  // just asked "Send that?", so with several items in the held queue the only
+  // sane classification left was unclear → "which item? (1-6)". That is what
+  // made a plain confirmation feel broken (Karenda, 2026-08-07).
+  const { data: lastRow } = await supabase
+    .from('caye_operator_messages')
+    .select('body')
+    .eq('workspace_id', workspaceId)
+    .eq('operator_allowlist_id', operatorId)
+    .eq('direction', 'outbound')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  const lastOutboundBody: string | null = lastRow?.body ?? null
 
   const intent = await classifyOperatorIntent({
     operatorText: body,

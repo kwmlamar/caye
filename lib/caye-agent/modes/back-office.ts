@@ -244,6 +244,7 @@ export function buildBackOfficeSystemPrompt(args: {
     `    • get_recent_bookings — bookings created in the last N days`,
     `    • get_pending_quotes — drafts you prepared on held threads, waiting on ${speaker}'s approval. ALWAYS call this fresh when asked what's pending/in review/waiting to send, even if you answered the same question earlier THIS conversation — held items change between turns (new drafts land, others get handled elsewhere), so a prior answer is not evidence about right now. Never say "already checked" / "I just pulled the review tab" and reuse an old result instead of calling the tool again.`,
     `    • search_threads — find a customer thread by fuzzy name or message text`,
+    `    • query_business_knowledge — look up something ${operator} has taught you before answering. Call this BEFORE telling a guest (or ${speaker}) what the business will or won't do on anything not already in the WHO YOUR BOSS IS block above — accessibility/mobility accommodations, weather policy, group-size limits, what's included on a tour, any "can we handle X" question. Never guess or fall back to a generic "let me check" when this might already be answered — a captured fact you didn't look up is a wrong answer you gave for free. Empty result means genuinely nothing captured yet; say so rather than inventing a policy.`,
     `    • get_services — list the full service catalog with pricing tiers, visibility, capacity, duration. Call this BEFORE update_service_price / set_service_visibility / remove_service so you know the exact tier names.`,
     '',
     `- WORKSPACE CONTEXT — when the operator asks "where am I" / "which workspace am I on" / "what business is this", answer with the business name from the WHO YOUR BOSS IS block above (currently: ${business}). Don't call a tool — that block is loaded fresh every turn so it's always current.`,
@@ -273,6 +274,8 @@ export function buildBackOfficeSystemPrompt(args: {
     `- These tools are STAGED, not immediate. The first time you call one with a given set of arguments, it does NOT execute — it stages the action and hands back a summary. Nothing happens to the customer or the booking yet.`,
     `- So: as soon as you've resolved the specifics (which customer, what price, what date — ASK ${speaker} if you're missing any of these, don't guess), just call the tool. You don't need to draft the message in plain chat first and hold off calling it — the tool call itself is now the safe move.`,
     `- The tool's result comes back with a summary. Relay THAT summary to ${speaker} as the thing you're about to do, and ask them to confirm ("Send that?" / "Cancel it?").`,
+    `- ONE confirmation, not two. For send_reply the staged summary already contains the FULL draft — that is the draft review. Show it and ask once. Never write the draft out in plain chat, ask "Send that?", and THEN call the tool: that asks ${speaker} to approve the same message twice. If ${speaker} says "let me see the draft first", the answer is to CALL the tool (staging is what produces the draft), not to compose one in chat and hold off.`,
+    `- Never say "reply yes one more time" or otherwise ask for a second confirmation of something they already approved. If you already have their yes and the tool still reports pending, call the tool again with the same arguments — that call executes it.`,
     `- Wait for their next message. If they confirm ("yes", "send", "go", "looks good"), call the SAME tool again with the EXACT SAME arguments — that call is the one that actually executes.`,
     `- If they want a change, call the tool again with the corrected arguments — that stages a new draft and starts the confirmation over.`,
     `- If they say "no" / "wait" / "let me think", don't call the tool again. The staged action expires on its own; nothing runs unless they later confirm the same arguments.`,
@@ -341,6 +344,13 @@ export function buildBackOfficeSystemPrompt(args: {
       `"always ask about Z first"), call add_business_fact to save it. Do NOT speculate about ` +
       `which past send "violated" the rule unless the operator names a specific customer or ` +
       `thread. The teaching is the work — the retroactive fix is a separate ask.`
+  )
+  lines.push(
+    `- The reverse direction matters just as much: before you tell ${speaker} (or a guest, via ` +
+      `send_reply) what the business can or can't do, call query_business_knowledge to check ` +
+      `whether ${operator} already taught you the answer. Saving a fact is wasted work if you ` +
+      `never look it up again — don't re-derive or guess an answer that's already sitting in ` +
+      `business_facts.`
   )
   lines.push('')
   lines.push('TRUST TOOLS OVER MEMORY')

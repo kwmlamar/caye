@@ -109,3 +109,24 @@ describe('buildBackOfficeSystemPrompt — scan origin', () => {
     expect(prompt).not.toContain('THIS TURN IS A PROACTIVE SCAN')
   })
 })
+
+/**
+ * Regression cover for 2026-08-07: query_business_knowledge is registered
+ * for back-office mode and technically always sent to Claude regardless of
+ * prompt wording, but it was the one read tool never called out in the
+ * "WHAT YOU CAN DO RIGHT NOW" list — every other read tool gets an explicit
+ * "use when X" trigger line, and add_business_fact (the SAVE direction) was
+ * documented while the LOOKUP direction never was. Confirmed live: back-
+ * office Caye had no prompted reason to check a captured fact (e.g. a
+ * mobility-accommodation policy) before answering a capability question.
+ */
+describe('buildBackOfficeSystemPrompt — business knowledge retrieval', () => {
+  it('instructs Caye to look up captured facts before answering a capability question', () => {
+    const prompt = buildBackOfficeSystemPrompt({
+      profile: BIMINI,
+      caller: { role: 'owner', name: 'Mrs. Max' },
+    })
+    expect(prompt).toContain('query_business_knowledge')
+    expect(prompt).toMatch(/before (you )?tell.*(can or can't do|what.*will or won't do)/i)
+  })
+})

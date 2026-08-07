@@ -30,6 +30,7 @@ import 'server-only'
 import Anthropic from '@anthropic-ai/sdk'
 import type { InboundCategory } from './inbound-classifier'
 import { loggedMessagesCreate } from './llm-telemetry'
+import { buildCustomerRecap } from './operator-brief'
 
 export type ForcedTrigger =
   | 'b2b_partnership'
@@ -81,8 +82,11 @@ const PING_LABELS: Record<ForcedTrigger, string> = {
 // complaint classifier even though it overlaps — refund gets a neutral
 // acknowledge, complaint gets an empathy line. Different template needs
 // different detection paths.
+// Deliberately request-shaped, not a bare "refund" match — "is a refund offered
+// if the port stop is cancelled?" is a policy question, not a refund ask, and
+// used to false-fire this trigger (Karin Roberts thread, 2026-08-06).
 const REFUND_PATTERN =
-  /\b(refund|money back|chargeback|charge back|reverse the charge|get my money|my deposit back|return my deposit|i want my money|i want a refund|process(?:ing)? a refund)\b/i
+  /\b(money back|chargeback|charge back|reverse the charge|get my money|my deposit back|return my deposit|i want my money|i(?:'d| would)? (?:like|want|need) (?:a |my )?refund|give me (?:a |my )?refund|issue (?:a |my )?refund|process(?:ing)? a refund)\b/i
 
 // "Custom / private / special / exception" pattern — catches off-menu
 // commercial asks even when classifyInbound returns 'general_question'.
@@ -144,11 +148,20 @@ function build(
   // Distill the customer's first sentence for the ping summary — strip newlines
   // and trim so the WhatsApp template renders cleanly.
   const customerAsk = body.replace(/\s+/g, ' ').trim().slice(0, 100)
+
+  // When the inbound is a parseable form submission (Web3Forms and similar
+  // intake widgets), append a deterministic recap of what was actually
+  // read — see buildCustomerRecap's own comment for why this doesn't
+  // paraphrase the notes field, only quotes it. Prose inbound (a normal
+  // email/WhatsApp message) gets the locked stem unchanged, same as before.
+  const recap = buildCustomerRecap(body)
+  const customerFacingMessage = recap ? `${TEMPLATES[trigger]} ${recap}` : TEMPLATES[trigger]
+
   return {
     trigger,
     category,
     routeTo,
-    customerFacingMessage: TEMPLATES[trigger],
+    customerFacingMessage,
     pingSummary: `${PING_LABELS[trigger]} — "${customerAsk}"`,
     internalContext:
       `Forced escalation — ${trigger} (${why}). ` +

@@ -27,14 +27,39 @@ export function stableArgsKey(args: unknown): string {
   return JSON.stringify(sort(args))
 }
 
-/** Short, operator-readable description of a staged action. Best-effort —
- *  falls back to the raw tool name for anything not enumerated below. */
-function describePendingAction(toolName: string, args: Record<string, unknown>): string {
+/**
+ * Short, operator-readable description of a staged action. Best-effort —
+ * falls back to the raw tool name for anything not enumerated below.
+ *
+ * send_reply resolves the recipient's name from conversation_id and puts it
+ * FIRST — added 2026-08-06 after a wrong-recipient send reached a customer
+ * with nothing in the staged summary to catch it (a legacy WhatsApp-operator
+ * dispatch path was the one that actually fired, but this same gap existed
+ * here: the summary previewed only the body, never who it was going to, so
+ * even a careful "yes, send" gave the operator no way to notice the resolved
+ * conversation_id didn't match who they meant).
+ */
+async function describePendingAction(
+  supabase: ReturnType<typeof createServiceClient>,
+  toolName: string,
+  args: Record<string, unknown>
+): Promise<string> {
   switch (toolName) {
     case 'send_reply': {
+      // Full body, deliberately NOT truncated. When this was a 140-char
+      // preview the agent couldn't show a reviewable draft from the staged
+      // summary, so it drafted in plain chat FIRST and asked "Send that?",
+      // then called the tool — which staged and asked a second time. Karenda
+      // ended up confirming the same one-paragraph send three times across
+      // four minutes while mid-thread with a live customer (2026-08-07).
+      // Returning the whole body makes the staged summary itself reviewable,
+      // so there's exactly one confirmation round-trip and the text shown is
+      // the text that will send.
       const body = typeof args.body === 'string' ? args.body : ''
-      const preview = body.length > 140 ? `${body.slice(0, 140)}…` : body
-      return `Send: "${preview}"`
+      const conversationId = typeof args.conversation_id === 'string' ? args.conversation_id : null
+      const recipient = conversationId ? await describeConversationRecipient(supabase, conversationId) : null
+      const heading = recipient ? `Send to ${recipient}:` : 'Send:'
+      return `${heading}\n\n${body}`
     }
     case 'cancel_booking':
       return `Cancel booking ${args.booking_id}${args.reason ? ` (${args.reason})` : ''}`
@@ -60,6 +85,25 @@ function describePendingAction(toolName: string, args: Record<string, unknown>):
     default:
       return `Run ${toolName}`
   }
+}
+
+/** Best-effort "Name (channel)" label for a conversation_id, for the
+ *  send_reply staged summary. Returns null on any lookup failure — a
+ *  missing recipient label degrades to the old body-only summary rather
+ *  than blocking staging. */
+async function describeConversationRecipient(
+  supabase: ReturnType<typeof createServiceClient>,
+  conversationId: string
+): Promise<string | null> {
+  const { data } = await supabase
+    .from('unified_conversations')
+    .select('customer_name, channel_type')
+    .eq('id', conversationId)
+    .maybeSingle()
+  if (!data) return null
+  const name = (data.customer_name as string | null)?.trim() || 'unknown contact'
+  const channel = data.channel_type as string | null
+  return channel ? `${name} (${channel})` : name
 }
 
 /**
@@ -132,7 +176,7 @@ export function gateHighRisk<T>(tool: Tool<T>, ttlMinutes: number = PENDING_TTL_
         .limit(1)
         .maybeSingle()
 
-      const summary = describePendingAction(tool.name, args as Record<string, unknown>)
+      const summary = await describePendingAction(supabase, tool.name, args as Record<string, unknown>)
 
       if (existing) {
         if (existing.created_in_request_id !== ctx.requestId && ctx.origin !== 'scan') {
@@ -190,7 +234,7 @@ export function gateHighRisk<T>(tool: Tool<T>, ttlMinutes: number = PENDING_TTL_
           pending: true,
           summary,
           expires_in_minutes: ttlMinutes,
-          note: 'Staged, not executed yet. Relay the summary to the operator and ask them to confirm. Once they reply affirmatively in a NEW message, call this same tool with the same arguments again to actually run it.',
+          note: 'Staged, not executed yet. Relay this summary to the operator VERBATIM — for a send_reply it already contains the full draft, so show that and ask one confirmation question ("Send that?"). Do not re-draft it in your own words and do not ask twice. Once they reply affirmatively in a NEW message, call this same tool with the same arguments again to actually run it.',
         },
       }
     },
