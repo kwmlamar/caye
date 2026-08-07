@@ -132,11 +132,17 @@ async function processWorkspace(
 
   const prompt = buildScanPrompt(row.last_opportunity_scan_summary)
 
+  // The caller IS the recipient. This used to hardcode callerRole 'founder'
+  // with no name, which made the prompt tell Caye the founder was listening
+  // while the result was persisted to and delivered at `operator`'s number —
+  // so she wrote founder-facing reports about the owner ("worth checking
+  // with Mrs. Max") and sent them to Mrs. Max (2026-08-06).
   const agentResult = await cayeAgent({
     mode: 'back-office',
     workspaceId: row.workspace_id,
     userMessage: prompt,
-    callerRole: 'founder',
+    callerRole: operator.role,
+    callerName: operator.name,
     operatorId: operator.id,
     origin: 'scan',
   })

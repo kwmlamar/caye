@@ -226,6 +226,7 @@ export async function cayeAgent(input: CayeAgentInput): Promise<CayeAgentResult>
       role: input.callerRole,
       name: input.callerName ?? null,
     },
+    origin: input.origin,
   })
 
   const history = await loadOperatorContext(input.workspaceId, input.operatorId)

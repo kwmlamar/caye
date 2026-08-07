@@ -127,11 +127,15 @@ async function processWorkspace(
   const operator = await resolveOperatorByPhone(supabase, row.workspace_id, row.operator_whatsapp_number)
   if (!operator) return { status: 'skip', detail: 'no operator_allowlist match for operator phone' }
 
+  // Caller identity must match the recipient — see the same note in
+  // opportunity-scan/cron. 'founder' here produced insights written about
+  // the owner and then delivered to her (2026-08-06).
   const agentResult = await cayeAgent({
     mode: 'back-office',
     workspaceId: row.workspace_id,
     userMessage: INSIGHTS_PROMPT,
-    callerRole: 'founder',
+    callerRole: operator.role,
+    callerName: operator.name,
     operatorId: operator.id,
     origin: 'scan',
   })
