@@ -204,10 +204,21 @@ Max has never sent a single message. His number is corrected now, but the seat i
   (`20260807e`), consistent with `bookings.source`.
   **This is the sharp limit of decision 2:** trigger-derivation guarantees *if the row
   exists, the event exists*. It does not guarantee correct attribution — a trigger can
-  only record what the source row carries. **Fix is upstream: every Caye send path must
-  set `metadata.generated_by`.** Until then "did Caye or a human handle this?" is
-  unanswerable for 72% of outbound, and the "you sent 31, got 3 replies" read-out the
-  stream was partly built for cannot be trusted.
+  only record what the source row carries.
+  **Fixed forward 2026-08-07** — `lib/message-authorship.ts` + `20260807g`. The root
+  cause was not a missing tag but a wrong one: `/api/messages/send` hardcoded
+  `metadata.sent_by = 'human'` and nothing recorded who *composed* the text. `sent_by`
+  answers who clicked send; `authored_by` now answers who wrote it — `caye` (draft sent
+  unedited), `human_edited` (owner changed Caye's draft first), `human` (no draft
+  existed). Trigger precedence: `authored_by`, then `generated_by`, then `unknown`.
+  `human_edited` is deliberately its own value. It maps to `actor_kind='operator'`
+  because those are the operator's words, but `payload.authored_by` preserves that Caye
+  drafted it — **that is the only accuracy signal the product has.** A draft the owner
+  rewrites before sending is a graded wrong answer, and counting it as either a pure
+  human send or a Caye send destroys the measurement.
+  Historical rows are NOT backfilled: the draft a July send was or wasn't based on is
+  gone, and inventing it would be the same manufactured fact `20260807e` refused to
+  write. Pre-2026-08-07 outbound attribution stays `unknown` by design.
 - **Six new SECURITY DEFINER functions were exposed as PostgREST RPC** to `anon` and
   `authenticated` on creation. `caye_workspace_for_conversation(uuid)` was the real one —
   a callable conversation-id → workspace-id enumeration primitive that bypasses RLS by

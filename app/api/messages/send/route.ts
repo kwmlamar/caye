@@ -17,6 +17,7 @@ import { sendZohoReply, sendZohoEmail } from '@/lib/email-ai'
 import { resolveOpenEscalations } from '@/lib/caye-agent/tools/write-low/resolve-open-escalations'
 import { maybeRefreshOwnerVoiceProfile } from '@/lib/owner-voice-learning'
 import { maybeSuggestBusinessFacts } from '@/lib/business-fact-suggestions'
+import { classifyOutboundAuthorship } from '@/lib/message-authorship'
 
 export async function POST(request: NextRequest) {
   // ── Auth ────────────────────────────────────────────────────────────────────
@@ -94,6 +95,10 @@ export async function POST(request: NextRequest) {
 
   const text = content.trim()
   const now = new Date().toISOString()
+  // Read before dispatch: the send path below can clear or rewrite thread
+  // metadata, and authorship has to be judged against the draft as it stood
+  // when this request arrived.
+  const convMeta = (conv.metadata ?? {}) as Record<string, unknown>
   // Zoho's own id for this send, persisted below so a later message on the
   // same thread (e.g. a follow-up to a lead who never replied) can reply
   // against it — see findReplyTargetZohoMessageId in lib/email-ai.ts.
@@ -173,7 +178,14 @@ export async function POST(request: NextRequest) {
       status: 'sent',
       is_internal: false,
       metadata: {
+        // sent_by answers who *dispatched* this — always a person here, since
+        // this route requires a dashboard session. authored_by answers who
+        // *wrote* it, which is a different question: batch-approved cold
+        // outreach is Caye's words clicked by a human, and recording only
+        // sent_by='human' asserted that a person hand-typed 158 cold emails
+        // on the TropiTech Outreach workspace. See lib/message-authorship.ts.
         sent_by: 'human',
+        ...classifyOutboundAuthorship(text, convMeta.proposed_reply),
         user_id: user.id,
         ...(zohoMessageId ? { zoho_message_id: zohoMessageId } : {}),
       },
@@ -213,7 +225,8 @@ export async function POST(request: NextRequest) {
   // is what makes outreach-nudge-scan's cron correctly find this lead 2
   // days later if it goes quiet. .is('first_touch_sent_at', null) guards
   // against a later reply on the same thread re-stamping the timestamp.
-  const convMeta = (conv.metadata ?? {}) as Record<string, unknown>
+  // convMeta is declared above the dispatch — authorship has to be judged
+  // against the pre-send snapshot, and this block wants the same one.
   if (convMeta.source === 'outreach_leads' && convMeta.lead_id) {
     await supabase
       .from('outreach_leads')

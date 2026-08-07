@@ -81,4 +81,5 @@ export const REPO_MIGRATIONS: readonly string[] = [
   '20260807d_workspace_events',
   '20260807e_workspace_events_attribution_fix',
   '20260807f_workspace_events_revoke_rpc',
+  '20260807g_workspace_events_authored_by',
 ]
