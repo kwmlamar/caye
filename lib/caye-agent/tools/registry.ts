@@ -8,6 +8,7 @@ import { getTourTypePerformance } from './read/get-tour-type-performance'
 import { getCustomer } from './read/get-customer'
 import { getCustomerHistory } from './read/get-customer-history'
 import { getRecentActivity } from './read/get-recent-activity'
+import { getRecentInboundTool } from './read/get-recent-inbound'
 import { getRecentBookings } from './read/get-recent-bookings'
 import { getPendingQuotes } from './read/get-pending-quotes'
 import { searchThreads } from './read/search-threads'
@@ -92,6 +93,7 @@ export const TOOL_REGISTRY: AnyTool[] = [
   getCustomer as AnyTool,
   getCustomerHistory as AnyTool,
   getRecentActivity as AnyTool,
+  getRecentInboundTool as AnyTool,
   getRecentBookings as AnyTool,
   getPendingQuotes as AnyTool,
   searchThreads as AnyTool,
