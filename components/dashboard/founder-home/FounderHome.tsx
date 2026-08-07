@@ -62,6 +62,58 @@ function StatusPill({ status }: { status: CustomerStatus }) {
   return <Pill color={STATUS_COLOR[status]} label={STATUS_LABEL[status]} />
 }
 
+// Takes the expanded panel clean out of the page — over the icon rail,
+// workspace sidebar and top status bar, not just the content column — so
+// a thread/calendar/editor that expands gets the whole viewport instead of
+// whatever's left under the chrome. Safe as position:fixed here: nothing
+// between this and <html> sets a transform/filter/backdrop-filter/contain,
+// so nothing steals its containing block. See FullscreenPanelHeader for the
+// minimal chrome that replaces the status bar while a panel owns the page.
+const FULLSCREEN_PANEL_STYLE: CSSProperties = {
+  position: 'fixed', inset: 0, zIndex: 200,
+  display: 'flex', flexDirection: 'column',
+  background: APP_BG,
+}
+
+function FullscreenPanelHeader({ title, workspaceName, onCollapse }: { title: string; workspaceName: string; onCollapse: () => void }) {
+  const [hover, setHover] = useState(false)
+  return (
+    <div style={{
+      flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      padding: '13px 20px', borderBottom: `1px solid ${CARD_BORDER}`,
+      background: 'rgba(17,17,19,0.55)', ...GLASS,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 9, minWidth: 0 }}>
+        <span style={{ fontSize: 15, fontWeight: 600, fontFamily: 'var(--font-display)', whiteSpace: 'nowrap' }}>{title}</span>
+        <span style={{
+          fontSize: 12, color: LABEL_COLOR, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+        }}>
+          {workspaceName}
+        </span>
+      </div>
+      <button
+        onClick={onCollapse}
+        onMouseEnter={() => setHover(true)}
+        onMouseLeave={() => setHover(false)}
+        title="Collapse (Esc)"
+        style={{
+          flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6,
+          border: 'none', cursor: 'pointer', borderRadius: 8,
+          padding: '6px 10px 6px 8px', fontSize: 11.5, fontWeight: 600,
+          background: hover ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.08)',
+          color: '#a1a1aa', transition: 'background 0.15s ease',
+        }}
+      >
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="4 14 10 14 10 20" /><polyline points="20 10 14 10 14 4" />
+          <line x1="14" y1="10" x2="21" y2="3" /><line x1="3" y1="21" x2="10" y2="14" />
+        </svg>
+        Collapse
+      </button>
+    </div>
+  )
+}
+
 function ExpandButton({ expanded, onClick }: { expanded: boolean; onClick: () => void }) {
   const [hover, setHover] = useState(false)
   return (
@@ -324,6 +376,14 @@ export default function FounderHome() {
   const [pendingWorkspaceId, setPendingWorkspaceId] = useState<string | null>(null)
   const { hasActivity } = useWorkspacesActivity(workspaces.map((m) => m.workspace_id), workspaceId)
   const [expanded, setExpanded] = useState<'calendar' | 'conversations' | 'cayeDirect' | 'settings' | null>(null)
+  // A fullscreen panel has no visible close chrome besides its own
+  // collapse button — Esc is the expected way out of a takeover like this.
+  useEffect(() => {
+    if (!expanded) return
+    const onKeyDown = (e: KeyboardEvent) => { if (e.key === 'Escape') setExpanded(null) }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [expanded])
   // Set by CommandCalendar on a booking click — jumps CommandConversations
   // to that customer's thread. Lives here since the two panels are
   // siblings with no coordination of their own.
@@ -657,36 +717,49 @@ export default function FounderHome() {
                 ? { flex: 1, minHeight: 0 }
                 : { flexShrink: 0, height: 420 }),
             }}>
-              <div style={{
+              <div style={expanded === 'conversations' ? FULLSCREEN_PANEL_STYLE : {
                 display: expanded === 'calendar' ? 'none' : 'block',
                 position: 'relative',
                 borderRadius: 16, overflow: 'hidden', background: CARD_BG,
               }}>
-                <ExpandButton expanded={expanded === 'conversations'} onClick={() => setExpanded(expanded === 'conversations' ? null : 'conversations')} />
-                {data ? (
-                  <CommandConversations
-                    workspaceId={workspaceId}
-                    selectedConversationId={selectedConversationId}
-                    onSent={refetch}
-                    compact={expanded !== 'conversations'}
-                  />
-                ) : <PanelSkeleton />}
+                {expanded === 'conversations' ? (
+                  <FullscreenPanelHeader title="Conversations" workspaceName={workspace.business_name ?? 'New signup'} onCollapse={() => setExpanded(null)} />
+                ) : (
+                  <ExpandButton expanded={false} onClick={() => setExpanded('conversations')} />
+                )}
+                <div style={expanded === 'conversations' ? { flex: 1, minHeight: 0 } : undefined}>
+                  {data ? (
+                    <CommandConversations
+                      workspaceId={workspaceId}
+                      selectedConversationId={selectedConversationId}
+                      onSent={refetch}
+                      compact={expanded !== 'conversations'}
+                    />
+                  ) : <PanelSkeleton />}
+                </div>
               </div>
-              <div style={{
+              <div style={expanded === 'calendar' ? FULLSCREEN_PANEL_STYLE : {
                 display: expanded === 'conversations' ? 'none' : 'block',
                 position: 'relative',
                 borderRadius: 16, overflow: 'hidden', background: CARD_BG,
               }}>
-                <ExpandButton expanded={expanded === 'calendar'} onClick={() => setExpanded(expanded === 'calendar' ? null : 'calendar')} />
-                {data ? (
-                  <CommandCalendar
-                    bookings={data.bookings}
-                    weekStart={data.week_start}
-                    weekOffset={weekOffset}
-                    onWeekOffsetChange={setWeekOffset}
-                    onSelectConversation={setSelectedConversationId}
-                  />
-                ) : <PanelSkeleton />}
+                {expanded === 'calendar' ? (
+                  <FullscreenPanelHeader title="Calendar" workspaceName={workspace.business_name ?? 'New signup'} onCollapse={() => setExpanded(null)} />
+                ) : (
+                  <ExpandButton expanded={false} onClick={() => setExpanded('calendar')} />
+                )}
+                <div style={expanded === 'calendar' ? { flex: 1, minHeight: 0 } : undefined}>
+                  {data ? (
+                    <CommandCalendar
+                      workspaceId={workspaceId}
+                      bookings={data.bookings}
+                      weekStart={data.week_start}
+                      weekOffset={weekOffset}
+                      onWeekOffsetChange={setWeekOffset}
+                      onSelectConversation={setSelectedConversationId}
+                    />
+                  ) : <PanelSkeleton />}
+                </div>
               </div>
             </div>
 
@@ -694,16 +767,20 @@ export default function FounderHome() {
                 texts over WhatsApp, now with a web front end. Employee
                 Performance Scorecard will take the other half of this
                 row once built (next pass). */}
-            <div style={{
+            <div style={expanded === 'cayeDirect' ? FULLSCREEN_PANEL_STYLE : {
               display: expanded === 'calendar' || expanded === 'conversations' || expanded === 'settings' ? 'none' : 'block',
               position: 'relative',
-              ...(expanded === 'cayeDirect'
-                ? { flex: 1, minHeight: 0 }
-                : { flexShrink: 0, height: 480 }),
+              flexShrink: 0, height: 480,
               borderRadius: 16, overflow: 'hidden', background: CARD_BG,
             }}>
-              <ExpandButton expanded={expanded === 'cayeDirect'} onClick={() => setExpanded(expanded === 'cayeDirect' ? null : 'cayeDirect')} />
-              <CayeDirect workspaceId={workspaceId} />
+              {expanded === 'cayeDirect' ? (
+                <FullscreenPanelHeader title="Caye Direct" workspaceName={workspace.business_name ?? 'New signup'} onCollapse={() => setExpanded(null)} />
+              ) : (
+                <ExpandButton expanded={false} onClick={() => setExpanded('cayeDirect')} />
+              )}
+              <div style={expanded === 'cayeDirect' ? { flex: 1, minHeight: 0 } : { height: '100%' }}>
+                <CayeDirect workspaceId={workspaceId} />
+              </div>
             </div>
 
             {/* Channels + Settings — paired row, same weight as Calendar/
@@ -717,12 +794,17 @@ export default function FounderHome() {
               ...(expanded === 'settings' ? { flex: 1, minHeight: 0 } : { flexShrink: 0 }),
             }}>
               {expanded !== 'settings' && <ChannelsCard workspaceId={workspaceId} />}
-              <div style={{
+              <div style={expanded === 'settings' ? FULLSCREEN_PANEL_STYLE : {
                 display: 'flex', flexDirection: 'column', position: 'relative',
-                ...(expanded === 'settings' ? { flex: 1, minHeight: 0 } : {}),
               }}>
-                <ExpandButton expanded={expanded === 'settings'} onClick={() => setExpanded(expanded === 'settings' ? null : 'settings')} />
-                <SettingsCard workspaceId={workspaceId} compact={expanded !== 'settings'} />
+                {expanded === 'settings' ? (
+                  <FullscreenPanelHeader title="Settings" workspaceName={workspace.business_name ?? 'New signup'} onCollapse={() => setExpanded(null)} />
+                ) : (
+                  <ExpandButton expanded={false} onClick={() => setExpanded('settings')} />
+                )}
+                <div style={expanded === 'settings' ? { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' } : undefined}>
+                  <SettingsCard workspaceId={workspaceId} compact={expanded !== 'settings'} />
+                </div>
               </div>
             </div>
 
