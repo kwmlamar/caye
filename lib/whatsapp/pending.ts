@@ -17,6 +17,24 @@ export interface PendingHeldItem {
   lastMessageAt: string | null
 }
 
+/**
+ * Pick the draft for a held conversation from the two places Caye writes one.
+ * Conversation metadata wins because it's the outreach path's only store; the
+ * internal note is the inbound reply-draft path. Exported for regression
+ * coverage — see the comment in getPendingHeldItems for why both matter.
+ */
+export function pickProposedReply(
+  conversationMetadata: unknown,
+  latestInternalNoteMetadata: unknown
+): string | null {
+  const read = (source: unknown): string | null => {
+    if (!source || typeof source !== 'object') return null
+    const value = (source as Record<string, unknown>).proposed_reply
+    return typeof value === 'string' && value.trim() ? value.trim() : null
+  }
+  return read(conversationMetadata) ?? read(latestInternalNoteMetadata)
+}
+
 export async function getPendingHeldItems(workspaceId: string): Promise<PendingHeldItem[]> {
   const supabase = createServiceClient()
 
@@ -26,7 +44,7 @@ export async function getPendingHeldItems(workspaceId: string): Promise<PendingH
     .from('unified_conversations')
     .select(
       `
-      id, customer_name, channel_type, human_agent_reason,
+      id, customer_name, channel_type, human_agent_reason, metadata,
       last_message_preview, last_message_at,
       connected_account:connected_accounts!inner(user_id)
     `
@@ -46,21 +64,40 @@ export async function getPendingHeldItems(workspaceId: string): Promise<PendingH
     return []
   }
 
-  // Fetch the most recent internal note per conversation in parallel — that's
-  // where Caye stashes the proposed reply.
+  // Caye stashes a proposed reply in one of TWO places, and both have to be
+  // read here or the draft is invisible to every action handler:
+  //
+  //   1. unified_conversations.metadata.proposed_reply — written by
+  //      create_outreach_leads for cold-outreach first-touch/follow-up drafts,
+  //      with no internal message row at all.
+  //   2. the most recent internal unified_messages note's metadata — the
+  //      reply-draft path used for inbound customer threads.
+  //
+  // Only (2) was read until 2026-08-07, so every outreach draft reported
+  // "No draft on file for <name>" even though the text was sitting right on
+  // the conversation — 18 of 19 held items on the TropiTech workspace, which
+  // made actionSend structurally incapable of ever succeeding there. The
+  // agent's get_pending_quotes tool already reads both; this is the same fix
+  // applied to the path the WhatsApp dispatch actually uses.
   const items: PendingHeldItem[] = await Promise.all(
     data.map(async (row, i) => {
-      const { data: note } = await supabase
-        .from('unified_messages')
-        .select('metadata')
-        .eq('conversation_id', row.id)
-        .eq('is_internal', true)
-        .order('sent_at', { ascending: false })
-        .limit(1)
-        .maybeSingle()
+      const convProposed = pickProposedReply(row.metadata, null)
 
-      const meta = (note?.metadata ?? {}) as Record<string, unknown>
-      const proposed = typeof meta.proposed_reply === 'string' ? (meta.proposed_reply as string) : null
+      // Skip the per-conversation note lookup when the conversation already
+      // carries the draft — that's the outreach path, and it's the majority
+      // of held items on an outreach-heavy workspace.
+      const { data: note } = convProposed
+        ? { data: null }
+        : await supabase
+            .from('unified_messages')
+            .select('metadata')
+            .eq('conversation_id', row.id)
+            .eq('is_internal', true)
+            .order('sent_at', { ascending: false })
+            .limit(1)
+            .maybeSingle()
+
+      const proposed = pickProposedReply(row.metadata, note?.metadata)
 
       return {
         index: i + 1,

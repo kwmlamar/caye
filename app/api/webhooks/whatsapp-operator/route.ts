@@ -22,7 +22,13 @@ import { NextRequest, NextResponse, after } from 'next/server'
 import { createHmac } from 'crypto'
 import type Anthropic from '@anthropic-ai/sdk'
 import { createServiceClient } from '@/lib/supabase-server'
-import { classifyOperatorIntent } from '@/lib/whatsapp/intent'
+import {
+  classifyOperatorIntent,
+  type OperatorIntent,
+  type SingleOperatorIntent,
+} from '@/lib/whatsapp/intent'
+import { resolveTurnOwner } from '@/lib/whatsapp/turn-ownership'
+import { corroborateItemRef } from '@/lib/whatsapp/item-ref-guard'
 import { getPendingHeldItems } from '@/lib/whatsapp/pending'
 import { dispatchOperatorIntent } from '@/lib/whatsapp/actions'
 import { sendFreeFormWhatsApp, deliveryFieldsFromResult, type SendResult } from '@/lib/whatsapp/outbound'
@@ -801,7 +807,7 @@ async function handleOneInbound(
   // made a plain confirmation feel broken (Karenda, 2026-08-07).
   const { data: lastRow } = await supabase
     .from('caye_operator_messages')
-    .select('body')
+    .select('body, claude_format')
     .eq('workspace_id', workspaceId)
     .eq('operator_allowlist_id', operatorId)
     .eq('direction', 'outbound')
@@ -810,12 +816,34 @@ async function handleOneInbound(
     .maybeSingle()
   const lastOutboundBody: string | null = lastRow?.body ?? null
 
-  const intent = await classifyOperatorIntent({
+  const rawIntent = await classifyOperatorIntent({
     operatorText: body,
     pending,
     lastCayeOutboundBody: lastOutboundBody,
     quotedMessage: null,
   })
+
+  // Strip an item_ref the operator never gave. The classifier answered a bare
+  // "Yes" with item_ref="1" — position 1 being an unrelated contact it had no
+  // basis to pick (2026-08-07). Dropping it makes the action handlers ask
+  // "which one?" instead of acting on a guess. See lib/whatsapp/item-ref-guard.
+  const guardRef = (one: SingleOperatorIntent): SingleOperatorIntent => {
+    if (!('item_ref' in one)) return one
+    const { itemRef, reason } = corroborateItemRef({
+      itemRef: one.item_ref,
+      operatorText: body,
+      lastOutboundBody,
+      pending,
+    })
+    if (reason) console.warn(`[whatsapp-operator] ${workspaceId}: ${reason} — dropped`)
+    return { ...one, item_ref: itemRef }
+  }
+  const intent: OperatorIntent =
+    rawIntent.kind === 'multi'
+      ? { ...rawIntent, actions: rawIntent.actions.map(guardRef) }
+      : rawIntent.kind === 'unclear'
+        ? rawIntent // carries no item_ref
+        : guardRef(rawIntent)
 
   // Persist inbound + classified intent + claude_format for the user turn.
   // claude_format is what the back-office agent's sliding-window loader
@@ -842,9 +870,10 @@ async function handleOneInbound(
   }
 
   // ── Routing decision ───────────────────────────────────────────────
-  // Held-item action kinds keep the legacy classifier+dispatch path.
-  // Everything else (query / unclear) routes through the new
-  // back-office agent — slice 1 of epic #35.
+  // Held-item action kinds take the legacy classifier+dispatch path ONLY
+  // when the agent isn't already mid-conversation with this operator (see
+  // the ownership check below). Everything else (query / unclear) routes
+  // through the back-office agent — slice 1 of epic #35.
   // Reply destination: send back to whoever messaged us, NOT to the
   // workspace's canonical operator number. Critical for founders DMing on
   // a workspace they don't own (e.g. Lamar texting Caye about Bimini —
@@ -854,7 +883,20 @@ async function handleOneInbound(
   // without it but our send helper expects the canonical form.
   // (replyTo was already declared above the discovery-grill branch.)
 
-  if (LEGACY_DISPATCH_KINDS.has(intent.kind)) {
+  // Ownership beats the intent label. The classifier decides WHAT the operator
+  // means; it does not get to decide who the reply belongs to. When the agent
+  // has a staged action awaiting confirmation, or simply spoke last, the reply
+  // is part of that conversation — routing it to the legacy held-queue path
+  // silently orphaned a correct staged send (2026-08-07). See
+  // lib/whatsapp/turn-ownership.ts for the full trace.
+  const ownership = await resolveTurnOwner({
+    supabase,
+    workspaceId,
+    operatorId,
+    lastOutboundClaudeFormat: lastRow?.claude_format ?? null,
+  })
+
+  if (LEGACY_DISPATCH_KINDS.has(intent.kind) && ownership.owner === 'legacy') {
     const result = await dispatchOperatorIntent({ workspaceId }, intent, pending)
     if (result.ackBody && result.ackBody.trim()) {
       // Send ack synchronously instead of via the outbound queue. The
