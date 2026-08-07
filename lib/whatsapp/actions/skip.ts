@@ -1,24 +1,26 @@
 import 'server-only'
 import { createServiceClient } from '@/lib/supabase-server'
-import { resolveItemRef, type PendingHeldItem } from '../pending'
+import { type PendingHeldItem } from '../pending'
 import type { ActionContext, ActionResult } from './types'
 import { resolveOpenEscalations } from '@/lib/caye-agent/tools/write-low/resolve-open-escalations'
+import { resolveItemRefOutcome, describeUnresolved } from '../item-ref-resolution'
 
 export async function actionSkip(
   _ctx: ActionContext,
   intent: { item_ref?: string },
   pending: PendingHeldItem[]
 ): Promise<ActionResult> {
-  const item = resolveItemRef(pending, intent.item_ref)
-  if (!item) {
+  const outcome = resolveItemRefOutcome(pending, intent.item_ref, (it) => it.conversationId)
+  if (outcome.status !== 'matched') {
     return {
-      ackBody:
-        pending.length === 0
-          ? 'Nothing pending to skip.'
-          : `Which one to skip? ${pending.map((p) => `${p.index}. ${p.contactName}`).join(' / ')}`,
+      ackBody: describeUnresolved(outcome, pending, {
+        nothingPending: 'Nothing pending to skip.',
+        question: 'Which one to skip?',
+      }),
       tag: { label: 'skip', status: 'failed' },
     }
   }
+  const item = outcome.item
 
   const supabase = createServiceClient()
   const { error } = await supabase

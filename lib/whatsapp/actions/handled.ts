@@ -1,24 +1,28 @@
 import 'server-only'
 import { createServiceClient } from '@/lib/supabase-server'
-import { resolveItemRef, type PendingHeldItem } from '../pending'
+import { type PendingHeldItem } from '../pending'
 import type { ActionContext, ActionResult } from './types'
 import { resolveOpenEscalations } from '@/lib/caye-agent/tools/write-low/resolve-open-escalations'
+import { resolveItemRefOutcome, describeUnresolved } from '../item-ref-resolution'
 
 export async function actionHandled(
   _ctx: ActionContext,
   intent: { item_ref?: string },
   pending: PendingHeldItem[]
 ): Promise<ActionResult> {
-  const item = resolveItemRef(pending, intent.item_ref)
-  if (!item) {
+  const outcome = resolveItemRefOutcome(pending, intent.item_ref, (it) => it.conversationId)
+  if (outcome.status !== 'matched') {
+    // A named ref that matches nothing gets said out loud — see
+    // lib/whatsapp/item-ref-resolution.ts for the Lisa Ramos case.
     return {
-      ackBody:
-        pending.length === 0
-          ? "Nothing's on hold."
-          : `Which one did you handle? ${pending.map((p) => `${p.index}. ${p.contactName}`).join(' / ')}`,
+      ackBody: describeUnresolved(outcome, pending, {
+        nothingPending: "Nothing's on hold.",
+        question: 'Which one did you handle?',
+      }),
       tag: { label: 'handled', status: 'failed' },
     }
   }
+  const item = outcome.item
 
   const supabase = createServiceClient()
   const { error } = await supabase
