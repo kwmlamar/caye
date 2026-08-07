@@ -25,6 +25,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient, createServerClient } from '@/lib/supabase-server'
 import { isFounderUserId } from '@/lib/founder'
 import { costForModel } from '@/lib/llm-pricing'
+import { holdKindOf, isAttentionHold } from '@/lib/hold-kinds'
 
 export async function GET(req: NextRequest) {
   const workspaceId = req.nextUrl.searchParams.get('workspaceId')
@@ -68,6 +69,7 @@ export async function GET(req: NextRequest) {
     { data: llmRows, error: llmErr },
     { data: bookingsRows, error: bookingsErr },
     { data: aiConfig },
+    { data: accounts },
   ] = await Promise.all([
     supabase
       .from('caye_escalations')
@@ -94,6 +96,10 @@ export async function GET(req: NextRequest) {
       .select('whatsapp_muted_until')
       .eq('workspace_id', workspaceId)
       .maybeSingle(),
+    supabase
+      .from('connected_accounts')
+      .select('id')
+      .eq('user_id', workspaceId),
   ])
 
   if (escErr) return NextResponse.json({ error: escErr.message }, { status: 500 })
@@ -128,9 +134,38 @@ export async function GET(req: NextRequest) {
     cost_usd: Number(cost.toFixed(4)),
   }))
 
-  const pendingEscalations = (escalations ?? []).filter(
-    (e) => !e.owner_responded_at && !e.expired_at
-  ).length
+  // "Needs review" is deliberately NOT "open caye_escalations rows" — that
+  // definition drifts from what the Review tab (founder/conversations)
+  // shows, because the two are only kept in sync by every hold-clearing
+  // call site remembering to call resolveOpenEscalations, and escalation
+  // bookkeeping can legitimately expire (stop nagging) while the
+  // underlying hold is still real and unresolved (see
+  // expireEscalationBookkeepingOnly's doc comment). Confirmed live
+  // 2026-08-07 on Bimini: the stat card and the Review tab both read "2"
+  // by coincidence while counting two different threads each — one
+  // (Jonathan Garcia) whose hold had been manually cleared without the
+  // escalation being closed, the other (Sue Guilbert) whose escalation
+  // bookkeeping expired 2026-08-01 while her thread has sat held since
+  // 2026-07-25.
+  //
+  // The canonical definition, matching founder/conversations' reviewCount
+  // and the agent-side get_held_queue (lib/hold-kinds.ts): a held,
+  // non-archived conversation that isn't a queued outreach draft awaiting
+  // batch approval. Both cards now read this same thing.
+  const accountIds = (accounts ?? []).map((a: { id: string }) => a.id)
+  let pendingEscalations = 0
+  if (accountIds.length > 0) {
+    const { data: heldRows } = await supabase
+      .from('unified_conversations')
+      .select('id, metadata')
+      .in('connected_account_id', accountIds)
+      .eq('is_archived', false)
+      .eq('human_agent_enabled', true)
+      .limit(200)
+    pendingEscalations = ((heldRows ?? []) as { metadata: unknown }[]).filter((r) =>
+      isAttentionHold(holdKindOf(r.metadata))
+    ).length
+  }
 
   // Conversation IDs with an escalation still waiting on the
   // owner/founder — used to flag bookings whose customer has an open
