@@ -20,6 +20,8 @@ import { getConnectLink } from './write-low/get-connect-link'
 import { recordChannelIntake } from './write-low/record-channel-intake'
 import { markHandled } from './write-low/mark-handled'
 import { addBusinessFact } from './write-low/add-business-fact'
+import { confirmFactCandidate } from './write-low/confirm-fact-candidate'
+import { dismissFactCandidate } from './write-low/dismiss-fact-candidate'
 import { removeBusinessFact } from './write-low/remove-business-fact'
 import { updateServicePrice } from './write-low/update-service-price'
 import { addService } from './write-low/add-service'
@@ -106,6 +108,8 @@ export const TOOL_REGISTRY: AnyTool[] = [
   recordChannelIntake as AnyTool,
   markHandled as AnyTool,
   addBusinessFact as AnyTool,
+  confirmFactCandidate as AnyTool,
+  dismissFactCandidate as AnyTool,
   removeBusinessFact as AnyTool,
   updateServicePrice as AnyTool,
   addService as AnyTool,

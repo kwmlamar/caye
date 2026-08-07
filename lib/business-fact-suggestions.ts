@@ -3,6 +3,7 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { fetchBusinessFacts } from '@/lib/business-facts'
 import { sendFreeFormWhatsApp, deliveryFieldsFromResult } from '@/lib/whatsapp/outbound'
 import { operatorPingsEnabled } from '@/lib/whatsapp/triggers'
+import { findSemanticFactMatch } from '@/lib/business-fact-semantic-match'
 import {
   extractCandidateSentences,
   normalizeSentence,
@@ -10,6 +11,8 @@ import {
   shouldProposeCandidate,
   OCCURRENCE_THRESHOLD,
 } from '@/lib/business-fact-candidate-detection'
+
+const SEMANTIC_MATCH_SOURCE = 'lib/business-fact-suggestions.ts:maybeSuggestBusinessFacts'
 
 /**
  * Fire-and-forget hook called after the owner sends a manual reply
@@ -40,7 +43,10 @@ export async function maybeSuggestBusinessFacts(
     const normalized = normalizeSentence(sentence)
     if (!normalized) continue
 
-    const { data: existing, error: readErr } = await supabase
+    // Exact match first — free, and still the common case for a sentence copy-pasted
+    // from a saved template. Falls back to semantic matching only on a miss, so most
+    // sentences never cost an LLM call.
+    const { data: exact, error: readErr } = await supabase
       .from('business_fact_candidates')
       .select('id, status, occurrence_count, conversation_ids')
       .eq('workspace_id', workspaceId)
@@ -50,6 +56,36 @@ export async function maybeSuggestBusinessFacts(
     if (readErr) {
       console.warn('[business-fact-suggestions] read failed:', readErr.message)
       continue
+    }
+
+    let existing = exact
+    if (!existing) {
+      // No exact match — check whether this is the same fact as an already-open
+      // candidate, just worded differently. This is the fix for the confirmed
+      // 2026-08-07 bug: Bimini's tram-stop meeting point was retyped two different
+      // ways and filed as two permanently-unmerged rows because the old path only
+      // ever checked normalized_text equality. See briefs/cold-start-plan.md.
+      const { data: pending } = await supabase
+        .from('business_fact_candidates')
+        .select('id, status, occurrence_count, conversation_ids, sample_text')
+        .eq('workspace_id', workspaceId)
+        .in('status', ['pending', 'proposed'])
+      const openCandidates = (pending ?? []) as Array<{
+        id: string
+        status: 'pending' | 'proposed' | 'resolved' | 'dismissed'
+        occurrence_count: number
+        conversation_ids: unknown
+        sample_text: string
+      }>
+
+      if (openCandidates.length > 0) {
+        const { matchId } = await findSemanticFactMatch(
+          sentence,
+          openCandidates.map((c) => ({ id: c.id, text: c.sample_text })),
+          { workspaceId, source: SEMANTIC_MATCH_SOURCE }
+        )
+        if (matchId) existing = openCandidates.find((c) => c.id === matchId) ?? null
+      }
     }
 
     if (!existing) {
@@ -88,7 +124,7 @@ export async function maybeSuggestBusinessFacts(
 
     if (!shouldProposeCandidate(existing.status, newCount)) continue
 
-    const alreadyKnown = await overlapsExistingFact(workspaceId, normalized)
+    const alreadyKnown = await overlapsExistingFact(workspaceId, sentence)
     if (alreadyKnown) {
       await supabase
         .from('business_fact_candidates')
@@ -101,18 +137,24 @@ export async function maybeSuggestBusinessFacts(
   }
 }
 
-/** Cheap word-overlap check against facts already saved for this workspace. */
-async function overlapsExistingFact(workspaceId: string, normalized: string): Promise<boolean> {
+/**
+ * Is this candidate already covered by a saved fact? Was a crude 60% word-overlap
+ * heuristic — replaced 2026-08-07 with the same semantic-match primitive used for
+ * candidate-to-candidate merging, for the same reason: word overlap is a poor proxy
+ * for "same fact" (it both misses paraphrases and false-positives on topically
+ * related but factually different sentences — "refunds take 30 days" vs "refunds
+ * require investigation" share enough words to clear 60% while meaning opposite
+ * things).
+ */
+async function overlapsExistingFact(workspaceId: string, sentence: string): Promise<boolean> {
   const facts = await fetchBusinessFacts(workspaceId)
   if (facts.length === 0) return false
-  const candidateWords = new Set(normalized.split(' ').filter(w => w.length > 3))
-  if (candidateWords.size === 0) return false
-  return facts.some(f => {
-    const factWords = normalizeSentence(f.fact).split(' ').filter(w => w.length > 3)
-    if (factWords.length === 0) return false
-    const overlap = factWords.filter(w => candidateWords.has(w)).length
-    return overlap / factWords.length >= 0.6
-  })
+  const { matchId } = await findSemanticFactMatch(
+    sentence,
+    facts.map((f) => ({ id: f.id, text: f.fact })),
+    { workspaceId, source: SEMANTIC_MATCH_SOURCE }
+  )
+  return matchId !== null
 }
 
 async function proposeCandidate(
@@ -127,11 +169,16 @@ async function proposeCandidate(
     .update({ status: 'proposed', proposed_at: new Date().toISOString() })
     .eq('id', candidateId)
 
+  // candidate_id is embedded so a later turn can call confirm_fact_candidate /
+  // dismiss_fact_candidate with the right id straight from context — see
+  // lib/caye-agent/modes/back-office.ts for the instruction telling Caye to use
+  // those tools (not add_business_fact) when she sees this shape of message.
   const proposalText =
     `Hey — I've noticed you telling guests the same thing in ${OCCURRENCE_THRESHOLD} different conversations:\n\n` +
     `"${sampleText}"\n\n` +
     `Want me to save this as a standing fact (${category.replace('_', ' ')}) so I say it myself next time? ` +
-    `Just say yes and I'll remember it.`
+    `Just say yes and I'll remember it.\n\n` +
+    `[candidate_id: ${candidateId}]`
 
   // Write into the back-office conversation history so the next turn's
   // sliding window (loadOperatorContext) includes this proposal — if the

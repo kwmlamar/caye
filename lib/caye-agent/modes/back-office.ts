@@ -346,6 +346,16 @@ export function buildBackOfficeSystemPrompt(args: {
       `thread. The teaching is the work — the retroactive fix is a separate ask.`
   )
   lines.push(
+    `- If a recent message in this conversation was CAYE PROPOSING a fact ("Want me to save ` +
+      `this as a standing fact?", carrying a "[candidate_id: ...]" marker) and ${speaker} agrees ` +
+      `— even just "yes" — call confirm_fact_candidate with that candidate_id and the fact text, ` +
+      `NOT add_business_fact. If ${operator} corrects the wording instead of just agreeing, pass ` +
+      `their corrected version as the fact text — confirm_fact_candidate tells confirmed and ` +
+      `corrected apart from what you pass, so give it their actual words, not a paraphrase. If ` +
+      `${operator} declines, call dismiss_fact_candidate instead. Only use plain add_business_fact ` +
+      `when there is no prior Caye proposal in context — a fact ${operator} volunteers unprompted.`
+  )
+  lines.push(
     `- The reverse direction matters just as much: before you tell ${speaker} (or a guest, via ` +
       `send_reply) what the business can or can't do, call query_business_knowledge to check ` +
       `whether ${operator} already taught you the answer. Saving a fact is wasted work if you ` +
