@@ -52,6 +52,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase-server'
 import { sendZohoEmail } from '@/lib/email-ai'
 import { loadScheduleConfig, inQuietHours } from '@/lib/whatsapp/schedule'
+import { holdKindOf, isAttentionHold } from '@/lib/hold-kinds'
 
 const STALE_BUSINESS_HOURS = 4
 
@@ -182,7 +183,7 @@ async function processWorkspace(args: ProcessArgs): Promise<WorkspaceOutcome> {
   const { data: held } = await supabase
     .from('unified_conversations')
     .select(
-      'id, customer_name, customer_id, channel_type, human_agent_reason, human_agent_marked_at, last_message_at, last_business_sender_kind, last_sender_type, target_date'
+      'id, customer_name, customer_id, channel_type, human_agent_reason, human_agent_marked_at, last_message_at, last_business_sender_kind, last_sender_type, target_date, metadata'
     )
     .in('connected_account_id', accountIds)
     .eq('human_agent_enabled', true)
@@ -203,6 +204,13 @@ async function processWorkspace(args: ProcessArgs): Promise<WorkspaceOutcome> {
   const stale: StaleHold[] = []
   const agedStale: StaleHold[] = []
   for (const c of held) {
+    // Drafted cold outreach parked for batch approval is a work queue, not a
+    // guest waiting. Chasing the operator about a queue they are
+    // deliberately letting fill up is the fastest way to teach them that
+    // this sweep is noise — and on TropiTech Outreach it would have chased
+    // 18 of 19 held threads. See lib/hold-kinds.ts.
+    if (!isAttentionHold(holdKindOf(c.metadata))) continue
+
     const lastBusinessAt = (c.last_message_at as string | null) ?? null
     if (!lastBusinessAt) continue
 

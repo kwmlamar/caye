@@ -1,5 +1,6 @@
 import 'server-only'
 import { createServiceClient } from '@/lib/supabase-server'
+import { holdKindOf, isQueueHold } from '@/lib/hold-kinds'
 import type { Tool } from '../types'
 
 interface HeldRow {
@@ -11,12 +12,13 @@ interface HeldRow {
   human_agent_marked_at: string | null
   last_message_preview: string | null
   target_date: string | null
+  metadata: Record<string, unknown> | null
 }
 
 export const getHeldQueue: Tool<Record<string, never>> = {
   name: 'get_held_queue',
   description:
-    "Get the current held items needing the operator's call. Each item is a customer thread Caye paused because she wasn't confident enough to reply autonomously. Use this when the operator asks 'anything need my call?' / 'anyone held?' / 'what's pending?'. Each item carries has_open_escalation — true means it already has its own daily nag cadence via escalation-followup, so briefings/recaps should NOT re-describe it in detail or re-propose an action (that's duplicate noise the operator already saw); just fold escalated items into a one-line count. Only items with has_open_escalation=false are new enough to warrant calling out by name. Each item also carries date_passed — true means the customer referenced a specific calendar date (e.g. a booking date) that has already gone by with no response sent. When narrating these, say so plainly (e.g. 'that date's already passed') instead of repeating the original ask as if it were still live — don't imply the date is still actionable.\n\n`reason` is the full operator brief for escalated items (calendar check, the customer's own words, what they were already told, a suggested question to answer) — relay it in substance, don't re-summarize it down to a fragment. For a plain low-confidence hold (no escalation) it's still just a short internal note, same as before.",
+    "Get the current held items needing the operator's call. Each item is a customer thread Caye paused because she wasn't confident enough to reply autonomously. Drafted cold outreach awaiting batch approval is NOT included — it appears only as `queued_outreach_drafts`, a count. Those are a work queue the operator processes when it suits them (via get_pending_quotes and send_outreach_batch); nobody is waiting on them, so never describe them as needing attention or fold them into the held count. Use this when the operator asks 'anything need my call?' / 'anyone held?' / 'what's pending?'. Each item carries has_open_escalation — true means it already has its own daily nag cadence via escalation-followup, so briefings/recaps should NOT re-describe it in detail or re-propose an action (that's duplicate noise the operator already saw); just fold escalated items into a one-line count. Only items with has_open_escalation=false are new enough to warrant calling out by name. Each item also carries date_passed — true means the customer referenced a specific calendar date (e.g. a booking date) that has already gone by with no response sent. When narrating these, say so plainly (e.g. 'that date's already passed') instead of repeating the original ask as if it were still live — don't imply the date is still actionable.\n\n`reason` is the full operator brief for escalated items (calendar check, the customer's own words, what they were already told, a suggested question to answer) — relay it in substance, don't re-summarize it down to a fragment. For a plain low-confidence hold (no escalation) it's still just a short internal note, same as before.",
   risk: 'read',
   roles: ['owner', 'founder'],
   modes: ['back-office'],
@@ -40,7 +42,7 @@ export const getHeldQueue: Tool<Record<string, never>> = {
     const { data, error } = await supabase
       .from('unified_conversations')
       .select(
-        'id, customer_name, customer_id, channel_type, human_agent_reason, human_agent_marked_at, last_message_preview, target_date'
+        'id, customer_name, customer_id, channel_type, human_agent_reason, human_agent_marked_at, last_message_preview, target_date, metadata'
       )
       .in('connected_account_id', accountIds)
       .eq('is_archived', false)
@@ -49,7 +51,15 @@ export const getHeldQueue: Tool<Record<string, never>> = {
 
     if (error) return { ok: false, error: error.message }
 
-    const rows = (data ?? []) as HeldRow[]
+    const allRows = (data ?? []) as HeldRow[]
+
+    // Split the queue from the genuine holds. Drafted cold outreach parked
+    // for batch approval shares human_agent_enabled with "a guest is waiting
+    // on you", and counting them together is why this workspace reported 19
+    // items needing the operator's call when 18 were a queue they process on
+    // their own schedule. See lib/hold-kinds.ts.
+    const rows = allRows.filter((r) => !isQueueHold(holdKindOf(r.metadata)))
+    const queued = allRows.length - rows.length
     const conversationIds = rows.map((r) => r.id)
 
     // Cross-reference caye_escalations for two things: (1) has_open_escalation
@@ -109,6 +119,11 @@ export const getHeldQueue: Tool<Record<string, never>> = {
           date_passed: !!r.target_date && r.target_date < todayISO,
         })),
         count: rows.length,
+        // Drafted cold outreach waiting on batch approval. Deliberately NOT
+        // in `items` — nobody is waiting on these and they are processed in
+        // one sitting via get_pending_quotes + send_outreach_batch. Mention
+        // the number if it's useful; never present it as pending attention.
+        queued_outreach_drafts: queued,
       },
     }
   },

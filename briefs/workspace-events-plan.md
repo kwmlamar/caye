@@ -181,11 +181,42 @@ Max has never sent a single message. His number is corrected now, but the seat i
 - `coverage` object on every activity/digest response.
 - Resolution re-check before anything is spoken.
 
-### Phase 3 — escalation split
-- `guest_served` on `caye_escalations`, set on `caye-reply.ts:2087` only.
-- Backfill existing rows (`internal_context` begins `"Caye self-rated confidence="`),
-  clear `human_agent_enabled` on those threads. Current pile: 16 held, 6 stale 3d+,
-  oldest since 2026-07-07 — some served a month ago.
+### Phase 3 — hold split ✅ shipped 2026-08-07 (NOT the split originally planned)
+
+**`guest_served` was dropped. Its premise had gone stale.** Re-measured before
+building: all 8 self-rated escalations that have ever existed now show
+`thread_still_held = false`. Not one is holding a thread — the pile drained on its
+own between 08-03 and 08-07. Building it would have added a column, set it on a
+branch producing ~4 rows a month, backfilled 8 already-cleared rows, and changed
+nothing measurable. Deferred, not done; revisit if the self-rated pile regrows.
+
+**What the held pile actually was — 23 threads, and the problem was elsewhere:**
+
+| Workspace | Held | Composition |
+|---|---|---|
+| TropiTech Outreach | 19 | **18 = drafted cold outreach awaiting batch approval** |
+| Bimini | 2 | both genuine — a complaint (07-24) and a policy call (07-25) |
+| 29227a12 | 2 | — |
+
+Drafted outreach shares `human_agent_enabled` with "a guest is waiting on you", so
+every reader counted a batch-approval queue as pending attention:
+`get_held_queue`, `get_today_summary.held_items`, the morning digest (both the count
+and the oldest-aging-hold line), and `stale-hold-sweep`, which would actively chase
+the operator about a queue they were deliberately letting fill up.
+
+This is decision 1 ("route on who owes the next move") applied where the problem
+turned out to be. **Nothing new is stored** — `metadata.hold_kind` was already being
+written by `create-outreach-leads` and `outreach-nudge-scan`; the readers were
+ignoring it. `lib/hold-kinds.ts` holds the predicate; `send_outreach_batch` now
+imports the same `QUEUE_HOLD_KINDS` set it used to duplicate, so the send gate and
+the read layer cannot drift.
+
+Default is deliberately conservative: a hold with no `hold_kind` counts as needing
+attention, so a hold path that forgets to set it surfaces rather than vanishing into
+a queue nobody checks.
+
+Effect on prod: TropiTech Outreach 19 → **1** attention item (18 queued), Bimini
+unchanged at 2.
 
 ### Phase 4 — delivery
 - Per-person cursor + explicit-action-only clearing.
@@ -226,6 +257,17 @@ Max has never sent a single message. His number is corrected now, but the seat i
   **Any future SECURITY DEFINER function in `public` needs the same revoke in the same
   migration.** Seven pre-existing functions carry the same exposure and were deliberately
   left alone — some are referenced by RLS policies and need their own review.
+
+## 3b. Needs a human, not code — as of 2026-08-07
+
+- **Jeff A Montenaro — complaint, held since 2026-07-24. Fourteen days.** Forced
+  escalation via the sentiment cascade, `route_to = owner`, escalation row still open,
+  thread still `human_agent_enabled`. A complaint from a guest of the one paying
+  customer, unanswered for two weeks.
+- **Sue Guilbert — policy hold since 2026-07-25.** Same shape, thirteen days.
+
+Both were invisible underneath 17 outreach drafts before the Phase 3 split. Neither is
+fixed by shipping anything; they want Karenda today.
 
 ## 4. Still open — not solved by this project
 

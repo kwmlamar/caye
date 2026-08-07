@@ -4,6 +4,7 @@ import { dispatchOperatorReply } from '@/lib/whatsapp/channel-dispatch'
 import type { Tool } from '../types'
 import { assertConversationOwnedByWorkspace } from '../write-low/_guards'
 import { findOutreachDraftIssues, describeDraftIssues } from '@/lib/outreach-draft-guard'
+import { QUEUE_HOLD_KINDS } from '@/lib/hold-kinds'
 
 interface SendOutreachBatchItem {
   conversation_id: string
@@ -21,8 +22,14 @@ interface SendOutreachBatchInput {
  *  wired to send — outreach-nudge-scan only ever holds it, same as
  *  first-touch). Both are a single Caye-drafted message the operator
  *  reviews once before it ships; neither is the permanently-gated step-4
- *  "zero review" case. */
-const BATCHABLE_HOLD_KINDS = new Set(['outreach_first_touch', 'outreach_followup'])
+ *  "zero review" case.
+ *
+ *  Shared with the read layer (lib/hold-kinds.ts), which uses the same set
+ *  to keep these out of the "needs your call" queue. The two MUST agree: a
+ *  kind hidden from the operator's attention list but not batch-sendable
+ *  would be invisible and unsendable, and the reverse would let a thread be
+ *  batch-shipped that the operator was never shown. */
+const BATCHABLE_HOLD_KINDS = QUEUE_HOLD_KINDS
 
 /**
  * Batch-approved cold-outreach sends — first-touch opens (roadmap step 3)

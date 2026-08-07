@@ -1,5 +1,6 @@
 import 'server-only'
 import { createServiceClient } from '@/lib/supabase-server'
+import { holdKindOf, isAttentionHold } from '@/lib/hold-kinds'
 import type { Tool } from '../types'
 import {
   bookingRevenue,
@@ -62,13 +63,20 @@ export const getTodaySummary: Tool<Record<string, never>> = {
       .eq('user_id', ctx.workspaceId)
     const accountIds = (accounts ?? []).map((a: { id: string }) => a.id)
     if (accountIds.length > 0) {
-      const { count } = await supabase
+      // Fetched rather than counted: drafted cold outreach awaiting batch
+      // approval shares human_agent_enabled with genuine holds, and a
+      // head:true count cannot see metadata.hold_kind. Counting them here
+      // reported 19 "held items" on a workspace with 1. See lib/hold-kinds.ts.
+      const { data: heldRows } = await supabase
         .from('unified_conversations')
-        .select('id', { count: 'exact', head: true })
+        .select('id, metadata')
         .in('connected_account_id', accountIds)
         .eq('is_archived', false)
         .eq('human_agent_enabled', true)
-      heldCount = count ?? 0
+        .limit(200)
+      heldCount = ((heldRows ?? []) as { metadata: unknown }[]).filter((r) =>
+        isAttentionHold(holdKindOf(r.metadata))
+      ).length
     }
 
     return {
