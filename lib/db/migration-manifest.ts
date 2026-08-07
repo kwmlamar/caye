@@ -77,4 +77,8 @@ export const REPO_MIGRATIONS: readonly string[] = [
   '20260806_workspace_channel_intake',
   '20260807_caye_escalations_brief',
   '20260807b_enable_rls_service_role_only_tables',
+  '20260807c_bookings_source',
+  '20260807d_workspace_events',
+  '20260807e_workspace_events_attribution_fix',
+  '20260807f_workspace_events_revoke_rpc',
 ]
