@@ -33,6 +33,7 @@ import { alertFounderOfDeliveryFailure } from '@/lib/whatsapp/founder-alert'
 import { sendFounderAlertEmail } from '@/lib/email/founder-mailer'
 import { extractErrorCode } from '@/lib/whatsapp/delivery-errors'
 import { resyncTemplatesAfterParamMismatch } from '@/lib/whatsapp/template-sync'
+import { detectInternalLeak } from '@/lib/operator-text-guard'
 
 // Kinds that represent Caye proactively messaging an operator about
 // something (as opposed to system plumbing like otp/welcome/ack) — these
@@ -463,6 +464,24 @@ async function dispatch(row: QueueRow, config: WorkspaceConfig): Promise<{ resul
   return { result: await sendFreeFormWhatsApp(phone, body, idem), phone }
 }
 
+/**
+ * Last line of defence on the legacy `internalContext` fallbacks below.
+ *
+ * Those only fire for queue rows predating brief/one_line/ping_summary, but
+ * `internalContext` is machine-composed on the forced-escalation path
+ * ("Forced escalation — b2b_partnership (inbound classifier — …)") and both
+ * call sites feed operator-facing surfaces — one a Caye Direct bubble, one a
+ * WhatsApp template placeholder. Neither is recallable once sent, so a leak
+ * degrades to the generic fallback rather than shipping the payload.
+ */
+function operatorSafe(text: string, fallback: string): string {
+  if (!text.trim()) return fallback
+  const leak = detectInternalLeak(text)
+  if (!leak) return text
+  console.error(`[outbound-worker] internal text in operator ping (${leak}) — using fallback`)
+  return fallback
+}
+
 // Human-readable summary of a sent ping, for the caye_operator_messages
 // audit log — this is what actually renders in Caye Direct's thread view,
 // so it has to read like Caye talking, not a debug-log line. Every kind
@@ -490,7 +509,8 @@ function operatorPingLogBody(kind: string, payload: Record<string, unknown>): st
       const brief = str('brief')
       if (brief) return brief
       const who = str('contactName', 'A guest')
-      const summary = str('ping_summary') || str('internalContext', 'needs your call')
+      const summary =
+        str('ping_summary') || operatorSafe(str('internalContext'), 'needs your call')
       return `Kicking this one up to you — ${who}: ${summary}. Tell me what to say and I'll send it, or handle it yourself and I'll stand down.`
     }
     case 'escalation_followup': {
@@ -790,7 +810,7 @@ async function templateForKind(
       const summary =
         str('one_line', '') ||
         str('ping_summary', '') ||
-        `${str('category', 'policy')}: ${str('internalContext', 'needs your call').slice(0, 80)}`
+        `${str('category', 'policy')}: ${operatorSafe(str('internalContext'), 'needs your call').slice(0, 80)}`
       return {
         name: 'caye_urgent_hold',
         placeholders: [str('contactName', 'A guest'), summary],

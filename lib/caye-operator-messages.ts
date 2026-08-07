@@ -3,6 +3,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { createServiceClient } from '@/lib/supabase-server'
 import type { OperatorIdentity } from '@/lib/operator-identity'
 import { deliveryFieldsFromResult, type SendResult } from '@/lib/whatsapp/outbound'
+import { stripToolMarkers } from '@/lib/operator-text-guard'
 
 /**
  * Render a one-line body summary for a Claude MessageParam — used for
@@ -22,8 +23,6 @@ export function summarizeTurnBody(turn: Anthropic.MessageParam): string {
   return parts.join(' ').trim() || '[empty]'
 }
 
-const TOOL_MARKER_RE = /\[tool_use: [^\]]+\]|\[tool_result\]/g
-
 /**
  * A turn whose body is nothing but tool_use/tool_result markers (see
  * summarizeTurnBody above) — real for the agent's own history replay via
@@ -33,7 +32,24 @@ const TOOL_MARKER_RE = /\[tool_use: [^\]]+\]|\[tool_result\]/g
  */
 export function isInternalOnlyBody(body: string): boolean {
   if (body === '[empty]') return true
-  return body.replace(TOOL_MARKER_RE, '').trim().length === 0
+  return stripToolMarkers(body).length === 0
+}
+
+/**
+ * The text of a persisted turn as a human should see it in Caye Direct.
+ *
+ * Hiding all-marker rows (isInternalOnlyBody) was never sufficient: Claude
+ * routinely emits ONE turn carrying both text and a tool call, which
+ * summarizeTurnBody renders as "You're welcome! Anytime. [tool_use:
+ * get_held_queue]". That strips to non-empty, so the row was shown — with
+ * the marker still glued to the end. Live in Mrs. Max's thread, 2026-08-07.
+ *
+ * Callers must filter with isInternalOnlyBody first and render this; the
+ * persisted `body` column keeps the markers, since claude_format replay and
+ * the audit trail both want the unedited turn.
+ */
+export function visibleBody(body: string): string {
+  return stripToolMarkers(body)
 }
 
 /**

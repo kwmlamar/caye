@@ -23,7 +23,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase-server'
 import { requireFounder } from '@/lib/founder'
 import { cayeAgent } from '@/lib/caye-agent'
-import { persistAgentTurns, isInternalOnlyBody } from '@/lib/caye-operator-messages'
+import { persistAgentTurns, isInternalOnlyBody, visibleBody } from '@/lib/caye-operator-messages'
 import { resolveFounderOperator } from '@/lib/operator-identity'
 
 /**
@@ -82,7 +82,15 @@ export async function GET(req: NextRequest) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  const visible = dedupeConsecutive((data ?? []).filter((m) => !isInternalOnlyBody(m.body)))
+  // Strip tool markers BEFORE deduping: a mixed text+tool_use turn renders as
+  // "…Anytime. [tool_use: get_held_queue]", which isInternalOnlyBody keeps
+  // (it isn't marker-only) and which dedupe would treat as distinct from the
+  // same text without the marker. Stripping first fixes both.
+  const visible = dedupeConsecutive(
+    (data ?? [])
+      .filter((m) => !isInternalOnlyBody(m.body))
+      .map((m) => ({ ...m, body: visibleBody(m.body) }))
+  )
 
   return NextResponse.json({ operatorId, messages: visible.reverse() })
 }

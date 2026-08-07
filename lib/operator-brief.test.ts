@@ -1,4 +1,7 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
+
+vi.mock('server-only', () => ({}))
+
 import {
   buildOperatorBrief,
   buildCustomerRecap,
@@ -9,6 +12,8 @@ import {
   shortDate,
   longDate,
 } from './operator-brief'
+import { detectForcedEscalation } from './forced-escalation'
+import { detectInternalLeak } from './operator-text-guard'
 
 /**
  * Regression fixture: Robert's real Bimini Island Tours web form submission
@@ -174,9 +179,12 @@ describe('buildOperatorBrief — structured form path (Robert fixture)', () => {
 })
 
 describe('buildOperatorBrief — prose fallback', () => {
-  it('falls back to internalContext when the body is not a parseable form', () => {
+  it('carries internalContext on the LLM path, where it is operator-ready prose', () => {
+    // trigger === null means escalate_to_team wrote this, and that contract
+    // specifies an operator-ready handoff. This is the ONLY path that renders
+    // internalContext.
     const result = buildOperatorBrief({
-      trigger: 'complaint',
+      trigger: null,
       contactName: 'Marissa',
       body: 'This is unacceptable, I want my money back immediately.',
       internalContext:
@@ -184,8 +192,68 @@ describe('buildOperatorBrief — prose fallback', () => {
     })
     expect(result.targetDate).toBeNull()
     expect(result.brief).toContain('Marissa is upset about a delayed refund')
-    expect(result.brief).toMatch(/apology|make-good/i)
   })
+
+  it('quotes the customer instead of internalContext on the forced path', () => {
+    // A trigger means the LLM was skipped and internalContext is machine
+    // diagnostics, never prose. The operator gets the actual message.
+    const result = buildOperatorBrief({
+      trigger: 'complaint',
+      contactName: 'Marissa',
+      body: 'This is unacceptable, I want my money back immediately.',
+      internalContext:
+        'Forced escalation — complaint (inbound classifier — complaint keywords). ' +
+        'Customer message excerpt: "This is unacceptable". ' +
+        'Caye did not draft a substantive reply; the customer-facing send was a controlled template. ' +
+        'Owner: review the thread and respond directly.',
+    })
+    expect(result.brief).toContain('I want my money back immediately')
+    expect(result.brief).toMatch(/apology|make-good/i)
+    expect(result.brief).not.toMatch(/forced escalation/i)
+    expect(result.brief).not.toMatch(/inbound classifier/i)
+    expect(result.brief).not.toMatch(/Caye did not draft/i)
+    // oneLine feeds a WhatsApp template placeholder — same rule applies.
+    expect(result.oneLine).not.toMatch(/forced escalation|inbound classifier/i)
+  })
+})
+
+/**
+ * End-to-end regression for the leak that reached Mrs. Max on 2026-08-07:
+ * Ruslan Prakapovich's B2B email (prose, not a form) was escalated, and the
+ * brief that went out over WhatsApp was forced-escalation.ts's internalContext
+ * verbatim — trigger label, classifier name, and "Owner: review the thread".
+ *
+ * Driven through the REAL producer (detectForcedEscalation) rather than a
+ * hand-written internalContext, so it stays honest if that wording changes.
+ */
+describe('buildOperatorBrief — no internal machinery reaches the operator', () => {
+  const RUSLAN_BODY =
+    'Dear Karenda, Maxwell and Team,\n\n' +
+    'Thank you for your thoughtful follow-up and continued engagement. I also apologize ' +
+    'for the delay in coming back to you with more specific information.\n\n' +
+    'As mentioned in my introductory email, I am pleased to confirm that the ATS ' +
+    'Preferred Partner Program is now open to your team.'
+
+  it.each(['b2b_partnership', 'complaint'] as const)(
+    'composes a clean brief for a forced %s escalation',
+    (category) => {
+      const forced = detectForcedEscalation(RUSLAN_BODY, category)
+      expect(forced).not.toBeNull()
+
+      const result = buildOperatorBrief({
+        trigger: forced!.trigger,
+        contactName: 'Ruslan Prakapovich',
+        body: RUSLAN_BODY,
+        alreadySent: forced!.customerFacingMessage,
+        internalContext: forced!.internalContext,
+      })
+
+      expect(detectInternalLeak(result.brief)).toBeNull()
+      expect(detectInternalLeak(result.oneLine)).toBeNull()
+      // Still actually useful: the customer's words and a decision to make.
+      expect(result.brief).toContain('ATS Preferred Partner Program')
+    }
+  )
 })
 
 describe('buildCustomerRecap', () => {

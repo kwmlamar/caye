@@ -1,0 +1,91 @@
+/**
+ * Pure guard that catches Caye's internal machinery leaking into text an
+ * operator actually reads. Sibling of policy-figure-guard.ts and
+ * caye-identity-guard.ts — same reasoning: the structural fix is upstream,
+ * and a backstop in code is what keeps it fixed.
+ *
+ * WHY THIS EXISTS (2026-08-07)
+ * Two leaks landed in Mrs. Max's Caye Direct thread on the same screen:
+ *
+ *   1. "You're welcome! Anytime. [tool_use: get_held_queue]"
+ *      summarizeTurnBody (lib/caye-operator-messages.ts) renders a turn's
+ *      tool_use blocks as "[tool_use: name]" markers for the audit column.
+ *      isInternalOnlyBody then hides turns that are NOTHING BUT markers — but
+ *      a turn carrying both text and a tool call strips to non-empty, so it
+ *      rendered with the marker still glued to the end.
+ *
+ *   2. "Forced escalation — b2b_partnership (inbound classifier — B2B /
+ *      partnership voice). Customer message excerpt: "…". Caye did not draft a
+ *      substantive reply… Owner: review the thread and respond directly."
+ *      That is forced-escalation.ts's `internalContext` verbatim — written for
+ *      the dashboard internal note, not for a human. buildProseBrief used it
+ *      as the brief body, so it went out over WhatsApp as the ping.
+ *
+ * Both root causes are fixed at their source. This module exists because the
+ * brief is an IRREVERSIBLE channel: once a machine payload is in the owner's
+ * WhatsApp, "we fixed the composer" doesn't unsend it. Same conclusion the
+ * outreach work reached after an LLM ignored its own ban list — an
+ * irreversible channel gets a check in code, not a note in a prompt.
+ *
+ * SCOPE — deliberately narrow, to stay false-positive-free. Only the exact
+ * machine strings this codebase generates are matched: the tool markers
+ * summarizeTurnBody emits, and the locked stem forced-escalation.ts builds.
+ * Ordinary operator prose that happens to mention an escalation is NOT
+ * touched — "I escalated this to you" contains none of these patterns.
+ */
+
+/** Tool markers emitted by summarizeTurnBody for the audit `body` column. */
+const TOOL_MARKER_PATTERN = /\s*\[tool_use:[^\]]*\]|\s*\[tool_result\]/g
+
+/**
+ * The machine-composed stems from forced-escalation.ts's build(). These are
+ * internal-note prose — a trigger enum, the classifier that fired, and an
+ * instruction addressed to the operator in the third person. None of it
+ * should ever reach a human-facing surface.
+ */
+const INTERNAL_PROSE_PATTERNS: { pattern: RegExp; label: string }[] = [
+  { pattern: /\bForced escalation\s*—/i, label: 'forced-escalation stem' },
+  { pattern: /\binbound classifier\s*—/i, label: 'classifier diagnostic' },
+  { pattern: /\bCustomer message excerpt:/i, label: 'internal excerpt label' },
+  {
+    pattern: /\bCaye did not draft a substantive reply\b/i,
+    label: 'internal handoff note',
+  },
+  { pattern: /\bOwner: review the thread\b/i, label: 'internal owner directive' },
+  { pattern: /\bhybrid sentiment cascade\b/i, label: 'cascade diagnostic' },
+]
+
+/**
+ * Returns a short reason string when `text` carries internal machinery that an
+ * operator should never see, otherwise null.
+ *
+ * Callers that are about to SEND use this to fail loudly (log + fall back to a
+ * clean string). Tests use it as the assertion that composed operator text is
+ * clean, so a future composer change that reintroduces a leak fails CI rather
+ * than reaching a customer's owner.
+ */
+export function detectInternalLeak(text: string): string | null {
+  if (!text) return null
+
+  const found: string[] = []
+  if (/\[tool_use:|\[tool_result\]/.test(text)) found.push('raw tool marker')
+  for (const { pattern, label } of INTERNAL_PROSE_PATTERNS) {
+    if (pattern.test(text)) found.push(label)
+  }
+
+  return found.length > 0 ? `contains ${found.join(', ')}` : null
+}
+
+/**
+ * Remove tool markers from a rendered turn body, leaving the human-readable
+ * text. Returns an empty string when the body was nothing but markers, which
+ * is how callers detect "this turn has nothing to show a human."
+ *
+ * Only strips the markers — deliberately does NOT try to rewrite leaked
+ * internal PROSE. A brief whose body is a machine payload has no clean
+ * subset to salvage; that case is a composer bug, caught by
+ * detectInternalLeak and fixed upstream rather than papered over here.
+ */
+export function stripToolMarkers(text: string): string {
+  return text.replace(TOOL_MARKER_PATTERN, '').trim()
+}

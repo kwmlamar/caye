@@ -35,6 +35,7 @@
 // from this module. Kept as the same type (not a re-declared duplicate) so
 // the two can never drift apart.
 import type { ForcedTrigger } from './forced-escalation'
+import { detectInternalLeak } from './operator-text-guard'
 
 export interface BriefField {
   label: string
@@ -327,14 +328,58 @@ export function buildOperatorBrief(input: OperatorBriefInput): OperatorBrief {
   return { brief: lines.join('\n'), oneLine, targetDate }
 }
 
+// How much of a prose inbound to quote into the brief. Long enough to carry a
+// real B2B/complaint email's actual ask, short enough to stay scannable on a
+// phone. truncate() cuts at a word boundary with a real ellipsis.
+const INBOUND_QUOTE_MAX = 400
+
 /**
- * Prose fallback — no parseable form. The LLM's internalContext is already
- * written as an operator-ready handoff, so it carries the brief; we only
- * add the calendar line and the already-sent line, which the LLM has no
- * visibility into.
+ * The customer's own message, attributed by name and quoted verbatim. Named
+ * rather than pronouned, per this module's no-guessed-pronouns rule.
+ */
+function quoteInbound(body: string, who: string): string {
+  const flat = truncate(body ?? '', INBOUND_QUOTE_MAX)
+  return flat ? `${who} wrote: "${flat}"` : ''
+}
+
+/**
+ * Prose fallback — no parseable form.
+ *
+ * WHICH FIELD CARRIES THE BRIEF DEPENDS ON THE PATH, and getting this wrong
+ * is what put a machine payload in an owner's WhatsApp (Ruslan Prakapovich,
+ * 2026-08-07). `trigger` is the discriminator, and it's exact: triggerHint is
+ * set in precisely one place (lib/caye-reply.ts, from forced.trigger), so
+ *
+ *   trigger === null  → LLM escalate_to_team path. internalContext is
+ *                       operator-ready prose by contract — it carries the brief.
+ *   trigger !== null  → forced escalation, LLM skipped entirely.
+ *                       internalContext is machine-composed diagnostics
+ *                       ("Forced escalation — b2b_partnership (inbound
+ *                       classifier — …). Owner: review the thread…") written
+ *                       for the dashboard internal note. NEVER show it.
+ *
+ * On the forced path the operator needs the customer's actual words, so the
+ * body carries the brief instead — the OPENING and CLOSING_ASK enums already
+ * supply every bit of framing internalContext was being mined for.
  */
 function buildProseBrief(input: OperatorBriefInput, who: string): OperatorBrief {
-  const core = (input.internalContext ?? input.body ?? '').trim()
+  let core = (
+    input.trigger ? quoteInbound(input.body, who) : (input.internalContext ?? input.body ?? '')
+  ).trim()
+
+  // Backstop. The discriminator above is exact today, but this brief goes
+  // straight to an operator's WhatsApp — irreversible in the way that matters,
+  // since "we fixed the composer" doesn't unsend a machine payload. So a core
+  // that still carries internal machinery gets dropped rather than sent, and
+  // falls back to the customer's own words. Loud, because reaching this means
+  // an upstream contract broke and the structural fix needs revisiting.
+  const leak = detectInternalLeak(core)
+  if (leak) {
+    console.error(`[operator-brief] internal text in brief core (${leak}) — using inbound quote instead`)
+    const fallback = quoteInbound(input.body, who)
+    core = detectInternalLeak(fallback) ? '' : fallback
+  }
+
   const lines: string[] = []
 
   lines.push(input.trigger ? OPENING[input.trigger] : `${who} needs your call.`)
