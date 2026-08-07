@@ -284,6 +284,7 @@ async function processInboundMessenger(payload: Record<string, unknown>): Promis
         workspaceId,
         conversationId: conversation.id,
         contactName: customerName,
+        body,
       })
 
       if (decision.action === 'hold') {

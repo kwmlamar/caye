@@ -108,6 +108,60 @@ async function processWorkspace(
       .maybeSingle(),
   ])
 
+  // Identity registry for this workspace's bookings, used to fail-closed
+  // suppress ghosted-lead nudges to guests who already booked. Bookings'
+  // conversation_id linkage is inert in practice (~1.5% of Bimini's 615
+  // bookings carry one — most were created from a channel that never
+  // wrote it), so matching on conversation_id alone lets a "still
+  // interested?" nudge go out to someone who already paid. This is the
+  // guard that actually protects real customers — see
+  // briefs/cold-followup-plan.md Q6/Phase 1. Loaded once per workspace
+  // per run rather than per conversation.
+  const { data: bookingIdentities } = await supabase
+    .from('bookings')
+    .select('customer_email, customer_name')
+    .eq('user_id', workspaceId)
+
+  const bookedEmails = new Set(
+    (bookingIdentities ?? [])
+      .map((b) => b.customer_email?.trim().toLowerCase())
+      .filter((e): e is string => !!e)
+  )
+
+  // Word-based, not substring — Bimini's booking data has ~289 rows (of
+  // 615) with customer_name literally "s" (a placeholder that leaked
+  // through some import). A raw substring match ('%s%') would match
+  // almost every real name and silently suppress nearly every follow-up
+  // without ever surfacing an error — worse than the risk it exists to
+  // prevent. Splitting into words and requiring a shared word of 3+
+  // characters excludes junk short names from the registry entirely
+  // while still catching "Holly" vs "Holly Sands".
+  function significantWords(name: string | null | undefined): Set<string> {
+    if (!name) return new Set()
+    return new Set(name.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3))
+  }
+
+  const bookedNameWordSets = (bookingIdentities ?? [])
+    .map((b) => significantWords(b.customer_name))
+    .filter((words) => words.size > 0)
+
+  // Fail closed: exact email match, or any shared significant name word,
+  // suppresses the nudge. Never send "still interested?" to someone who
+  // might already have booked.
+  function isPlausiblyAlreadyBooked(email: string | null, name: string | null): boolean {
+    const e = email?.trim().toLowerCase()
+    if (e && bookedEmails.has(e)) return true
+    const candidateWords = significantWords(name)
+    if (candidateWords.size > 0) {
+      for (const bookedWords of bookedNameWordSets) {
+        for (const word of candidateWords) {
+          if (bookedWords.has(word)) return true
+        }
+      }
+    }
+    return false
+  }
+
   // Don't nudge from a workspace where the owner has explicitly turned AI off
   if (aiConfig?.ai_enabled === false) return counts
 
@@ -253,6 +307,12 @@ async function processWorkspace(
       },
       now
     )) continue
+
+    // c.customer_id is the bare email for email conversations (per webhook
+    // pattern in app/api/webhooks/zoho-email/route.ts) — check it here too,
+    // ahead of the direct-linkage bookingCount above, since that count is
+    // usually 0 even for a booked guest.
+    if (isPlausiblyAlreadyBooked(c.customer_id, c.customer_name)) continue
 
     // Build a short excerpt of the recent thread for ghosted_lead context
     const { data: recentMessages } = await supabase

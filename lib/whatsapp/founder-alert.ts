@@ -31,18 +31,20 @@ import { classifyDeliveryError, extractErrorCode } from './delivery-errors'
  * and works fine for the non-account-fatal classes it usually fires for).
  * See briefs/whatsapp-delivery-reliability.md.
  *
- * stage: 'skipped' is for a send that was never attempted at all — e.g. the
- * scan crons declining to send because the operator's 24h window is closed.
- * `detail` there is a plain-English reason, not a Meta error code, so
- * classifyDeliveryError falls through to its 'transient' default; that's
- * fine, it only changes account_fatal's email escalation, which a window
- * closure never is.
+ * Only ever fires for a send that was actually ATTEMPTED and failed. There
+ * used to be a third stage, 'skipped', for sends the scan crons declined to
+ * make because the operator's 24h window was closed — removed 2026-08-06.
+ * A closed window is the resting state for an owner who messages Caye a few
+ * times a week, so it fired on nearly every scan and paged the founder 3x/
+ * day about a condition with no available action. The scan crons' notify
+ * pings still route through the outbound queue, so a genuine failure to
+ * reach the operator surfaces here via the dispatch/delivery paths.
  */
 export async function alertFounderOfDeliveryFailure(args: {
   workspaceId: string
   kind: string
   detail: string | null
-  stage: 'dispatch' | 'delivery' | 'skipped'
+  stage: 'dispatch' | 'delivery'
 }): Promise<void> {
   try {
     const supabase = createServiceClient()
@@ -56,8 +58,7 @@ export async function alertFounderOfDeliveryFailure(args: {
       .maybeSingle()
     const business = (customer?.business_name as string | null) ?? args.workspaceId
 
-    const stageLabel =
-      args.stage === 'dispatch' ? 'send failed' : args.stage === 'delivery' ? 'delivery failed' : 'not sent'
+    const stageLabel = args.stage === 'dispatch' ? 'send failed' : 'delivery failed'
     const bucket = Math.floor(Date.now() / (60 * 60 * 1000))
     // Global key for account_fatal — every workspace hitting the same WABA
     // outage in the same hour collapses to one alert instead of one each.

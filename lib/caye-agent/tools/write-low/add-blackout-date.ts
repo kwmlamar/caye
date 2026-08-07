@@ -62,6 +62,15 @@ export const addBlackoutDate: Tool<AddBlackoutDateInput> = {
     if (!pattern.test(end)) {
       return { ok: false, error: 'end must match the same format as start.' }
     }
+    if (!recurring) {
+      const todayISO = new Date().toISOString().slice(0, 10)
+      if (end < todayISO) {
+        return {
+          ok: false,
+          error: `${end} is in the past (today is ${todayISO}) — check the year before retrying.`,
+        }
+      }
+    }
 
     const range: BlackoutRange = {
       start: args.start,

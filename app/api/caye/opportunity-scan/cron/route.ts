@@ -30,13 +30,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase-server'
 import { cayeAgent } from '@/lib/caye-agent'
-import { sendFreeFormWhatsApp, deliveryFieldsFromResult, enqueueOutbound } from '@/lib/whatsapp/outbound'
+import { sendFreeFormWhatsApp, enqueueOutbound } from '@/lib/whatsapp/outbound'
 import { isWhatsAppWindowOpen } from '@/lib/whatsapp/window'
-import { alertFounderOfDeliveryFailure } from '@/lib/whatsapp/founder-alert'
 import { loadScheduleConfig, inQuietHours, type WorkspaceScheduleConfig } from '@/lib/whatsapp/schedule'
 import { resolveOperatorByPhone } from '@/lib/operator-identity'
 import { persistAgentTurns } from '@/lib/caye-operator-messages'
 import { recordCronRun } from '@/lib/cron-run-log'
+import { QUIET_SENTINEL, isQuietScan, stripQuietSentinelFromTurns } from '@/lib/quiet-scan'
+import { getActivitySince, isActivityEmpty, type ActivitySince } from '@/lib/caye-agent/activity-since'
 
 // Three passes a day, spread through waking hours — bounds LLM spend to a
 // handful of tool-loop invocations per workspace per day and avoids
@@ -130,7 +131,27 @@ async function processWorkspace(
   const operator = await resolveOperatorByPhone(supabase, row.workspace_id, row.operator_whatsapp_number)
   if (!operator) return { status: 'skip', detail: 'no operator_allowlist match for operator phone' }
 
-  const prompt = buildScanPrompt(row.last_opportunity_scan_summary)
+  // Pre-LLM change-gate (2026-08-07). Caye can't repeat a stale finding if
+  // she never runs — the root cause of the 2026-08-06 noise wasn't a
+  // prompt-compliance failure, it was running a real tool-loop against a
+  // held queue that hadn't moved in days. Bypassed on the very first scan
+  // for a workspace (no stored cutoff — run once as a baseline per the
+  // cutover decision, see the design note in decisions-log.md) and on a
+  // forced admin test run (force verifies the scan still works end to
+  // end, not that it stays quiet). See lib/caye-agent/activity-since.ts.
+  let activity: ActivitySince | null = null
+  if (row.last_opportunity_scan_at && !force) {
+    activity = await getActivitySince(row.workspace_id, row.last_opportunity_scan_at)
+    if (isActivityEmpty(activity)) {
+      await supabase
+        .from('workspace_ai_config')
+        .update({ last_opportunity_scan_at: now.toISOString() })
+        .eq('workspace_id', row.workspace_id)
+      return { status: 'skip', detail: 'no activity since last scan' }
+    }
+  }
+
+  const prompt = buildScanPrompt(row.last_opportunity_scan_summary, activity)
 
   // The caller IS the recipient. This used to hardcode callerRole 'founder'
   // with no name, which made the prompt tell Caye the founder was listening
@@ -147,16 +168,33 @@ async function processWorkspace(
     origin: 'scan',
   })
 
-  const summaryText = agentResult.replyText || '(Nothing needed attention this scan.)'
+  const replyText = agentResult.replyText.trim()
+  const quiet = isQuietScan(replyText)
+
+  // Always record that the round happened — the cadence gate and Admin
+  // Shell both read this timestamp. Only overwrite the "what I flagged"
+  // summary when something WAS flagged: a quiet round shouldn't erase the
+  // context that stops the next scan repeating a finding.
   await supabase
     .from('workspace_ai_config')
     .update({
       last_opportunity_scan_at: now.toISOString(),
-      last_opportunity_scan_summary: summaryText.slice(0, MAX_SUMMARY_CHARS),
+      ...(quiet ? {} : { last_opportunity_scan_summary: replyText.slice(0, MAX_SUMMARY_CHARS) }),
     })
     .eq('workspace_id', row.workspace_id)
 
-  if (!agentResult.replyText) {
+  if (quiet) {
+    // Persist the turns (caye_operator_messages is the only audit trail
+    // for anything Caye acted on with a low-risk tool this round) but as a
+    // log-only row — no delivery status, no send, no ping, no alert. A
+    // quiet round is a non-event, and every downstream noise source below
+    // exists to surface findings, not to announce that there weren't any.
+    await persistAgentTurns(
+      supabase,
+      row.workspace_id,
+      stripQuietSentinelFromTurns(agentResult.newTurns),
+      operator
+    )
     return { status: 'ok', detail: 'nothing to report' }
   }
 
@@ -164,38 +202,44 @@ async function processWorkspace(
   if (!windowOpen) {
     // Don't hard-fail — the pending action (if any) and the persisted
     // turns still exist and will surface next time the owner opens a
-    // real conversation with Caye. But mark it as not-sent (not null) so
+    // real conversation with Caye. Mark it as not-sent (not null) so
     // Caye Direct shows an explicit warning instead of looking identical
-    // to a demo/log-only row, and tell the founder — a scan recommendation
-    // that never reaches the operator is otherwise silently invisible.
+    // to a demo/log-only row.
+    //
+    // Deliberately NOT a founder alert (removed 2026-08-06). A closed 24h
+    // window is the owner's normal resting state, not a fault — Karenda
+    // messages Caye a few times a week, so this branch fired on nearly
+    // every scan and paged the founder 3x/day about a condition he can't
+    // act on. Real failures still alert: if the notify ping below can't be
+    // dispatched or Meta reports it undelivered, the outbound worker and
+    // the status webhooks call alertFounderOfDeliveryFailure themselves
+    // ('opportunity_scan' is in OPERATOR_LOGGABLE_KINDS).
     const notSentReason = `Not sent — ${row.operator_whatsapp_number}'s 24h WhatsApp window is closed`
     await persistAgentTurns(supabase, row.workspace_id, agentResult.newTurns, operator, undefined, notSentReason)
-    await alertFounderOfDeliveryFailure({
-      workspaceId: row.workspace_id,
-      kind: 'opportunity_scan',
-      detail: notSentReason,
-      stage: 'skipped',
-    })
     // Queue a short template-based "something's waiting" ping through the
     // normal outbound pipeline — inherits retries/template fallback/delivery
     // correlation for free. Never carries the real analysis (Meta blocks
     // free-form text outside the window regardless of pipeline); that stays
-    // in the persistAgentTurns row above, marked not_sent. Stable per-hour
-    // idempotency key: shouldSkip's "already scanned this hour" gate means
-    // this branch only runs once per target hour, but a stable key is cheap
-    // insurance against a duplicate row if that ever changes.
+    // in the persistAgentTurns row above, marked not_sent.
+    //
+    // Keyed by local day, not by hour: enqueueOutbound's unique-key
+    // constraint then collapses all three of the day's scan hours into one
+    // ping. The ping is contentless ("come look") — sending it again four
+    // hours later tells the owner nothing new and just trains her to
+    // ignore it, which is exactly what happened on 2026-08-06 when two
+    // pings in one day both pointed at a stale re-flagged escalation.
     await enqueueOutbound({
       workspaceId: row.workspace_id,
       kind: 'opportunity_scan',
       payload: {},
-      idempotencyKey: `opportunity-scan-notify-${row.workspace_id}-${now.toISOString().slice(0, 13)}`,
+      idempotencyKey: `opportunity-scan-notify-${row.workspace_id}-${localDayKey(now, cfg.timezone)}`,
     })
     return { status: 'skipped_window_closed' }
   }
 
   const sendResult = await sendFreeFormWhatsApp(
     row.operator_whatsapp_number,
-    agentResult.replyText,
+    replyText,
     `opportunity-scan-${row.workspace_id}-${now.getTime()}`
   )
   if (sendResult.status === 'failed') {
@@ -209,25 +253,108 @@ async function processWorkspace(
     : { status: 'sent' }
 }
 
-function buildScanPrompt(lastSummary: string | null): string {
-  const lastSummaryBlock = lastSummary
-    ? `\n\nWhat you flagged or proposed last scan, for reference (don't repeat it unless the situation has clearly escalated):\n${lastSummary}`
-    : ''
+// The token is load-bearing, not decoration — it's the only thing the cron
+// can check to tell a quiet round from a real finding, and the difference
+// decides whether the owner gets pinged. Spelled out because a model that
+// writes "nothing new this scan" in prose reads to itself as having
+// complied.
+const SENTINEL_INSTRUCTIONS =
+  `If nothing needs surfacing, begin your reply with the exact token ${QUIET_SENTINEL} followed by ` +
+  'one short sentence saying so, and nothing else. That token is what tells the system to stay ' +
+  "quiet; a reply that only says 'nothing new' in prose gets delivered to the operator as if it " +
+  'mattered. Do not use the token if you acted on anything or have something worth their time.'
+
+const REASONING_INSTRUCTIONS =
+  'Every action you take and every proposal you make must state your reasoning — what you ' +
+  "observed, why it matters, what you recommend and why — never just the bare action. Bad: " +
+  "'Cancel hold #421?' Good: 'Hold #421 has been inactive 72h, two reminders went unanswered, " +
+  "and it expires in 3h — recommend releasing it."
+
+const ACTION_INSTRUCTIONS =
+  'You may act directly using your low-risk tools. For anything needing a high-risk action, ' +
+  "propose it via the normal tool — it will stage for the owner's approval, not execute directly."
+
+/**
+ * activity === null means either the very first scan for this workspace
+ * (no stored last_opportunity_scan_at to gate against) or a forced admin
+ * test run — both intentionally get the old free-look behavior: review
+ * everything, decide what's worth a baseline report.
+ *
+ * activity !== null means processWorkspace's pre-LLM gate already
+ * confirmed something changed since the last scan — the prompt then
+ * scopes her to that computed delta instead of a fresh open-ended look,
+ * so a resolved or unchanged item can't get re-described just because
+ * her read tools can still see it.
+ */
+function buildScanPrompt(lastSummary: string | null, activity: ActivitySince | null): string {
+  const intro = "This is your periodic self-initiated workspace scan, not a message from the operator. "
+
+  if (!activity) {
+    const lastSummaryBlock = lastSummary
+      ? `\n\nWhat you flagged or proposed last scan, for reference (don't repeat it unless the situation has clearly escalated):\n${lastSummary}`
+      : ''
+    return (
+      intro +
+      'Review current state using your read tools (held queue, calendar, revenue, pending quotes, ' +
+      'recent activity) and decide if anything needs attention, the way a good employee doing rounds ' +
+      `would. ${ACTION_INSTRUCTIONS} ` +
+      "Only surface things that are new or materially worse; don't pad the report with items that " +
+      "have simply been sitting unchanged for a while and haven't gotten worse — aging backlog is " +
+      "the morning briefing's job, not yours. " +
+      `${SENTINEL_INSTRUCTIONS} ${REASONING_INSTRUCTIONS}` +
+      lastSummaryBlock
+    )
+  }
 
   return (
-    "This is your periodic self-initiated workspace scan, not a message from the operator. " +
-    'Review current state using your read tools (held queue, calendar, revenue, pending quotes, ' +
-    'recent activity) and decide if anything needs attention, the way a good employee doing rounds ' +
-    'would. You may act directly using your low-risk tools. For anything needing a high-risk action, ' +
-    'propose it via the normal tool — it will stage for the owner\'s approval, not execute directly. ' +
-    "Only surface things that are new or materially worse since your last scan; don't repeat what " +
-    'you already flagged unless it has escalated. If nothing needs surfacing, say so briefly. ' +
-    'Every action you take and every proposal you make must state your reasoning — what you ' +
-    "observed, why it matters, what you recommend and why — never just the bare action. Bad: " +
-    "'Cancel hold #421?' Good: 'Hold #421 has been inactive 72h, two reminders went unanswered, " +
-    "and it expires in 3h — recommend releasing it.'" +
-    lastSummaryBlock
+    intro +
+    `Here is everything that changed in the workspace since your last scan (${activity.cutoff}):\n\n` +
+    `${formatActivityForPrompt(activity)}\n\n` +
+    'Report ONLY on what changed above. Do not re-describe or re-propose anything from the held ' +
+    "queue, calendar, or other read tools that isn't listed here — it hasn't moved since you last " +
+    "looked at it, and repeating it is exactly the stale-noise problem this scan used to have. You " +
+    'may still call your read tools to get more detail on an item listed above (e.g. the full thread ' +
+    `behind a new hold) before deciding what to say. ${ACTION_INSTRUCTIONS} ${SENTINEL_INSTRUCTIONS} ` +
+    REASONING_INSTRUCTIONS
   )
+}
+
+function formatActivityForPrompt(activity: ActivitySince): string {
+  const lines: string[] = []
+  const newHolds = activity.holdEvents.filter((h) => h.stillHeld)
+  const resolvedHolds = activity.holdEvents.filter((h) => !h.stillHeld)
+
+  if (newHolds.length > 0) {
+    lines.push('New holds (customer waiting on the operator):')
+    for (const h of newHolds) {
+      lines.push(`  - ${h.customer ?? 'a customer'} (${h.channel}), held since ${h.markedAt}`)
+    }
+  }
+  if (resolvedHolds.length > 0) {
+    lines.push('Holds resolved since your last scan (already dealt with — do not describe as pending):')
+    for (const h of resolvedHolds) {
+      lines.push(`  - ${h.customer ?? 'a customer'}: ${h.resolution}`)
+    }
+  }
+  if (activity.escalationEvents.length > 0) {
+    lines.push('Escalation activity:')
+    for (const e of activity.escalationEvents) {
+      lines.push(`  - ${e.category} escalation ${e.status} (routed to ${e.routeTo})`)
+    }
+  }
+  if (activity.bookingEvents.length > 0) {
+    lines.push('Booking activity:')
+    for (const b of activity.bookingEvents) {
+      lines.push(`  - ${b.customer ?? 'a customer'}: ${b.event} (${b.status}, ${b.bookingDate})`)
+    }
+  }
+  if (activity.chaseMessages.length > 0) {
+    lines.push("Customers who followed up again on an already-held thread (still the operator's call, but they're waiting):")
+    for (const m of activity.chaseMessages) {
+      lines.push(`  - ${m.customer ?? 'a customer'} followed up at ${m.sentAt}`)
+    }
+  }
+  return lines.join('\n')
 }
 
 function shouldSkip(args: {
@@ -266,6 +393,23 @@ function localHour(date: Date, tz: string): number {
     return h === 24 ? 0 : h
   } catch {
     return date.getUTCHours()
+  }
+}
+
+/** Local YYYY-MM-DD — dedupes the window-closed notify ping to one per
+ *  day. Local rather than UTC so the three scan hours always land in the
+ *  same bucket regardless of the workspace's offset (18:00 in a UTC+6
+ *  timezone is already the next UTC day). */
+function localDayKey(date: Date, tz: string): string {
+  try {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: tz,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(date)
+  } catch {
+    return date.toISOString().slice(0, 10)
   }
 }
 

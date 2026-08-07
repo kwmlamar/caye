@@ -1,5 +1,5 @@
 import 'server-only'
-import { createServiceClient } from '@/lib/supabase-server'
+import { fetchBookingsInRange, type BookingLite } from '@/lib/calendar-availability'
 import type { Tool } from '../types'
 
 interface GetCalendarInput {
@@ -7,14 +7,7 @@ interface GetCalendarInput {
   end_date?: string
 }
 
-interface BookingRow {
-  customer_name: string
-  booking_date: string
-  booking_time: string
-  number_of_people: number
-  status: string
-  service: { name: string }[] | null
-}
+type BookingRow = BookingLite
 
 export const getCalendar: Tool<GetCalendarInput> = {
   name: 'get_calendar',
@@ -40,26 +33,14 @@ export const getCalendar: Tool<GetCalendarInput> = {
   },
 
   async execute(args, ctx) {
-    const supabase = createServiceClient()
     const today = new Date().toISOString().slice(0, 10)
     const start = args.date ?? today
     const end = args.end_date ?? start
 
-    const { data, error } = await supabase
-      .from('bookings')
-      .select(
-        'customer_name, booking_date, booking_time, number_of_people, status, service:booking_services(name)'
-      )
-      .eq('user_id', ctx.workspaceId)
-      .gte('booking_date', start)
-      .lte('booking_date', end)
-      .neq('status', 'cancelled')
-      .order('booking_date')
-      .order('booking_time')
+    const result = await fetchBookingsInRange(ctx.workspaceId, start, end)
+    if (!result.ok) return { ok: false, error: result.error }
 
-    if (error) return { ok: false, error: error.message }
-
-    const rows = (data ?? []) as unknown as BookingRow[]
+    const rows = result.bookings as unknown as BookingRow[]
     return {
       ok: true,
       data: {

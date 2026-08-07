@@ -62,8 +62,15 @@ export async function GET(req: NextRequest) {
         console.log(
           `[poll-zoho] ${workspaceId}: fetched=${stats.fetched} ` +
             `inserted=${stats.inserted} updated=${stats.updated} ` +
-            `linked=${stats.linked} cancelled=${stats.cancelled} skipped=${stats.skipped}`
+            `linked=${stats.linked} cancelled=${stats.cancelled} skipped=${stats.skipped}` +
+            (stats.burstSkipped ? ` burstSkipped=${stats.burstSkipped}` : '')
         )
+        if (stats.burstSkipped) {
+          console.warn(
+            `[poll-zoho] ${workspaceId}: burst guard skipped ${stats.burstSkipped} events — ` +
+              `a calendar entry may be recurring far more often than a real booking would`
+          )
+        }
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)

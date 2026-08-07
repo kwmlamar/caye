@@ -3,11 +3,14 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { clearStaleOutreachAutofill } from '@/lib/outreach-autofill'
 import { enqueueEscalationPings } from './triggers'
 import { extractTargetDate } from './urgency'
+import { getDayAvailability } from '@/lib/calendar-availability'
+import { buildOperatorBrief } from '@/lib/operator-brief'
 import type {
   CayeAutoReply,
   EscalationCategory,
   EscalationRouteTo,
 } from '@/lib/caye-reply'
+import type { ForcedTrigger } from '@/lib/forced-escalation'
 
 export interface RecordEscalationInput {
   workspaceId: string
@@ -21,6 +24,22 @@ export interface RecordEscalationInput {
    *  Forced escalations always supply one; LLM-driven escalate_to_team
    *  falls back to deriving from category + customerFacingMessage. */
   pingSummary?: string
+  /** Raw inbound body the decision was generated from. Feeds
+   *  buildOperatorBrief's structured-form parse (2026-08-07) — without it,
+   *  a web-form booking (name/email/date/notes as labelled fields) can only
+   *  be summarized as prose, losing the fields that actually decide the
+   *  handoff (date, party size, the free-text note). Optional so existing
+   *  callers keep working; omitting it just falls back to the prose brief. */
+  body?: string
+  /** Exact forced-escalation trigger, when this came from Layer 1
+   *  (lib/forced-escalation.ts) rather than the LLM's escalate_to_team.
+   *  Picks the right opening line + closing ask in buildOperatorBrief. */
+  triggerHint?: ForcedTrigger
+  /** When false, skip the human_agent_enabled update below — the
+   *  escalation row and operator ping still go out, the conversation just
+   *  doesn't enter the held queue. Defaults to true. See the matching
+   *  doc comment on CayeAutoReply's escalate variant in caye-reply.ts. */
+  holdConversation?: boolean
 }
 
 /**
@@ -38,6 +57,48 @@ export async function recordEscalation(
   input: RecordEscalationInput
 ): Promise<{ escalationId: string | null }> {
   const supabase = createServiceClient()
+
+  // Compose the operator brief (2026-08-07). Two passes: the first parses
+  // the body for a structured date (form intake's DateISO field, the
+  // strongest signal — same source extractCustomerRequestedDate trusts
+  // elsewhere), then a calendar lookup on that date is folded into a
+  // second pass so the brief answers "am I free that day?" before the
+  // operator has to ask. Cheap either way — no LLM call, one Supabase
+  // query only when a date was actually found.
+  const firstPass = buildOperatorBrief({
+    trigger: input.triggerHint ?? null,
+    contactName: input.contactName,
+    body: input.body ?? '',
+    alreadySent: input.customerFacingMessage,
+    internalContext: input.internalContext,
+  })
+  const availability = firstPass.targetDate
+    ? await getDayAvailability(input.workspaceId, firstPass.targetDate)
+    : null
+  const brief = availability
+    ? buildOperatorBrief({
+        trigger: input.triggerHint ?? null,
+        contactName: input.contactName,
+        body: input.body ?? '',
+        alreadySent: input.customerFacingMessage,
+        internalContext: input.internalContext,
+        availability: { dateISO: availability.dateISO, bookingCount: availability.bookings.length },
+      })
+    : firstPass
+
+  // Single source of truth for the date this escalation is about — prefer
+  // the structured form field (brief.targetDate) over prose-scraping
+  // internalContext/customerFacingMessage, and use the SAME value for both
+  // caye_escalations.target_date and unified_conversations.target_date so
+  // the two tables can't disagree about when a hold's underlying date has
+  // passed (see the fix below — unified_conversations.target_date used to
+  // never get set on the escalate path at all, only on plain 'hold'
+  // decisions, so get_held_queue's date_passed flag was silently blind for
+  // every escalated booking).
+  const resolvedTargetDate =
+    brief.targetDate ?? extractTargetDate(`${input.internalContext} ${input.customerFacingMessage}`)
+      ?.toISOString()
+      .slice(0, 10) ?? null
 
   // Guard against piling on: if this conversation already has an open
   // escalation (not yet resolved, not expired), don't create a second row
@@ -68,6 +129,7 @@ export async function recordEscalation(
         .update({
           human_agent_reason: `Escalation (${input.category}): ${input.internalContext.replace(/\s+/g, ' ').trim().slice(0, 120)}`,
           human_agent_marked_at: new Date().toISOString(),
+          target_date: resolvedTargetDate,
         })
         .eq('id', input.conversationId)
       await supabase.from('unified_messages').insert({
@@ -105,13 +167,6 @@ export async function recordEscalation(
   const pingSummary =
     input.pingSummary ?? input.internalContext.replace(/\s+/g, ' ').trim().slice(0, 200)
 
-  // Best-effort target date, so the follow-up cron can stop nudging once
-  // the underlying window has passed (confirmed live: a "July 4th booking"
-  // escalation kept getting a daily "still waiting" ping days after July
-  // 4th was gone). Null when no concrete date is mentioned — the cron just
-  // keeps its existing behavior for those rows.
-  const targetDate = extractTargetDate(`${input.internalContext} ${input.customerFacingMessage}`)
-
   const { data, error } = await supabase
     .from('caye_escalations')
     .insert({
@@ -122,7 +177,13 @@ export async function recordEscalation(
       customer_facing_message: input.customerFacingMessage,
       internal_context: input.internalContext,
       ping_summary: pingSummary,
-      target_date: targetDate ? targetDate.toISOString().slice(0, 10) : null,
+      // Best-effort target date, so the follow-up cron can stop nudging
+      // once the underlying window has passed (confirmed live: a "July 4th
+      // booking" escalation kept getting a daily "still waiting" ping days
+      // after July 4th was gone). resolvedTargetDate prefers the structured
+      // form field over prose-scraping — see the comment where it's built.
+      target_date: resolvedTargetDate,
+      brief: brief.brief,
     })
     .select('id')
     .single()
@@ -137,14 +198,22 @@ export async function recordEscalation(
     // autofill draft before marking this (unrelated) escalation, or the
     // dashboard compose box keeps surfacing the old templated nudge.
     await clearStaleOutreachAutofill(input.conversationId)
-    await supabase
-      .from('unified_conversations')
-      .update({
-        human_agent_enabled: true,
-        human_agent_reason: `Escalation (${input.category}): ${pingSummary.slice(0, 120)}`,
-        human_agent_marked_at: new Date().toISOString(),
-      })
-      .eq('id', input.conversationId)
+    // holdConversation: false (2026-08-07, Layer 2 self-review) skips this
+    // — the escalation row + ping below still fire, but a reply Caye
+    // already sent to a customer who isn't blocked on anything shouldn't
+    // enter the held queue. See the doc comment on CayeAutoReply's
+    // escalate variant for the incident this fixes.
+    if (input.holdConversation !== false) {
+      await supabase
+        .from('unified_conversations')
+        .update({
+          human_agent_enabled: true,
+          human_agent_reason: `Escalation (${input.category}): ${pingSummary.slice(0, 120)}`,
+          human_agent_marked_at: new Date().toISOString(),
+          target_date: resolvedTargetDate,
+        })
+        .eq('id', input.conversationId)
+    }
     await supabase.from('unified_messages').insert({
       conversation_id: input.conversationId,
       channel_message_id: null,
@@ -173,6 +242,8 @@ export async function recordEscalation(
     suggestedReply: input.customerFacingMessage,
     internalContext: input.internalContext,
     pingSummary,
+    brief: brief.brief,
+    oneLine: brief.oneLine,
   }).catch((err) => console.error('[escalation] enqueueEscalationPings failed:', err))
 
   return { escalationId: data.id }
@@ -187,7 +258,17 @@ export async function recordEscalation(
  */
 export async function applyEscalation(
   decision: CayeAutoReply,
-  meta: { workspaceId: string; conversationId: string | null; contactName: string }
+  meta: {
+    workspaceId: string
+    conversationId: string | null
+    contactName: string
+    /** Raw inbound body the decision was generated from — see
+     *  RecordEscalationInput.body. Every call site already has this (it's
+     *  what was passed to generateCayeAutoReply), so pass it through rather
+     *  than re-deriving from decision.internalContext, which is prose Caye
+     *  wrote about the inbound, not the inbound itself. */
+    body?: string
+  }
 ): Promise<Exclude<CayeAutoReply, { action: 'escalate' }>> {
   if (decision.action !== 'escalate') return decision
 
@@ -200,6 +281,9 @@ export async function applyEscalation(
     customerFacingMessage: decision.content,
     internalContext: decision.internalContext,
     pingSummary: decision.pingSummary,
+    body: meta.body,
+    triggerHint: decision.triggerHint,
+    holdConversation: decision.holdConversation,
   })
 
   return { action: 'reply', content: decision.content }

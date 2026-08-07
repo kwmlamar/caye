@@ -469,6 +469,7 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
     workspaceId,
     conversationId: conversation.id,
     contactName: effectiveName || effectiveEmail,
+    body: effectiveBody || subject,
   })
 
   if (decision.action === 'hold') {

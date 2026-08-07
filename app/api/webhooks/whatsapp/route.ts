@@ -342,6 +342,7 @@ async function processInboundWhatsApp(payload: Record<string, unknown>): Promise
       workspaceId,
       conversationId: conversation.id,
       contactName: customerName,
+      body,
     })
 
     if (decision.action === 'hold') {

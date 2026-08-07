@@ -41,6 +41,11 @@ export interface InboundSyncStats {
   linked: number
   cancelled: number
   skipped: number
+  /** Subset of `skipped` specifically due to the same-day title-burst
+   *  guard (2026-07-28) — surfaced separately so a flood shows up
+   *  distinctly in the cron log instead of blending into ordinary skips
+   *  (all-day events, insert failures). */
+  burstSkipped?: number
   error?: string
 }
 
@@ -50,6 +55,19 @@ export interface InboundSyncStats {
 // so the wider window isn't dangerous.
 const WINDOW_DAYS_BACK = 7
 const WINDOW_DAYS_FORWARD = 90
+
+// Same-day title-burst guard (2026-07-28, discovered live on Bimini):
+// a Zoho Calendar recurring event unrelated to bookings ("Business Update
+// - Bimini Island Tours", firing every ~5 minutes for a day) got expanded
+// by Zoho's feed into hundreds of individual event instances and blindly
+// ingested as separate confirmed bookings — 578 fake rows, no service
+// match, no email, all under one duplicated title. No real tour operator
+// legitimately books the identical title more than a handful of times in
+// one day, so treat that pattern as a non-booking calendar entry rather
+// than inserting it. Threshold is intentionally generous (a real group
+// could plausibly have a few same-titled entries on one day) — this is a
+// blunt guard against a flood, not a precise classifier.
+export const BURST_THRESHOLD_PER_DAY = 3
 
 function addDaysISO(iso: string, n: number): string {
   const d = new Date(`${iso}T00:00:00Z`)
@@ -70,6 +88,23 @@ function parseCustomerFromTitle(title: string): string {
   // Strip trailing " (N)" or " (N guests)"
   const cleaned = right.replace(/\s*\(\d+\s*(guests?)?\)\s*$/i, '').trim()
   return cleaned || title
+}
+
+/**
+ * Counts non-all-day events per (normalized title, date), keyed the same
+ * way the insert-time burst guard checks it. Exported standalone so the
+ * burst-detection logic (the fix for the 2026-07-28 Bimini incident — see
+ * BURST_THRESHOLD_PER_DAY) is unit-testable without mocking Supabase or
+ * the Zoho API client.
+ */
+export function countByTitleDate(events: ZohoEventSummary[]): Map<string, number> {
+  const counts = new Map<string, number>()
+  for (const ev of events) {
+    if (ev.isAllDay) continue
+    const key = `${parseCustomerFromTitle(ev.title).trim().toLowerCase()}|${ev.startDate}`
+    counts.set(key, (counts.get(key) ?? 0) + 1)
+  }
+  return counts
 }
 
 function bookingMatchesEvent(b: LocalBookingRow, ev: ZohoEventSummary): boolean {
@@ -147,6 +182,11 @@ export async function syncZohoEventsToBookings(workspaceId: string): Promise<Inb
 
   const zohoUidsSeen = new Set<string>()
 
+  // Pre-count (normalized title, date) pairs across this fetch so the
+  // burst guard below can tell "flood" from "a couple of legitimate
+  // same-titled entries" without depending on insert order.
+  const titleDateCounts = countByTitleDate(events)
+
   for (const ev of events) {
     if (ev.isAllDay) { stats.skipped++; continue }
     zohoUidsSeen.add(ev.uid)
@@ -191,6 +231,14 @@ export async function syncZohoEventsToBookings(workspaceId: string): Promise<Inb
 
     // Insert new booking from external Zoho event
     const customerName = parseCustomerFromTitle(ev.title)
+
+    const burstKey = `${customerName.trim().toLowerCase()}|${ev.startDate}`
+    if ((titleDateCounts.get(burstKey) ?? 0) > BURST_THRESHOLD_PER_DAY) {
+      stats.skipped++
+      stats.burstSkipped = (stats.burstSkipped ?? 0) + 1
+      continue
+    }
+
     const { error: insertErr } = await supabase.from('bookings').insert({
       user_id: workspaceId,
       conversation_id: null,

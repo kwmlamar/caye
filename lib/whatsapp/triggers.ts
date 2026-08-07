@@ -201,6 +201,15 @@ export interface EscalationPingInput {
    *  into the caye_urgent_hold template's reason placeholder so the operator
    *  sees a readable summary instead of truncated dev-debug text. */
   pingSummary?: string
+  /** Composed operator brief (lib/operator-brief.ts) — full multi-line
+   *  message. Sent free-form when the recipient's WhatsApp window is open;
+   *  ignored (falls back to oneLine/pingSummary) when it's closed, since
+   *  Meta template params can't carry newlines. */
+  brief?: string
+  /** Template-safe one-line summary from buildOperatorBrief — preferred
+   *  over pingSummary for the template placeholder when present, since it
+   *  actually names the booking/ask instead of raw form-field syntax. */
+  oneLine?: string
   /** Used to make the idempotency key unique across retries on the same
    *  escalation row. */
   timestamp?: string
@@ -254,6 +263,11 @@ export async function enqueueEscalationPings(
         // drops into the caye_urgent_hold template's reason placeholder.
         // Falls back inside the worker if absent.
         ping_summary: input.pingSummary?.slice(0, 120),
+        // brief: full multi-line handoff, sent free-form when this
+        // recipient's window is open. one_line: the template-safe
+        // fallback, preferred over ping_summary when present.
+        brief: input.brief,
+        one_line: input.oneLine?.slice(0, 160),
         escalationId: input.escalationId,
       },
       // Each recipient gets one row, immediate. Quiet-hours don't apply —

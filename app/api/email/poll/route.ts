@@ -386,6 +386,28 @@ type Supabase = ReturnType<typeof createServiceClient>
 type Account = Record<string, unknown>
 
 /**
+ * True if this sender has already tripped the newsletter/cold-sales filter
+ * on this account before (any thread — blast senders reuse the same address
+ * across many distinct Zoho threads, so per-thread state doesn't catch the
+ * repeat). First occurrence still gets held for the owner to see once;
+ * every occurrence after that auto-archives silently instead of re-flagging
+ * — otherwise a weekly drip sender re-triggers "held for review" forever.
+ */
+async function hasPriorBlastHold(
+  supabase: Supabase,
+  connectedAccountId: string,
+  fromEmail: string
+): Promise<boolean> {
+  const { count } = await supabase
+    .from('unified_conversations')
+    .select('id', { count: 'exact', head: true })
+    .eq('connected_account_id', connectedAccountId)
+    .filter('metadata->>from', 'ilike', `%${fromEmail}%`)
+    .not('metadata->>hold_reason', 'is', null)
+  return (count ?? 0) > 0
+}
+
+/**
  * Imports a sent message from the Zoho Sent folder into an existing Caye
  * conversation so the chat thread shows both sides of the exchange.
  * Only adds the message if the thread already exists — never creates new
@@ -864,6 +886,7 @@ async function processMessage(
                   workspaceId,
                   conversationId,
                   contactName: receipt.customerName,
+                  body: buildReceiptSyntheticInbound(receipt),
                 })
                 if (decision.action === 'reply') {
                   thankYou = decision.content
@@ -1203,24 +1226,31 @@ async function processMessage(
   if (!web3FormsFields) {
     const newsletterReason = detectNewsletter(body, subject, fromEmail)
     if (newsletterReason) {
+      const repeatSender = await hasPriorBlastHold(supabase, String(account.id), fromEmail)
       await supabase
         .from('unified_conversations')
-        .update({ human_agent_enabled: true, human_agent_reason: 'Newsletter / marketing blast — held automatically' })
+        .update(
+          repeatSender
+            ? { human_agent_enabled: false, human_agent_reason: null, is_archived: true }
+            : { human_agent_enabled: true, human_agent_reason: 'Newsletter / marketing blast — held automatically' }
+        )
         .eq('id', conversation.id)
       await supabase.from('unified_messages').insert({
         conversation_id: conversation.id,
         channel_message_id: null,
         sender_type: 'business',
-        content:
-          `Marketing/newsletter detected — auto-reply skipped.\n\nSignals: ${newsletterReason}\n\n` +
-          `If you want Caye to stop seeing future emails from this sender, drag the thread out of Inbox in Zoho.`,
+        content: repeatSender
+          ? `Marketing/newsletter detected — auto-reply skipped and auto-archived (repeat sender, already held before).\n\nSignals: ${newsletterReason}`
+          : `Marketing/newsletter detected — auto-reply skipped.\n\nSignals: ${newsletterReason}\n\n` +
+            `If you want Caye to stop seeing future emails from this sender, drag the thread out of Inbox in Zoho. ` +
+            `Future emails from this sender will auto-archive without holding for review.`,
         message_type: 'text',
         sent_at: new Date().toISOString(),
         status: 'sent',
         is_internal: true,
-        metadata: { generated_by: 'caye', hold_reason: 'newsletter', signals: newsletterReason, from: fromRaw },
+        metadata: { generated_by: 'caye', hold_reason: 'newsletter', signals: newsletterReason, from: fromRaw, auto_archived_repeat_sender: repeatSender },
       })
-      console.log(`[email/poll] Newsletter held: ${fromEmail} — ${newsletterReason}`)
+      console.log(`[email/poll] Newsletter ${repeatSender ? 'auto-archived (repeat sender)' : 'held'}: ${fromEmail} — ${newsletterReason}`)
       return 'held'
     }
   }
@@ -1233,22 +1263,25 @@ async function processMessage(
   if (!web3FormsFields) {
     const coldSalesReason = detectColdSales(body, subject, fromEmail)
     if (coldSalesReason) {
+      const repeatSender = await hasPriorBlastHold(supabase, String(account.id), fromEmail)
       await supabase
         .from('unified_conversations')
-        .update({
-          human_agent_enabled: true,
-          human_agent_reason: 'Cold sales pitch suspected — held for triage',
-        })
+        .update(
+          repeatSender
+            ? { human_agent_enabled: false, human_agent_reason: null, is_archived: true }
+            : { human_agent_enabled: true, human_agent_reason: 'Cold sales pitch suspected — held for triage' }
+        )
         .eq('id', conversation.id)
       await supabase.from('unified_messages').insert({
         conversation_id: conversation.id,
         channel_message_id: null,
         sender_type: 'business',
-        content:
-          `Cold sales pitch suspected — auto-reply skipped.\n\nSignals: ${coldSalesReason}\n\n` +
-          `Caye held this for you to decide. If it turns out to be a real partnership lead, ` +
-          `just reply manually and Caye will re-engage on the next inbound. If you want her to ` +
-          `stop seeing future emails from this sender, drag the thread out of Inbox in Zoho.`,
+        content: repeatSender
+          ? `Cold sales pitch suspected — auto-reply skipped and auto-archived (repeat sender, already held before).\n\nSignals: ${coldSalesReason}`
+          : `Cold sales pitch suspected — auto-reply skipped.\n\nSignals: ${coldSalesReason}\n\n` +
+            `Caye held this for you to decide. If it turns out to be a real partnership lead, ` +
+            `just reply manually and Caye will re-engage on the next inbound. Future emails from ` +
+            `this sender will auto-archive without holding for review.`,
         message_type: 'text',
         sent_at: new Date().toISOString(),
         status: 'sent',
@@ -1259,9 +1292,10 @@ async function processMessage(
           cold_sales_suspected: true,
           signals: coldSalesReason,
           from: fromRaw,
+          auto_archived_repeat_sender: repeatSender,
         },
       })
-      console.log(`[email/poll] Cold sales held: ${fromEmail} — ${coldSalesReason}`)
+      console.log(`[email/poll] Cold sales ${repeatSender ? 'auto-archived (repeat sender)' : 'held'}: ${fromEmail} — ${coldSalesReason}`)
       return 'held'
     }
   }
@@ -1376,6 +1410,7 @@ async function processMessage(
     workspaceId,
     conversationId: conversation.id,
     contactName: effectiveName || effectiveEmail,
+    body: body || subject,
   })
 
   if (decision.action === 'hold') {

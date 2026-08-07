@@ -181,6 +181,7 @@ export async function POST(request: NextRequest) {
     workspaceId,
     conversationId: conversationId,
     contactName: customerName,
+    body: lastInbound.content || subject,
   })
 
   // Hold branch

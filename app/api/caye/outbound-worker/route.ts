@@ -74,9 +74,20 @@ const TEMPLATE_REQUIRED_KINDS = new Set([
   // hard-fail with "no free-form body" just because the window happened
   // to be open.
   'booking_created',
-  // Escalations may go to the founder, who has no 24h window with the
-  // workspace's Caye number. Always template — match urgent_hold's shape.
-  'escalation',
+  // 'escalation' deliberately NOT here (2026-08-07, was here before). It
+  // used to be forced to a template unconditionally because escalations
+  // may route to the founder, who has no 24h window with the workspace's
+  // Caye number — but that penalized the OWNER's rich free-form brief
+  // (lib/operator-brief.ts) every time, even with an open window, just to
+  // cover a founder recipient who has none. dispatch() already resolves
+  // window-openness per recipient phone (payload.to_phone, one queue row
+  // per recipient) and falls through to the template automatically when
+  // that specific phone's window is closed — so the founder case still
+  // gets the template on its own, without penalizing the owner.
+  //
+  // 'escalation_followup' stays template-required — its only remaining
+  // sender is the founder backstop (maybeEscalateToFounder), which never
+  // has an open window with the workspace's Caye number.
   'escalation_followup',
   // Notify-only pings enqueued by the scan crons specifically because the
   // window was closed at enqueue time — always template, same reasoning
@@ -470,6 +481,14 @@ function operatorPingLogBody(kind: string, payload: Record<string, unknown>): st
       return `${who} came in — ${reason}. Want me to take a first pass, or you got this one?`
     }
     case 'escalation': {
+      // Mirror the composed brief (lib/operator-brief.ts) verbatim when
+      // it's what actually went out over WhatsApp — otherwise Caye
+      // Direct's dashboard thread shows different text than the message
+      // the operator received (same mismatch concern as morning_digest's
+      // narrative case, below). Only synthesize the old one-liner when the
+      // brief is missing (legacy rows / a compose failure at enqueue time).
+      const brief = str('brief')
+      if (brief) return brief
       const who = str('contactName', 'A guest')
       const summary = str('ping_summary') || str('internalContext', 'needs your call')
       return `Kicking this one up to you — ${who}: ${summary}. Tell me what to say and I'll send it, or handle it yourself and I'll stand down.`
@@ -760,11 +779,16 @@ async function templateForKind(
         placeholders: [str('guest', 'A guest'), str('summary', 'just booked')],
       }
     case 'escalation': {
-      // Reuse the urgent_hold template. Prefer the operator-friendly
-      // ping_summary supplied by the trigger; fall back to the older
-      // "<category>: <internalContext>" shape only when ping_summary is
-      // missing (legacy queue rows from before the field landed).
+      // Reuse the urgent_hold template — only reached when the window's
+      // closed for this recipient (see TEMPLATE_REQUIRED_KINDS's comment;
+      // 'escalation' is no longer unconditionally template-required).
+      // Prefer one_line (buildOperatorBrief's template-safe summary —
+      // newline-free, real ellipsis, and for a form submission actually
+      // names the booking instead of dumping raw field syntax), then the
+      // older ping_summary, then the oldest "<category>: <internalContext>"
+      // shape for legacy queue rows predating both fields.
       const summary =
+        str('one_line', '') ||
         str('ping_summary', '') ||
         `${str('category', 'policy')}: ${str('internalContext', 'needs your call').slice(0, 80)}`
       return {
@@ -818,8 +842,19 @@ function freeFormBodyForKind(kind: string, payload: Record<string, unknown>): st
       ? (payload.narrativeBody as string)
       : null
   }
+  // The composed operator brief (lib/operator-brief.ts) — multi-line, so it
+  // can only go out free-form; Meta rejects newlines in template params.
+  // Absent only for escalation rows enqueued before this landed, or if
+  // recordEscalation's compose step failed — dispatch() falls back to the
+  // template (one_line/ping_summary placeholder) in that case, same
+  // fallback shape as morning_digest above.
+  if (kind === 'escalation') {
+    return typeof payload.brief === 'string' && payload.brief.trim()
+      ? (payload.brief as string)
+      : null
+  }
   // All other kinds prefer their template; this is only used when the 24h
   // window is open AND the kind isn't in TEMPLATE_REQUIRED_KINDS. In v1
-  // that's ack + morning_digest's narrative path.
+  // that's ack + morning_digest's narrative path + escalation's brief.
   return null
 }

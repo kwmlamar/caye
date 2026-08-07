@@ -395,6 +395,7 @@ async function processGmailMessage(
     workspaceId,
     conversationId,
     contactName: fromName || fromEmail,
+    body: body || subject,
   })
 
   // Caye chose to reply → actually send via Gmail. Fall back to held-draft

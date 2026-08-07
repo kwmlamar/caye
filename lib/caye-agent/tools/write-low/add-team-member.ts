@@ -23,6 +23,12 @@ const CONSENT_REPLY = 'OK'
 export function normalizeE164(raw: string): string | null {
   const digits = raw.replace(/\D/g, '')
   if (digits.length < 8) return null
+  // Bare 10-digit NANP number (e.g. Bahamas 242 area code entered without
+  // the leading country code) — Caye's operator base is Caribbean/US, so
+  // treat a 10-digit number as missing '1' rather than shipping it as-is.
+  // Caught in prod: a Bahamas owner's number stored as "+242..." routed to
+  // the Republic of the Congo instead of the Bahamas.
+  if (digits.length === 10) return `+1${digits}`
   return `+${digits}`
 }
 
