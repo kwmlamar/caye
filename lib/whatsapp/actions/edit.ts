@@ -1,14 +1,34 @@
 import 'server-only'
 import Anthropic from '@anthropic-ai/sdk'
 import { createServiceClient } from '@/lib/supabase-server'
-import { dispatchOperatorReply } from '../channel-dispatch'
 import { resolveItemRef, type PendingHeldItem } from '../pending'
 import type { ActionContext, ActionResult } from './types'
 import type { VoiceProfile } from '@/lib/voice-profile'
 import { loggedMessagesCreate } from '@/lib/llm-telemetry'
 
 /**
- * Compose a revised draft per the operator's instruction, then send.
+ * Compose a revised draft per the operator's instruction and stage it —
+ * NEVER send directly from here.
+ *
+ * Before 2026-08-07 this dispatched the revised reply straight to the
+ * customer in the same call, with no confirmation step at all — the only
+ * send-capable action in this module that didn't require an existing
+ * reviewed proposedReply first (contrast actionSend, which refuses to send
+ * unless one is already on file). That let a single ambiguous instruction
+ * ("give me a draft" with no customer named) both (a) go straight to the
+ * customer with zero review, and (b) land on the wrong conversation with
+ * nothing to catch it, since the ack echoed back was just the sent text —
+ * never the resolved contact name. Confirmed live 2026-08-06: Karenda asked
+ * for a draft on Robert's escalation and got an email sent to Marissa
+ * instead, with "Sent: ..." as the only feedback.
+ *
+ * Now this mirrors the hold flow's draft-then-confirm shape: persist the
+ * revision as the conversation's proposed_reply (same is_internal note
+ * shape the front-desk webhooks write at hold time — see
+ * app/api/webhooks/whatsapp/route.ts's hold branch), and hand the drafted
+ * text AND the resolved contact name back to the operator. Actually
+ * sending it requires a separate, later "send" intent (actionSend), which
+ * only ever sends a proposedReply that's already been shown once.
  *
  * Uses the workspace's voice profile (the same one caye-reply.ts uses) so the
  * revised reply still sounds like the owner. Keeps it short — WhatsApp/email
@@ -45,19 +65,44 @@ export async function actionEdit(
   }
 
   try {
-    await dispatchOperatorReply(item.conversationId, revised)
+    await stageProposedReply(item.conversationId, revised)
     return {
-      ackBody: `Sent: "${revised.slice(0, 60)}${revised.length > 60 ? '…' : ''}"`,
+      ackBody: `Draft for ${item.contactName}: "${revised}"\n\nSend that?`,
       tag: { label: `edit ${item.contactName}`, status: 'ok' },
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    console.error('[actions/edit] dispatch failed:', msg)
+    console.error('[actions/edit] stage failed:', msg)
     return {
-      ackBody: `Couldn't send the edit to ${item.contactName} — ${msg.slice(0, 100)}.`,
+      ackBody: `Couldn't save the draft for ${item.contactName} — ${msg.slice(0, 100)}.`,
       tag: { label: `edit ${item.contactName}`, status: 'failed' },
     }
   }
+}
+
+/**
+ * Persist a revised draft as an internal note carrying metadata.proposed_reply
+ * — the same shape getPendingHeldItems reads (lib/whatsapp/pending.ts). This
+ * is what actionSend later sends once the operator confirms.
+ */
+async function stageProposedReply(conversationId: string, proposedReply: string): Promise<void> {
+  const supabase = createServiceClient()
+  const { error } = await supabase.from('unified_messages').insert({
+    conversation_id: conversationId,
+    channel_message_id: null,
+    sender_type: 'business',
+    content: proposedReply,
+    message_type: 'text',
+    sent_at: new Date().toISOString(),
+    status: 'sent',
+    is_internal: true,
+    metadata: {
+      generated_by: 'caye',
+      hold_reason: 'operator edit',
+      proposed_reply: proposedReply,
+    },
+  })
+  if (error) throw new Error(error.message)
 }
 
 async function composeRevisedReply(
