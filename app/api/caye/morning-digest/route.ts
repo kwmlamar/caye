@@ -25,7 +25,7 @@ import { loadScheduleConfig, isDigestHour } from '@/lib/whatsapp/schedule'
 import { recordCronRun } from '@/lib/cron-run-log'
 import { composeMorningBriefing } from '@/lib/caye-agent/briefing'
 import { resolveOperatorByPhone } from '@/lib/operator-identity'
-import { holdKindOf, isAttentionHold } from '@/lib/hold-kinds'
+import { getAttentionHoldCount, getAttentionHolds } from '@/lib/hold-kinds'
 import {
   AGING_LIST_MAX_ITEMS,
   ESCALATION_FOLLOWUP_HOURS,
@@ -88,18 +88,8 @@ export async function runMorningDigest() {
       continue
     }
 
-    const [{ data: heldRows }, { count: bookingsCount }, { data: customer }] = await Promise.all([
-      // Fetched rather than counted so drafted cold outreach can be excluded
-      // in TS — metadata.hold_kind is where the distinction lives and a
-      // head:true count cannot see it. Without this the digest opens every
-      // morning with a held count dominated by a batch-approval queue nobody
-      // is waiting on (19 held on TropiTech Outreach, 18 of them queue).
-      supabase
-        .from('unified_conversations')
-        .select('id, metadata, connected_account:connected_accounts!inner(user_id)')
-        .eq('connected_account.user_id', ws.workspace_id)
-        .eq('human_agent_enabled', true)
-        .limit(200),
+    const [held, { count: bookingsCount }, { data: customer }] = await Promise.all([
+      getAttentionHoldCount(supabase, ws.workspace_id),
       supabase
         .from('bookings')
         .select('id', { count: 'exact', head: true })
@@ -108,9 +98,6 @@ export async function runMorningDigest() {
       supabase.from('customers').select('full_name, business_name').eq('id', ws.workspace_id).maybeSingle(),
     ])
 
-    const held = ((heldRows ?? []) as { metadata: unknown }[]).filter((r) =>
-      isAttentionHold(holdKindOf(r.metadata))
-    ).length
     const bookings = bookingsCount ?? 0
     if (held === 0 && bookings === 0) {
       summary.skipped_no_state++
@@ -196,37 +183,13 @@ async function findOldestAgingHold(
   now: Date
 ): Promise<{ customer: string; daysHeld: number } | null> {
   const supabase = createServiceClient()
-  const { data: accounts } = await supabase
-    .from('connected_accounts')
-    .select('id')
-    .eq('user_id', workspaceId)
-  const accountIds = (accounts ?? []).map((a: { id: string }) => a.id)
-  if (accountIds.length === 0) return null
 
-  // Over-fetch and filter: the oldest held thread is frequently a parked
-  // outreach draft, and reporting "your oldest hold is 12 days old" about a
-  // batch-approval queue trains the operator to ignore the line entirely.
-  const { data: candidates, error } = await supabase
-    .from('unified_conversations')
-    .select('customer_name, customer_id, human_agent_marked_at, metadata')
-    .in('connected_account_id', accountIds)
-    .eq('is_archived', false)
-    .eq('human_agent_enabled', true)
-    .not('human_agent_marked_at', 'is', null)
-    .order('human_agent_marked_at', { ascending: true })
-    .limit(50)
-
-  if (error) {
-    console.error('[morning-digest] oldest-aging-hold fetch failed:', error)
-    return null
-  }
-
-  const data = ((candidates ?? []) as {
-    customer_name: string | null
-    customer_id: string | null
-    human_agent_marked_at: string | null
-    metadata: unknown
-  }[]).find((c) => isAttentionHold(holdKindOf(c.metadata)))
+  // getAttentionHolds already excludes queue holds and orders oldest-first
+  // with nulls last, so the first row carrying a mark time is the answer —
+  // reporting "your oldest hold is 12 days old" about a parked outreach
+  // draft trains the operator to ignore the line entirely.
+  const holds = await getAttentionHolds(supabase, workspaceId)
+  const data = holds.find((c) => c.human_agent_marked_at)
 
   if (!data?.human_agent_marked_at) return null
 

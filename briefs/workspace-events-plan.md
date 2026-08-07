@@ -269,6 +269,40 @@ unchanged at 2.
 Both were invisible underneath 17 outreach drafts before the Phase 3 split. Neither is
 fixed by shipping anything; they want Karenda today.
 
+## 3c. Founder dashboard drift + consolidation — 2026-08-07
+
+Triggered by a live report: the "Needs review" stat card and the "Review (N)" tab
+sometimes showed different numbers. They were reading two different tables —
+`caye_escalations` (open = `!owner_responded_at && !expired_at`) vs
+`unified_conversations.human_agent_enabled` — kept in sync only by every hold-clearing
+call site remembering to call `resolveOpenEscalations`. Two confirmed live drifts:
+Jonathan Garcia (hold cleared by a manual backfill that skipped the resolve call, so he
+counted on the stat card but had already dropped off the tab) and Sue Guilbert
+(escalation bookkeeping legitimately expired 2026-08-01 per `expireEscalationBookkeepingOnly`'s
+own "stop nagging, not resolved" design, while her thread has sat held since 07-25 — she
+counted on the tab, not the stat card). They read "2 = 2" by coincidence, counting
+different threads. Separately, `founder/command-overview` and `founder/conversations` —
+the dashboard's REST API — turned out to be a codebase Phase 3 never touched; unpatched,
+`founder/conversations` still returned 19 for TropiTech Outreach.
+
+Fix: both routes now compute the identical set — held, non-archived, non-queue — via
+`lib/hold-kinds.ts`. `founder/conversations` (paginated Review tab) fetches+filters in TS
+rather than a Postgrest jsonb-path filter, with the keyset cursor anchored to the last
+raw row scanned (not the last visible one) so "load more" can't re-scan across filtered-out
+queue holds.
+
+**Consolidation, same session:** the fetch-and-filter primitive itself (get this
+workspace's held conversations, exclude queue holds) was hand-copied in `get_held_queue`,
+`get_today_summary`, `morning-digest` (×2), and `stale-hold-sweep` — five more copies of
+the same query shape, agreeing in result only because each independently imported the
+`isAttentionHold` predicate correctly. Extracted to `getAttentionHolds` /
+`getAttentionHoldCount` / `getHeldSummary` in `lib/hold-kinds.ts`; all five call sites
+now call one of those instead of hand-rolling the query. `founder/conversations`
+deliberately still doesn't — it needs the raw pre-filter rows for cursor correctness,
+which the shared helper's return shape throws away by design; forcing it through would
+be the wrong abstraction, not a missed one. Net: −164 lines of duplicated query code,
++116 lines of shared (tested) primitive.
+
 ## 4. Still open — not solved by this project
 
 - **Bimini coverage.** Email-only for a business that almost certainly runs on WhatsApp

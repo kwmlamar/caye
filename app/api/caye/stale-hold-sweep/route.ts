@@ -52,7 +52,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase-server'
 import { sendZohoEmail } from '@/lib/email-ai'
 import { loadScheduleConfig, inQuietHours } from '@/lib/whatsapp/schedule'
-import { holdKindOf, isAttentionHold } from '@/lib/hold-kinds'
+import { getAttentionHolds } from '@/lib/hold-kinds'
 
 const STALE_BUSINESS_HOURS = 4
 
@@ -171,26 +171,13 @@ function buildDeadDateSuggestedReply(customerName: string | null, targetDate: st
 async function processWorkspace(args: ProcessArgs): Promise<WorkspaceOutcome> {
   const supabase = createServiceClient()
 
-  // Find all connected accounts so we can scope conversations to this workspace.
-  const { data: accounts } = await supabase
-    .from('connected_accounts')
-    .select('id')
-    .eq('user_id', args.workspaceId)
-  const accountIds = (accounts ?? []).map((a: { id: string }) => a.id)
-  if (accountIds.length === 0) return 'no_stale'
-
-  // Held conversations on those accounts.
-  const { data: held } = await supabase
-    .from('unified_conversations')
-    .select(
-      'id, customer_name, customer_id, channel_type, human_agent_reason, human_agent_marked_at, last_message_at, last_business_sender_kind, last_sender_type, target_date, metadata'
-    )
-    .in('connected_account_id', accountIds)
-    .eq('human_agent_enabled', true)
-    .eq('is_archived', false)
-    .limit(200)
-
-  if (!held || held.length === 0) return 'no_stale'
+  // Held, non-queue conversations for this workspace — see lib/hold-kinds.ts.
+  // Drafted cold outreach parked for batch approval is a work queue, not a
+  // guest waiting; chasing the operator about a queue they are deliberately
+  // letting fill up is the fastest way to teach them this sweep is noise —
+  // on TropiTech Outreach it would have chased 18 of 19 held threads.
+  const held = await getAttentionHolds(supabase, args.workspaceId)
+  if (held.length === 0) return 'no_stale'
 
   const cfg = await loadScheduleConfig(args.workspaceId)
   const now = new Date()
@@ -204,14 +191,7 @@ async function processWorkspace(args: ProcessArgs): Promise<WorkspaceOutcome> {
   const stale: StaleHold[] = []
   const agedStale: StaleHold[] = []
   for (const c of held) {
-    // Drafted cold outreach parked for batch approval is a work queue, not a
-    // guest waiting. Chasing the operator about a queue they are
-    // deliberately letting fill up is the fastest way to teach them that
-    // this sweep is noise — and on TropiTech Outreach it would have chased
-    // 18 of 19 held threads. See lib/hold-kinds.ts.
-    if (!isAttentionHold(holdKindOf(c.metadata))) continue
-
-    const lastBusinessAt = (c.last_message_at as string | null) ?? null
+    const lastBusinessAt = c.last_message_at
     if (!lastBusinessAt) continue
 
     // Skip if the latest activity on the thread is from the customer —

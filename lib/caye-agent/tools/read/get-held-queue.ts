@@ -1,19 +1,7 @@
 import 'server-only'
 import { createServiceClient } from '@/lib/supabase-server'
-import { holdKindOf, isQueueHold } from '@/lib/hold-kinds'
+import { getHeldSummary } from '@/lib/hold-kinds'
 import type { Tool } from '../types'
-
-interface HeldRow {
-  id: string
-  customer_name: string | null
-  customer_id: string | null
-  channel_type: string
-  human_agent_reason: string | null
-  human_agent_marked_at: string | null
-  last_message_preview: string | null
-  target_date: string | null
-  metadata: Record<string, unknown> | null
-}
 
 export const getHeldQueue: Tool<Record<string, never>> = {
   name: 'get_held_queue',
@@ -30,36 +18,10 @@ export const getHeldQueue: Tool<Record<string, never>> = {
   async execute(_args, ctx) {
     const supabase = createServiceClient()
 
-    const { data: accounts } = await supabase
-      .from('connected_accounts')
-      .select('id')
-      .eq('user_id', ctx.workspaceId)
-    const accountIds = (accounts ?? []).map((a: { id: string }) => a.id)
-    if (accountIds.length === 0) {
-      return { ok: true, data: { items: [], count: 0 } }
-    }
-
-    const { data, error } = await supabase
-      .from('unified_conversations')
-      .select(
-        'id, customer_name, customer_id, channel_type, human_agent_reason, human_agent_marked_at, last_message_preview, target_date, metadata'
-      )
-      .in('connected_account_id', accountIds)
-      .eq('is_archived', false)
-      .eq('human_agent_enabled', true)
-      .order('human_agent_marked_at', { ascending: true, nullsFirst: false })
-
-    if (error) return { ok: false, error: error.message }
-
-    const allRows = (data ?? []) as HeldRow[]
-
-    // Split the queue from the genuine holds. Drafted cold outreach parked
-    // for batch approval shares human_agent_enabled with "a guest is waiting
-    // on you", and counting them together is why this workspace reported 19
-    // items needing the operator's call when 18 were a queue they process on
-    // their own schedule. See lib/hold-kinds.ts.
-    const rows = allRows.filter((r) => !isQueueHold(holdKindOf(r.metadata)))
-    const queued = allRows.length - rows.length
+    // Queue holds (drafted cold outreach awaiting batch approval) are
+    // excluded from `rows` here, not just filtered at display time — see
+    // lib/hold-kinds.ts. `queued` is reported separately below.
+    const { attention: rows, queuedCount: queued } = await getHeldSummary(supabase, ctx.workspaceId)
     const conversationIds = rows.map((r) => r.id)
 
     // Cross-reference caye_escalations for two things: (1) has_open_escalation

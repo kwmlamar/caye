@@ -25,7 +25,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient, createServerClient } from '@/lib/supabase-server'
 import { isFounderUserId } from '@/lib/founder'
 import { costForModel } from '@/lib/llm-pricing'
-import { holdKindOf, isAttentionHold } from '@/lib/hold-kinds'
+import { getAttentionHoldCount } from '@/lib/hold-kinds'
 
 export async function GET(req: NextRequest) {
   const workspaceId = req.nextUrl.searchParams.get('workspaceId')
@@ -69,7 +69,6 @@ export async function GET(req: NextRequest) {
     { data: llmRows, error: llmErr },
     { data: bookingsRows, error: bookingsErr },
     { data: aiConfig },
-    { data: accounts },
   ] = await Promise.all([
     supabase
       .from('caye_escalations')
@@ -96,10 +95,6 @@ export async function GET(req: NextRequest) {
       .select('whatsapp_muted_until')
       .eq('workspace_id', workspaceId)
       .maybeSingle(),
-    supabase
-      .from('connected_accounts')
-      .select('id')
-      .eq('user_id', workspaceId),
   ])
 
   if (escErr) return NextResponse.json({ error: escErr.message }, { status: 500 })
@@ -152,20 +147,7 @@ export async function GET(req: NextRequest) {
   // and the agent-side get_held_queue (lib/hold-kinds.ts): a held,
   // non-archived conversation that isn't a queued outreach draft awaiting
   // batch approval. Both cards now read this same thing.
-  const accountIds = (accounts ?? []).map((a: { id: string }) => a.id)
-  let pendingEscalations = 0
-  if (accountIds.length > 0) {
-    const { data: heldRows } = await supabase
-      .from('unified_conversations')
-      .select('id, metadata')
-      .in('connected_account_id', accountIds)
-      .eq('is_archived', false)
-      .eq('human_agent_enabled', true)
-      .limit(200)
-    pendingEscalations = ((heldRows ?? []) as { metadata: unknown }[]).filter((r) =>
-      isAttentionHold(holdKindOf(r.metadata))
-    ).length
-  }
+  const pendingEscalations = await getAttentionHoldCount(supabase, workspaceId)
 
   // Conversation IDs with an escalation still waiting on the
   // owner/founder — used to flag bookings whose customer has an open
