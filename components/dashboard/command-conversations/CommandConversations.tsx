@@ -117,10 +117,11 @@ interface Props {
    *  its own conversation list locally via useFounderConversations. */
   onSent?: () => void
   /** True in the small grid-card layout (unexpanded dashboard tile) —
-   *  hides the compose box there since a two-line textarea + send button
-   *  doesn't fit that width/height without crowding the thread. The
-   *  ExpandButton at FounderHome's card level is how the founder gets to
-   *  the full view where sending actually makes sense. */
+   *  shows the conversation list only, full width, with no thread pane or
+   *  compose box: none of that fits the tile's width/height without
+   *  crowding it. The ExpandButton at FounderHome's card level is how the
+   *  founder gets to the full view where reading/sending actually makes
+   *  sense. */
   compact?: boolean
 }
 
@@ -130,6 +131,49 @@ interface Props {
 const SEARCH_DEBOUNCE_MS = 300
 // Pixels from the bottom of the list column at which the next page loads.
 const LOAD_MORE_THRESHOLD_PX = 120
+
+// List column width while expanded, as a % of the row — draggable via the
+// divider, remembered across sessions. Default favors the thread (the
+// thing you're actually reading) over the list.
+const LIST_WIDTH_KEY = 'cayeConversationsListWidthPct'
+const LIST_WIDTH_DEFAULT = 30
+const LIST_WIDTH_MIN = 20
+const LIST_WIDTH_MAX = 60
+
+function readStoredListWidth(): number {
+  if (typeof window === 'undefined') return LIST_WIDTH_DEFAULT
+  const stored = Number(window.localStorage.getItem(LIST_WIDTH_KEY))
+  return stored >= LIST_WIDTH_MIN && stored <= LIST_WIDTH_MAX ? stored : LIST_WIDTH_DEFAULT
+}
+
+function ColumnDivider({ onMouseDown, active }: { onMouseDown: (e: React.MouseEvent) => void; active: boolean }) {
+  const [hover, setHover] = useState(false)
+  const lit = active || hover
+  return (
+    <div
+      onMouseDown={onMouseDown}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      role="separator"
+      aria-orientation="vertical"
+      title="Drag to resize"
+      style={{
+        width: 9, flexShrink: 0, cursor: 'col-resize', position: 'relative',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}
+    >
+      <div style={{
+        width: lit ? 2 : 1, height: '100%', background: lit ? '#4EBECE' : 'rgba(255,255,255,0.08)',
+        transition: active ? 'none' : 'background 0.15s ease, width 0.15s ease',
+      }} />
+      <div style={{
+        position: 'absolute', width: 3, height: 22, borderRadius: 2,
+        background: lit ? 'rgba(78,190,206,0.9)' : 'rgba(255,255,255,0.18)',
+        transition: active ? 'none' : 'background 0.15s ease',
+      }} />
+    </div>
+  )
+}
 
 export default function CommandConversations({ workspaceId, selectedConversationId, onSent, compact = false }: Props) {
   const [tab, setTab] = useState<'all' | 'review'>('all')
@@ -145,6 +189,14 @@ export default function CommandConversations({ workspaceId, selectedConversation
   const [drafting, setDrafting] = useState(false)
   const threadContainerRef = useRef<HTMLDivElement | null>(null)
   const replyTextareaRef = useRef<HTMLTextAreaElement | null>(null)
+  // List-column width while expanded — draggable, persisted in
+  // localStorage. Lazy-init only reads it once; irrelevant in compact
+  // mode, where the list is always 100% regardless of this value.
+  const [listWidthPct, setListWidthPct] = useState(readStoredListWidth)
+  const [resizing, setResizing] = useState(false)
+  const containerRef = useRef<HTMLDivElement | null>(null)
+  const listWidthRef = useRef(listWidthPct)
+  listWidthRef.current = listWidthPct
   // In-progress compose text per conversation, keyed by conversation id —
   // switching threads and coming back used to wipe whatever was typed or
   // drafted, since replyText was a single flat value reset on every switch.
@@ -367,10 +419,47 @@ export default function CommandConversations({ workspaceId, selectedConversation
     })
   }, [threadLoading, thread?.messages?.length])
 
+  // Drag-to-resize the list/thread split. Tracked on window (not the
+  // divider itself) so the drag keeps following the cursor even once it
+  // leaves the thin handle — a mousedown on a 9px-wide strip loses the
+  // pointer on the very first move otherwise.
+  const handleDividerMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    setResizing(true)
+  }, [])
+
+  useEffect(() => {
+    if (!resizing) return
+    const onMove = (e: MouseEvent) => {
+      const el = containerRef.current
+      if (!el) return
+      const rect = el.getBoundingClientRect()
+      const pct = ((e.clientX - rect.left) / rect.width) * 100
+      setListWidthPct(Math.min(LIST_WIDTH_MAX, Math.max(LIST_WIDTH_MIN, pct)))
+    }
+    const onUp = () => {
+      setResizing(false)
+      window.localStorage.setItem(LIST_WIDTH_KEY, String(listWidthRef.current))
+    }
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    return () => {
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+  }, [resizing])
+
   return (
-    <div style={{ height: '100%', display: 'flex', color: '#f5f5f4' }}>
-      {/* ── List column ── */}
-      <div style={{ width: '46%', background: 'rgba(255,255,255,0.015)', display: 'flex', flexDirection: 'column' }}>
+    <div ref={containerRef} style={{ height: '100%', display: 'flex', color: '#f5f5f4' }}>
+      {/* ── List column — full width while compact (the small dashboard
+          tile has no room for a thread pane too); a draggable split once
+          expanded gives it space, defaulting narrower so the thread (what
+          you're actually reading) gets the bigger share. ── */}
+      <div style={{ width: compact ? '100%' : `${listWidthPct}%`, flexShrink: 0, background: 'rgba(255,255,255,0.015)', display: 'flex', flexDirection: 'column' }}>
         <div style={{ padding: '16px 16px 10px' }}>
           <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
             {(['all', 'review'] as const).map((t) => (
@@ -417,10 +506,14 @@ export default function CommandConversations({ workspaceId, selectedConversation
         </div>
       </div>
 
-      {/* ── Thread detail — header stays pinned; only the message list
-          scrolls, so landing scrolled-to-bottom never hides who/what
-          channel this is (matches CayeDirectThread's pattern). ── */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+      {/* ── Thread detail — hidden while compact (list-only tile); header
+          stays pinned when shown, only the message list scrolls, so
+          landing scrolled-to-bottom never hides who/what channel this is
+          (matches CayeDirectThread's pattern). ── */}
+      {!compact && (
+      <>
+      <ColumnDivider onMouseDown={handleDividerMouseDown} active={resizing} />
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
         {!activeSummary ? (
           <div style={{ padding: 16, fontSize: 13, color: 'rgba(245,245,244,0.35)' }}>Select a conversation.</div>
         ) : (
@@ -579,6 +672,8 @@ export default function CommandConversations({ workspaceId, selectedConversation
           </>
         )}
       </div>
+      </>
+      )}
     </div>
   )
 }
