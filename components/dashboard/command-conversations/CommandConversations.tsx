@@ -47,6 +47,15 @@ const CHANNEL_COLOR: Record<string, string> = {
   sms: 'rgba(245,245,244,0.5)',
 }
 
+function SearchIcon({ color }: { color: string }) {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="11" cy="11" r="7" />
+      <line x1="21" y1="21" x2="16.65" y2="16.65" />
+    </svg>
+  )
+}
+
 function TabPill({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
   const [hover, setHover] = useState(false)
   return (
@@ -123,6 +132,12 @@ interface Props {
    *  founder gets to the full view where reading/sending actually makes
    *  sense. */
   compact?: boolean
+  /** Called when a conversation row is clicked while compact — lets the
+   *  parent (FounderHome) expand the card to fullscreen so the thread
+   *  that was just selected is actually visible, instead of silently
+   *  setting activeId behind a hidden thread pane. No-op while already
+   *  expanded. */
+  onRequestExpand?: () => void
 }
 
 // Search re-queries the server (it covers every conversation, not just
@@ -175,7 +190,7 @@ function ColumnDivider({ onMouseDown, active }: { onMouseDown: (e: React.MouseEv
   )
 }
 
-export default function CommandConversations({ workspaceId, selectedConversationId, onSent, compact = false }: Props) {
+export default function CommandConversations({ workspaceId, selectedConversationId, onSent, compact = false, onRequestExpand }: Props) {
   const [tab, setTab] = useState<'all' | 'review'>('all')
   const [query, setQuery] = useState('')
   const [debouncedQuery, setDebouncedQuery] = useState('')
@@ -274,6 +289,14 @@ export default function CommandConversations({ workspaceId, selectedConversation
   useRevalidateOnFocus(refreshThread)
 
   const activeSummary = list.find((c) => c.id === activeId)
+
+  // Row click while compact: selecting a thread with the thread pane
+  // hidden would otherwise be a no-op the founder can't see, so it also
+  // asks the parent to expand the card to fullscreen.
+  function handleSelectConversation(id: string) {
+    setActiveId(id)
+    if (compact) onRequestExpand?.()
+  }
 
   // Auto-fill is scoped narrowly to AUTO_FILL_HOLD_KINDS — the repeatable,
   // policy-constrained cold-outreach cases (outreach-script.md's opener
@@ -466,20 +489,24 @@ export default function CommandConversations({ workspaceId, selectedConversation
               <TabPill key={t} label={t === 'all' ? 'All chats' : `Review (${reviewCount})`} active={tab === t} onClick={() => setTab(t)} />
             ))}
           </div>
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onFocus={() => setSearchFocused(true)}
-            onBlur={() => setSearchFocused(false)}
-            placeholder="Search by name…"
-            style={{
-              width: '100%', background: 'rgba(255,255,255,0.05)',
-              border: `1px solid ${searchFocused ? 'rgba(78,190,206,0.5)' : 'rgba(255,255,255,0.08)'}`,
-              borderRadius: 8, padding: '7px 10px', fontSize: 12.5, color: '#f5f5f4', outline: 'none',
-              boxShadow: searchFocused ? '0 0 0 3px rgba(78,190,206,0.1)' : 'none',
-              transition: 'border-color 0.15s ease, box-shadow 0.15s ease',
-            }}
-          />
+          <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+            <span style={{ position: 'absolute', left: 11, display: 'flex', pointerEvents: 'none' }}>
+              <SearchIcon color={searchFocused ? 'rgba(78,190,206,0.9)' : 'rgba(245,245,244,0.3)'} />
+            </span>
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onFocus={() => setSearchFocused(true)}
+              onBlur={() => setSearchFocused(false)}
+              placeholder="Search by name…"
+              style={{
+                width: '100%', background: searchFocused ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.035)',
+                border: '1px solid transparent',
+                borderRadius: 999, padding: '7px 10px 7px 30px', fontSize: 12.5, color: '#f5f5f4', outline: 'none',
+                transition: 'background 0.15s ease',
+              }}
+            />
+          </div>
         </div>
         <div
           style={{ flex: 1, overflowY: 'auto', padding: '0 8px 8px' }}
@@ -496,7 +523,7 @@ export default function CommandConversations({ workspaceId, selectedConversation
           ) : (
             <>
               {list.map((c) => (
-                <ConversationRow key={c.id} c={c} active={activeId === c.id} onClick={() => setActiveId(c.id)} />
+                <ConversationRow key={c.id} c={c} active={activeId === c.id} onClick={() => handleSelectConversation(c.id)} />
               ))}
               {loadingMore && (
                 <div style={{ padding: '8px 10px' }}><CayeLoadingPulse size={12} /></div>

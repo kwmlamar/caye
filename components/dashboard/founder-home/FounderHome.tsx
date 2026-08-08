@@ -734,6 +734,7 @@ export default function FounderHome() {
                       selectedConversationId={selectedConversationId}
                       onSent={refetch}
                       compact={expanded !== 'conversations'}
+                      onRequestExpand={() => setExpanded('conversations')}
                     />
                   ) : <PanelSkeleton />}
                 </div>
