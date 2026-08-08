@@ -14,7 +14,7 @@ import {
   MessengerLogoIcon,
   EnvelopeSimpleIcon,
   CalendarBlankIcon,
-  SparkleIcon,
+  ArrowSquareOutIcon,
   CaretDownIcon,
 } from '@phosphor-icons/react'
 import { sendGAEvent } from '@next/third-parties/google'
@@ -434,13 +434,23 @@ export default function LandingPageClient() {
               Meet <span className="text-caribbean-teal-deep">Caye.</span>
             </motion.h1>
 
-            {/* Subhead — Newsreader editorial deck */}
+            {/* Subhead — Newsreader editorial deck. Carries the locked
+                2026-08-06 headline claim (decisions-log): the wedge is
+                *how you manage her*, not which channel she's on. The
+                old line ("Talk to Caye in WhatsApp...") staked the
+                headline on the one channel Meta can gate — connecting a
+                guest-facing number to the Cloud API migrates it off the
+                owner's personal WhatsApp app, which is exactly why
+                Bimini's never connected. The back-office number below
+                (the phone dock) is TropiTech-owned and true for every
+                customer regardless of what they connect, so it's named
+                as the supporting detail, not the claim. */}
             <motion.p
               {...heroItem(0.34)}
               className="mt-8 font-newsreader text-[1.2rem] md:text-[1.35rem] leading-[1.45] text-near-black/85 max-w-2xl mx-auto font-light"
               style={{ fontStyle: 'normal' }}
             >
-              Talk to Caye in WhatsApp. She answers customers, manages operations, and gets work done across your business.
+              You text her like staff — no dashboard, no login, no settings page. She works your inbox, your DMs, your WhatsApp, so you never have to log into anything.
             </motion.p>
 
             {/* Primary CTA */}
@@ -755,7 +765,7 @@ export default function LandingPageClient() {
                       onClick={() => handleAskAi(label, href)}
                       className="inline-flex items-center gap-2 rounded-full bg-white/95 hover:bg-white text-near-black font-medium text-[13.5px] px-4 py-2.5 transition-all hover:-translate-y-px shadow-[0_6px_20px_-8px_rgba(7,26,26,0.35)]"
                     >
-                      <SparkleIcon size={13} weight="fill" color="#0D9C8B" />
+                      <ArrowSquareOutIcon size={13} weight="bold" color="#0D9C8B" />
                       {copiedAiTarget === label ? 'Copied — opening…' : label}
                     </button>
                   ))}
@@ -941,8 +951,8 @@ export default function LandingPageClient() {
                 </span>
               </div>
               <p className="mt-4 font-newsreader text-[15px] leading-relaxed text-near-black/60 max-w-[240px]">
-                Not a tool. A hire. The one who runs your front desk from
-                your own WhatsApp.
+                Not a tool. A hire. You text her like staff — no
+                dashboard, ever.
               </p>
               <div className="mt-5 flex items-center gap-2">
                 <span className="relative flex h-[7px] w-[7px]">

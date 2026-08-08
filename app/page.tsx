@@ -9,16 +9,16 @@ import { FAQ_ITEMS } from '@/components/landing/faq-data'
 // JSON-LD block search engines and AI answer engines read to figure out
 // what Caye is without having to infer it from the hero copy.
 export const metadata: Metadata = {
-  title: 'Caye — Your AI Front Desk for WhatsApp',
+  title: 'Caye — Not a Tool. A Hire for Your Front Desk.',
   description:
-    'Caye is a WhatsApp-first AI staff member for tour operators. She answers guest DMs, quotes tours, and books them — live on WhatsApp, Instagram, and Messenger. Free for 7 days, no credit card.',
+    'Caye is a hire, not software — you text her like staff, with no dashboard, login, or settings page. She answers guest messages, quotes tours, and books them across WhatsApp, Instagram, and Messenger for Caribbean tour operators. Free for 7 days, no credit card.',
   alternates: {
     canonical: '/',
   },
   openGraph: {
-    title: 'Caye — Your AI Front Desk for WhatsApp',
+    title: 'Caye — Not a Tool. A Hire for Your Front Desk.',
     description:
-      'She answers, quotes, and books. The AI staff member that lives in your WhatsApp — built for tour operators.',
+      'You text her like staff — no dashboard, no login, no settings page. She answers, quotes, and books for Caribbean tour operators.',
     url: '/',
     siteName: 'Caye',
     images: [{ url: '/hero.png', width: 1980, height: 1114, alt: 'Caye answering a guest on WhatsApp' }],
@@ -27,9 +27,9 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Caye — Your AI Front Desk for WhatsApp',
+    title: 'Caye — Not a Tool. A Hire for Your Front Desk.',
     description:
-      'She answers, quotes, and books. The AI staff member that lives in your WhatsApp — built for tour operators.',
+      'You text her like staff — no dashboard, no login, no settings page. She answers, quotes, and books for Caribbean tour operators.',
     images: ['/hero.png'],
   },
 }
@@ -43,7 +43,7 @@ const jsonLd = {
       url: 'https://www.meetcaye.com',
       logo: 'https://www.meetcaye.com/caye-mark-1024.png',
       description:
-        'Caye is a WhatsApp-first AI staff member for tour operators, built by TropiTech Solutions.',
+        'Caye is a hire for Caribbean tour operators, built by TropiTech Solutions — you manage her like staff, with no dashboard or software to configure.',
     },
     {
       '@type': 'SoftwareApplication',
