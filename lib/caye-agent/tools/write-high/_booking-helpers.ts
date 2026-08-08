@@ -86,7 +86,7 @@ export async function maybeNotifyCustomer(args: {
  * fresh confirmation.
  */
 export const HIGH_RISK_CONFIRMATION_PREAMBLE =
-  'HIGH-RISK — staged, not immediate. The first call with a given set of arguments only stages the action (nothing happens yet); it returns a summary for you to relay to the operator. Call it again with the SAME arguments after the operator confirms in their next message to actually run it.'
+  'HIGH-RISK — staged, not immediate. The first call only stages the action; NOTHING happens yet, so never tell the operator it is done. It returns a summary to relay and a pending_action_id. Once the operator confirms in their NEXT message, call confirm_pending_action with that id — do NOT call this tool again to confirm, because that only works if your arguments are byte-identical and any rewording silently stages a second action instead. If the operator wants changes, call this tool again with the corrected arguments to stage a fresh draft, then confirm THAT id.'
 
 export const NOTIFY_BODY_DESCRIPTION =
   "The exact customer-facing notification text. Sent as-is to the customer's thread via their native channel. Compose in the operator's voice using the VOICE PROFILE; this text has already been approved by the operator in the prior turn. Leave empty + set notify_customer=false to make the booking change silently without notifying the customer."

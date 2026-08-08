@@ -1,5 +1,7 @@
 import type { Tool } from './types'
 import { gateHighRisk } from './high-risk-gate'
+import { HIGH_RISK_TOOLS } from './high-risk-registry'
+import { confirmPendingAction } from './write-high/confirm-pending-action'
 import { getCalendar } from './read/get-calendar'
 import { getHeldQueue } from './read/get-held-queue'
 import { getTodaySummary } from './read/get-today-summary'
@@ -36,22 +38,12 @@ import { createOutreachLeads } from './write-low/create-outreach-leads'
 import { updateTeamMemberPermissions } from './write-low/update-team-member-permissions'
 import { updateTeamMemberName } from './write-low/update-team-member-name'
 import { switchWorkspace } from './write-low/switch-workspace'
-import { removeTeamMember } from './write-high/remove-team-member'
-import { removeService } from './write-high/remove-service'
-import { removePricingTier } from './write-high/remove-pricing-tier'
-import { removeBlackoutDate } from './write-high/remove-blackout-date'
 import { skipHeldItem } from './write-low/skip-held-item'
 import { muteCaye } from './write-low/mute-caye'
 import { unmuteCaye } from './write-low/unmute-caye'
 import { archiveThread } from './write-low/archive-thread'
 import { addInternalNote } from './write-low/add-internal-note'
 import { sendPaymentConfirmation } from './write-low/send-payment-confirmation'
-import { sendReply } from './write-high/send-reply'
-import { sendPaymentLink } from './write-high/send-payment-link'
-import { confirmBooking } from './write-high/confirm-booking'
-import { rescheduleBooking } from './write-high/reschedule-booking'
-import { cancelBooking } from './write-high/cancel-booking'
-import { sendOutreachBatch } from './write-high/send-outreach-batch'
 import { notifyDriver } from './write-low/notify-driver'
 import { getMyAssignments } from './read/get-my-assignments'
 import { getLogisticsFacts } from './read/get-logistics-facts'
@@ -76,10 +68,12 @@ import { gateAdminHighRisk } from './admin/admin-high-risk-gate'
  * 2026-08-06 — mints signed channel connect links and hard-refuses
  * WhatsApp when the owner's number is their personal phone, since that
  * migration is destructive and can't be left to prompt text)
- * High-risk write tools (9): #42/#43 — gated through confirmation flow
+ * High-risk write tools (10): #42/#43 — gated through confirmation flow
  * (adds remove_pricing_tier, 2026-07-26; send_outreach_batch, 2026-08-01 —
  * step 3 of the 2026-07-21 staged-autonomy roadmap, batch-approved
- * first-touch outreach sends)
+ * first-touch outreach sends). Listed ungated in high-risk-registry.ts.
+ * Plus confirm_pending_action (2026-08-08), which runs a staged action by
+ * id and is itself ungated by design.
  * Driver-mode tools (4, 2026-07-05): tagged modes: ['driver'] — never
  * shipped to back-office/front-desk requests, see execute.ts mode filter.
  */
@@ -133,22 +127,16 @@ export const TOOL_REGISTRY: AnyTool[] = [
   createOutreachLeads as AnyTool,
   // High-risk write — confirmation flow enforced in code (gateHighRisk,
   // #64), not just the prompt. See lib/caye-agent/tools/high-risk-gate.ts.
-  gateHighRisk(sendReply) as AnyTool,
-  gateHighRisk(sendPaymentLink) as AnyTool,
-  gateHighRisk(confirmBooking) as AnyTool,
-  gateHighRisk(rescheduleBooking) as AnyTool,
-  gateHighRisk(cancelBooking) as AnyTool,
-  gateHighRisk(removeService) as AnyTool,
-  gateHighRisk(removePricingTier) as AnyTool,
-  gateHighRisk(removeBlackoutDate) as AnyTool,
-  gateHighRisk(removeTeamMember) as AnyTool,
-  // Batch-approved first-touch outreach sends (2026-08-01) — step 3 of the
-  // 2026-07-21 staged-autonomy roadmap. Step 4 (fully autonomous, no
-  // review) stays permanently off; this only ever sends threads the
-  // operator already reviewed via get_pending_quotes, and only after the
-  // same code-enforced confirmation round-trip as every other high-risk
-  // tool above.
-  gateHighRisk(sendOutreachBatch) as AnyTool,
+  // The ungated list lives in high-risk-registry.ts because
+  // confirm_pending_action needs it too and cannot import this module.
+  ...HIGH_RISK_TOOLS.map((t) => gateHighRisk(t) as AnyTool),
+  // Confirms a staged action by id (2026-08-08). Deliberately NOT gated —
+  // staging a confirmation would itself need confirming, forever. Its own
+  // safety comes from the staged row: expiry, execution, cancellation, the
+  // different-request rule, and the TARGET tool's role list are all
+  // re-checked inside it. See write-high/confirm-pending-action.ts for why
+  // confirming by id replaced confirming by re-derived args.
+  confirmPendingAction as AnyTool,
   // Driver mode
   getMyAssignments as AnyTool,
   getLogisticsFacts as AnyTool,

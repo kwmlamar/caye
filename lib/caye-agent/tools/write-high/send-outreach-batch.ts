@@ -57,9 +57,11 @@ export const sendOutreachBatch: Tool<SendOutreachBatchInput> = {
     "(hold_kind 'outreach_followup'). HIGH-RISK — ships real, non-opted-in cold email; only ever call " +
     "with conversation_ids that came from get_pending_quotes. CONFIRMATION IS ENFORCED IN CODE, not " +
     "just by this text — the first call with a given item list only stages it and returns un-executed, " +
-    "nothing is sent yet. Relay the staged summary (count + recipient/subject list) to the operator and " +
-    "ask them to confirm. Once they reply affirmatively in a NEW message, call this again with the " +
-    "EXACT SAME items to actually send. The email/subject fields are for the confirmation summary " +
+    "nothing is sent yet — never tell the operator it went out. Relay the staged summary (count + " +
+    "recipient/subject list) to the operator and ask them to confirm. Once they reply affirmatively in " +
+    "a NEW message, call confirm_pending_action with the pending_action_id from the staged result — do " +
+    "NOT call this tool again to confirm, since that only matches if the item list is byte-identical " +
+    "and any drift silently stages a second batch. The email/subject fields are for the confirmation summary " +
     "only — the tool always sends the exact draft text stored on the thread, never text regenerated in " +
     "this turn. This tool refuses any conversation_id that isn't a held outreach thread of one of those " +
     "two kinds — it will never send anything with zero prior human review.",

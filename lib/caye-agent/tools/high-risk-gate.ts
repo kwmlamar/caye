@@ -1,4 +1,5 @@
 import 'server-only'
+import { randomUUID } from 'node:crypto'
 import { createServiceClient } from '@/lib/supabase-server'
 import type { Tool, ToolContext, ToolResult } from './types'
 
@@ -204,17 +205,29 @@ export function gateHighRisk<T>(tool: Tool<T>, ttlMinutes: number = PENDING_TTL_
           ok: true,
           data: {
             pending: true,
+            // NOT SENT / NOT DONE. Spelled out because `ok: true` plus a
+            // summary reading "Send to <name> (email): ..." scanned as a
+            // completed send and Caye twice told an operator a follow-up had
+            // gone out when nothing had (2026-08-07). The flags say it now.
+            executed: false,
+            status: 'awaiting_operator_confirmation',
+            pending_action_id: existing.id,
             summary,
             note:
               ctx.origin === 'scan'
-                ? 'Already staged (possibly from an earlier scan) — do not re-propose unless the situation has materially changed. This cannot be confirmed by a scan; only a real reply from the operator confirms it.'
-                : 'Already staged this turn — relay the summary to the operator and stop. Do not call this tool again until they reply in a new message.',
+                ? 'NOTHING HAS HAPPENED YET. Already staged (possibly from an earlier scan) — do not re-propose unless the situation has materially changed. This cannot be confirmed by a scan; only a real reply from the operator confirms it.'
+                : 'NOTHING HAS HAPPENED YET — do not tell the operator this was sent or done. Already staged this turn: relay the summary and stop. When they approve in a NEW message, call confirm_pending_action with pending_action_id.',
           },
         }
       }
 
-      // Fresh — stage it, don't mutate yet.
+      // Fresh — stage it, don't mutate yet. The id is generated here rather
+      // than read back from the insert so the row can be referenced in the
+      // returned payload without a second round trip (confirm_pending_action
+      // takes it as its only argument).
+      const pendingActionId = randomUUID()
       const { error } = await supabase.from('caye_pending_actions').insert({
+        id: pendingActionId,
         workspace_id: ctx.workspaceId,
         operator_id: ctx.operatorId ?? null,
         tool_name: tool.name,
@@ -232,9 +245,19 @@ export function gateHighRisk<T>(tool: Tool<T>, ttlMinutes: number = PENDING_TTL_
         ok: true,
         data: {
           pending: true,
+          executed: false,
+          status: 'awaiting_operator_confirmation',
+          pending_action_id: pendingActionId,
           summary,
           expires_in_minutes: ttlMinutes,
-          note: 'Staged, not executed yet. Relay this summary to the operator VERBATIM — for a send_reply it already contains the full draft, so show that and ask one confirmation question ("Send that?"). Do not re-draft it in your own words and do not ask twice. Once they reply affirmatively in a NEW message, call this same tool with the same arguments again to actually run it.',
+          note:
+            'NOTHING HAS BEEN SENT OR CHANGED YET — do not tell the operator otherwise. ' +
+            'Relay this summary VERBATIM: for a send_reply it already contains the full draft, ' +
+            'so show that and ask ONE confirmation question ("Send that?"). Do not re-draft it in ' +
+            'your own words and do not ask twice. When they approve in a NEW message, call ' +
+            'confirm_pending_action with pending_action_id — NOT this tool again. Re-calling this ' +
+            'tool only matches if your arguments are byte-identical, so any rewording silently ' +
+            'stages a SECOND action instead of running this one.',
         },
       }
     },
