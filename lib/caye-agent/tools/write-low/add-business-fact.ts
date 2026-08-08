@@ -103,6 +103,17 @@ export const addBusinessFact: Tool<AddBusinessFactInput> = {
         fact,
         expires_on: args.expires_on ?? null,
         created_at: data.created_at,
+        // The operator must be told, verbatim, what got stored. On
+        // 2026-08-07 Karenda gave three instructions in nine minutes; two
+        // were saved, one ("50% to hold, balance 7 days prior") was used in
+        // a single draft and silently dropped, and the one "Policy saved"
+        // she heard was about a third thing entirely. From her seat all
+        // three looked equally received — so the next day Caye quoted that
+        // package with no deposit terms. Saving without confirming is how
+        // an owner ends up trusting memory that isn't there.
+        tell_the_owner:
+          `Confirm back in your reply that you've saved this, quoting it: "${fact}". ` +
+          `If they told you several things at once, say which ones you saved and which you did not.`,
       },
     }
   },

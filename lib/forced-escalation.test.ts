@@ -117,38 +117,19 @@ describe('detectForcedEscalation', () => {
     )
   })
 
-  it('escalates on a Full Bimini Experience intake-form submission', () => {
-    // Regression: Emily Sherman thread (2026-08-08) — Caye quoted pricing and
-    // offered to hold the date herself on this package instead of tossing it
-    // to Mrs. Max, despite the founder confirming (2026-08-06) it should
-    // always escalate regardless of what Caye would otherwise auto-approve.
+  it('leaves owner-taught package rules to the standing-rules layer', () => {
+    // The Full Bimini Experience trigger briefly lived here (2026-08-08) and
+    // was replaced the same day by a caye_standing_rules row — see
+    // briefs/standing-rules-plan.md. This module must stay platform-level
+    // only; a package name is a per-workspace concern and hardcoding one
+    // here again would mean a repo commit per customer rule.
     const body = [
       'Name: Emily Sherman',
-      'Email: emily@eventblissdesign.com',
       'Guests: 3',
-      'Date: Thursday, August 20, 2026',
       'Tour: Full Bimini Experience',
-      'Notes: Would love a guided golf cart tour of the north and South Island. Thanks!',
+      'Notes: Would love a guided golf cart tour of the north and South Island.',
     ].join('\n')
-    const result = detectForcedEscalation(body, 'booking_inquiry')
-    expect(result?.trigger).toBe('full_bimini_experience')
-    expect(result?.routeTo).toBe('owner')
-  })
-
-  it('escalates on a conversational mention of the Full Bimini Experience', () => {
-    const result = detectForcedEscalation(
-      "Hi, we're interested in the full bimini experience for our trip next month",
-      'booking_inquiry'
-    )
-    expect(result?.trigger).toBe('full_bimini_experience')
-  })
-
-  it('does not fire the Full Bimini Experience trigger for other tours', () => {
-    const result = detectForcedEscalation(
-      'Can I book the North Bimini Heritage tour for Saturday?',
-      'booking_inquiry'
-    )
-    expect(result).toBeNull()
+    expect(detectForcedEscalation(body, 'booking_inquiry')).toBeNull()
   })
 
   it('pingSummary is plain-language, not internal classifier jargon', () => {

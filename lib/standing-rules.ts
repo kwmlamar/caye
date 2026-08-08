@@ -1,0 +1,185 @@
+import 'server-only'
+import { createServiceClient } from './supabase-server'
+import type { ForcedEscalation } from './forced-escalation'
+
+/**
+ * Owner-taught constraints, enforced deterministically before the front-desk
+ * LLM runs. See briefs/standing-rules-plan.md.
+ *
+ * The distinction this module exists to make real:
+ *   business_facts — knowledge. Prose in the prompt. Advisory.
+ *   standing rules — constraints on Caye's own authority. Evaluated here,
+ *                    pre-LLM, so there is no opportunity to disobey.
+ *
+ * Test for which one applies: if the model ignored this instruction, would a
+ * customer receive something we cannot take back? Yes → rule. No → fact.
+ *
+ * Matching is deliberately dumb — literal, case-insensitive substring on a
+ * word boundary. No regex, ever: an LLM-authored pattern eventually matches
+ * everything (burying the owner) or nothing (silent failure), and both are
+ * worse than a rule that only catches the phrasing the owner actually named.
+ */
+
+export interface StandingRule {
+  id: string
+  trigger_type: 'service_mention' | 'keyword'
+  match_value: string
+  action: 'escalate'
+  route_to: 'owner' | 'founder' | 'both'
+}
+
+/**
+ * Escape a literal phrase for use in a regex, then require word boundaries
+ * around it. Boundaries matter: a keyword rule on "VIP" should not fire on
+ * "vipassana", and a service rule on "Eat Like a Local" should still match
+ * inside "the Eat Like a Local tour".
+ */
+export function buildMatcher(matchValue: string): RegExp {
+  const trimmed = matchValue.trim()
+  const escaped = trimmed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  // Anchor with \b only where the adjacent character is actually a word
+  // character. \b is a transition between \w and \W, so "\bSunset (Private)\b"
+  // can never match: the pattern ends in ')', and a boundary after it would
+  // require a word character immediately following. Unconditional anchoring
+  // silently breaks every rule whose phrase starts or ends in punctuation —
+  // and a rule that never fires is the worst outcome available here, since
+  // the owner believes they're covered.
+  const prefix = /^\w/.test(trimmed) ? '\\b' : ''
+  const suffix = /\w$/.test(trimmed) ? '\\b' : ''
+  return new RegExp(`${prefix}${escaped}${suffix}`, 'i')
+}
+
+export function ruleMatches(rule: Pick<StandingRule, 'match_value'>, body: string): boolean {
+  return buildMatcher(rule.match_value).test(body)
+}
+
+/**
+ * First matching rule, or null. Ordered by created_at at the query layer, so
+ * "first" means oldest — a stable, explainable tiebreak rather than whichever
+ * row Postgres happened to return. With one action type and owner routing,
+ * a conflict between two rules is close to meaningless in v1; this becomes
+ * load-bearing only if `action` ever expands (brief §5.6).
+ */
+export function findMatchingRule(rules: StandingRule[], body: string): StandingRule | null {
+  for (const rule of rules) {
+    if (ruleMatches(rule, body)) return rule
+  }
+  return null
+}
+
+/** Locked customer-facing string. Controlled enum, never LLM-generated —
+ *  same posture as TEMPLATES in lib/forced-escalation.ts, so wording can't
+ *  drift per-rule or per-call. */
+const STANDING_RULE_TEMPLATE =
+  "Thanks for reaching out — let me get this in front of the team and we'll be back to you shortly."
+
+/**
+ * Build the ForcedEscalation a matched rule produces. Deliberately the same
+ * shape the hardcoded triggers return, so applyEscalation, the operator brief
+ * and the caye_urgent_hold ping all work unchanged.
+ */
+export function buildStandingRuleEscalation(
+  rule: StandingRule,
+  body: string
+): ForcedEscalation {
+  const customerAsk = body.replace(/\s+/g, ' ').trim().slice(0, 100)
+  return {
+    trigger: 'standing_rule',
+    category: 'policy',
+    routeTo: rule.route_to,
+    customerFacingMessage: STANDING_RULE_TEMPLATE,
+    pingSummary: `${rule.match_value} — "${customerAsk}"`,
+    internalContext:
+      `Forced escalation — standing rule (owner-taught: ${rule.trigger_type} "${rule.match_value}"). ` +
+      `Customer message excerpt: "${body.slice(0, 280)}". ` +
+      `Caye did not draft a substantive reply; the customer-facing send was a controlled template. ` +
+      `Owner: review the thread and respond directly.`,
+  }
+}
+
+/** Active rules for a workspace, oldest first. */
+export async function fetchStandingRules(workspaceId: string): Promise<StandingRule[]> {
+  const supabase = createServiceClient()
+  const { data, error } = await supabase
+    .from('caye_standing_rules')
+    .select('id, trigger_type, match_value, action, route_to')
+    .eq('workspace_id', workspaceId)
+    .eq('is_active', true)
+    .order('created_at', { ascending: true })
+    .limit(100)
+  if (error) {
+    // Fail OPEN on a read error, deliberately. A standing rule escalates
+    // instead of replying; if the table is unreachable we lose enforcement
+    // but Caye still answers the guest. The alternative — treating a DB
+    // blip as "escalate everything" — would bury the owner during exactly
+    // the incident where they can least afford noise.
+    console.error('[standing-rules] fetch failed:', error)
+    return []
+  }
+  return (data ?? []) as StandingRule[]
+}
+
+/**
+ * Fire-and-forget usage counter. Never awaited by the reply path — a failed
+ * counter update must not cost a guest their reply.
+ */
+export function recordRuleFired(ruleId: string): void {
+  const supabase = createServiceClient()
+  supabase
+    .rpc('increment_standing_rule_fired', { rule_id: ruleId })
+    .then(({ error }) => {
+      if (error) console.error('[standing-rules] fired-counter update failed:', error)
+    })
+}
+
+/**
+ * How many inbound customer messages in the last `days` would have matched
+ * this rule — the guardrail from brief §5.1.
+ *
+ * The single most important part of this feature. A rule on a common word
+ * ("private") can fire on a large share of inbound; an owner who gets buried
+ * stops reading pings, which is strictly worse than no rule at all. Showing a
+ * real number before activation turns an abstract rule into a volume the
+ * owner can actually judge.
+ *
+ * Counted in TypeScript rather than SQL ILIKE so the preview uses the exact
+ * same word-boundary matcher the reply path will use — an ILIKE '%private%'
+ * preview would over-count against a matcher that requires boundaries, and a
+ * preview that disagrees with enforcement is worse than none.
+ */
+export async function previewRuleVolume(
+  workspaceId: string,
+  matchValue: string,
+  days = 90
+): Promise<{ matches: number; scanned: number; days: number }> {
+  const supabase = createServiceClient()
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
+
+  const { data: accounts } = await supabase
+    .from('connected_accounts')
+    .select('id')
+    .eq('user_id', workspaceId)
+  const accountIds = ((accounts ?? []) as { id: string }[]).map((a) => a.id)
+  if (accountIds.length === 0) return { matches: 0, scanned: 0, days }
+
+  const { data: convos } = await supabase
+    .from('unified_conversations')
+    .select('id')
+    .in('connected_account_id', accountIds)
+    .limit(2000)
+  const convoIds = ((convos ?? []) as { id: string }[]).map((c) => c.id)
+  if (convoIds.length === 0) return { matches: 0, scanned: 0, days }
+
+  const { data: messages } = await supabase
+    .from('unified_messages')
+    .select('content')
+    .in('conversation_id', convoIds)
+    .eq('sender_type', 'customer')
+    .gte('sent_at', since)
+    .limit(5000)
+
+  const rows = (messages ?? []) as { content: string | null }[]
+  const matcher = buildMatcher(matchValue)
+  const matches = rows.filter((m) => m.content && matcher.test(m.content)).length
+  return { matches, scanned: rows.length, days }
+}

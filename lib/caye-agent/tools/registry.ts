@@ -15,6 +15,7 @@ import { getRecentBookings } from './read/get-recent-bookings'
 import { getPendingQuotes } from './read/get-pending-quotes'
 import { searchThreads } from './read/search-threads'
 import { queryBusinessKnowledge } from './read/query-business-knowledge'
+import { listStandingRules } from './read/list-standing-rules'
 import { getServices } from './read/get-services'
 import { getTeamMembers } from './read/get-team-members'
 import { getChannelStatus } from './read/get-channel-status'
@@ -25,6 +26,8 @@ import { addBusinessFact } from './write-low/add-business-fact'
 import { confirmFactCandidate } from './write-low/confirm-fact-candidate'
 import { dismissFactCandidate } from './write-low/dismiss-fact-candidate'
 import { removeBusinessFact } from './write-low/remove-business-fact'
+import { addStandingRule } from './write-low/add-standing-rule'
+import { removeStandingRule } from './write-low/remove-standing-rule'
 import { updateServicePrice } from './write-low/update-service-price'
 import { addService } from './write-low/add-service'
 import { addPricingTier } from './write-low/add-pricing-tier'
@@ -94,6 +97,7 @@ export const TOOL_REGISTRY: AnyTool[] = [
   getPendingQuotes as AnyTool,
   searchThreads as AnyTool,
   queryBusinessKnowledge as AnyTool,
+  listStandingRules as AnyTool,
   getServices as AnyTool,
   getTeamMembers as AnyTool,
   getChannelStatus as AnyTool,
@@ -105,6 +109,8 @@ export const TOOL_REGISTRY: AnyTool[] = [
   confirmFactCandidate as AnyTool,
   dismissFactCandidate as AnyTool,
   removeBusinessFact as AnyTool,
+  addStandingRule as AnyTool,
+  removeStandingRule as AnyTool,
   updateServicePrice as AnyTool,
   addService as AnyTool,
   addPricingTier as AnyTool,

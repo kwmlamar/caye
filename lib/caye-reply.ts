@@ -36,6 +36,12 @@ import {
   formatBusinessFactsBlock,
   type BusinessFactRow,
 } from './business-facts'
+import {
+  fetchStandingRules,
+  findMatchingRule,
+  buildStandingRuleEscalation,
+  recordRuleFired,
+} from './standing-rules'
 import { loggedMessagesCreate } from './llm-telemetry'
 import {
   detectForcedEscalation,
@@ -1908,6 +1914,21 @@ async function generateCayeAutoReplyCore(
     // controlled-template escalation. Cheaper, faster, and removes any
     // chance Caye drafts something commercial she shouldn't.
     let forced: ForcedEscalation | null = detectForcedEscalation(inbound.body, inboundCategory)
+
+    // Owner-taught constraints (caye_standing_rules), evaluated AFTER the
+    // hardcoded triggers so platform safety always outranks a workspace rule
+    // — a complaint stays a complaint even if it also mentions a ruled
+    // service, because the empathy template matters more than the routing
+    // label. See briefs/standing-rules-plan.md.
+    if (!forced && !isSalesWorkspace) {
+      const rules = await fetchStandingRules(inbound.workspaceId)
+      const matched = findMatchingRule(rules, inbound.body)
+      if (matched) {
+        forced = buildStandingRuleEscalation(matched, inbound.body)
+        recordRuleFired(matched.id)
+      }
+    }
+
     if (!forced) {
       // Hybrid sentiment cascade — Haiku second-pass when the keyword
       // classifier returned nothing OR landed on general_question (the
