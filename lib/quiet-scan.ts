@@ -17,18 +17,42 @@ import type Anthropic from '@anthropic-ai/sdk'
 export const QUIET_SENTINEL = 'NOTHING_TO_REPORT'
 
 /**
- * Prefix match, not equality — the prompt asks for the token followed by a
- * short sentence so the row that lands in caye_operator_messages still
- * reads like English once stripQuietSentinel has run.
+ * Line-start match, not string-start — the prompt asks for the token
+ * followed by a short sentence so the row that lands in
+ * caye_operator_messages still reads like English once stripQuietSentinel
+ * has run.
+ *
+ * Why line-start and not just string-start (2026-08-08, Bimini): the model
+ * wrote a summary paragraph and then opened the SECOND paragraph with the
+ * token. A string-start check missed it, so the round was delivered as a
+ * real finding — pinging the owner about a scan that had explicitly
+ * declared itself quiet — AND the raw token rendered in her thread because
+ * nothing stripped it. The module's original comment anticipated the model
+ * forgetting the token; misplacing it turns out to be the likelier miss.
+ *
+ * Still deliberately NOT a bare substring match: "Sue is 11 days old.
+ * NOTHING_TO_REPORT otherwise." is a real finding that happens to mention
+ * the token mid-sentence, and swallowing a genuine finding is far worse
+ * than delivering a quiet one.
  */
+const LINE_START_SENTINEL = new RegExp(`^[\\s]*${QUIET_SENTINEL}`, 'm')
+
 export function isQuietScan(replyText: string): boolean {
-  return replyText.trimStart().startsWith(QUIET_SENTINEL)
+  return LINE_START_SENTINEL.test(replyText)
 }
 
-/** Drops the token and any separator punctuation the model put after it. */
+/**
+ * Drops the token and any separator punctuation after it, wherever in the
+ * text the model put it. Prose before the token is preserved — it's the
+ * model's own summary of the quiet round and reads better than the
+ * fallback.
+ */
 export function stripQuietSentinel(text: string): string {
-  const rest = text.trimStart().slice(QUIET_SENTINEL.length).replace(/^[\s—:.-]+/, '')
-  return rest || 'Nothing needed attention this scan.'
+  const cleaned = text
+    .replace(new RegExp(`^[\\s]*${QUIET_SENTINEL}[\\s—:.-]*`, 'm'), '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+  return cleaned || 'Nothing needed attention this scan.'
 }
 
 /**
@@ -59,4 +83,25 @@ export function stripQuietSentinelFromTurns(
       ),
     }
   })
+}
+
+/**
+ * Belt-and-braces: remove the token from operator-facing text regardless of
+ * whether the quiet decision fired.
+ *
+ * The 2026-08-08 leak needed BOTH the detector to miss and the strip to be
+ * gated behind that same detector — one check guarding its own cleanup. The
+ * sentinel is a protocol detail between the cron and the model and must
+ * never render to a human, whatever the classification came out as, so the
+ * presentation path no longer depends on the decision path being right.
+ */
+export function scrubQuietSentinel(text: string): string {
+  if (!text.includes(QUIET_SENTINEL)) return text
+  return (
+    text
+      .replace(new RegExp(`^[\\s]*${QUIET_SENTINEL}[\\s—:.-]*`, 'gm'), '')
+      .replace(new RegExp(QUIET_SENTINEL, 'g'), '')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim() || 'Nothing needed attention this scan.'
+  )
 }

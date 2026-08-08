@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest'
 import type Anthropic from '@anthropic-ai/sdk'
-import { isQuietScan, stripQuietSentinel, stripQuietSentinelFromTurns } from './quiet-scan'
+import {
+  isQuietScan,
+  stripQuietSentinel,
+  stripQuietSentinelFromTurns,
+  scrubQuietSentinel,
+} from './quiet-scan'
 
 describe('isQuietScan', () => {
   it('recognises the token with a trailing sentence', () => {
@@ -21,8 +26,20 @@ describe('isQuietScan', () => {
     expect(isQuietScan('Nothing new this scan.\n\nOne item has been waiting 11 days:')).toBe(false)
   })
 
-  it('does NOT match the token buried mid-reply', () => {
+  it('does NOT match the token buried mid-sentence', () => {
     expect(isQuietScan('Sue is 11 days old. NOTHING_TO_REPORT otherwise.')).toBe(false)
+  })
+
+  // Live failure, Bimini 2026-08-08. The model wrote a summary paragraph
+  // and opened the SECOND paragraph with the token. The old string-start
+  // check missed it, so a scan that had declared itself quiet was delivered
+  // as a real finding AND the raw token rendered in Karenda's thread.
+  it('recognises the token opening a later paragraph', () => {
+    const real =
+      "Both Juli King and Delysia Weeks have open escalations already — they're covered in the nag cadence. " +
+      'Nothing new here beyond what you already have in front of you.\n\n' +
+      'NOTHING_TO_REPORT — both new holds have open escalations already running.'
+    expect(isQuietScan(real)).toBe(true)
   })
 })
 
@@ -34,6 +51,36 @@ describe('stripQuietSentinel', () => {
 
   it('falls back to a readable line when the token stands alone', () => {
     expect(stripQuietSentinel('NOTHING_TO_REPORT')).toBe('Nothing needed attention this scan.')
+  })
+
+  it('keeps the prose before a later-paragraph token', () => {
+    const out = stripQuietSentinel(
+      'Both have open escalations already.\n\nNOTHING_TO_REPORT — nothing new beyond that.'
+    )
+    expect(out).toContain('Both have open escalations already.')
+    expect(out).not.toContain('NOTHING_TO_REPORT')
+    expect(out).toContain('nothing new beyond that.')
+  })
+})
+
+describe('scrubQuietSentinel', () => {
+  // The 2026-08-08 leak needed BOTH the detector to miss and the only strip
+  // to be gated behind that same detector. This runs unconditionally so the
+  // presentation path can't depend on the classification being right.
+  it('removes the token even from text that is not classified as quiet', () => {
+    const notQuiet = 'Sue is 11 days old. NOTHING_TO_REPORT otherwise.'
+    expect(isQuietScan(notQuiet)).toBe(false)
+    expect(scrubQuietSentinel(notQuiet)).not.toContain('NOTHING_TO_REPORT')
+    expect(scrubQuietSentinel(notQuiet)).toContain('Sue is 11 days old.')
+  })
+
+  it('leaves ordinary text untouched', () => {
+    const plain = 'One item has been waiting 11 days.'
+    expect(scrubQuietSentinel(plain)).toBe(plain)
+  })
+
+  it('never returns an empty string', () => {
+    expect(scrubQuietSentinel('NOTHING_TO_REPORT')).toBe('Nothing needed attention this scan.')
   })
 })
 

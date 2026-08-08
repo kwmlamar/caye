@@ -36,7 +36,12 @@ import { loadScheduleConfig, inQuietHours, type WorkspaceScheduleConfig } from '
 import { resolveOperatorByPhone } from '@/lib/operator-identity'
 import { persistAgentTurns } from '@/lib/caye-operator-messages'
 import { recordCronRun } from '@/lib/cron-run-log'
-import { QUIET_SENTINEL, isQuietScan, stripQuietSentinelFromTurns } from '@/lib/quiet-scan'
+import {
+  QUIET_SENTINEL,
+  isQuietScan,
+  stripQuietSentinelFromTurns,
+  scrubQuietSentinel,
+} from '@/lib/quiet-scan'
 import { getActivitySince, isActivityEmpty, type ActivitySince } from '@/lib/caye-agent/activity-since'
 
 // Three passes a day, spread through waking hours — bounds LLM spend to a
@@ -168,8 +173,13 @@ async function processWorkspace(
     origin: 'scan',
   })
 
-  const replyText = agentResult.replyText.trim()
-  const quiet = isQuietScan(replyText)
+  const rawReplyText = agentResult.replyText.trim()
+  const quiet = isQuietScan(rawReplyText)
+  // Scrub unconditionally, not just on the quiet branch: on 2026-08-08 the
+  // detector missed a misplaced token AND the only strip was gated behind
+  // that same detector, so the raw sentinel rendered in Karenda's thread.
+  // Presentation must not depend on the classification being right.
+  const replyText = scrubQuietSentinel(rawReplyText)
 
   // Always record that the round happened — the cadence gate and Admin
   // Shell both read this timestamp. Only overwrite the "what I flagged"
