@@ -430,8 +430,15 @@ export default function CommandConversations({ workspaceId, selectedConversation
   }
 
   // Scroll the thread container to the bottom whenever the thread
-  // finishes loading or new messages arrive so the newest messages
-  // are visible by default.
+  // finishes loading, new messages arrive, or the pane itself just
+  // mounted (compact -> expanded, e.g. clicking a row on the collapsed
+  // card) so the newest messages are visible by default. `compact` is a
+  // dependency even though it's not read in the body: the thread pane
+  // doesn't exist in the DOM at all while compact (see the `!compact &&`
+  // guard below), so the ref only attaches on the transition to
+  // expanded — without `compact` here, a thread that was already loaded
+  // before expanding (nothing else in this array changes) would mount
+  // at the browser's default scrollTop of 0 instead of the bottom.
   useEffect(() => {
     if (threadLoading) return
     const el = threadContainerRef.current
@@ -440,7 +447,7 @@ export default function CommandConversations({ workspaceId, selectedConversation
     requestAnimationFrame(() => {
       el.scrollTop = el.scrollHeight
     })
-  }, [threadLoading, thread?.messages?.length])
+  }, [threadLoading, thread?.messages?.length, compact])
 
   // Drag-to-resize the list/thread split. Tracked on window (not the
   // divider itself) so the drag keeps following the cursor even once it
