@@ -28,6 +28,7 @@ import {
   type SingleOperatorIntent,
 } from '@/lib/whatsapp/intent'
 import { resolveTurnOwner } from '@/lib/whatsapp/turn-ownership'
+import { withSlowTurnHeartbeat } from '@/lib/whatsapp/slow-turn-heartbeat'
 import { corroborateItemRef } from '@/lib/whatsapp/item-ref-guard'
 import { getPendingHeldItems } from '@/lib/whatsapp/pending'
 import { dispatchOperatorIntent } from '@/lib/whatsapp/actions'
@@ -942,14 +943,45 @@ async function handleOneInbound(
 
   // ── Back-office agent path ─────────────────────────────────────────
   try {
-    const agentResult = await cayeAgent({
-      mode: 'back-office',
-      workspaceId,
-      userMessage: body,
-      callerRole,
-      callerName,
-      operatorId,
-    })
+    // Only the FINAL assistant turn is sent over WhatsApp, so a turn that
+    // spends 20-60s in the tool loop (bulk lead drafting, send_outreach_batch)
+    // leaves the operator staring at nothing. One fixed heartbeat, only once
+    // the turn has already proven slow — see lib/whatsapp/slow-turn-heartbeat.
+    const agentResult = await withSlowTurnHeartbeat(
+      () =>
+        cayeAgent({
+          mode: 'back-office',
+          workspaceId,
+          userMessage: body,
+          callerRole,
+          callerName,
+          operatorId,
+        }),
+      {
+        onSlow: async (stillRunning) => {
+          if (!replyTo || !stillRunning()) return
+          const heartbeat = "Still on it — one sec."
+          const sendResult = await sendFreeFormWhatsApp(
+            replyTo,
+            heartbeat,
+            `back-office-heartbeat-${message.id}`
+          )
+          // Persist so Caye Direct shows the same thing the operator got.
+          await supabase.from('caye_operator_messages').insert({
+            workspace_id: workspaceId,
+            direction: 'outbound',
+            ...deliveryFieldsFromResult(sendResult),
+            body: heartbeat,
+            intent: null,
+            // No claude_format: this is ours, not a model turn, and it must
+            // not enter the agent's replayed history as something it said.
+            operator_allowlist_id: operator.id,
+            operator_name: operator.name,
+            operator_role: operator.role,
+          })
+        },
+      }
+    )
 
     if (!agentResult.replyText) {
       // Same failure mode as the catch block below: the model finished its
