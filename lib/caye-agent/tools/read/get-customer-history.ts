@@ -2,6 +2,13 @@ import 'server-only'
 import { createServiceClient } from '@/lib/supabase-server'
 import type { Tool } from '../types'
 import {
+  identityFromConversation,
+  identityFromField,
+  mergeIdentities,
+  summarizeReachability,
+  type Identity,
+} from '../../customer-profile'
+import {
   bookingRevenue,
   BOOKING_WITH_SERVICE_PRICE_SELECT,
   type ServiceJoin,
@@ -30,7 +37,8 @@ interface MessageRow {
 export const getCustomerHistory: Tool<GetCustomerHistoryInput> = {
   name: 'get_customer_history',
   description:
-    "Get a customer's past bookings + the last 10 messages with them. Pass contact_id (richer profile) OR conversation_id (for conversation-only customers without an enriched contact row — common in Bimini's data). Use after a get_customer call: if the match's source was 'contact', pass contact_id; if 'conversation', pass conversation_id.",
+    "Get a customer's past bookings + the last 10 messages with them. Pass contact_id (richer profile) OR conversation_id (for conversation-only customers without an enriched contact row — the majority on outreach workspaces). Use after a get_customer call: if the match's source was 'contact', pass contact_id; if 'conversation', pass conversation_id. " +
+    "`contact.emails` / `contact.phones` carry every address attributable to them with provenance; `contact.relay_only` holds forwarding addresses that reach them but are not their own (a contact-form relay is not their email). `contact.absent` is what we checked for and genuinely do not have — the ONLY basis for saying we don't have it. `contact.not_checked` was not fetched by this call; never report those as missing.",
   risk: 'read',
   roles: ['owner', 'founder'],
   modes: ['back-office'],
@@ -58,6 +66,11 @@ export const getCustomerHistory: Tool<GetCustomerHistoryInput> = {
     let resolvedContactId = args.contact_id ?? null
     let conversationCustomerName: string | null = null
     let conversationChannel: string | null = null
+    // Every address we can attribute to this customer, from every source.
+    // The thread's own channel-native address matters most: on the outreach
+    // workspace ZERO threads have a contacts row, so customer_id is the only
+    // place an address exists. See ../../customer-profile.ts.
+    const identities: (Identity | null)[] = []
 
     if (!resolvedContactId && args.conversation_id) {
       const { data: accounts } = await supabase
@@ -67,7 +80,7 @@ export const getCustomerHistory: Tool<GetCustomerHistoryInput> = {
       const accountIds = (accounts ?? []).map((a: { id: string }) => a.id)
       const { data: conv } = await supabase
         .from('unified_conversations')
-        .select('id, contact_id, customer_name, customer_id, channel_type')
+        .select('id, contact_id, customer_name, customer_id, channel_type, last_message_at')
         .eq('id', args.conversation_id)
         .in('connected_account_id', accountIds)
         .maybeSingle()
@@ -77,6 +90,13 @@ export const getCustomerHistory: Tool<GetCustomerHistoryInput> = {
       resolvedContactId = (conv.contact_id as string | null) ?? null
       conversationCustomerName = (conv.customer_name as string | null) ?? null
       conversationChannel = (conv.channel_type as string | null) ?? null
+      identities.push(
+        identityFromConversation(
+          conversationChannel,
+          conv.customer_id as string | null,
+          conv.last_message_at as string | null
+        )
+      )
     }
 
     // Load contact profile if we have a contact_id. May be null for
@@ -84,15 +104,13 @@ export const getCustomerHistory: Tool<GetCustomerHistoryInput> = {
     let contact: {
       id: string | null
       name: string | null
-      phone: string | null
-      email: string | null
       notes: string | null
       facts: unknown
     } | null = null
     if (resolvedContactId) {
       const { data: c } = await supabase
         .from('contacts')
-        .select('id, name, phone_number, email, notes, ai_contact_facts')
+        .select('id, name, phone_number, email, notes, ai_contact_facts, last_message_at')
         .eq('id', resolvedContactId)
         .eq('customer_id', ctx.workspaceId)
         .maybeSingle()
@@ -100,23 +118,61 @@ export const getCustomerHistory: Tool<GetCustomerHistoryInput> = {
         contact = {
           id: c.id as string,
           name: c.name as string | null,
-          phone: c.phone_number as string | null,
-          email: c.email as string | null,
           notes: c.notes as string | null,
           facts: c.ai_contact_facts,
         }
+        // Stored contact fields are additional identities, not replacements —
+        // a contacts row can hold an address the thread never used, and vice
+        // versa. Both are kept; mergeIdentities collapses exact duplicates.
+        const lastSeen = (c.last_message_at as string | null) ?? null
+        identities.push(identityFromField('email', c.email as string | null, 'verified', lastSeen))
+        identities.push(
+          identityFromField('whatsapp', c.phone_number as string | null, 'verified', lastSeen)
+        )
       }
     }
     if (!contact) {
       contact = {
         id: null,
         name: conversationCustomerName,
-        phone: null,
-        email: null,
         notes: null,
         facts: null,
       }
     }
+
+    // Gather the addresses from every thread this contact owns. Without this,
+    // calling with contact_id (rather than conversation_id) would report
+    // absent: ['email'] for a contacts row that has no email while the address
+    // sits on the conversation — which is exactly the false negative `absent`
+    // exists to make impossible. `absent` is only trustworthy if we really did
+    // look everywhere before claiming it.
+    if (contact.id) {
+      const { data: accounts } = await supabase
+        .from('connected_accounts')
+        .select('id')
+        .eq('user_id', ctx.workspaceId)
+      const accountIds = (accounts ?? []).map((a: { id: string }) => a.id)
+      if (accountIds.length > 0) {
+        const { data: convs } = await supabase
+          .from('unified_conversations')
+          .select('customer_id, channel_type, last_message_at')
+          .eq('contact_id', contact.id)
+          .in('connected_account_id', accountIds)
+          .order('last_message_at', { ascending: false, nullsFirst: false })
+          .limit(20)
+        for (const row of (convs ?? []) as {
+          customer_id: string | null
+          channel_type: string | null
+          last_message_at: string | null
+        }[]) {
+          identities.push(
+            identityFromConversation(row.channel_type, row.customer_id, row.last_message_at)
+          )
+        }
+      }
+    }
+
+    const reachability = summarizeReachability(mergeIdentities(identities))
 
     // Bookings: only when we have a real contact_id (booking schema joins
     // through contact_id, not conversation).
@@ -189,8 +245,15 @@ export const getCustomerHistory: Tool<GetCustomerHistoryInput> = {
         contact: {
           contact_id: contact.id,
           name: contact.name,
-          phone: contact.phone,
-          email: contact.email,
+          // Every address we can attribute to them, with how we know it.
+          // `absent` means we looked everywhere and it genuinely isn't
+          // recorded — that is the ONLY basis for telling the operator we
+          // don't have something.
+          emails: reachability.emails,
+          phones: reachability.phones,
+          relay_only: reachability.relay_only,
+          absent: reachability.absent,
+          not_checked: reachability.not_checked,
           notes: contact.notes,
           facts: contact.facts,
           has_full_profile: contact.id !== null,

@@ -7,6 +7,14 @@ import {
   type IntakeSummary,
 } from '@/lib/operator-brief'
 import type { Tool } from '../types'
+import {
+  identityFromConversation,
+  identityFromField,
+  mergeIdentities,
+  summarizeReachability,
+  classifyMatch,
+  type Identity,
+} from '../../customer-profile'
 
 interface GetCustomerInput {
   query: string
@@ -37,8 +45,9 @@ interface CustomerMatch {
   contact_id: string | null
   conversation_id: string | null
   name: string | null
-  phone: string | null
-  email: string | null
+  /** Every address attributable to this match, from every source. Shaped
+   *  into emails/phones/absent by summarizeReachability on the way out. */
+  identities: (Identity | null)[]
   channel: string | null
   last_seen: string | null
   notes: string | null
@@ -77,7 +86,12 @@ function intakeFromMetadata(metadata: unknown): IntakeSummary | null {
 export const getCustomer: Tool<GetCustomerInput> = {
   name: 'get_customer',
   description:
-    'Look up a customer by name, phone, or email. Searches both the contacts profile table AND active conversation threads, since many customers exist only as a thread (no enriched contact row yet). Returns up to 5 matches across both sources. When the thread began as a website intake form, the match includes an `intake` object with what the customer actually requested — party size, date, tour, and their own free-text note. Read `intake` before drafting: if it has a party size, quote for that party size rather than asking or leaving pricing open-ended. This is a summary, not the conversation — call get_customer_history for the full message thread.',
+    "Look up a customer by name, phone, or email. Searches the contacts table AND conversation threads, since many customers exist only as a thread (on one workspace ZERO threads have a contact row). " +
+    "READ `match` FIRST. 'unique' -> `contact` holds the one person. 'ambiguous' -> `candidates` holds several and there is deliberately NO single contact: say who they might be and ask which, never pick one. 'none' -> nobody matched. " +
+    "Contact details are `emails` and `phones` (each with provenance: verified = we have exchanged messages there, stated = an operator told us, claimed = typed into a form) plus `relay_only` for forwarding addresses that reach them but are not their own. " +
+    "`absent` lists what we checked for and genuinely do not have — that is the ONLY basis for telling the operator we don't have something. `not_checked` lists what this call did not fetch; never report those as missing. " +
+    "When the thread began as a website intake form, `intake` carries what the customer actually requested — party size, date, tour, free-text note. Read it before drafting: if it has a party size, quote for that party size. " +
+    "This is a summary, not the conversation — call get_customer_history for the full thread.",
   risk: 'read',
   roles: ['owner', 'founder'],
   modes: ['back-office'],
@@ -151,8 +165,10 @@ export const getCustomer: Tool<GetCustomerInput> = {
         contact_id: c.id,
         conversation_id: null,
         name: c.name,
-        phone: c.phone_number,
-        email: c.email,
+        identities: [
+          identityFromField('email', c.email, 'verified', c.last_message_at),
+          identityFromField('whatsapp', c.phone_number, 'verified', c.last_message_at),
+        ],
         channel: c.channel_type,
         last_seen: c.last_message_at,
         notes: c.notes,
@@ -161,7 +177,13 @@ export const getCustomer: Tool<GetCustomerInput> = {
     }
 
     for (const c of (convsRes.data ?? []) as ConvRow[]) {
-      const inferredEmail = c.customer_id?.includes('@') ? c.customer_id : null
+      // Shared with get_customer_history so the two tools can never
+      // disagree about whether a thread has contact details.
+      const threadIdentity = identityFromConversation(
+        c.channel_type,
+        c.customer_id,
+        c.last_message_at
+      )
       const intake = intakeFromMetadata(c.metadata)
       const key = (c.customer_name || c.customer_id || '').toLowerCase()
 
@@ -169,9 +191,12 @@ export const getCustomer: Tool<GetCustomerInput> = {
       if (existing) {
         existing.conversation_id ??= c.id
         existing.contact_id ??= c.contact_id
-        existing.email ??= inferredEmail
+        existing.identities.push(
+          threadIdentity,
+          identityFromField('email', intake?.email, 'claimed'),
+          identityFromField('whatsapp', intake?.phone, 'claimed')
+        )
         existing.intake ??= intake
-        existing.phone ??= intake?.phone ?? null
         existing.notes ??= intake?.notes ?? null
         continue
       }
@@ -181,8 +206,11 @@ export const getCustomer: Tool<GetCustomerInput> = {
         contact_id: c.contact_id,
         conversation_id: c.id,
         name: c.customer_name ?? intake?.name ?? null,
-        phone: intake?.phone ?? null,
-        email: inferredEmail ?? intake?.email ?? null,
+        identities: [
+          threadIdentity,
+          identityFromField('email', intake?.email, 'claimed'),
+          identityFromField('whatsapp', intake?.phone, 'claimed'),
+        ],
         channel: c.channel_type,
         last_seen: c.last_message_at,
         notes: intake?.notes ?? null,
@@ -217,17 +245,26 @@ export const getCustomer: Tool<GetCustomerInput> = {
         const intake = summarizeIntakeBody(body)
         if (!intake) continue
         match.intake = intake
-        match.phone ??= intake.phone
-        match.email ??= intake.email
+        match.identities.push(
+          identityFromField('email', intake.email, 'claimed'),
+          identityFromField('whatsapp', intake.phone, 'claimed')
+        )
         match.notes ??= intake.notes
       }
     }
+
+    // Shape identities into the reachability block, then classify. An
+    // ambiguous result carries NO primary contact — see classifyMatch.
+    const shaped = top.map(({ identities, ...rest }) => ({
+      ...rest,
+      ...summarizeReachability(mergeIdentities(identities)),
+    }))
 
     return {
       ok: true,
       data: {
         query: q,
-        matches: top,
+        ...classifyMatch(shaped),
         count: matches.length,
       },
     }
