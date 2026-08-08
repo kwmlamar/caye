@@ -1,7 +1,25 @@
 # Standing rules — teaching Caye a constraint that actually holds
 
 **Date:** 2026-08-08
-**Status:** Spec only. Nothing built. No schema, no tools, no code.
+**Status:** Phases 0–3 shipped 2026-08-08 (`2acff15`). Phase 4 not started.
+
+**Shipped:** `20260808_caye_standing_rules`, `20260808b_standing_rule_fired_rpc`.
+`lib/standing-rules.ts` + 13 tests; `add_standing_rule` / `list_standing_rules` /
+`remove_standing_rule`; evaluation at `lib/caye-reply.ts` after the hardcoded triggers;
+confirm-back on `add_business_fact`. **The `full_bimini_experience` hardcode from `19b25f9`
+is deleted** and replaced by one row — the acceptance test in §4 passed. Bimini's rule
+seeded (`1b6e187b`), volume preview verified against prod at 23 matches / 334 customer
+messages / 90 days (~1.8 a week).
+
+**Decisions taken without Lamar** (§7 was left open; he asked for it to be handled —
+all reversible, all worth a second look):
+1. Deposit-style rules stay **knowledge**, `action` not expanded.
+2. Rule creation is **owner + founder**, matching `add_business_fact`. Staff excluded.
+3. **No founder notification** on rule creation — `list_standing_rules` is the visibility
+   path for now. Weakest of the five calls; revisit.
+4. Phase 4 **not** reordered ahead of 1–3, but Phase 0 (confirm-back) shipped alongside,
+   which addresses the same trust gap more cheaply.
+5. Model upgrade **not** done — would confound whether this design worked.
 **Origin:** Emily Sherman / Full Bimini Experience thread, 2026-08-08 — Caye quoted
 $645 and offered to hold a date on a package the owner is supposed to price herself.
 **Related:** [workspace-events-plan.md](workspace-events-plan.md) — same "route on who owes
