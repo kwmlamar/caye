@@ -72,6 +72,11 @@ const EMAIL_BLOCKLIST_PATTERNS = [
   /rezdy\.com$/i,
   /^user@domain\.com$/i,
   /^(name|email|test|someone|yourname)@(domain|example|yoursite)\.com$/i,
+  // Shared web-developer/agency contact — confirmed appearing on two
+  // unrelated businesses' sites (a Tulum villa and a Puerto Rico fishing
+  // charter, 2026-07-30), same pattern as the booking-platform false
+  // positives: it's whoever built the site, not the business itself.
+  /eyebytes\.com$/i,
 ]
 
 function isLikelyRealEmail(email: string): boolean {
