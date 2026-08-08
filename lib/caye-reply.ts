@@ -2383,11 +2383,29 @@ export async function generateCayeAutoReply(
   const decision = await generateCayeAutoReplyCore(systemPrompt, inbound, voiceProfile)
 
   const supabase = createServiceClient()
-  const { data: workspaceRow } = await supabase
-    .from('customers')
-    .select('autosend_enabled')
-    .eq('id', inbound.workspaceId)
-    .maybeSingle()
+  const [{ data: workspaceRow }, { data: aiConfigRow }] = await Promise.all([
+    supabase
+      .from('customers')
+      .select('autosend_enabled')
+      .eq('id', inbound.workspaceId)
+      .maybeSingle(),
+    supabase
+      .from('workspace_ai_config')
+      .select('whatsapp_muted_until')
+      .eq('workspace_id', inbound.workspaceId)
+      .maybeSingle(),
+  ])
 
-  return applyAutosendGate(decision, workspaceRow?.autosend_enabled ?? true)
+  // Caye-wide mute gate (mute_caye / Deployment card "Pause"). Column name is
+  // legacy from when it only gated WhatsApp, but the operator's "pause
+  // yuhself" expectation is total, not per-channel — enforced centrally here
+  // so every call site (WhatsApp, IG, Messenger, both email pollers) gets it
+  // without each webhook needing its own check.
+  const mutedUntil = aiConfigRow?.whatsapp_muted_until ? new Date(aiConfigRow.whatsapp_muted_until) : null
+  const isMuted = mutedUntil !== null && mutedUntil > new Date()
+
+  const autosendEnabled = (workspaceRow?.autosend_enabled ?? true) && !isMuted
+  const holdReason = isMuted ? 'Caye is paused for this workspace' : 'Autosend disabled for this workspace'
+
+  return applyAutosendGate(decision, autosendEnabled, holdReason)
 }

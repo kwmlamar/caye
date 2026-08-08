@@ -29,15 +29,16 @@ import type { CayeAutoReply } from './caye-reply'
 
 export function applyAutosendGate(
   decision: CayeAutoReply,
-  autosendEnabled: boolean
+  autosendEnabled: boolean,
+  holdReason: string = 'Autosend disabled for this workspace'
 ): CayeAutoReply {
   if (autosendEnabled) return decision
 
   if (decision.action === 'reply') {
     return {
       action: 'hold',
-      reason: 'Autosend disabled for this workspace',
-      note: 'Caye drafted a reply, but autosend is off for this workspace — review and send manually.',
+      reason: holdReason,
+      note: 'Caye drafted a reply, but it\'s being held for review — send manually.',
       proposedReply: decision.content,
     }
   }
@@ -45,7 +46,7 @@ export function applyAutosendGate(
   if (decision.action === 'escalate') {
     return {
       action: 'hold',
-      reason: `Autosend disabled for this workspace (would have escalated: ${decision.category})`,
+      reason: `${holdReason} (would have escalated: ${decision.category})`,
       note: decision.internalContext,
       proposedReply: decision.content,
     }
