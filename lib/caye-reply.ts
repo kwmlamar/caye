@@ -2383,7 +2383,7 @@ export async function generateCayeAutoReply(
   const decision = await generateCayeAutoReplyCore(systemPrompt, inbound, voiceProfile)
 
   const supabase = createServiceClient()
-  const [{ data: workspaceRow }, { data: aiConfigRow }] = await Promise.all([
+  const [{ data: workspaceRow }, { data: aiConfigRow }, { data: conversationRow }] = await Promise.all([
     supabase
       .from('customers')
       .select('autosend_enabled')
@@ -2394,6 +2394,13 @@ export async function generateCayeAutoReply(
       .select('whatsapp_muted_until')
       .eq('workspace_id', inbound.workspaceId)
       .maybeSingle(),
+    inbound.conversationId
+      ? supabase
+          .from('unified_conversations')
+          .select('human_agent_enabled')
+          .eq('id', inbound.conversationId)
+          .maybeSingle()
+      : Promise.resolve({ data: null }),
   ])
 
   // Caye-wide mute gate (mute_caye / Deployment card "Pause"). Column name is
@@ -2404,8 +2411,23 @@ export async function generateCayeAutoReply(
   const mutedUntil = aiConfigRow?.whatsapp_muted_until ? new Date(aiConfigRow.whatsapp_muted_until) : null
   const isMuted = mutedUntil !== null && mutedUntil > new Date()
 
-  const autosendEnabled = (workspaceRow?.autosend_enabled ?? true) && !isMuted
-  const holdReason = isMuted ? 'Caye is paused for this workspace' : 'Autosend disabled for this workspace'
+  // Human-takeover gate. `human_agent_enabled` is written in nine places to
+  // mean "a person owes the next move on this thread" — but until now nothing
+  // read it before generating, so Caye would autonomously reply straight into
+  // a thread an operator had already taken over (Emily Sherman / Full Bimini,
+  // 2026-08-08). Gate on the raw flag, not getAttentionHolds(): the
+  // queue-hold split in lib/hold-kinds.ts exists to stop Caye *nagging* the
+  // operator about drafted outreach, not to license *sending* into a held
+  // thread. Queue holds only occur on the internal_sales workspace, where
+  // autosend is permanently locked off anyway.
+  const isHumanHeld = conversationRow?.human_agent_enabled === true
+
+  const autosendEnabled = (workspaceRow?.autosend_enabled ?? true) && !isMuted && !isHumanHeld
+  const holdReason = isHumanHeld
+    ? 'Thread is held for a human — Caye did not reply'
+    : isMuted
+      ? 'Caye is paused for this workspace'
+      : 'Autosend disabled for this workspace'
 
   return applyAutosendGate(decision, autosendEnabled, holdReason)
 }

@@ -56,4 +56,35 @@ describe('applyAutosendGate', () => {
     }
     expect(applyAutosendGate(decision, false)).toEqual(decision)
   })
+
+  it('surfaces the caller-supplied hold reason instead of the autosend default', () => {
+    // The gate now backs three distinct causes (autosend off, workspace
+    // paused, thread held for a human). The operator-facing reason has to say
+    // which one actually fired — "Autosend disabled" on a human-held thread
+    // sent us looking at the wrong switch on 2026-08-08.
+    const decision: CayeAutoReply = { action: 'reply', content: 'Sure, happy to help!' }
+    const result = applyAutosendGate(
+      decision,
+      false,
+      'Thread is held for a human — Caye did not reply'
+    )
+    expect(result).toMatchObject({
+      action: 'hold',
+      reason: 'Thread is held for a human — Caye did not reply',
+      proposedReply: 'Sure, happy to help!',
+    })
+  })
+
+  it('keeps the caller-supplied reason when collapsing an escalate', () => {
+    const decision: CayeAutoReply = {
+      action: 'escalate',
+      content: 'Let me check with the team.',
+      category: 'knowledge',
+      routeTo: 'owner',
+      internalContext: 'Guest asked about a package the owner prices herself.',
+    }
+    const result = applyAutosendGate(decision, false, 'Thread is held for a human')
+    expect((result as { reason?: string }).reason).toMatch(/held for a human/)
+    expect((result as { reason?: string }).reason).toMatch(/knowledge/)
+  })
 })
