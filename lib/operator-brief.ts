@@ -219,6 +219,8 @@ const CLOSING_ASK: Record<BriefTrigger, string> = {
     'Your call. Tell me what to offer and I\'ll send it.',
   complaint:
     'Want me to draft an apology and a make-good, or do you want to take this one yourself?',
+  full_bimini_experience:
+    'This one\'s yours to price and confirm. Tell me the rate and whether the date works, and I\'ll write back.',
 }
 
 // Opening line by trigger — names what landed, not the internal taxonomy.
@@ -227,6 +229,7 @@ const OPENING: Record<BriefTrigger, string> = {
   b2b_partnership: 'B2B enquiry — needs your call.',
   refund: 'Refund request — needs your call.',
   complaint: 'Complaint came in — needs your call.',
+  full_bimini_experience: 'Full Bimini Experience request — needs your call.',
 }
 
 /**
