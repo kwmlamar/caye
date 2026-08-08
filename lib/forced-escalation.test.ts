@@ -117,6 +117,40 @@ describe('detectForcedEscalation', () => {
     )
   })
 
+  it('escalates on a Full Bimini Experience intake-form submission', () => {
+    // Regression: Emily Sherman thread (2026-08-08) — Caye quoted pricing and
+    // offered to hold the date herself on this package instead of tossing it
+    // to Mrs. Max, despite the founder confirming (2026-08-06) it should
+    // always escalate regardless of what Caye would otherwise auto-approve.
+    const body = [
+      'Name: Emily Sherman',
+      'Email: emily@eventblissdesign.com',
+      'Guests: 3',
+      'Date: Thursday, August 20, 2026',
+      'Tour: Full Bimini Experience',
+      'Notes: Would love a guided golf cart tour of the north and South Island. Thanks!',
+    ].join('\n')
+    const result = detectForcedEscalation(body, 'booking_inquiry')
+    expect(result?.trigger).toBe('full_bimini_experience')
+    expect(result?.routeTo).toBe('owner')
+  })
+
+  it('escalates on a conversational mention of the Full Bimini Experience', () => {
+    const result = detectForcedEscalation(
+      "Hi, we're interested in the full bimini experience for our trip next month",
+      'booking_inquiry'
+    )
+    expect(result?.trigger).toBe('full_bimini_experience')
+  })
+
+  it('does not fire the Full Bimini Experience trigger for other tours', () => {
+    const result = detectForcedEscalation(
+      'Can I book the North Bimini Heritage tour for Saturday?',
+      'booking_inquiry'
+    )
+    expect(result).toBeNull()
+  })
+
   it('pingSummary is plain-language, not internal classifier jargon', () => {
     // Regression test: pingSummary is what ends up in the operator's WhatsApp
     // ping. internalContext ("Forced escalation — b2b_partnership (inbound

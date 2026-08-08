@@ -13,6 +13,13 @@
  *   - Complaint sentiment (policy → owner, empathy template).
  *   - Refund / cancellation-with-money (policy → owner, neutral template).
  *   - Custom / private / special / exception language (policy → owner).
+ *   - "Full Bimini Experience" package mentions (policy → owner). Locked
+ *     2026-08-06 — this package needs Mrs. Max's own pricing/logistics call,
+ *     Caye doesn't quote or hold a date for it herself. `routeTo: 'owner'`
+ *     resolves via workspace_ai_config.operator_whatsapp_number, which for
+ *     Bimini is Mrs. Max's verified number specifically (not the second,
+ *     unverified operator_allowlist "owner" row) — confirmed before adding
+ *     this trigger, no separate per-operator targeting needed.
  *
  * The catalog/blackout/group-size triggers in the spec are enforced inside
  * the tool layer (lookup_price, check_availability already short-circuit
@@ -37,6 +44,7 @@ export type ForcedTrigger =
   | 'complaint'
   | 'refund'
   | 'custom_request'
+  | 'full_bimini_experience'
 
 export interface ForcedEscalation {
   trigger: ForcedTrigger
@@ -65,6 +73,8 @@ const TEMPLATES: Record<ForcedTrigger, string> = {
     "Thanks for letting me know — checking with the team on this and we'll get back to you shortly.",
   custom_request:
     "Thanks for the details — let me check on this with the team and circle back shortly.",
+  full_bimini_experience:
+    "Thanks for your interest in the Full Bimini Experience — let me get this to the team and we'll be back to you shortly with pricing and availability.",
 }
 
 /** Operator-friendly trigger labels for the WhatsApp ping. Short enough that
@@ -75,6 +85,7 @@ const PING_LABELS: Record<ForcedTrigger, string> = {
   complaint: 'Complaint',
   refund: 'Refund request',
   custom_request: 'Custom request',
+  full_bimini_experience: 'Full Bimini Experience booking',
 }
 
 // ── Keyword patterns ───────────────────────────────────────────────────────
@@ -95,14 +106,22 @@ const REFUND_PATTERN =
 const CUSTOM_REQUEST_PATTERN =
   /\b(custom (?:trip|tour|booking|arrangement|package|itiner)|private (?:tour|trip|charter|booking)|special (?:arrangement|request|accommodation|booking)|make an exception|exception to|off[- ]menu|off the menu|bespoke|tailored)\b/i
 
+// "Full Bimini Experience" package mentions — literal package name, unique to
+// the Bimini Island Tours catalog, so no workspace check needed to avoid
+// false-firing for other workspaces. Matches both the structured intake-form
+// field ("Tour: Full Bimini Experience") and conversational mentions.
+const FULL_BIMINI_EXPERIENCE_PATTERN = /\bfull bimini experience\b/i
+
 /**
  * Check the inbound for Layer 1 triggers. Returns the highest-priority
  * forced escalation, or null when no trigger fires.
  *
- * Priority order: complaint > b2b > refund > custom_request. Complaint
- * wins because the empathy template matters most when the customer is
- * upset. B2B beats refund because the routing implications are different
- * (sensitive vs policy).
+ * Priority order: complaint > b2b > refund > custom_request >
+ * full_bimini_experience. Complaint wins because the empathy template
+ * matters most when the customer is upset. B2B beats refund because the
+ * routing implications are different (sensitive vs policy).
+ * full_bimini_experience is last since it's a narrow literal-package-name
+ * match, unlikely to overlap with the others.
  *
  * `classifierCategory` comes from classifyInbound() — we re-use its
  * complaint / b2b decisions instead of re-running keyword detection here.
@@ -133,6 +152,15 @@ export function detectForcedEscalation(
       'owner',
       body,
       'custom / private / exception language in body'
+    )
+  }
+  if (FULL_BIMINI_EXPERIENCE_PATTERN.test(body)) {
+    return build(
+      'full_bimini_experience',
+      'policy',
+      'owner',
+      body,
+      '"Full Bimini Experience" package mention — locked 2026-08-06, Mrs. Max quotes/holds this one herself'
     )
   }
   return null
