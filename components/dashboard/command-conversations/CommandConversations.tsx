@@ -600,7 +600,7 @@ export default function CommandConversations({ workspaceId, selectedConversation
                   }
 
                   // Same language as Caye Direct: her replies sit in the
-                  // open with an accent rule and her mark, no box — a
+                  // open with her mark, no box, no accent rule — a
                   // human's words (owner or customer) stay boxed. That
                   // keeps "who actually said this" unambiguous without
                   // adding a name/label to every line.
@@ -608,7 +608,7 @@ export default function CommandConversations({ workspaceId, selectedConversation
                     return (
                       <div key={m.id} style={{ alignSelf: 'flex-end', maxWidth: '80%', display: 'flex', alignItems: 'flex-start', gap: 6, flexDirection: 'row-reverse' }}>
                         <div style={{ paddingTop: 2, flexShrink: 0 }}><CayeMark size={14} /></div>
-                        <div style={{ borderRight: '2px solid #4EBECE', padding: '1px 12px 1px 0', textAlign: 'left' }}>
+                        <div style={{ padding: '1px 0', textAlign: 'left' }}>
                           <FormattedReplyText text={m.content} style={{ fontSize: 13.5, lineHeight: 1.5, color: '#f4f4f5' }} />
                           <span style={{ display: 'block', textAlign: 'right', fontSize: 10, color: 'rgba(245,245,244,0.35)', marginTop: 2 }}>{formatDistanceToNow(m.sent_at)}</span>
                         </div>

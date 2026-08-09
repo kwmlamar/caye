@@ -625,12 +625,13 @@ export default function CayeDirectThread({ workspaceId, operatorId, operatorLabe
                   {isCaye && (showAvatar ? <CayeMark size={18} /> : <div style={{ width: 18, flexShrink: 0 }} />)}
                   <div style={{ maxWidth: '100%' }}>
                     {isCaye ? (
-                      // No box for Caye — her words sit in the open, set off
-                      // by a single accent rule, so long replies stay easy
-                      // to read instead of fighting a tinted container.
-                      // The operator's own words keep the bubble, so the
-                      // two voices still read as visually distinct.
-                      <div style={{ borderLeft: '2px solid #4EBECE', padding: '1px 0 1px 12px' }}>
+                      // No box for Caye — her words sit in the open, so
+                      // long replies stay easy to read instead of fighting
+                      // a tinted container. Her mark (rendered alongside)
+                      // is what identifies the sender, not a rule. The
+                      // operator's own words keep the bubble, so the two
+                      // voices still read as visually distinct.
+                      <div style={{ padding: '1px 0' }}>
                         <FormattedReplyText text={m.body} style={{ fontSize: 14, lineHeight: 1.6, color: '#f4f4f5' }} />
                       </div>
                     ) : (

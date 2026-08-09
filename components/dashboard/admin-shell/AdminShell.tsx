@@ -387,7 +387,7 @@ export default function AdminShell() {
                   {isCaye && (showAvatar ? <CayeMark size={18} /> : <div style={{ width: 18, flexShrink: 0 }} />)}
                   <div style={{ maxWidth: '100%' }}>
                     {isCaye ? (
-                      <div style={{ borderLeft: '2px solid #4EBECE', padding: '1px 0 1px 12px' }}>
+                      <div style={{ padding: '1px 0' }}>
                         <FormattedReplyText text={m.body} style={{ fontSize: 14, lineHeight: 1.6, color: '#f4f4f5' }} />
                       </div>
                     ) : (
