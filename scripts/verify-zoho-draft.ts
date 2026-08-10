@@ -27,9 +27,44 @@
  * and the tool must stay off.
  */
 
-import { config } from 'dotenv'
-config({ path: '.env.local' })
+import { readFileSync } from 'node:fs'
 import { createClient } from '@supabase/supabase-js'
+
+/**
+ * Minimal .env.local loader.
+ *
+ * The other scripts in this directory `import { config } from 'dotenv'`, but
+ * dotenv is not in package.json — so all of them fail with MODULE_NOT_FOUND
+ * on a clean install. Rather than add a dependency for one throwaway script,
+ * parse the handful of keys we need. Handles KEY=VALUE, optional quotes,
+ * comments and blank lines; deliberately not a full dotenv implementation.
+ */
+function loadEnvLocal(path = '.env.local'): void {
+  let raw: string
+  try {
+    raw = readFileSync(path, 'utf8')
+  } catch {
+    console.error(`Could not read ${path} — run this from the repo root.`)
+    process.exit(1)
+  }
+  for (const line of raw.split('\n')) {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith('#')) continue
+    const eq = trimmed.indexOf('=')
+    if (eq === -1) continue
+    const key = trimmed.slice(0, eq).trim()
+    let value = trimmed.slice(eq + 1).trim()
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1)
+    }
+    if (!(key in process.env)) process.env[key] = value
+  }
+}
+
+loadEnvLocal()
 
 const ZOHO_TOKEN_URL = 'https://accounts.zoho.com/oauth/v2/token'
 const WORKSPACE = '653257d9-c0f1-4271-be6d-3e2596fd893e' // Bimini Island Tours
@@ -117,7 +152,11 @@ async function main() {
   // Deliberately a standalone draft, not a reply into a customer thread —
   // there is no reason to involve a real guest's thread in a test whose whole
   // premise is that the API might send.
-  const url = `${apiDomain.replace(/\/$/, '')}/mail/v1/api/accounts/${zohoAccountId}/messages`
+  // Same base construction as lib/email-ai.ts's mailBase — the Mail API lives
+  // on mail.zoho.com, not the www.zohoapis.com domain stored on the account.
+  // Must match exactly, or this verifies a URL production never calls.
+  const base = (apiDomain || 'https://www.zohoapis.com').replace('www.zohoapis', 'mail.zoho')
+  const url = `${base}/api/accounts/${zohoAccountId}/messages`
   const res = await fetch(url, {
     method: 'POST',
     headers: {
