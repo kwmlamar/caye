@@ -3,6 +3,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { createServiceClient } from '@/lib/supabase-server'
 import { loggedMessagesCreate } from '@/lib/llm-telemetry'
 import { sendFreeFormWhatsApp, sendTemplateWhatsApp, deliveryFieldsFromResult } from '@/lib/whatsapp/outbound'
+import { findDemoReplyLeak, demoRetryInstruction } from '@/lib/caye-demo-guard'
 
 /**
  * Operator-initiated demo-roleplay mode (2026-07-22). Lets an
@@ -173,7 +174,13 @@ function demoSystemPrompt(realSystemPrompt: string, businessName: string): strin
 DEMO MODE — this section overrides nothing above except as noted here.
 The person messaging you right now is ${businessName}'s own operator, previewing what a real guest would experience. They are role-playing as their own customer, not messaging you as themselves. Stay fully in character as the guest-facing version of yourself described above and respond exactly as you would to a real guest.
 
-EXCEPTION: you have no tools right now and nothing you say has real side effects. Whenever you would normally take a real action (confirm/create a booking, cancel or reschedule one, escalate to the owner/staff, or anything else that writes data or notifies a human), respond in character first, then add a separate short line starting with "→" describing what would really happen, e.g.: → In a live chat, this creates a real booking and notifies the owner. Never imply a real action succeeded without that "→" line making clear it's simulated. Keep replies concise, WhatsApp-length.`
+EXCEPTION — how actions work here: nothing you say has a real side effect, because this is a preview. That is a detail about this preview, NOT a limitation on the character you are playing. The Caye being previewed books, reschedules, cancels and escalates herself. So do the same: when a guest asks to book, TAKE the booking — collect whatever you still need in your own words, then state it as done, exactly as the live version would. Then add one separate short line starting with "→" noting what would really happen, e.g.: → In a live chat, this creates a real booking and notifies the owner. That "→" line is the only thing marking it as simulated; never imply a real action succeeded without it.
+
+NEVER hand the guest off as a substitute for doing the job. Do not tell them to WhatsApp, call, text, email or otherwise contact the owner, a staff member, or any other number or channel to finish what you could finish yourself. You are the one handling it. (Genuinely out-of-scope matters can still be escalated — say you're passing it to the owner and that they'll follow up, then use the "→" line. That is different from telling the guest to go do it themselves.)
+
+NEVER write a placeholder in brackets — no [your number here], [name], [link], or anything like it. You have no real phone numbers, links, or staff names to insert, so write replies that don't need them.
+
+Keep replies concise, WhatsApp-length.`
 }
 
 /**
@@ -181,6 +188,11 @@ EXCEPTION: you have no tools right now and nothing you say has real side effects
  * tool loop — see file-level comment for why. Falls back to a generic
  * apology on any failure rather than throwing, since a thrown error
  * here would otherwise leave the operator's demo message unanswered.
+ *
+ * Retries once if the reply punts the guest to a human or leaks a
+ * bracketed placeholder (see lib/caye-demo-guard.ts). The demo is the
+ * surface that convinces an owner Caye can do the job, so a reply telling
+ * their guest to go message someone else is worth one more call to fix.
  */
 export async function generateDemoReply(
   systemPrompt: string,
@@ -197,20 +209,35 @@ export async function generateDemoReply(
       })),
       { role: 'user', content: guestMessage },
     ]
+    const baseSystem = demoSystemPrompt(systemPrompt, businessName)
 
-    const response = await loggedMessagesCreate(
-      client,
-      {
-        model: 'claude-sonnet-4-6',
-        max_tokens: 512,
-        system: demoSystemPrompt(systemPrompt, businessName),
-        messages,
-      },
-      { source: 'lib/caye-demo.ts:generateDemoReply' }
-    )
+    const complete = async (system: string): Promise<string> => {
+      const response = await loggedMessagesCreate(
+        client,
+        { model: 'claude-sonnet-4-6', max_tokens: 512, system, messages },
+        { source: 'lib/caye-demo.ts:generateDemoReply' }
+      )
+      const block = response.content[0]
+      return block?.type === 'text' ? block.text.trim() : ''
+    }
 
-    const block = response.content[0]
-    return block?.type === 'text' ? block.text.trim() : "Sorry, let me try that again in a moment?"
+    const first = await complete(baseSystem)
+    if (!first) return "Sorry, let me try that again in a moment?"
+
+    const leak = findDemoReplyLeak(first)
+    if (!leak) return first
+
+    console.warn(`[caye-demo] demo reply had a "${leak}" leak — retrying once`)
+    const retried = await complete(baseSystem + demoRetryInstruction(leak))
+    if (!retried) return first
+
+    // Still bad after the nudge: send it anyway rather than leave the
+    // operator hanging, but make sure it shows up in logs.
+    const retryLeak = findDemoReplyLeak(retried)
+    if (retryLeak) {
+      console.error(`[caye-demo] demo reply still had a "${retryLeak}" leak after retry`)
+    }
+    return retried
   } catch (err) {
     console.error('[caye-demo] generateDemoReply failed:', err)
     return "Sorry, I hit a snag there — try that again in a moment?"

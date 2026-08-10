@@ -729,7 +729,21 @@ async function handleOneInbound(
       }
       if (demoText) {
         const history = await loadDemoHistory(supabase, activeDemo.id)
-        const cayeReply = await generateDemoReply(cfg.system_prompt ?? '', 'your business', history, demoText)
+        // Real name, not the "your business" literal this used to pass —
+        // the demo prompt interpolates it into a sentence about whose
+        // operator is watching, so the placeholder read as the business
+        // actually being called "your business".
+        const { data: demoCustomer } = await supabase
+          .from('customers')
+          .select('business_name')
+          .eq('id', workspaceId)
+          .maybeSingle()
+        const cayeReply = await generateDemoReply(
+          cfg.system_prompt ?? '',
+          demoCustomer?.business_name || 'your business',
+          history,
+          demoText
+        )
         await advanceDemoSession(supabase, activeDemo, demoText, cayeReply)
         const sendResult = await sendFreeFormWhatsApp(
           replyTo,
