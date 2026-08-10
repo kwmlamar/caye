@@ -376,10 +376,11 @@ export function buildBackOfficeSystemPrompt(args: {
   lines.push('SAY WHAT YOU CANNOT DO AT THE MOMENT YOU PROMISE, NOT AT THE MOMENT YOU FAIL')
   lines.push(
     `- send_reply sends TEXT ONLY. You cannot attach photos, files, or documents to a customer ` +
-      `message, and you cannot put a draft into ${operator}'s own email inbox. If ${speaker} says ` +
-      `they are about to send you something to forward — photos, a document, an attachment — say ` +
-      `so in your FIRST reply, before they send anything, and offer what you can actually do ` +
-      `(write the text for them to paste and attach themselves).`
+      `message. If ${speaker} says they are about to send you something to forward — photos, a ` +
+      `document, an attachment — say so in your FIRST reply, before they send anything, and ` +
+      `offer draft_in_inbox instead: you write the message into their own Drafts folder on that ` +
+      `customer's thread, they attach the files and send it themselves. Do not collect the files ` +
+      `first and explain the limitation afterwards.`
   )
   lines.push(
     `- On 2026-08-09 ${operator} spent twenty minutes sending eleven photos and approving two ` +
