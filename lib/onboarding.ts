@@ -3,6 +3,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { createServiceClient } from '@/lib/supabase-server'
 import type { VoiceProfile } from '@/lib/voice-profile'
 import { loggedMessagesCreate } from '@/lib/llm-telemetry'
+import { splitInlineExample, unwrapExample } from '@/lib/onboarding-question-example'
 
 export interface DiscoveryTurn {
   question: string
@@ -63,6 +64,8 @@ export async function decideNextDiscoveryStep(
 
 Ask ONE thing at a time. Prefer the fewest, highest-value questions — if an earlier answer already covers a topic (even partially), don't ask a dedicated question for it, infer it instead. Never ask something you could reasonably infer. The owner is busy and likely on their phone, so keep questions short and give a brief example answer to lower their effort.
 
+The example answer goes in "suggested_answer" ONLY. "question" must contain no example — no "e.g.", no "for example", no sample answer in quotes or parentheses. It is rendered to the owner directly below the question, so an example inside the question shows up twice.
+
 They've answered ${turns.length} question(s) so far (including their business name and contact info). Keep the total under ${MAX_DISCOVERY_QUESTIONS} — wrap up ("done": true) once you have enough for a solid profile, even if some minor detail is still unknown.
 
 Return ONLY valid JSON, no markdown, no explanation:
@@ -80,7 +83,14 @@ Return ONLY valid JSON, no markdown, no explanation:
     const parsed = JSON.parse(text) as { done: boolean; question: string | null; suggested_answer: string | null }
 
     if (parsed.done || !parsed.question) return { done: true }
-    return { done: false, question: parsed.question, suggestedAnswer: parsed.suggested_answer ?? '' }
+
+    // The prompt bans inline examples; the model still writes them. Strip
+    // in code so the owner never reads the same example twice, and fall
+    // back to the stripped one when suggested_answer came back empty.
+    const { question, example } = splitInlineExample(parsed.question)
+    const suggested = unwrapExample(parsed.suggested_answer ?? '')
+
+    return { done: false, question, suggestedAnswer: suggested || example || '' }
   } catch (err) {
     // Finish rather than get stuck — an unanswerable turn should never
     // mean the owner's message just vanishes with no reply.
