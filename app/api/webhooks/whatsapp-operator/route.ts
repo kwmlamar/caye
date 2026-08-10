@@ -34,6 +34,7 @@ import { getPendingHeldItems } from '@/lib/whatsapp/pending'
 import { dispatchOperatorIntent } from '@/lib/whatsapp/actions'
 import { sendFreeFormWhatsApp, deliveryFieldsFromResult, type SendResult } from '@/lib/whatsapp/outbound'
 import { downloadWhatsAppMedia, isSupportedImageMimeType } from '@/lib/whatsapp/media'
+import { decideImageBurst } from '@/lib/whatsapp/image-burst'
 import { generateCayeAutoReply } from '@/lib/caye-reply'
 import { alertFounderOfDeliveryFailure } from '@/lib/whatsapp/founder-alert'
 import { emailFallbackForFailedPing } from '@/lib/whatsapp/email-fallback'
@@ -1096,6 +1097,25 @@ async function handleImageInbound(
   const caption = image.caption?.trim() || null
   const placeholderBody = caption ? `[image: ${caption}]` : '[image]'
 
+  // Is this one photo in a burst? Read the previous image from this operator
+  // BEFORE inserting this one, so the lookup can't find the current row.
+  const { data: priorImage } = await supabase
+    .from('caye_operator_messages')
+    .select('created_at')
+    .eq('workspace_id', workspaceId)
+    .eq('operator_allowlist_id', operator.id)
+    .eq('direction', 'inbound')
+    .like('body', '[image%')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  const burst = decideImageBurst({
+    previousImageAt: priorImage?.created_at ? new Date(priorImage.created_at as string) : null,
+    now: new Date(),
+    hasCaption: !!caption,
+  })
+
   await supabase.from('caye_operator_messages').insert({
     workspace_id: workspaceId,
     direction: 'inbound',
@@ -1107,6 +1127,25 @@ async function handleImageInbound(
     operator_name: operator.name,
     operator_role: operator.role,
   })
+
+  // Mid-burst: the row is persisted (so the next turn's context knows the
+  // photos arrived) but Caye says nothing. Acknowledging each photo
+  // individually is what produced eleven near-identical replies with a
+  // miscounted running total on 2026-08-09 — see decideImageBurst.
+  //
+  // Trade-off, deliberately taken: the model only ever receives image bytes
+  // on the turn they arrive (claude_format persists a text placeholder — see
+  // the block comment above), so a silently-collected image is never seen.
+  // The operator's next message is what says what to do with the batch, and
+  // that message is answered with full knowledge of how many arrived. A
+  // captioned image is always answered, which is the escape hatch when a
+  // specific photo needs looking at.
+  if (!burst.respond) {
+    console.log(
+      `[whatsapp-operator] image burst for ${workspaceId} — ${burst.reason}, staying quiet`
+    )
+    return
+  }
 
   if (!isSupportedImageMimeType(image.mime_type)) {
     await sendFreeFormWhatsApp(

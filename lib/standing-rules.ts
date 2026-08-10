@@ -97,6 +97,68 @@ export function buildStandingRuleEscalation(
   }
 }
 
+/**
+ * Sticky escalation for a thread that already has an unresolved one.
+ *
+ * A standing rule matches the literal service name in the message that
+ * triggered it — and nothing after. Delysia Weeks (2026-08-09) hit exactly
+ * that seam: the Full Bimini rule caught her first message, the owner had
+ * not yet decided, and her follow-up asked "What would solo be for the 4
+ * hours (north and south)". No literal service name, so no rule match, so
+ * the LLM answered autonomously and quoted $199/person — the shared rate,
+ * for a party of one, on a tour that needs three. The owner found it four
+ * minutes later and had to send a correction.
+ *
+ * The rule the owner thought she was buying was "you don't quote this tour
+ * without me". Enforcing that only on the first message of a thread doesn't
+ * deliver it. So: while the owner owes a decision on a thread, Caye's
+ * authority on that thread stays suspended regardless of how the next
+ * message is phrased.
+ *
+ * No second ping results — applyEscalation's open-escalation guard folds
+ * this into the existing row (see lib/whatsapp/escalation.ts).
+ */
+export function buildStickyEscalation(body: string): ForcedEscalation {
+  const customerAsk = body.replace(/\s+/g, ' ').trim().slice(0, 100)
+  return {
+    trigger: 'standing_rule',
+    category: 'policy',
+    routeTo: 'owner',
+    customerFacingMessage: STANDING_RULE_TEMPLATE,
+    pingSummary: `Follow-up while you decide — "${customerAsk}"`,
+    internalContext:
+      `Forced escalation — thread already has an unresolved escalation, so Caye's authority here stays ` +
+      `suspended until you respond. Customer follow-up: "${body.slice(0, 280)}". ` +
+      `Caye did not draft a substantive reply; the customer-facing send was a controlled template.`,
+  }
+}
+
+/**
+ * Does this conversation already have an escalation the owner hasn't
+ * answered? Gates buildStickyEscalation — see its docstring.
+ */
+export async function conversationHasOpenEscalation(
+  conversationId: string | null | undefined
+): Promise<boolean> {
+  if (!conversationId) return false
+  const supabase = createServiceClient()
+  const { data, error } = await supabase
+    .from('caye_escalations')
+    .select('id')
+    .eq('conversation_id', conversationId)
+    .is('owner_responded_at', null)
+    .is('expired_at', null)
+    .limit(1)
+    .maybeSingle()
+  if (error) {
+    // Fail OPEN, matching fetchStandingRules: a DB blip must not turn every
+    // thread into an escalation and bury the owner.
+    console.error('[standing-rules] open-escalation lookup failed:', error.message)
+    return false
+  }
+  return !!data
+}
+
 /** Active rules for a workspace, oldest first. */
 export async function fetchStandingRules(workspaceId: string): Promise<StandingRule[]> {
   const supabase = createServiceClient()

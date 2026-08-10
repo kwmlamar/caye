@@ -5,6 +5,7 @@ import { enqueueEscalationPings } from './triggers'
 import { extractTargetDate } from './urgency'
 import { getDayAvailability } from '@/lib/calendar-availability'
 import { buildOperatorBrief } from '@/lib/operator-brief'
+import { displayContactName, looksLikeEmailAddress } from './contact-display'
 import type {
   CayeAutoReply,
   EscalationCategory,
@@ -272,10 +273,25 @@ export async function applyEscalation(
 ): Promise<Exclude<CayeAutoReply, { action: 'escalate' }>> {
   if (decision.action !== 'escalate') return decision
 
+  // Every call site builds contactName as `senderName || senderEmail`, so a
+  // sender with no display name arrives here as a bare address — and the
+  // owner's ping reads "tuzi needs your call" about a guest she knows as
+  // Delysia Weeks (2026-08-09). Recover the thread's stored customer_name
+  // before that reaches a phone; fall back to a generic label rather than an
+  // inbox handle. Centralised here so all eight call sites are covered at
+  // once. See lib/whatsapp/contact-display.ts.
+  const contactName = looksLikeEmailAddress(meta.contactName)
+    ? displayContactName(
+        await lookupConversationName(meta.conversationId),
+        // Deliberately not meta.contactName — it's the address we just rejected.
+        null
+      )
+    : displayContactName(meta.contactName)
+
   await recordEscalation({
     workspaceId: meta.workspaceId,
     conversationId: meta.conversationId,
-    contactName: meta.contactName,
+    contactName,
     category: decision.category,
     routeTo: decision.routeTo,
     customerFacingMessage: decision.content,
@@ -287,6 +303,18 @@ export async function applyEscalation(
   })
 
   return { action: 'reply', content: decision.content }
+}
+
+/** The thread's stored customer_name, or null. Used to recover a real name
+ *  when the call site could only supply an email address. */
+async function lookupConversationName(conversationId: string | null): Promise<string | null> {
+  if (!conversationId) return null
+  const { data } = await createServiceClient()
+    .from('unified_conversations')
+    .select('customer_name')
+    .eq('id', conversationId)
+    .maybeSingle()
+  return (data as { customer_name: string | null } | null)?.customer_name ?? null
 }
 
 // Last-resort fallback only, for legacy escalation rows with no persisted

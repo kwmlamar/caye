@@ -40,6 +40,8 @@ import {
   fetchStandingRules,
   findMatchingRule,
   buildStandingRuleEscalation,
+  buildStickyEscalation,
+  conversationHasOpenEscalation,
   recordRuleFired,
 } from './standing-rules'
 import { loggedMessagesCreate } from './llm-telemetry'
@@ -1926,6 +1928,13 @@ async function generateCayeAutoReplyCore(
       if (matched) {
         forced = buildStandingRuleEscalation(matched, inbound.body)
         recordRuleFired(matched.id)
+      } else if (await conversationHasOpenEscalation(inbound.conversationId)) {
+        // A rule matched this THREAD earlier and the owner hasn't decided
+        // yet. Her follow-up won't repeat the service name, so no rule will
+        // match it — and without this, Caye answers it herself. That is how
+        // a $199/person shared rate went to a solo guest on a tour that
+        // needs three (Delysia Weeks, 2026-08-09). See buildStickyEscalation.
+        forced = buildStickyEscalation(inbound.body)
       }
     }
 

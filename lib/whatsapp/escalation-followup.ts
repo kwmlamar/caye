@@ -4,7 +4,11 @@ import { enqueueEscalationPings, resolveEscalationRecipients } from './triggers'
 import { labelForCategory } from './escalation'
 import { classifyHoldUrgency } from './urgency'
 import { resolveOperatorByPhone } from '@/lib/operator-identity'
+import { BOOKING_LOOKUP_FAILED } from './escalation-expiry'
+import { displayContactName } from './contact-display'
 import type { EscalationCategory } from '@/lib/caye-reply'
+
+export { shouldExpireOnTargetDate } from './escalation-expiry'
 
 /**
  * Shared state for caye_escalations "aging" handling, split across two
@@ -102,10 +106,35 @@ export async function resolveContactName(conversationId: string | null): Promise
   const supabase = createServiceClient()
   const { data: conv } = await supabase
     .from('unified_conversations')
-    .select('customer_name')
+    .select('customer_name, customer_id')
     .eq('id', conversationId)
     .maybeSingle()
-  return conv?.customer_name ?? 'A guest'
+  return displayContactName(conv?.customer_name, conv?.customer_id)
+}
+
+/**
+ * Latest non-cancelled booking date on a conversation, or null. Feeds
+ * shouldExpireOnTargetDate — see its docstring in escalation-expiry.ts for
+ * why expiry can't look at target_date alone.
+ */
+export async function latestBookingDateFor(conversationId: string | null): Promise<string | null> {
+  if (!conversationId) return null
+  const supabase = createServiceClient()
+  const { data, error } = await supabase
+    .from('bookings')
+    .select('booking_date')
+    .eq('conversation_id', conversationId)
+    .is('cancelled_at', null)
+    .neq('status', 'cancelled')
+    .order('booking_date', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (error) {
+    // Fail CLOSED on a read error — i.e. don't expire.
+    console.error('[escalation-followup] booking lookup failed:', error.message)
+    return BOOKING_LOOKUP_FAILED
+  }
+  return (data as { booking_date: string } | null)?.booking_date ?? null
 }
 
 /**

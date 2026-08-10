@@ -7,6 +7,7 @@ import {
   ruleMatches,
   findMatchingRule,
   buildStandingRuleEscalation,
+  buildStickyEscalation,
   type StandingRule,
 } from './standing-rules'
 
@@ -104,5 +105,39 @@ describe('buildStandingRuleEscalation', () => {
   it('honours a founder-routed rule', () => {
     const esc = buildStandingRuleEscalation(rule({ route_to: 'founder' }), 'Full Bimini Experience')
     expect(esc.routeTo).toBe('founder')
+  })
+})
+
+describe('buildStickyEscalation', () => {
+  // Delysia Weeks, 2026-08-09. The Full Bimini rule caught her first message.
+  // Her follow-up — "What would solo be for the 4 hours (north and south)" —
+  // names no service, so no rule matched it and the LLM answered alone,
+  // quoting $199 as a flat solo total on a tour that needs three to run.
+  const followUp = 'What would solo be for the 4 hours (north and south). Yes I am interested.'
+
+  it('escalates a follow-up that names no service', () => {
+    const esc = buildStickyEscalation(followUp)
+    expect(esc.category).toBe('policy')
+    expect(esc.routeTo).toBe('owner')
+  })
+
+  it('sends the same controlled template, never a drafted answer', () => {
+    const esc = buildStickyEscalation(followUp)
+    expect(esc.customerFacingMessage).toBe(
+      buildStandingRuleEscalation(rule(), 'Full Bimini Experience').customerFacingMessage
+    )
+    expect(esc.customerFacingMessage).not.toMatch(/\$\d/)
+  })
+
+  it('keeps internal jargon out of the owner-facing ping', () => {
+    const esc = buildStickyEscalation(followUp)
+    expect(esc.pingSummary).not.toMatch(/forced escalation/i)
+    expect(esc.pingSummary).not.toMatch(/standing_rule/)
+    expect(esc.pingSummary).toContain('solo')
+  })
+
+  it('carries the customer words through to the operator brief', () => {
+    const esc = buildStickyEscalation(followUp)
+    expect(esc.internalContext).toContain('4 hours')
   })
 })

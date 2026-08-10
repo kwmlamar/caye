@@ -541,10 +541,16 @@ function operatorPingLogBody(kind: string, payload: Record<string, unknown>): st
     }
     case 'auth_failure':
       return `${str('service', 'A connected service')} needs reconnecting — I can't see new messages there until you do. Want me to walk you through it?`
+    // "It's waiting for you above" was literally false on WhatsApp — there is
+    // no "above" there, the full text lives in Caye Direct. Worse, these fire
+    // right after unrelated pings do land, so the owner reads "I couldn't send
+    // it" directly beneath a long message that plainly did send (2026-08-09,
+    // 10:00 and 10:01). Name where the write-up actually is, and don't claim a
+    // send failed in a way that contradicts what's on her screen.
     case 'opportunity_scan':
-      return `Heads up — I found something during my workspace scan but your window was closed so I couldn't send the full write-up. It's waiting for you above.`
+      return `Heads up — my workspace scan turned something up. The full write-up is in Caye Direct; say the word and I'll walk you through it here.`
     case 'business_insights':
-      return `Heads up — this week's business insights are ready but your window was closed so I couldn't send the full write-up. It's waiting for you above.`
+      return `Heads up — this week's business insights are ready. The full write-up is in Caye Direct; say the word and I'll walk you through it here.`
     default:
       return `[${kind}]`
   }

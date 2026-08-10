@@ -16,11 +16,15 @@
  *   1. Resolved-detection — if the operator replied on the conversation
  *      since the escalation opened, mark owner_responded_at and stop
  *      nudging (any channel counts; see operatorRepliedSince).
- *   2. Expiry — if target_date has passed with no response, mark
- *      expired_at, clear the conversation's hold flag, and log a closing
- *      note to caye_operator_messages. No WhatsApp send for this: the note
- *      itself says "no reply needed", so pushing it to a phone is pure
- *      noise (see expireEscalationLogOnly in escalation-followup.ts).
+ *   2. Expiry — if target_date has passed with no response AND the contact
+ *      has no live booking still ahead of them, mark expired_at, clear the
+ *      conversation's hold flag, and log a closing note to
+ *      caye_operator_messages. No WhatsApp send for this: the note itself
+ *      says "no reply needed", so pushing it to a phone is pure noise (see
+ *      expireEscalationLogOnly in escalation-followup.ts). The booking
+ *      check is not optional — see shouldExpireOnTargetDate for the Aug 9
+ *      case where expiring on target_date alone silently retired a live
+ *      $645 booking and told the owner her queue was empty.
  *   3. Founder backstop — owner-routed escalations that sit unresolved
  *      past FOUNDER_ESCALATION_HOURS (7d) / FOUNDER_ESCALATION_URGENT_HOURS
  *      (24h, time-sensitive holds) get a one-shot ping to the founder.
@@ -54,10 +58,12 @@ import {
   composeFollowupPingSummary,
   expireEscalationBookkeepingOnly,
   expireEscalationLogOnly,
+  latestBookingDateFor,
   maybeEscalateToFounder,
   operatorRepliedSince,
   resolveContactName,
   shouldExpireBookkeeping,
+  shouldExpireOnTargetDate,
   type EscalationRow,
 } from '@/lib/whatsapp/escalation-followup'
 
@@ -172,7 +178,8 @@ async function processEscalation(
   // clears the conversation's hold — it should win if both conditions
   // happen to be true on the same row.
   const todayISO = new Date().toISOString().slice(0, 10)
-  if (row.target_date && row.target_date < todayISO) {
+  const latestBookingDate = await latestBookingDateFor(row.conversation_id)
+  if (shouldExpireOnTargetDate({ targetDate: row.target_date, todayISO, latestBookingDate })) {
     try {
       await expireEscalationLogOnly(row, contactName)
     } catch (err) {
