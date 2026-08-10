@@ -273,6 +273,26 @@ export function extractCustomerRequestedDate(body: string): string | null {
 }
 
 /**
+ * Extract the party size from an inbound message body. Handles the intake
+ * form's structured "Guests: 2" line — the same strongest-signal-only posture
+ * as extractCustomerTourName and extractCustomerRequestedDate above.
+ *
+ * Deliberately no free-text parsing. "a couple of us", "me and the wife
+ * plus maybe her sister" and "2-3 people" are exactly the phrasings a
+ * regex gets confidently wrong, and this number decides whether an
+ * availability rule blocks a booking. A null here costs a clarifying
+ * question; a wrong number costs a refused group or a quote at the wrong
+ * rate.
+ */
+export function extractCustomerPartySize(body: string): number | null {
+  if (!body) return null
+  const match = body.match(/^\s*(?:Guests|Party Size|Group Size|Number of Guests)\s*:\s*(\d{1,3})\s*$/im)
+  if (!match) return null
+  const n = Number.parseInt(match[1], 10)
+  return Number.isInteger(n) && n > 0 ? n : null
+}
+
+/**
  * Build a system-prompt block that surfaces the match result to the LLM.
  * Designed to be appended to the existing AVAILABLE SERVICES block.
  * Empty string when nothing useful to add — caller should append unconditionally.

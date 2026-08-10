@@ -83,4 +83,7 @@ export const REPO_MIGRATIONS: readonly string[] = [
   '20260807f_workspace_events_revoke_rpc',
   '20260807g_workspace_events_authored_by',
   '20260807h_fact_candidate_lifecycle',
+  '20260808_caye_standing_rules',
+  '20260808b_standing_rule_fired_rpc',
+  '20260810_service_availability_rules',
 ]

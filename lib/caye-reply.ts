@@ -20,9 +20,15 @@ import {
   matchServiceByName,
   extractCustomerTourName,
   extractCustomerRequestedDate,
+  extractCustomerPartySize,
   buildMatchHintBlock,
   type ServiceMatchResult,
 } from './services/match-service'
+import {
+  evaluateServiceAvailability,
+  buildAvailabilityBlock,
+  type ServiceAvailabilityRule,
+} from './services/service-availability'
 import {
   summarizeBookingHistory,
   formatCustomerHistoryBlock,
@@ -1719,6 +1725,53 @@ interface HistoryRow {
 }
 
 /**
+ * Load this service's availability rules and turn them into a prompt
+ * constraint for one specific enquiry.
+ *
+ * Requires a HIGH-confidence service match. A medium/low match means we are
+ * not certain which tour the customer means, and applying "that tour can't
+ * run on Sunday" to the wrong tour is worse than saying nothing — the model
+ * still has the ordinary clarification path for those.
+ *
+ * Returns '' whenever anything is missing or unclear, so the caller appends
+ * unconditionally. Failing quiet is right here: a missing constraint costs a
+ * question the model would have asked anyway, while a wrong one refuses a
+ * booking the business wanted.
+ */
+async function buildAvailabilityConstraint(
+  workspaceId: string,
+  serviceMatch: ServiceMatchResult | null,
+  dateISO: string | null,
+  partySize: number | null
+): Promise<string> {
+  if (!dateISO) return ''
+  if (!serviceMatch?.best || serviceMatch.confidence !== 'high') return ''
+
+  const { data, error } = await createServiceClient()
+    .from('service_availability_rules')
+    .select('id, weekday, effect, min_party, note')
+    .eq('workspace_id', workspaceId)
+    .eq('service_id', serviceMatch.best.id)
+    .eq('is_active', true)
+    .limit(20)
+
+  if (error) {
+    console.error('[caye-reply] availability rule lookup failed:', error.message)
+    return ''
+  }
+
+  const rules = (data ?? []) as ServiceAvailabilityRule[]
+  if (rules.length === 0) return ''
+
+  const verdict = evaluateServiceAvailability({ rules, dateISO, partySize })
+  return buildAvailabilityBlock({
+    verdict,
+    serviceName: serviceMatch.best.name,
+    dateISO,
+  })
+}
+
+/**
  * Pull the last N messages from this conversation so Caye sees what was
  * already said. Excludes the current inbound (by channel_message_id) so
  * it isn't echoed back as prior context.
@@ -2021,6 +2074,7 @@ async function generateCayeAutoReplyCore(
 
   const businessFacts = isSalesWorkspace ? [] : await fetchBusinessFacts(inbound.workspaceId)
 
+
   // Grounding text for the payment-figure guard. Every business fact is
   // already in the system prompt, so a deposit rate absent from here was read
   // from nowhere — see lib/policy-figure-guard.ts for the Karin Roberts
@@ -2035,6 +2089,19 @@ async function generateCayeAutoReplyCore(
     if (figure) return `Payment-figure guard: ${figure}`
     return null
   }
+
+  // Deterministic availability verdict for THIS enquiry, computed before the
+  // model runs. The intake form these arrive on carries all three inputs
+  // (Tour / DateISO / Guests), so "can this tour run for this party on this
+  // date" is a lookup, not a judgement call. Without it, both of the rules
+  // Mrs. Max taught on 2026-08-09 lived only as advisory prose — see
+  // lib/services/service-availability.ts.
+  const availabilityBlock = await buildAvailabilityConstraint(
+    inbound.workspaceId,
+    serviceMatch,
+    extractCustomerRequestedDate(inbound.body),
+    extractCustomerPartySize(inbound.body)
+  )
 
   const { stable: systemStable, dynamic: systemDynamic } = isSalesWorkspace
     ? buildSalesSystem(systemPrompt, effectiveVoiceProfile, todayISO)
@@ -2055,6 +2122,11 @@ async function generateCayeAutoReplyCore(
         serviceMatch,
         businessFacts
       )
+
+  // Appended to the DYNAMIC half deliberately: this verdict is specific to
+  // one enquiry's date and party size, so folding it into the cached stable
+  // prefix would serve a stale answer to the next customer.
+  const systemDynamicWithAvailability = systemDynamic + availabilityBlock
 
   // Pull prior conversation history (if we have a conversation to query) so
   // Caye sees what was already said. Non-fatal — empty history just means
@@ -2089,7 +2161,7 @@ async function generateCayeAutoReplyCore(
       // Locked 2026-06-24 (#46).
       system: [
         { type: 'text', text: systemStable, cache_control: { type: 'ephemeral', ttl: '1h' } },
-        { type: 'text', text: systemDynamic },
+        { type: 'text', text: systemDynamicWithAvailability },
       ],
       tools: isSalesWorkspace ? SALES_TOOLS : TOOLS,
       tool_choice: { type: 'any' },
