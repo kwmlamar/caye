@@ -106,10 +106,92 @@ async function recordVerdict(verified: boolean, note: string) {
   console.log(`\n${verified ? '✅' : '🚫'} ${VERIFIED_KEY} = ${verified}\n   ${note}`)
 }
 
+/**
+ * Ask Zoho which folder a message actually landed in.
+ *
+ * Exists because the founder does not have login access to the workspace
+ * owner's mailbox — "go and look in Drafts" is not a step he can perform.
+ * The API can answer it with the credentials we already hold, and folderId
+ * is a different claim than the mode:draft echo in the create response: it
+ * describes where the message IS, not what the request asked for.
+ *
+ * Still not sufficient on its own. Pair it with confirming the message never
+ * arrived at the external test address — that half cannot be faked by Zoho
+ * misreporting its own state.
+ */
+async function inspect(needle: string) {
+  const supabase = sb()
+  const { data: account } = await supabase
+    .from('connected_accounts')
+    .select('*')
+    .eq('user_id', WORKSPACE)
+    .eq('channel_type', 'email')
+    .eq('is_active', true)
+    .maybeSingle()
+  if (!account) throw new Error('No active Zoho account for the Bimini workspace')
+
+  const meta = (account.metadata || {}) as Record<string, string>
+  const apiDomain = meta.zoho_api_domain || 'https://www.zohoapis.com'
+  const zohoAccountId = meta.zoho_account_id || account.channel_account_id
+  const base = (apiDomain || 'https://www.zohoapis.com').replace('www.zohoapis', 'mail.zoho')
+  const accessToken = await refresh(account.refresh_token!)
+  const auth = { Authorization: `Zoho-oauthtoken ${accessToken}` }
+
+  const foldersRes = await fetch(`${base}/api/accounts/${zohoAccountId}/folders`, { headers: auth })
+  const folders = await foldersRes.json()
+  const idFor = (name: string): string | null => {
+    const hit = (folders?.data ?? []).find(
+      (f: { folderName?: string }) => String(f.folderName).toLowerCase() === name
+    )
+    return hit ? String(hit.folderId) : null
+  }
+
+  // The per-message /details endpoint returns nothing usable for a draft, so
+  // list each folder and look for the marker subject instead.
+  const findIn = async (folderName: string): Promise<string[]> => {
+    const folderId = idFor(folderName)
+    if (!folderId) return []
+    const res = await fetch(
+      `${base}/api/accounts/${zohoAccountId}/messages/view?folderId=${folderId}&limit=25`,
+      { headers: auth }
+    )
+    const json = await res.json()
+    return (json?.data ?? [])
+      .filter((m: { subject?: string }) => String(m.subject ?? '').includes(needle))
+      .map((m: { subject?: string }) => String(m.subject))
+  }
+
+  const inDrafts = await findIn('drafts')
+  const inSent = await findIn('sent')
+
+  console.log(`\nSearching both folders for a subject containing: ${needle}`)
+  console.log(`  Drafts : ${inDrafts.length > 0 ? inDrafts.join(' | ') : '(not found)'}`)
+  console.log(`  Sent   : ${inSent.length > 0 ? inSent.join(' | ') : '(not found)'}`)
+
+  if (inDrafts.length > 0 && inSent.length === 0) {
+    console.log('\n✅ In Drafts, not in Sent. Combined with it never arriving at the test')
+    console.log('   address, that is the verification — run --confirm-drafted.')
+  } else if (inSent.length > 0) {
+    console.log('\n🚫 Found in Sent — mode:draft was ignored. Run --confirm-sent.')
+  } else {
+    console.log('\n⚠️  Not found in either. Inconclusive; do not open the gate on this alone.')
+  }
+}
+
 async function main() {
   const to = process.argv[2]
   const confirmDrafted = process.argv.includes('--confirm-drafted')
   const confirmSent = process.argv.includes('--confirm-sent')
+  const inspectIdx = process.argv.indexOf('--inspect')
+  if (inspectIdx !== -1) {
+    const id = process.argv[inspectIdx + 1]
+    if (!id) {
+      console.error('Usage: npx tsx scripts/verify-zoho-draft.ts --inspect <messageId>')
+      process.exit(1)
+    }
+    await inspect(id)
+    return
+  }
 
   if (!to || to.startsWith('--')) {
     console.error('Usage: npx tsx scripts/verify-zoho-draft.ts <your-own-email> [--confirm-drafted|--confirm-sent]')
