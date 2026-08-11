@@ -11,6 +11,7 @@ import { formatHistoryBlock } from './conversation-history'
 import { checkBookingAutonomy, AUTONOMY_WINDOW_HOURS } from './booking-policy'
 import { syncBookingToCalendar } from './calendar-sync'
 import { resolveTier, type PricingTier } from './services/resolve-tier'
+import { findDuplicateBooking } from './bookings/duplicate-booking'
 import {
   evaluateOperatingDate,
   findMatchingBlackout,
@@ -1341,6 +1342,34 @@ async function createBookingFromCaye(
     // See _Ops/Brain/decisions-log.md and Clients/bimini-island-tours.md.
     status: input.status ?? 'pending',
     notes: notesWithMarker,
+  }
+
+  // Don't book the same guest twice for the same day. Karin Roberts ended up
+  // on Karenda's November 6th calendar twice — same email, same thread, same
+  // party — because the guest came back with more detail two days later and
+  // this ran a bare insert with no check of any kind (2026-08-11). Two Zoho
+  // events for a party of 2 reads as 4 guests, which overbooks the tour on
+  // paper and makes a free day look full.
+  const { data: sameDay } = await supabase
+    .from('bookings')
+    .select('id, customer_name, customer_email, booking_date, booking_time, number_of_people, status')
+    .eq('user_id', workspaceId)
+    .eq('booking_date', input.booking_date)
+    .in('status', ['pending', 'confirmed'])
+
+  const dupe = findDuplicateBooking({
+    existing: sameDay ?? [],
+    candidate: {
+      customer_name: payload.customer_name,
+      customer_email: payload.customer_email,
+      booking_date: payload.booking_date,
+    },
+  })
+  if (dupe.duplicate) {
+    // Surfaced as an error so the model has to address it in its reply rather
+    // than treat the booking as done. It is not a failure of the insert — the
+    // guest already has what they asked for.
+    return { success: false, error: dupe.message }
   }
 
   const { data, error } = await supabase.from('bookings').insert(payload).select('id').single()
