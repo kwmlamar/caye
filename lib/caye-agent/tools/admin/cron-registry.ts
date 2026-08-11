@@ -6,6 +6,7 @@ import { runTemplateSync } from '@/app/api/caye/template-sync/cron/route'
 import { runOpportunityScan } from '@/app/api/caye/opportunity-scan/cron/route'
 import { runBusinessInsights } from '@/app/api/caye/business-insights/cron/route'
 import { runActivationScan } from '@/app/api/caye/activation-scan/cron/route'
+import { runOperationWorker } from '@/app/api/caye/operation-worker/route'
 
 /**
  * Fixed, hardcoded map of the crons Admin Shell can report on / manually
@@ -37,4 +38,10 @@ export const CRON_JOBS: Record<
   // to trigger by hand — it dedupes per workspace forever, so a manual run
   // can't re-alert anyone already flagged.
   'activation-scan': { label: 'Zero-channel signups (alerts founder, once per workspace)', run: runActivationScan },
+  // Drains caye_pending_operations (deferred Zoho calendar syncs). Already
+  // runs on every outbound-worker tick, so this entry is for forcing a drain
+  // by hand — useful right after Zoho comes back up rather than waiting out
+  // the backoff. Idempotent: each row's key is unique, so a manual trigger
+  // can't double-apply anything.
+  'operation-worker': { label: 'External-effects outbox (deferred calendar syncs)', run: runOperationWorker },
 }

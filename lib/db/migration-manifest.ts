@@ -86,4 +86,7 @@ export const REPO_MIGRATIONS: readonly string[] = [
   '20260808_caye_standing_rules',
   '20260808b_standing_rule_fired_rpc',
   '20260810_service_availability_rules',
+  '20260811_dropped_confirmation_sweep',
+  '20260811b_caye_pending_operations',
+  '20260811c_caye_tool_calls',
 ]

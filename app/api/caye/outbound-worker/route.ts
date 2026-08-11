@@ -34,6 +34,7 @@ import { sendFounderAlertEmail } from '@/lib/email/founder-mailer'
 import { extractErrorCode } from '@/lib/whatsapp/delivery-errors'
 import { resyncTemplatesAfterParamMismatch } from '@/lib/whatsapp/template-sync'
 import { detectInternalLeak } from '@/lib/operator-text-guard'
+import { drainPendingOperationsSafely } from '@/lib/pending-operations-worker'
 
 // Kinds that represent Caye proactively messaging an operator about
 // something (as opposed to system plumbing like otp/welcome/ack) — these
@@ -155,6 +156,13 @@ export async function GET(request: NextRequest) {
   await checkStaleCronsAndAlert()
   await checkStaleDeliveryAndAlert()
   await checkDeliveryHealthAndAlert()
+
+  // Drain the external-effects outbox on the same tick (2026-08-11). Same
+  // reasoning as checkStaleCronsAndAlert living here rather than in its own
+  // job: a queue whose only drain is a cron someone has to remember to
+  // register externally is a queue that silently stops — which is exactly
+  // what happened to this very endpoint for ~25h on 2026-07-25. Never throws.
+  await drainPendingOperationsSafely()
 
   try {
     const summary = await recordCronRun('outbound-worker', async () => {

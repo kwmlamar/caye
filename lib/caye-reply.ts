@@ -54,6 +54,16 @@ import {
 } from './standing-rules'
 import { loggedMessagesCreate } from './llm-telemetry'
 import {
+  decideDisposition,
+  ownerNoteFor,
+  type EvidenceFact,
+} from './caye-agent/evidence'
+import {
+  extractDollarAmounts,
+  amountsAttestedBy,
+  assertsAvailability,
+} from './caye-agent/draft-claims'
+import {
   detectForcedEscalation,
   detectSubtleComplaint,
   buildSubtleComplaintEscalation,
@@ -2244,12 +2254,43 @@ async function generateCayeAutoReplyCore(
   // date" is a lookup, not a judgement call. Without it, both of the rules
   // Mrs. Max taught on 2026-08-09 lived only as advisory prose — see
   // lib/services/service-availability.ts.
+  const requestedDateForEvidence = extractCustomerRequestedDate(inbound.body)
+  const partySizeForEvidence = extractCustomerPartySize(inbound.body)
   const availabilityBlock = await buildAvailabilityConstraint(
     inbound.workspaceId,
     serviceMatch,
-    extractCustomerRequestedDate(inbound.body),
-    extractCustomerPartySize(inbound.body)
+    requestedDateForEvidence,
+    partySizeForEvidence
   )
+
+  // Evidence-based confidence (2026-08-11, replaces the model's self-rating
+  // as the authorising signal — see lib/caye-agent/evidence.ts).
+  //
+  // Seeded here from what deterministic code has already established before
+  // the model has said a word, then added to as tools return real data during
+  // the loop. Only facts that came from a database read, a parse, or a rule
+  // evaluation are ever put in this set; nothing the model asserts goes in.
+  const evidence = new Set<EvidenceFact>()
+  if (serviceMatch?.best && serviceMatch.confidence === 'high') {
+    evidence.add('service_identified')
+  }
+  if (requestedDateForEvidence) evidence.add('date_identified')
+  if (partySizeForEvidence !== null) evidence.add('party_size_identified')
+  if (inbound.senderEmail?.trim() || inbound.conversationId) {
+    evidence.add('customer_identified')
+  }
+  // buildAvailabilityConstraint returns '' unless it actually evaluated the
+  // service's rules for this date — a non-empty block IS the verification.
+  if (availabilityBlock.trim()) evidence.add('availability_verified')
+
+  // Everything deterministic code put in front of the model this turn.
+  // A figure in a draft is grounded if it appears somewhere in here, and
+  // invented if it does not. Tool results are appended as the loop runs.
+  const retrievedCorpus: string[] = [
+    formatServicesList(services),
+    availabilityBlock,
+    businessFacts.map((f) => f.fact).join('\n'),
+  ]
 
   const { stable: systemStable, dynamic: systemDynamic } = isSalesWorkspace
     ? buildSalesSystem(systemPrompt, effectiveVoiceProfile, todayISO)
@@ -2354,6 +2395,27 @@ async function generateCayeAutoReplyCore(
           high_stakes_claim?: boolean
         }
         const blocked = guardDraft(input.content)
+
+        // Evidence-based disposition (2026-08-11). Computed from what
+        // deterministic code established this turn plus a grounding check on
+        // the draft itself. The model's `confidence` is passed in but can
+        // only ever make this MORE cautious — see decideDisposition.
+        const evidenceVerdict = decideDisposition({
+          evidence,
+          modelConfidence: input.confidence ?? null,
+          highStakesClaim: input.high_stakes_claim,
+          // Does every figure in the draft appear in what we actually
+          // retrieved? An invented price is the failure this catches, and a
+          // self-rating of 'high' cannot talk past it because the check never
+          // asks the model anything.
+          quotesPrice: !amountsAttestedBy(
+            extractDollarAmounts(input.content),
+            retrievedCorpus.join('\n')
+          ),
+          claimsAvailability: assertsAvailability(input.content),
+          requestsOwnerFollowup: !!input.flag_for_owner_followup,
+        })
+
         if (blocked) {
           // A pre-send guard tripped — don't ship the reply. Hand to the owner
           // with the draft attached so they can decide.
@@ -2364,6 +2426,26 @@ async function generateCayeAutoReplyCore(
             note:
               `Caye drafted a reply but a pre-send guard blocked it (${blocked}). ` +
               `Review the draft below and send manually if appropriate.\n\n---\n\n${input.content}`,
+          }
+        } else if (evidenceVerdict.disposition === 'hold') {
+          // Held on evidence, not on the model's opinion of itself. The note
+          // is composed by ownerNoteFor from the same verdict, so what Mrs.
+          // Max reads and what actually happened cannot drift — and it
+          // contains no internal vocabulary (item 12).
+          console.warn(
+            `[caye-reply] Evidence gate held reply: ${evidenceVerdict.reasons.join(', ')}` +
+              (evidenceVerdict.missing.length
+                ? ` (missing: ${evidenceVerdict.missing.join(', ')})`
+                : '')
+          )
+          terminal = {
+            action: 'hold',
+            reason: evidenceVerdict.reasons[0] ?? 'unverified_claim',
+            note: ownerNoteFor(evidenceVerdict, input.owner_note),
+            proposedReply: sanitizeDashes(input.content),
+            customerAcknowledgement:
+              "Thanks for the detail — let me confirm the specifics with our team so I can give you an accurate answer, and we'll follow up shortly.",
+            urgency: 'urgent',
           }
         } else if (input.high_stakes_claim && input.confidence && input.confidence !== 'high') {
           // Safety/accessibility-adjacent claim + non-high confidence: unlike the
@@ -2386,39 +2468,32 @@ async function generateCayeAutoReplyCore(
               "Thanks for the detail — let me confirm the specifics with our team so I can give you an accurate answer, and we'll follow up shortly.",
             urgency: 'urgent',
           }
-        } else if (input.confidence && input.confidence !== 'high') {
-          // Layer 2 confidence model (#57) — medium/low confidence escalates
-          // automatically. The drafted reply still ships to the customer (no
-          // silent hold per spec) but the operator is pinged so they can
-          // follow up before the customer hears back again. Category defaults
-          // to 'knowledge' since send_reply confidence ≠ high typically means
-          // Caye is unsure of a fact she stated.
+        } else if (
+          evidenceVerdict.disposition === 'send_and_flag' &&
+          evidenceVerdict.reasons.includes('model_reported_uncertainty')
+        ) {
+          // The evidence checks all passed, and the only outstanding signal is
+          // the model saying it wasn't sure. That is worth telling the owner
+          // about, but it is not grounds to hold: the customer already has a
+          // grounded answer and isn't blocked on anything.
           //
-          // holdConversation: false (2026-08-07) — the customer already got
-          // an answer and isn't blocked on anything, so this shouldn't enter
-          // the held queue. It used to, which meant an already-resolved
-          // thread sat in "needs review" for a ~6 day average — see the
-          // holdConversation doc comment on CayeAutoReply above.
+          // holdConversation: false (2026-08-07) — it used to enter the held
+          // queue, which left already-resolved threads sitting in "needs
+          // review" for a ~6 day average.
           terminal = {
             action: 'escalate',
             content: sanitizeDashes(input.content),
             category: 'knowledge',
             routeTo: 'owner',
             holdConversation: false,
-            // Written for the owner reading it on her phone, not for us.
-            // This shipped as "Caye self-rated confidence=medium on her reply.
-            // She sent it (per the Layer 2 spec, drafts ship even at
-            // medium/low)..." and went to Mrs. Max exactly like that
-            // (2026-08-11). "Layer 2 spec" is an internal issue number; she has
-            // no way to know it means "answered but unsure". Everything the
-            // owner needs is: I replied, I wasn't certain, check me.
-            internalContext:
-              `I answered her, but I wasn't fully sure of what I said. ` +
-              `The reply already went out, so nothing is waiting on you — ` +
-              `worth a read in case it needs correcting.` +
-              (input.owner_note?.trim()
-                ? `\n\nWhat I was unsure about: ${input.owner_note.trim()}`
-                : ''),
+            // Composed by ownerNoteFor, written for the owner reading it on
+            // her phone. This previously shipped as "Caye self-rated
+            // confidence=medium on her reply. She sent it (per the Layer 2
+            // spec, drafts ship even at medium/low)..." and reached Mrs. Max
+            // exactly like that (2026-08-11). "Layer 2 spec" is an issue
+            // number. Everything she needs is: I replied, I wasn't certain,
+            // check me.
+            internalContext: ownerNoteFor(evidenceVerdict, input.owner_note),
           }
         } else {
           const needsFollowup = !!input.flag_for_owner_followup
@@ -2524,6 +2599,11 @@ async function generateCayeAutoReplyCore(
       } else if (tool.name === 'check_availability') {
         const input = tool.input as { date: string }
         const result = await checkAvailability(inbound.workspaceId, input.date)
+        // The schedule was actually consulted for this date — Caye may now
+        // state what it said. Without this the draft can only hedge.
+        evidence.add('availability_verified')
+        evidence.add('date_identified')
+        retrievedCorpus.push(JSON.stringify(result))
         toolResults.push({
           type: 'tool_result',
           tool_use_id: tool.id,
@@ -2537,6 +2617,13 @@ async function generateCayeAutoReplyCore(
           input.group_size,
           input.variant ?? null
         )
+        if (result.ok) {
+          // The figure came out of the pricing tables. This is the single
+          // fact that authorises quoting a number to a customer.
+          evidence.add('price_from_database')
+          evidence.add('service_identified')
+          retrievedCorpus.push(JSON.stringify(result))
+        }
         toolResults.push({
           type: 'tool_result',
           tool_use_id: tool.id,
@@ -2551,7 +2638,10 @@ async function generateCayeAutoReplyCore(
           input,
           inbound.senderEmail ?? null
         )
-        if (result.success && result.booking_id) createdBookingId = result.booking_id
+        if (result.success && result.booking_id) {
+          createdBookingId = result.booking_id
+          evidence.add('booking_exists')
+        }
         toolResults.push({
           type: 'tool_result',
           tool_use_id: tool.id,
@@ -2561,6 +2651,14 @@ async function generateCayeAutoReplyCore(
       } else if (tool.name === 'find_bookings') {
         const input = tool.input as { customer_email?: string; customer_name?: string }
         const result = await findBookings(inbound.workspaceId, input)
+        // Only an email match proves identity. A name-only hit is exactly the
+        // case findBookings flags for confirmation, so it must not count as
+        // the customer being identified.
+        if (result.match_count > 0) {
+          evidence.add('booking_exists')
+          if (result.matched_by === 'email') evidence.add('customer_identified')
+        }
+        retrievedCorpus.push(JSON.stringify(result))
         toolResults.push({
           type: 'tool_result',
           tool_use_id: tool.id,
