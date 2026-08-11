@@ -42,10 +42,21 @@ export const addInternalNote: Tool<AddInternalNoteInput> = {
     )
     if (!owned.ok) return owned
 
+    // sender_type is a Postgres enum with exactly two values: customer,
+    // business. This wrote 'system' from the day the tool shipped, so every
+    // call failed on `invalid input value for enum sender_type` and the
+    // operator was told to write the note down themselves. Zero notes had
+    // ever been stored when this was found (2026-08-11). The rest of the
+    // shape mirrors the writers that do work — escalation.ts and
+    // actions/edit.ts — including status, which otherwise defaults to
+    // 'sending' and leaves notes looking like undelivered messages.
     const { error } = await supabase.from('unified_messages').insert({
       conversation_id: args.conversation_id,
+      channel_message_id: null,
       content: note,
-      sender_type: 'system',
+      sender_type: 'business',
+      message_type: 'text',
+      status: 'sent',
       is_internal: true,
       metadata: { source: 'back-office-agent', kind: 'internal_note' },
       sent_at: new Date().toISOString(),

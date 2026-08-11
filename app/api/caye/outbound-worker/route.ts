@@ -62,6 +62,7 @@ export const OPERATOR_LOGGABLE_KINDS = new Set([
   // lands somewhere she'll see it, rather than silently failing. There is no
   // approved template for reminders and inventing one would need Meta review.
   'operator_reminder',
+  'dropped_confirmation',
 ])
 
 const CONCURRENCY = 10
@@ -862,6 +863,12 @@ function freeFormBodyForKind(kind: string, payload: Record<string, unknown>): st
   // Composed at enqueue time by schedule_reminder (formatReminderBody), so
   // the text she gets is the text she asked for, decorated once.
   if (kind === 'operator_reminder') {
+    return typeof payload.body === 'string' && payload.body.trim() ? (payload.body as string) : null
+  }
+  // Composed at enqueue time by the dropped-confirmation sweep
+  // (formatDroppedConfirmation), for the same reason as operator_reminder:
+  // the recipient's local time is baked into the sentence.
+  if (kind === 'dropped_confirmation') {
     return typeof payload.body === 'string' && payload.body.trim() ? (payload.body as string) : null
   }
   if (kind === 'ack') {

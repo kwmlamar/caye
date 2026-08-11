@@ -185,6 +185,12 @@ export type OutboundKind =
   // out over WhatsApp. It's in OPERATOR_LOGGABLE_KINDS so it still lands in
   // Caye Direct in that case rather than disappearing.
   | 'operator_reminder'
+  // A staged action the operator was shown, then never executed and never
+  // cancelled — it just expired (dropped-confirmation-sweep). Same free-form
+  // constraint as operator_reminder: no approved template, so a closed window
+  // means it lands in Caye Direct instead. In practice the operator was
+  // mid-conversation minutes earlier, so the window is open.
+  | 'dropped_confirmation'
 
 export interface EnqueueOutboundInput {
   workspaceId: string

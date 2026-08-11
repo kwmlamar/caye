@@ -2257,13 +2257,19 @@ async function generateCayeAutoReplyCore(
             category: 'knowledge',
             routeTo: 'owner',
             holdConversation: false,
+            // Written for the owner reading it on her phone, not for us.
+            // This shipped as "Caye self-rated confidence=medium on her reply.
+            // She sent it (per the Layer 2 spec, drafts ship even at
+            // medium/low)..." and went to Mrs. Max exactly like that
+            // (2026-08-11). "Layer 2 spec" is an internal issue number; she has
+            // no way to know it means "answered but unsure". Everything the
+            // owner needs is: I replied, I wasn't certain, check me.
             internalContext:
-              `Caye self-rated confidence=${input.confidence} on her reply. ` +
-              `She sent it (per the Layer 2 spec, drafts ship even at medium/low) but the ` +
-              `escalation is open so you can review and follow up if the answer needs ` +
-              `correction.` +
+              `I answered her, but I wasn't fully sure of what I said. ` +
+              `The reply already went out, so nothing is waiting on you — ` +
+              `worth a read in case it needs correcting.` +
               (input.owner_note?.trim()
-                ? `\n\nCaye's note: ${input.owner_note.trim()}`
+                ? `\n\nWhat I was unsure about: ${input.owner_note.trim()}`
                 : ''),
           }
         } else {
