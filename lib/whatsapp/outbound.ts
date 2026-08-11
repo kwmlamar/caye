@@ -180,6 +180,11 @@ export type OutboundKind =
   // only tells the operator something is waiting.
   | 'opportunity_scan'
   | 'business_insights'
+  // Operator-set reminder (schedule_reminder). Free-form only — there is no
+  // approved Meta template for it, so a closed 24h window means it can't go
+  // out over WhatsApp. It's in OPERATOR_LOGGABLE_KINDS so it still lands in
+  // Caye Direct in that case rather than disappearing.
+  | 'operator_reminder'
 
 export interface EnqueueOutboundInput {
   workspaceId: string

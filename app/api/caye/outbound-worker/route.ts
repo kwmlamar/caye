@@ -57,6 +57,11 @@ export const OPERATOR_LOGGABLE_KINDS = new Set([
   // proximity in the thread, since wa_message_id isn't known until dispatch.
   'opportunity_scan',
   'business_insights',
+  // Operator-set reminders (schedule_reminder). Logged so a reminder that
+  // can't go out free-form — the 24h window closed since she set it — still
+  // lands somewhere she'll see it, rather than silently failing. There is no
+  // approved template for reminders and inventing one would need Meta review.
+  'operator_reminder',
 ])
 
 const CONCURRENCY = 10
@@ -854,6 +859,11 @@ async function templateForKind(
 }
 
 function freeFormBodyForKind(kind: string, payload: Record<string, unknown>): string | null {
+  // Composed at enqueue time by schedule_reminder (formatReminderBody), so
+  // the text she gets is the text she asked for, decorated once.
+  if (kind === 'operator_reminder') {
+    return typeof payload.body === 'string' && payload.body.trim() ? (payload.body as string) : null
+  }
   if (kind === 'ack') {
     return typeof payload.body === 'string' ? (payload.body as string) : null
   }

@@ -22,6 +22,7 @@ import { getChannelStatus } from './read/get-channel-status'
 import { getConnectLink } from './write-low/get-connect-link'
 import { recordChannelIntake } from './write-low/record-channel-intake'
 import { markHandled } from './write-low/mark-handled'
+import { scheduleReminder } from './write-low/schedule-reminder'
 import { draftInInbox } from './write-low/draft-in-inbox'
 import { addServiceAvailabilityRule } from './write-low/add-service-availability-rule'
 import { addBusinessFact } from './write-low/add-business-fact'
@@ -107,6 +108,7 @@ export const TOOL_REGISTRY: AnyTool[] = [
   getConnectLink as AnyTool,
   recordChannelIntake as AnyTool,
   markHandled as AnyTool,
+  scheduleReminder as AnyTool,
   draftInInbox as AnyTool,
   addServiceAvailabilityRule as AnyTool,
   addBusinessFact as AnyTool,
