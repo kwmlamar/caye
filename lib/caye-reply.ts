@@ -11,6 +11,7 @@ import { formatHistoryBlock } from './conversation-history'
 import { checkBookingAutonomy, AUTONOMY_WINDOW_HOURS } from './booking-policy'
 import { syncBookingToCalendar } from './calendar-sync'
 import { resolveTier, type PricingTier } from './services/resolve-tier'
+import { canStandDown, type StandDownFacts } from './standing-rule-standdown'
 import { findDuplicateBooking } from './bookings/duplicate-booking'
 import {
   evaluateOperatingDate,
@@ -1754,6 +1755,108 @@ interface HistoryRow {
 }
 
 /**
+ * Gather the facts canStandDown needs, for one enquiry that matched an
+ * owner-taught standing rule.
+ *
+ * Runs only when a rule actually matched — six times in the four days after
+ * Bimini's rule was taught — so the extra lookups are negligible, and doing it
+ * here keeps the decision out of the main path entirely.
+ *
+ * Every lookup failure resolves to "unknown", which canStandDown treats as a
+ * reason to escalate. See lib/standing-rule-standdown.ts.
+ */
+async function gatherStandDownFacts(
+  workspaceId: string,
+  body: string,
+  services: ServiceRow[]
+): Promise<StandDownFacts> {
+  const unknown: StandDownFacts = {
+    serviceMatchConfidence: null,
+    dateISO: null,
+    partySize: null,
+    availabilityStatus: null,
+    tierResolved: false,
+    tierOwnerConfirmed: false,
+  }
+
+  const tourName = extractCustomerTourName(body)
+  if (!tourName || services.length === 0) return unknown
+
+  const match = matchServiceByName(
+    services.map(s => ({ id: s.id, name: s.name })),
+    tourName
+  )
+  const dateISO = extractCustomerRequestedDate(body)
+  const partySize = extractCustomerPartySize(body)
+
+  const facts: StandDownFacts = {
+    ...unknown,
+    serviceMatchConfidence: match.confidence,
+    dateISO,
+    partySize,
+  }
+  // Short-circuit before touching the database on enquiries that already
+  // cannot stand down.
+  if (match.confidence !== 'high' || !match.best || !dateISO || partySize == null) return facts
+
+  const supabase = createServiceClient()
+
+  const { data: ruleRows, error: ruleErr } = await supabase
+    .from('service_availability_rules')
+    .select('id, weekday, effect, min_party, note')
+    .eq('workspace_id', workspaceId)
+    .eq('service_id', match.best.id)
+    .eq('is_active', true)
+    .limit(20)
+  if (ruleErr) {
+    console.error('[caye-reply] stand-down availability lookup failed:', ruleErr.message)
+    return facts
+  }
+  const rules = (ruleRows ?? []) as ServiceAvailabilityRule[]
+  // No rules means nobody has said this tour is safe to sell on an arbitrary
+  // day. Left null so canStandDown reads it as unknown, not as permission.
+  if (rules.length === 0) return facts
+  facts.availabilityStatus = evaluateServiceAvailability({ rules, dateISO, partySize }).status
+
+  const { data: tierRows, error: tierErr } = await supabase
+    .from('service_pricing_tiers')
+    .select('id, tier_name, variant, group_size_min, group_size_max, price_amount, price_label, is_flat, is_ambiguous_above, display_order, source')
+    .eq('service_id', match.best.id)
+    .eq('workspace_id', workspaceId)
+    .order('display_order', { ascending: true })
+  if (tierErr) {
+    console.error('[caye-reply] stand-down pricing lookup failed:', tierErr.message)
+    return facts
+  }
+
+  const rows = (tierRows ?? []) as (PricingTier & { source: string | null })[]
+  const tiers: PricingTier[] = rows.map(r => ({
+    id: r.id,
+    tier_name: r.tier_name,
+    variant: r.variant ?? null,
+    group_size_min: r.group_size_min,
+    group_size_max: r.group_size_max,
+    price_amount: typeof r.price_amount === 'string' ? parseFloat(r.price_amount) : r.price_amount,
+    price_label: r.price_label,
+    is_flat: r.is_flat,
+    is_ambiguous_above: r.is_ambiguous_above,
+    display_order: r.display_order,
+  }))
+
+  // No variant passed: the customer hasn't said shared or private, and
+  // guessing which they meant is exactly the judgement the owner reserved.
+  // resolveTier holds on that ambiguity, which is the answer we want.
+  const resolved = resolveTier(tiers, partySize, undefined)
+  facts.tierResolved = resolved.ok
+  if (resolved.ok) {
+    facts.tierOwnerConfirmed =
+      rows.find(r => r.id === resolved.tier.id)?.source === 'owner_confirmed'
+  }
+
+  return facts
+}
+
+/**
  * Load this service's availability rules and turn them into a prompt
  * constraint for one specific enquiry.
  *
@@ -2008,8 +2111,24 @@ async function generateCayeAutoReplyCore(
       const rules = await fetchStandingRules(inbound.workspaceId)
       const matched = findMatchingRule(rules, inbound.body)
       if (matched) {
-        forced = buildStandingRuleEscalation(matched, inbound.body)
-        recordRuleFired(matched.id)
+        // The rule stands down only when the enquiry contains no question the
+        // owner hasn't already answered in writing — exact catalog match,
+        // stated date and party size, a clean verdict from her own
+        // availability rules, and a price she confirmed herself. Anything
+        // less and it escalates exactly as before. See
+        // lib/standing-rule-standdown.ts for why this narrowing is safe now
+        // and wasn't when Karenda taught the rule.
+        const standDown = canStandDown(
+          await gatherStandDownFacts(inbound.workspaceId, inbound.body, services)
+        )
+        if (standDown.standDown) {
+          console.log(
+            `[caye-reply] standing rule ${matched.id} stood down: ${standDown.reason}`
+          )
+        } else {
+          forced = buildStandingRuleEscalation(matched, inbound.body)
+          recordRuleFired(matched.id)
+        }
       } else if (await conversationHasOpenEscalation(inbound.conversationId)) {
         // A rule matched this THREAD earlier and the owner hasn't decided
         // yet. Her follow-up won't repeat the service name, so no rule will
