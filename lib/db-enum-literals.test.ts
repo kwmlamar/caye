@@ -110,3 +110,72 @@ describe('enum literals written to the database', () => {
     expect(DELIVERY_STATUS_VALUES.has('sent')).toBe(true)
   })
 })
+
+/**
+ * Every kind passed to enqueueOutbound must be allowed by
+ * caye_outbound_queue_kind_check.
+ *
+ * WHY THIS EXISTS (2026-08-12)
+ * Same bug class as sender_type above, caught the same day. The TS
+ * OutboundKind union was extended three separate times without the matching
+ * Postgres CHECK constraint ever being updated to match:
+ *
+ *   'booking_created'      — DB said 'same_day_booking' since the very
+ *                             FIRST outbound migration (2026-05-28). Every
+ *                             new-booking ping to an operator has silently
+ *                             failed to enqueue since the feature existed.
+ *   'operator_reminder'    — added in code 2026-08-09, never in the DB.
+ *                             Every reminder Caye offered to set has failed.
+ *   'dropped_confirmation' — added in code 2026-08-11, caught here before
+ *                             it ever fired live.
+ *
+ * enqueueOutbound swallows the insert error and returns null; nothing
+ * downstream checks the return value, so the caller has no idea the ping
+ * never went anywhere. This is deliberately NOT scoped like the checks
+ * above (`kind: 'literal'` appears constantly for unrelated shapes —
+ * metadata.kind, OperatorIntent.kind, coding-session kind) — it's scoped to
+ * `enqueueOutbound(` call sites specifically, since that is the one place
+ * this exact constraint applies.
+ *
+ * Update OUTBOUND_KIND_VALUES only when 20260812_fix_outbound_kind_check.sql
+ * (or a later migration on the same constraint) changes what's allowed.
+ */
+describe('enqueueOutbound kind matches caye_outbound_queue_kind_check', () => {
+  const OUTBOUND_KIND_VALUES = new Set([
+    'urgent_hold', 'booking_created', 'auth_failure', 'morning_digest',
+    'welcome', 'otp', 'ack', 'escalation', 'escalation_followup',
+    'opportunity_scan', 'business_insights', 'operator_reminder',
+    'dropped_confirmation',
+  ])
+
+  it('only calls enqueueOutbound with a kind the database accepts', () => {
+    const offenders: string[] = []
+
+    for (const file of files) {
+      const src = readFileSync(file, 'utf8')
+      for (const call of src.matchAll(/enqueueOutbound\(/g)) {
+        // enqueueOutbound's object argument is small; a 400-char window past
+        // the call comfortably covers every real call site in this repo
+        // without reaching into an unrelated later call.
+        const window = src.slice(call.index, call.index + 400)
+        const kindMatch = window.match(/kind:\s*'([^']*)'/)
+        if (!kindMatch) continue // kind passed as a variable — type system covers that case
+        if (!OUTBOUND_KIND_VALUES.has(kindMatch[1])) {
+          const line = src.slice(0, call.index).split('\n').length
+          offenders.push(`${file.replace(repoRoot + '/', '')}:${line} → kind: '${kindMatch[1]}'`)
+        }
+      }
+    }
+
+    expect(
+      offenders,
+      `enqueueOutbound call(s) with a kind the DB constraint rejects. Valid: ` +
+        [...OUTBOUND_KIND_VALUES].join(', ') + '\n' + offenders.join('\n')
+    ).toEqual([])
+  })
+
+  it('rejects the exact mismatch that broke every booking notification since May', () => {
+    expect(OUTBOUND_KIND_VALUES.has('same_day_booking')).toBe(false)
+    expect(OUTBOUND_KIND_VALUES.has('booking_created')).toBe(true)
+  })
+})
