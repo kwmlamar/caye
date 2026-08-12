@@ -147,23 +147,74 @@ async function logToolCall(entry: {
   attempts: number
   durationMs: number
 }): Promise<void> {
-  const supabase = createServiceClient()
-  const { error } = await supabase.from('caye_tool_calls').insert({
-    workspace_id: entry.ctx.workspaceId,
-    request_id: entry.ctx.requestId,
-    operator_allowlist_id: entry.ctx.operatorId ?? null,
-    caller_role: entry.ctx.callerRole,
+  await recordToolCall({
+    workspaceId: entry.ctx.workspaceId,
+    requestId: entry.ctx.requestId,
+    operatorId: entry.ctx.operatorId ?? null,
+    callerRole: entry.ctx.callerRole,
     mode: entry.meta.mode,
-    tool_name: entry.tool.name,
+    toolName: entry.tool.name,
     risk: entry.tool.risk,
     status: entry.result.status ?? 'SUCCESS',
-    error_code: entry.result.error_code ?? null,
-    error: entry.result.error ? entry.result.error.slice(0, 500) : null,
+    errorCode: entry.result.error_code ?? null,
+    error: entry.result.error ?? null,
     attempts: entry.attempts,
     deferred: entry.result.deferred === true,
-    duration_ms: entry.durationMs,
+    durationMs: entry.durationMs,
   })
-  if (error) console.error('[orchestrator] caye_tool_calls insert failed:', error.message)
+}
+
+export interface ToolCallRecord {
+  workspaceId: string | null
+  requestId: string | null
+  operatorId?: number | null
+  callerRole?: string | null
+  mode: string
+  toolName: string
+  risk?: string | null
+  status: ToolStatus
+  errorCode?: string | null
+  error?: string | null
+  attempts?: number
+  deferred?: boolean
+  durationMs?: number | null
+}
+
+/**
+ * Write one row to caye_tool_calls.
+ *
+ * Takes primitives rather than a registry Tool so the front-desk path can use
+ * it too (2026-08-12). Front-desk tools live as inline branches in
+ * lib/caye-reply.ts rather than as registered Tool objects — the cross-registry
+ * unification is issue #14 and has not happened — but the reason this table
+ * exists applies to them at least as strongly: add_internal_note failed on
+ * every call for weeks with the only trace being Caye apologising in a
+ * transcript, and the customer-facing path has exactly the same blind spot.
+ *
+ * Never throws.
+ */
+export async function recordToolCall(entry: ToolCallRecord): Promise<void> {
+  try {
+    const supabase = createServiceClient()
+    const { error } = await supabase.from('caye_tool_calls').insert({
+      workspace_id: entry.workspaceId,
+      request_id: entry.requestId,
+      operator_allowlist_id: entry.operatorId ?? null,
+      caller_role: entry.callerRole ?? null,
+      mode: entry.mode,
+      tool_name: entry.toolName,
+      risk: entry.risk ?? null,
+      status: entry.status,
+      error_code: entry.errorCode ?? null,
+      error: entry.error ? entry.error.slice(0, 500) : null,
+      attempts: entry.attempts ?? 1,
+      deferred: entry.deferred === true,
+      duration_ms: entry.durationMs ?? null,
+    })
+    if (error) console.error('[orchestrator] caye_tool_calls insert failed:', error.message)
+  } catch (err) {
+    console.error('[orchestrator] caye_tool_calls insert threw:', err)
+  }
 }
 
 /**

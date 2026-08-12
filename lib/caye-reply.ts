@@ -1,4 +1,5 @@
 import 'server-only'
+import { randomUUID } from 'crypto'
 import Anthropic from '@anthropic-ai/sdk'
 import type { VoiceProfile } from '@/lib/voice-profile'
 import { stripWrappingQuotes } from '@/lib/voice-profile'
@@ -63,6 +64,8 @@ import {
   amountsAttestedBy,
   assertsAvailability,
 } from './caye-agent/draft-claims'
+import { recordToolCall } from './caye-agent/orchestrator'
+import { deriveOutcome } from './caye-agent/front-desk-telemetry'
 import {
   detectForcedEscalation,
   detectSubtleComplaint,
@@ -2338,6 +2341,11 @@ async function generateCayeAutoReplyCore(
 
   let createdBookingId: string | undefined
 
+  // Correlates every tool call made while handling this one inbound message,
+  // so "what did Caye do on this message" is a single query — the same role
+  // ToolContext.requestId plays on the back-office path.
+  const frontDeskRequestId = randomUUID()
+
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     const response = await loggedMessagesCreate(client, {
       model: 'claude-sonnet-4-6',
@@ -2386,6 +2394,14 @@ async function generateCayeAutoReplyCore(
     let terminal: CayeAutoReply | null = null
 
     for (const tool of toolUses) {
+      // Front-desk tool telemetry (2026-08-12). Observational only — the
+      // outcome is read back out of whatever the branch below pushes, so
+      // nothing a customer receives depends on this. See
+      // lib/caye-agent/front-desk-telemetry.ts for why it reads results
+      // rather than restructuring 9 inline branches on a live path.
+      const toolStartedAt = Date.now()
+      const resultsBefore = toolResults.length
+
       if (tool.name === 'send_reply') {
         const input = tool.input as {
           content: string
@@ -2707,6 +2723,24 @@ async function generateCayeAutoReplyCore(
           is_error: true,
         })
       }
+
+      // Fire-and-forget, after the branch has pushed its result. A logging
+      // failure must never affect the customer's reply, so recordToolCall
+      // swallows its own errors and this is deliberately not awaited.
+      const pushed = toolResults
+        .slice(resultsBefore)
+        .find((r) => r.tool_use_id === tool.id)
+      const outcome = deriveOutcome(pushed)
+      void recordToolCall({
+        workspaceId: inbound.workspaceId,
+        requestId: frontDeskRequestId,
+        mode: 'front-desk',
+        toolName: tool.name,
+        callerRole: null,
+        status: outcome.status,
+        error: outcome.error,
+        durationMs: Date.now() - toolStartedAt,
+      })
     }
 
     if (terminal) return terminal
