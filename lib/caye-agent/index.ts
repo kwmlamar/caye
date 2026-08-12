@@ -3,6 +3,8 @@ import { randomUUID } from 'crypto'
 import Anthropic from '@anthropic-ai/sdk'
 import { createServiceClient } from '@/lib/supabase-server'
 import type { VoiceProfile } from '@/lib/voice-profile'
+import { loadAttentionDelta, renderAttentionContext } from '@/lib/owner-attention'
+import { syncOwnerAttention } from '@/lib/owner-attention-sync'
 import { loadOperatorContext } from './context'
 import { buildBackOfficeSystemPrompt } from './modes/back-office'
 import { buildDriverSystemPrompt } from './modes/driver'
@@ -110,6 +112,19 @@ export interface CayeAgentResult {
  * Front-desk mode still routes through lib/caye-reply.ts; the mode arg
  * is here to lock the API shape for later refactors.
  */
+/**
+ * Reconcile the attention ledger against reality, then read the delta.
+ *
+ * The sync must run first or the delta only reflects items that happened to
+ * push themselves into the ledger — which was the original bug, one layer up.
+ * Both calls are individually failure-tolerant, so a bookkeeping problem
+ * degrades the context block rather than the scan.
+ */
+async function reconciledAttention(workspaceId: string) {
+  await syncOwnerAttention(workspaceId)
+  return loadAttentionDelta({ workspaceId })
+}
+
 export async function cayeAgent(input: CayeAgentInput): Promise<CayeAgentResult> {
   if (input.mode === 'driver') {
     return runDriverAgent(input)
@@ -227,6 +242,13 @@ export async function cayeAgent(input: CayeAgentInput): Promise<CayeAgentResult>
       name: input.callerName ?? null,
     },
     origin: input.origin,
+    // Only on proactive turns. A scan speaks unprompted, so it's the path
+    // that can contradict something Caye already said; an ordinary chat turn
+    // is answering a live question and should trust the read tools.
+    attentionContext:
+      input.origin === 'scan'
+        ? renderAttentionContext(await reconciledAttention(input.workspaceId))
+        : null,
   })
 
   const history = await loadOperatorContext(input.workspaceId, input.operatorId)

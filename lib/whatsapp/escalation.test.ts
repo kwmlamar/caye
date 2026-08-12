@@ -1,4 +1,11 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+
+// vi.resetModules() re-imports the module under test but does NOT clear call
+// history on mocks declared in the factories above — so without this, a
+// "was not called" assertion sees the previous test's calls.
+beforeEach(() => {
+  vi.clearAllMocks()
+})
 
 vi.mock('server-only', () => ({}))
 
@@ -13,6 +20,20 @@ vi.mock('./urgency', () => ({ extractTargetDate: () => null }))
 vi.mock('@/lib/calendar-availability', () => ({ getDayAvailability: vi.fn() }))
 vi.mock('@/lib/operator-brief', () => ({
   buildOperatorBrief: () => ({ brief: 'brief text', oneLine: 'one line', targetDate: null }),
+}))
+// Explicitly stubbed even though the cases below pass no body (so extraction
+// is skipped anyway): without this, a future test that DOES pass a body would
+// make a live Anthropic call from the unit suite.
+vi.mock('@/lib/inbound-digest-extract', () => ({
+  extractInboundDigest: vi.fn(() => Promise.resolve(null)),
+}))
+// Only the write is stubbed. The SUBJECT_* constants come from the real
+// module, so a test asserting subjectType: 'conversation' is asserting the
+// same value escalation.ts and owner-attention-sync.ts actually use — the
+// whole point of that constant is that these two producers cannot drift.
+vi.mock('@/lib/owner-attention', async () => ({
+  ...(await vi.importActual<typeof import('@/lib/owner-attention')>('@/lib/owner-attention')),
+  observeAttentionItem: vi.fn(() => Promise.resolve(null)),
 }))
 
 interface Row {
@@ -122,6 +143,93 @@ describe('recordEscalation holdConversation', () => {
     expect(insertCalls.find((c) => c.table === 'caye_escalations')).toBeDefined()
     expect(insertCalls.find((c) => c.table === 'unified_messages')).toBeDefined()
     expect(enqueueEscalationPings).toHaveBeenCalled()
+    vi.resetModules()
+  })
+})
+
+describe('recordEscalation — digest extraction and attention bookkeeping', () => {
+  const base = {
+    workspaceId: 'ws-1',
+    conversationId: 'conv-3',
+    contactName: 'Ruslan Prakapovich',
+    category: 'sensitive' as const,
+    routeTo: 'owner' as const,
+    customerFacingMessage: 'Thanks for reaching out.',
+    internalContext: 'B2B partnership enquiry.',
+  }
+
+  it('reads a prose inbound structurally instead of quoting its first 400 chars', async () => {
+    const { client } = makeFakeSupabase()
+    vi.doMock('@/lib/supabase-server', () => ({ createServiceClient: () => client }))
+    const { recordEscalation } = await import('./escalation')
+    const { extractInboundDigest } = await import('@/lib/inbound-digest-extract')
+
+    await recordEscalation({
+      ...base,
+      body: 'Dear Karenda, thank you for the thoughtful questions. Could you confirm wheelchair access?',
+    })
+
+    expect(extractInboundDigest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        contactName: 'Ruslan Prakapovich',
+        // The reply already sent is passed so commitmentsMade comes from
+        // evidence rather than a guess.
+        alreadySent: 'Thanks for reaching out.',
+      })
+    )
+    vi.resetModules()
+  })
+
+  it('registers the item in the shared attention ledger before the ping goes out', async () => {
+    const { client } = makeFakeSupabase()
+    vi.doMock('@/lib/supabase-server', () => ({ createServiceClient: () => client }))
+    const { recordEscalation } = await import('./escalation')
+    const { observeAttentionItem } = await import('@/lib/owner-attention')
+
+    await recordEscalation({ ...base, body: 'Some prose enquiry.' })
+
+    // Keyed by CONVERSATION, not escalation id. owner-attention-sync sees
+    // this same thread as a hold and must land on the same ledger row, or one
+    // thread becomes two lines in the briefing.
+    expect(observeAttentionItem).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: 'ws-1',
+        subjectType: 'conversation',
+        subjectId: 'conv-3',
+        conversationId: 'conv-3',
+        // An escalation is by definition something that needs the owner.
+        priority: 'decision',
+      })
+    )
+    vi.resetModules()
+  })
+
+  it('falls back to the escalation id only when there is no conversation', async () => {
+    // A conversation-less escalation has no thread for the sync to find, so
+    // it cannot collide — and keying it on the escalation id is the only
+    // stable identity available.
+    const { client } = makeFakeSupabase()
+    vi.doMock('@/lib/supabase-server', () => ({ createServiceClient: () => client }))
+    const { recordEscalation } = await import('./escalation')
+    const { observeAttentionItem } = await import('@/lib/owner-attention')
+
+    await recordEscalation({ ...base, conversationId: null, body: 'Some prose enquiry.' })
+
+    expect(observeAttentionItem).toHaveBeenCalledWith(
+      expect.objectContaining({ subjectType: 'escalation', subjectId: 'esc-1' })
+    )
+    vi.resetModules()
+  })
+
+  it('does not spend an LLM call on a message with no body', async () => {
+    const { client } = makeFakeSupabase()
+    vi.doMock('@/lib/supabase-server', () => ({ createServiceClient: () => client }))
+    const { recordEscalation } = await import('./escalation')
+    const { extractInboundDigest } = await import('@/lib/inbound-digest-extract')
+
+    await recordEscalation(base)
+
+    expect(extractInboundDigest).not.toHaveBeenCalled()
     vi.resetModules()
   })
 })

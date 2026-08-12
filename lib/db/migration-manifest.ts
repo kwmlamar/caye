@@ -89,4 +89,8 @@ export const REPO_MIGRATIONS: readonly string[] = [
   '20260811_dropped_confirmation_sweep',
   '20260811b_caye_pending_operations',
   '20260811c_caye_tool_calls',
+  '20260812_fix_outbound_kind_check',
+  '20260812_outreach_autonomy',
+  '20260812b_outreach_bounce_log',
+  '20260812c_caye_owner_attention',
 ]

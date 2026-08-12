@@ -50,6 +50,7 @@ import {
   normalizeE164,
 } from '@/lib/onboarding-whatsapp'
 import { FIRST_DISCOVERY_QUESTION } from '@/lib/onboarding'
+import { mediaPlaceholder } from '@/lib/operator-text-guard'
 import {
   getActiveDemoSession,
   startDemoSession,
@@ -633,7 +634,7 @@ async function handleOneInbound(
         workspace_id: workspaceId,
         direction: 'inbound',
         wa_message_id: message.id,
-        body: message.type === 'text' ? message.text?.body ?? '' : `[${message.type}]`,
+        body: message.type === 'text' ? message.text?.body ?? '' : mediaPlaceholder(message.type),
         intent: null,
         operator_allowlist_id: operator.id,
         operator_name: operator.name,
@@ -801,7 +802,7 @@ async function handleOneInbound(
       workspace_id: workspaceId,
       direction: 'inbound',
       wa_message_id: message.id,
-      body: `[${message.type}]`,
+      body: mediaPlaceholder(message.type),
       intent: null,
       operator_allowlist_id: operator.id,
       operator_name: operator.name,

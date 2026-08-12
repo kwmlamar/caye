@@ -5,6 +5,8 @@ import { enqueueEscalationPings } from './triggers'
 import { extractTargetDate } from './urgency'
 import { getDayAvailability } from '@/lib/calendar-availability'
 import { buildOperatorBrief } from '@/lib/operator-brief'
+import { extractInboundDigest } from '@/lib/inbound-digest-extract'
+import { observeAttentionItem, SUBJECT_CONVERSATION } from '@/lib/owner-attention'
 import { displayContactName, looksLikeEmailAddress } from './contact-display'
 import type {
   CayeAutoReply,
@@ -66,26 +68,54 @@ export async function recordEscalation(
   // second pass so the brief answers "am I free that day?" before the
   // operator has to ask. Cheap either way — no LLM call, one Supabase
   // query only when a date was actually found.
-  const firstPass = buildOperatorBrief({
+  const briefInput = {
     trigger: input.triggerHint ?? null,
     contactName: input.contactName,
     body: input.body ?? '',
     alreadySent: input.customerFacingMessage,
     internalContext: input.internalContext,
-  })
+  }
+  const firstPass = buildOperatorBrief(briefInput)
+
+  // Structured reading of prose inbounds (2026-08-12). Only for messages
+  // that AREN'T a parseable intake form — a form is already rendered field
+  // by field and needs no comprehension. targetDate is the discriminator:
+  // buildOperatorBrief only ever sets it from the form path, so a null here
+  // means we're on the prose path where the old code quoted the first 400
+  // characters and shipped an owner a stranger's salutation.
+  //
+  // One extra LLM call per escalation. Escalations are low-frequency by
+  // construction (they're the exception path), and the alternative is the
+  // owner reading the raw email themselves — which is the cost this whole
+  // product exists to remove.
+  const digest =
+    firstPass.targetDate === null && (input.body ?? '').trim()
+      ? await extractInboundDigest({
+          body: input.body ?? '',
+          contactName: input.contactName,
+          alreadySent: input.customerFacingMessage,
+          workspaceId: input.workspaceId,
+        })
+      : null
+
   const availability = firstPass.targetDate
     ? await getDayAvailability(input.workspaceId, firstPass.targetDate)
     : null
-  const brief = availability
-    ? buildOperatorBrief({
-        trigger: input.triggerHint ?? null,
-        contactName: input.contactName,
-        body: input.body ?? '',
-        alreadySent: input.customerFacingMessage,
-        internalContext: input.internalContext,
-        availability: { dateISO: availability.dateISO, bookingCount: availability.bookings.length },
-      })
-    : firstPass
+  const brief =
+    availability || digest
+      ? buildOperatorBrief({
+          ...briefInput,
+          digest,
+          ...(availability
+            ? {
+                availability: {
+                  dateISO: availability.dateISO,
+                  bookingCount: availability.bookings.length,
+                },
+              }
+            : {}),
+        })
+      : firstPass
 
   // Single source of truth for the date this escalation is about — prefer
   // the structured form field (brief.targetDate) over prose-scraping
@@ -232,6 +262,33 @@ export async function recordEscalation(
       },
     })
   }
+
+  // Register with the shared attention ledger BEFORE the ping goes out, so
+  // the outbound worker's markAttentionNotified has a row to stamp and the
+  // morning digest can never describe this as "nothing new" (2026-08-12).
+  //
+  // Keyed by CONVERSATION, not by escalation id — see SUBJECT_CONVERSATION.
+  // lib/owner-attention-sync.ts also sees this thread (as a hold) and must
+  // land on the same row, or one thread becomes two lines in the briefing.
+  // Escalating writes here rather than leaving it to the sync because this
+  // is the only moment the composed digest exists.
+  //
+  // Falls back to the escalation id only for a conversation-less escalation,
+  // which has no thread for the sync to find and so cannot collide.
+  await observeAttentionItem({
+    workspaceId: input.workspaceId,
+    subjectType: input.conversationId ? SUBJECT_CONVERSATION : 'escalation',
+    subjectId: input.conversationId ?? data.id,
+    conversationId: input.conversationId,
+    title: `${input.contactName} — ${pingSummary.slice(0, 80)}`,
+    priority: 'decision',
+    nextAction: 'Waiting on your call',
+    digest,
+    // What re-earns attention: a different ask, a different date, a
+    // different category. Not the clock — an item that has merely aged is
+    // handled by the unchanged bucket, not by a fresh fingerprint.
+    fingerprintParts: [input.category, resolvedTargetDate, pingSummary],
+  })
 
   enqueueEscalationPings({
     workspaceId: input.workspaceId,

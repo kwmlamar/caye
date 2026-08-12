@@ -36,6 +36,11 @@
 // the two can never drift apart.
 import type { ForcedTrigger } from './forced-escalation'
 import { detectInternalLeak } from './operator-text-guard'
+import {
+  digestClosingAsk,
+  renderDigestBody,
+  type InboundDigest,
+} from './inbound-digest'
 
 export interface BriefField {
   label: string
@@ -59,6 +64,12 @@ export interface OperatorBriefInput {
   availability?: { dateISO: string; bookingCount: number } | null
   /** Operator-ready prose from the LLM path, used when there's no trigger. */
   internalContext?: string | null
+  /** Structured reading of `body` (lib/inbound-digest.ts). When present it
+   *  REPLACES the verbatim inbound quote on the prose path — see
+   *  buildProseBrief. Null/undefined falls back to the quote, which is the
+   *  degraded path: extraction failed, or the caller is synchronous and
+   *  never attempted it. */
+  digest?: InboundDigest | null
 }
 
 export interface OperatorBrief {
@@ -331,9 +342,75 @@ export function buildOperatorBrief(input: OperatorBriefInput): OperatorBrief {
   return { brief: lines.join('\n'), oneLine, targetDate }
 }
 
-// How much of a prose inbound to quote into the brief. Long enough to carry a
-// real B2B/complaint email's actual ask, short enough to stay scannable on a
-// phone. truncate() cuts at a word boundary with a real ellipsis.
+/**
+ * Prose brief built from a structured reading of the inbound.
+ *
+ * THE SHAPE IS FIXED HERE, NOT BY THE MODEL. The extractor supplies facts;
+ * this function decides the order the operator meets them in — who and what
+ * they want, then the stakes, then what's already been done, then Caye's
+ * recommendation, then exactly one question. Same division of labour as the
+ * structured-form path above, and the same reason: what an owner reads at
+ * 7am should not vary with model temperature.
+ *
+ * DELIBERATELY OMITS the "So far X has only had a holding line from me —
+ * '<quote>'" block that the quote path appends. The digest's
+ * commitmentsMade already carries what was promised, which is the part that
+ * constrains the owner's options; quoting Caye's own holding line back at
+ * them is Caye reporting her own good behaviour, which is not information.
+ */
+function buildDigestBrief(
+  input: OperatorBriefInput,
+  who: string,
+  digest: InboundDigest
+): OperatorBrief {
+  const lines: string[] = []
+  lines.push(input.trigger ? OPENING[input.trigger] : `${who} needs your call.`)
+
+  for (const para of renderDigestBody(digest)) {
+    lines.push('')
+    lines.push(para)
+  }
+
+  if (input.availability) {
+    lines.push('')
+    lines.push(
+      input.availability.bookingCount === 0
+        ? `Calendar's clear on ${shortDate(input.availability.dateISO)}.`
+        : `Already ${input.availability.bookingCount} on the calendar ${shortDate(input.availability.dateISO)}.`
+    )
+  }
+
+  // One question, or none. A non-substantive message (a holding note, an
+  // acknowledgement) gets NO closing ask — manufacturing one so the message
+  // looks actionable is the exact behaviour this work exists to remove.
+  // The locked CLOSING_ASK is the fallback for a real decision the extractor
+  // couldn't phrase, not the default.
+  const ask =
+    digestClosingAsk(digest) ??
+    (digest.substantive && digest.actionNeeded && input.trigger ? CLOSING_ASK[input.trigger] : null)
+  if (ask) {
+    lines.push('')
+    lines.push(ask)
+  }
+
+  const brief = lines.join('\n')
+  // Same backstop as the quote path — this text goes to a phone, so a
+  // composed body carrying machinery degrades rather than sends.
+  const leak = detectInternalLeak(brief)
+  if (leak) {
+    console.error(`[operator-brief] internal text in digest brief (${leak}) — falling back to quote path`)
+    return buildProseBrief({ ...input, digest: null }, who)
+  }
+
+  return { brief, oneLine: truncate(digest.intent, ONE_LINE_MAX), targetDate: null }
+}
+
+// How much of a prose inbound to quote into the brief. DEGRADED PATH ONLY —
+// used when no structured digest was available (extraction failed, or a
+// synchronous caller never attempted one). Prefix-truncating a business
+// email captures its pleasantries and drops its ask, which is why the digest
+// exists; this cap only bounds how much of that to inflict when there is no
+// alternative. truncate() cuts at a word boundary with a real ellipsis.
 const INBOUND_QUOTE_MAX = 400
 
 /**
@@ -366,6 +443,10 @@ function quoteInbound(body: string, who: string): string {
  * supply every bit of framing internalContext was being mined for.
  */
 function buildProseBrief(input: OperatorBriefInput, who: string): OperatorBrief {
+  // A structured reading beats every quoting strategy, so it wins outright
+  // when the caller managed to get one (2026-08-12). See buildDigestBrief.
+  if (input.digest) return buildDigestBrief(input, who, input.digest)
+
   let core = (
     input.trigger ? quoteInbound(input.body, who) : (input.internalContext ?? input.body ?? '')
   ).trim()

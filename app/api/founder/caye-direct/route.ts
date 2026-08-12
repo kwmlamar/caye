@@ -23,7 +23,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase-server'
 import { requireFounder } from '@/lib/founder'
 import { cayeAgent } from '@/lib/caye-agent'
-import { persistAgentTurns, isInternalOnlyBody, visibleBody } from '@/lib/caye-operator-messages'
+import { persistAgentTurns, isInternalTurnBody, visibleBody } from '@/lib/caye-operator-messages'
 import { resolveFounderOperator } from '@/lib/operator-identity'
 
 /**
@@ -82,13 +82,14 @@ export async function GET(req: NextRequest) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  // Strip tool markers BEFORE deduping: a mixed text+tool_use turn renders as
-  // "…Anytime. [tool_use: get_held_queue]", which isInternalOnlyBody keeps
-  // (it isn't marker-only) and which dedupe would treat as distinct from the
-  // same text without the marker. Stripping first fixes both.
+  // Drop intermediate tool-loop turns entirely (isInternalTurnBody), then
+  // render what's left. A turn carrying a tool call is preamble, not an
+  // answer — showing its text as a bubble is what put "Let me check both the
+  // held queue and pending quotes at the same time." above the actual reply
+  // in Mrs. Max's thread. visibleBody stays as a backstop for markers.
   const visible = dedupeConsecutive(
     (data ?? [])
-      .filter((m) => !isInternalOnlyBody(m.body))
+      .filter((m) => !isInternalTurnBody(m.body))
       .map((m) => ({ ...m, body: visibleBody(m.body) }))
   )
 

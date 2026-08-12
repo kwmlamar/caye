@@ -53,7 +53,68 @@ const INTERNAL_PROSE_PATTERNS: { pattern: RegExp; label: string }[] = [
   },
   { pattern: /\bOwner: review the thread\b/i, label: 'internal owner directive' },
   { pattern: /\bhybrid sentiment cascade\b/i, label: 'cascade diagnostic' },
+  // Bracketed snake_case system tokens — outbound queue kinds
+  // ("[operator_reminder]", "[dropped_confirmation]"), turn markers
+  // ("[empty]"), and anything else that echoes an internal enum into prose.
+  // Live in Mrs. Max's thread 2026-08-12: operatorPingLogBody's `default:`
+  // branch returned `[${kind}]` for kinds it had no case for.
+  //
+  // Requires an underscore (or matches the one known single-word token) so
+  // ordinary bracketed prose — "[see attached]", "[draft]" — is untouched.
+  // Enum names are snake_case by construction; human asides are not.
+  {
+    pattern: /\[(?:[a-z][a-z0-9]*(?:_[a-z0-9]+)+|empty)\]/,
+    label: 'internal event token',
+  },
+  // The quiet-scan protocol token (lib/quiet-scan.ts). That module already
+  // scrubs it belt-and-braces; this is the third layer, so a NEW consumer of
+  // scan text that forgets to scrub fails a test instead of shipping the
+  // token to a phone. It leaked once already, on 2026-08-08.
+  { pattern: /\bNOTHING_TO_REPORT\b/, label: 'quiet-scan sentinel' },
 ]
+
+/**
+ * Human label for a non-text inbound, for any surface a person reads.
+ *
+ * WHY (2026-08-12b audit). Four sites interpolated the raw WhatsApp API enum
+ * straight into owner-facing text — `[${message.type}]` into
+ * caye_operator_messages.body (renders in Caye Direct) and into
+ * unified_conversations.last_message_preview, which get_held_queue hands back
+ * as `preview` for Caye to relay out loud. So an owner's held-queue readout
+ * could contain the literal string "[image]". Same defect as
+ * "[operator_reminder]", a different enum.
+ *
+ * The bracketed snake_case guard above does NOT catch these — the WhatsApp
+ * types are single words with no underscore — which is exactly why the fix
+ * has to be a real renderer rather than another pattern.
+ *
+ * Unknown types return "Attachment", never the raw type. Same rule as
+ * operatorPingLogBody's default branch: an unmapped value is a gap in this
+ * function, not something to echo at a customer.
+ */
+export function mediaPlaceholder(messageType: string | null | undefined): string {
+  switch ((messageType ?? '').toLowerCase()) {
+    case 'image':
+      return 'Photo'
+    case 'video':
+      return 'Video'
+    case 'audio':
+    case 'voice':
+    case 'ptt':
+      return 'Voice note'
+    case 'document':
+      return 'Document'
+    case 'sticker':
+      return 'Sticker'
+    case 'location':
+      return 'Location'
+    case 'contacts':
+    case 'contact':
+      return 'Contact card'
+    default:
+      return 'Attachment'
+  }
+}
 
 /**
  * Returns a short reason string when `text` carries internal machinery that an

@@ -29,6 +29,7 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { requireFounder } from '@/lib/founder'
 import { cayeAgent } from '@/lib/caye-agent'
 import { persistAdminShellTurns } from '@/lib/admin-shell-messages'
+import { isInternalTurnBody, visibleBody } from '@/lib/caye-operator-messages'
 import { startCodingSession } from '@/lib/coding-session/start'
 import { getLatestCodingSession } from '@/lib/coding-session/queries'
 
@@ -49,7 +50,16 @@ export async function GET(req: NextRequest) {
 
   const codingSession = await getLatestCodingSession()
 
-  return NextResponse.json({ messages: (data ?? []).reverse(), codingSession })
+  // Same filter as Caye Direct (app/api/founder/caye-direct/route.ts): drop
+  // intermediate tool-loop turns rather than showing their preamble. This
+  // surface had no filtering at all, so it rendered raw "[tool_use: …]"
+  // markers as bubbles — founder-only, but the identical defect.
+  const messages = (data ?? [])
+    .filter((m) => !isInternalTurnBody(m.body))
+    .map((m) => ({ ...m, body: visibleBody(m.body) }))
+    .reverse()
+
+  return NextResponse.json({ messages, codingSession })
 }
 
 export async function POST(req: NextRequest) {
