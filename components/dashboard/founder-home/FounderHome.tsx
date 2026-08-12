@@ -20,6 +20,7 @@ import CostPage from '@/components/dashboard/founder-home/CostPage'
 import HealthPage from '@/components/dashboard/founder-home/HealthPage'
 import ToolsPage from '@/components/dashboard/founder-home/ToolsPage'
 import { CayeLoadingPulse } from '@/components/dashboard/founder-home/CayeLoadingPulse'
+import CayeLivePulse from '@/components/dashboard/founder-home/CayeLivePulse'
 import { Pill, GhostButton } from '@/components/dashboard/founder-home/console-ui'
 import type { CustomerStatus } from '@/types/database'
 
@@ -683,6 +684,12 @@ export default function FounderHome() {
           <StubConsole label={activeRailItem.label} />
         ) : (
           <div style={{ flex: 1, overflowY: expanded ? 'hidden' : 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 16, minHeight: 0 }}>
+            {/* Live pulse — real events off workspace_events (last message,
+                booking, escalation, channel blip), cycling through a
+                pulsing orb. Hidden alongside the overview strip while a
+                panel is expanded. */}
+            {!expanded && <CayeLivePulse workspaceId={workspaceId} />}
+
             {/* Overview strip — hidden while a panel is expanded, so the
                 expanded panel gets the whole page under the top bar. */}
             <div style={{ flexShrink: 0, display: expanded ? 'none' : 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
