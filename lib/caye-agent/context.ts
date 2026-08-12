@@ -1,6 +1,7 @@
 import 'server-only'
 import type Anthropic from '@anthropic-ai/sdk'
 import { createServiceClient } from '@/lib/supabase-server'
+import { compactHistory } from './history-compaction'
 
 // Sliding window bounds locked during the back-office grill-me, Q3:
 // last 30 messages OR last 24h, whichever is shorter. For richer history
@@ -54,7 +55,7 @@ export async function loadOperatorContext(
   }
 
   // Walk newest→oldest from the DB, then reverse so Claude sees chronological.
-  return data
+  const window = data
     .reverse()
     .map((row): Anthropic.MessageParam | null => {
       const stored = row.claude_format as Anthropic.MessageParam | null | undefined
@@ -68,4 +69,10 @@ export async function loadOperatorContext(
       }
     })
     .filter((m): m is Anthropic.MessageParam => m !== null)
+
+  // Spent tool results are 59.2% of the replayed bytes and the largest single
+  // line item in the bill (see history-compaction.ts). Shrink the ones past
+  // the verbatim budget — blocks and tool_use_ids are preserved, only stale
+  // payloads shrink.
+  return compactHistory(window)
 }

@@ -389,6 +389,14 @@ export function buildBackOfficeSystemPrompt(args: {
       `disclosed at the end costs all the work in between.`
   )
   lines.push('')
+  lines.push('REMINDERS')
+  lines.push(
+    `- You CAN set reminders now — schedule_reminder. When ${speaker} asks to be reminded of ` +
+      `anything, set it, don't apologise for not being able to. Convert their words to a real ` +
+      `date and 24-hour time yourself, and confirm the local time back so a mistake is caught ` +
+      `before it fires. Two times means two calls.`
+  )
+  lines.push('')
   lines.push('WHAT YOU NEVER DO')
   lines.push(`- Never invent bookings, customers, revenue, calendar entries, or held messages. If you don't have a tool to look it up, say so.`)
   lines.push(`- Never write as if you were the operator when talking TO them. You are Caye speaking to ${speaker}.`)

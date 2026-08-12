@@ -180,6 +180,17 @@ export type OutboundKind =
   // only tells the operator something is waiting.
   | 'opportunity_scan'
   | 'business_insights'
+  // Operator-set reminder (schedule_reminder). Free-form only — there is no
+  // approved Meta template for it, so a closed 24h window means it can't go
+  // out over WhatsApp. It's in OPERATOR_LOGGABLE_KINDS so it still lands in
+  // Caye Direct in that case rather than disappearing.
+  | 'operator_reminder'
+  // A staged action the operator was shown, then never executed and never
+  // cancelled — it just expired (dropped-confirmation-sweep). Same free-form
+  // constraint as operator_reminder: no approved template, so a closed window
+  // means it lands in Caye Direct instead. In practice the operator was
+  // mid-conversation minutes earlier, so the window is open.
+  | 'dropped_confirmation'
 
 export interface EnqueueOutboundInput {
   workspaceId: string
@@ -237,7 +248,94 @@ export async function enqueueOutbound(input: EnqueueOutboundInput): Promise<{ id
     // Unique violation on idempotency_key → already queued; not an error.
     if (error.code === '23505') return null
     console.error('[enqueueOutbound] insert failed:', error)
+    // Fire-and-forget, deliberately not awaited — an alert that can fail must
+    // never be able to swallow or delay the throw below, which is the part
+    // every caller actually depends on for its own error handling.
+    alertFounderOfEnqueueFailure({ workspaceId: input.workspaceId, kind: input.kind, detail: error.message })
     throw new Error(`enqueueOutbound: ${error.message}`)
   }
   return data
+}
+
+/**
+ * Tell the founder when a row can't even be QUEUED — distinct from, and
+ * upstream of, alertFounderOfDeliveryFailure in founder-alert.ts (which
+ * covers a queued row that later fails to SEND).
+ *
+ * WHY THIS EXISTS (2026-08-12)
+ * 'booking_created' has never once enqueued successfully since the feature
+ * existed (2026-05-28) — the DB CHECK constraint said 'same_day_booking',
+ * the code said 'booking_created', and every insert was rejected. Every one
+ * of the 7 call sites does `enqueueBookingCreated(...).catch(err =>
+ * console.error(...))` — a deliberate, correct choice (a notification
+ * failure must never block the booking itself succeeding), but the
+ * consequence was that the only trace of a permanently-broken kind was a
+ * console.error nobody was watching. It took over two months to surface,
+ * and only because an unrelated task happened to hit the same constraint.
+ *
+ * This does not fix that class of bug — the migration/constraint check
+ * does (see lib/db-enum-literals.test.ts and
+ * scripts/verify-outbound-kind-constraint.ts). This fixes how long the
+ * NEXT one like it stays invisible.
+ *
+ * Deliberately NOT routed through classifyDeliveryError/extractErrorCode —
+ * those parse Meta Cloud API error codes, and a Postgres constraint
+ * violation is not one. Forcing an insert failure through Meta-specific
+ * account_fatal branching risks misclassifying it and emailing the founder
+ * "WhatsApp is down account-wide" for a bug that has nothing to do with
+ * WhatsApp being down. This stays deliberately simpler: one WhatsApp ping
+ * to the founder, deduped hourly per (workspace, kind), same table and same
+ * bucketing scheme founder-alert.ts already uses so the two failure classes
+ * don't fight over the same dedup keys.
+ */
+async function alertFounderOfEnqueueFailure(args: {
+  workspaceId: string
+  kind: string
+  detail: string
+}): Promise<void> {
+  try {
+    const supabase = createServiceClient()
+    const bucket = Math.floor(Date.now() / (60 * 60 * 1000))
+    const alertKey = `wa-enqueue-fail-alert-${args.workspaceId}-${args.kind}-${bucket}`
+
+    const { error: dedupErr } = await supabase
+      .from('caye_founder_alert_log')
+      .insert({ alert_key: alertKey })
+    if (dedupErr) {
+      if (dedupErr.code === '23505') return // already alerted this bucket
+      console.error('[enqueueOutbound] alert dedup check failed:', dedupErr)
+      return
+    }
+
+    const { data: customer } = await supabase
+      .from('customers')
+      .select('business_name')
+      .eq('id', args.workspaceId)
+      .maybeSingle()
+    const business = (customer?.business_name as string | null) ?? args.workspaceId
+
+    const { data: setting } = await supabase
+      .from('platform_settings')
+      .select('value')
+      .eq('key', 'founder_phone')
+      .maybeSingle()
+    const founderPhone = setting?.value as string | undefined
+    if (!founderPhone) {
+      console.error(
+        `[enqueueOutbound] ${args.kind} could not be queued for ${business} but no founder_phone configured:`,
+        args.detail
+      )
+      return
+    }
+
+    const messageBody =
+      `⚠️ ${business}: couldn't queue a ${args.kind} notification — ${args.detail.slice(0, 200)}. ` +
+      `Likely a DB constraint the code has outgrown; check caye_outbound_queue_kind_check.`
+    const result = await sendFreeFormWhatsApp(founderPhone, messageBody, alertKey)
+    if (result.status === 'failed') {
+      console.error('[enqueueOutbound] alert send failed:', result.error)
+    }
+  } catch (err) {
+    console.error('[enqueueOutbound] alertFounderOfEnqueueFailure failed:', err)
+  }
 }

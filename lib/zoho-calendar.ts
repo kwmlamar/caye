@@ -192,11 +192,22 @@ export async function updateZohoCalendarEvent(
   const base = calendarBase(apiDomain)
   const formBody = new URLSearchParams({ eventdata: JSON.stringify(eventdata) }).toString()
 
+  // Same ETAG_MISSING bug as delete had, and just as total: this never once
+  // succeeded. reschedule_booking updated Supabase, told the operator the tour
+  // had moved, and left the original time sitting on Karenda's calendar
+  // (confirmed live 2026-08-11 — the API rejects the call outright, so the
+  // event was never even partially written). See deleteZohoCalendarEvent.
+  const etag = await fetchEventEtag(base, calId, eventId, accessToken)
+  if (etag === null) {
+    throw new Error(`Zoho Calendar update failed: event ${eventId} no longer exists`)
+  }
+
   const res = await fetch(`${base}/api/v1/calendars/${calId}/events/${eventId}`, {
     method: 'PUT',
     headers: {
       Authorization: `Zoho-oauthtoken ${accessToken}`,
       'Content-Type': 'application/x-www-form-urlencoded',
+      ETAG: etag,
     },
     body: formBody,
   })
@@ -392,6 +403,47 @@ export async function listZohoCalendarEvents(
   return out
 }
 
+/**
+ * Zoho requires the event's current ETAG on any mutating call — it is their
+ * optimistic-concurrency check, not an optional cache header. Without it the
+ * API returns 400 ETAG_MISSING.
+ *
+ * Returns null when the event is already gone, so callers can treat a missing
+ * event as an accomplished delete rather than an error.
+ */
+async function fetchEventEtag(
+  base: string,
+  calId: string,
+  eventId: string,
+  accessToken: string
+): Promise<string | null> {
+  const res = await fetch(`${base}/api/v1/calendars/${calId}/events/${eventId}`, {
+    headers: { Authorization: `Zoho-oauthtoken ${accessToken}` },
+  })
+  if (res.status === 404) return null
+  if (!res.ok) {
+    const body = await res.text()
+    throw new Error(`Zoho Calendar event fetch failed (${res.status}): ${body.slice(0, 300)}`)
+  }
+  const json = (await res.json()) as { events?: { etag?: string | number }[] }
+  const etag = json.events?.[0]?.etag
+  return etag == null ? null : String(etag)
+}
+
+/**
+ * Remove an event from the workspace's Zoho calendar.
+ *
+ * WHY THE ETAG DANCE (2026-08-11)
+ * This shipped without an ETAG header and therefore never once succeeded —
+ * every call came back 400 ETAG_MISSING. Because syncBookingToCalendar catches
+ * and returns { synced: false, reason }, the failure was swallowed at every
+ * call site: cancel_booking would mark the booking cancelled in Supabase and
+ * report success to the operator while the event stayed on Karenda's calendar
+ * forever. A cancelled tour that still occupies its slot makes a free day look
+ * booked, which is the same class of damage as the duplicate-booking bug.
+ *
+ * Found while removing a genuine duplicate booking, when the delete refused.
+ */
 export async function deleteZohoCalendarEvent(
   workspaceId: string,
   eventId: string
@@ -401,9 +453,16 @@ export async function deleteZohoCalendarEvent(
   const calId = await getOrFetchCalendarId(workspaceId, apiDomain, accessToken, meta.zoho_calendar_id)
 
   const base = calendarBase(apiDomain)
+  const etag = await fetchEventEtag(base, calId, eventId, accessToken)
+  // Already gone on Zoho's side — the desired end state, not a failure.
+  if (etag === null) return
+
   const res = await fetch(`${base}/api/v1/calendars/${calId}/events/${eventId}`, {
     method: 'DELETE',
-    headers: { Authorization: `Zoho-oauthtoken ${accessToken}` },
+    headers: {
+      Authorization: `Zoho-oauthtoken ${accessToken}`,
+      ETAG: etag,
+    },
   })
   // Tolerate 404 — event already gone on Zoho side
   if (!res.ok && res.status !== 404) {

@@ -34,6 +34,7 @@ import { sendFounderAlertEmail } from '@/lib/email/founder-mailer'
 import { extractErrorCode } from '@/lib/whatsapp/delivery-errors'
 import { resyncTemplatesAfterParamMismatch } from '@/lib/whatsapp/template-sync'
 import { detectInternalLeak } from '@/lib/operator-text-guard'
+import { drainPendingOperationsSafely } from '@/lib/pending-operations-worker'
 
 // Kinds that represent Caye proactively messaging an operator about
 // something (as opposed to system plumbing like otp/welcome/ack) — these
@@ -57,6 +58,12 @@ export const OPERATOR_LOGGABLE_KINDS = new Set([
   // proximity in the thread, since wa_message_id isn't known until dispatch.
   'opportunity_scan',
   'business_insights',
+  // Operator-set reminders (schedule_reminder). Logged so a reminder that
+  // can't go out free-form — the 24h window closed since she set it — still
+  // lands somewhere she'll see it, rather than silently failing. There is no
+  // approved template for reminders and inventing one would need Meta review.
+  'operator_reminder',
+  'dropped_confirmation',
 ])
 
 const CONCURRENCY = 10
@@ -149,6 +156,13 @@ export async function GET(request: NextRequest) {
   await checkStaleCronsAndAlert()
   await checkStaleDeliveryAndAlert()
   await checkDeliveryHealthAndAlert()
+
+  // Drain the external-effects outbox on the same tick (2026-08-11). Same
+  // reasoning as checkStaleCronsAndAlert living here rather than in its own
+  // job: a queue whose only drain is a cron someone has to remember to
+  // register externally is a queue that silently stops — which is exactly
+  // what happened to this very endpoint for ~25h on 2026-07-25. Never throws.
+  await drainPendingOperationsSafely()
 
   try {
     const summary = await recordCronRun('outbound-worker', async () => {
@@ -854,6 +868,17 @@ async function templateForKind(
 }
 
 function freeFormBodyForKind(kind: string, payload: Record<string, unknown>): string | null {
+  // Composed at enqueue time by schedule_reminder (formatReminderBody), so
+  // the text she gets is the text she asked for, decorated once.
+  if (kind === 'operator_reminder') {
+    return typeof payload.body === 'string' && payload.body.trim() ? (payload.body as string) : null
+  }
+  // Composed at enqueue time by the dropped-confirmation sweep
+  // (formatDroppedConfirmation), for the same reason as operator_reminder:
+  // the recipient's local time is baked into the sentence.
+  if (kind === 'dropped_confirmation') {
+    return typeof payload.body === 'string' && payload.body.trim() ? (payload.body as string) : null
+  }
   if (kind === 'ack') {
     return typeof payload.body === 'string' ? (payload.body as string) : null
   }

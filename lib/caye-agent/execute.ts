@@ -2,6 +2,8 @@ import 'server-only'
 import type Anthropic from '@anthropic-ai/sdk'
 import { TOOL_REGISTRY, findTool } from './tools/registry'
 import { asAnthropicTool, type ToolContext, type ToolMode } from './tools/types'
+import { stripForModel } from './tools/result'
+import { runToolWithRecovery, guidanceFor } from './orchestrator'
 import { loggedMessagesCreate } from '@/lib/llm-telemetry'
 
 // Safety: bound the tool loop so a misbehaving model can't call tools
@@ -141,27 +143,24 @@ export async function runToolLoop(args: ToolLoopArgs): Promise<ToolLoopResult> {
         })
         continue
       }
-      try {
-        const result = await tool.execute(block.input as never, args.ctx)
-        toolResults.push({
-          type: 'tool_result',
-          tool_use_id: block.id,
-          content: JSON.stringify(result),
-          is_error: !result.ok,
-        })
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
-        console.error(
-          `[caye-agent/execute] tool ${block.name} threw:`,
-          msg
-        )
-        toolResults.push({
-          type: 'tool_result',
-          tool_use_id: block.id,
-          content: JSON.stringify({ ok: false, error: msg }),
-          is_error: true,
-        })
-      }
+      // Execution, classification, retry, and logging all live in the
+      // orchestrator (2026-08-11) — runToolWithRecovery never throws, so
+      // there is no catch here any more. What reaches the model is a
+      // classified outcome plus an instruction for how to report it, not a
+      // raw error string it has to interpret for itself.
+      const { result } = await runToolWithRecovery(tool, block.input, args.ctx, { mode })
+      const payload = stripForModel(result)
+      const guidance = guidanceFor(result.status, result.deferred === true)
+      if (guidance) payload.how_to_report_this = guidance
+      toolResults.push({
+        type: 'tool_result',
+        tool_use_id: block.id,
+        content: JSON.stringify(payload),
+        // A deferred write is a success from the operator's side — flagging
+        // it as an error is what invites the apologetic "it didn't work"
+        // framing this whole path exists to prevent.
+        is_error: !result.ok,
+      })
     }
 
     const toolResultTurn: Anthropic.MessageParam = {

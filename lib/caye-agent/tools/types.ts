@@ -1,5 +1,6 @@
 import 'server-only'
 import type Anthropic from '@anthropic-ai/sdk'
+import type { ToolResult } from './result'
 
 /**
  * Risk tier locked in grill-me Q2: read/low execute autonomously,
@@ -102,19 +103,30 @@ export interface ToolContext {
    * chat-origin invocation can confirm it.
    */
   origin?: 'chat' | 'scan'
+  /**
+   * Deterministic key for this exact (turn, tool, arguments) triple, set by
+   * runToolWithRecovery before execute() is called (2026-08-11).
+   *
+   * Tools with external side effects thread this into the system they call
+   * so a retry — by the orchestrator, or by the model repeating itself
+   * within a turn — collapses onto the same operation instead of creating a
+   * second booking / event / charge. Optional because most tools write only
+   * to Supabase behind a uniqueness constraint and don't need it.
+   */
+  operationKey?: string
 }
 
 /**
  * Structured tool output. Stringified and handed back to Claude in a
- * tool_result block. ok=true means tool succeeded; data is the
- * structured response. ok=false means tool failed; error is a short
- * human-readable message Caye can pass to the operator.
+ * tool_result block.
+ *
+ * Defined in ./result alongside the outcome taxonomy and its constructors,
+ * and re-exported here so the ~60 tools that already `import type
+ * { ToolResult } from '../types'` keep compiling untouched. `ok`/`data`/
+ * `error` mean exactly what they always did; `status` and friends are
+ * additive and optional.
  */
-export interface ToolResult {
-  ok: boolean
-  data?: unknown
-  error?: string
-}
+export type { ToolResult, ToolStatus } from './result'
 
 export interface Tool<T = unknown> {
   name: string
