@@ -4,20 +4,24 @@ import { detectIdentityLeak } from './caye-identity-guard'
 import { sanitizeDashes } from './sanitize-dashes'
 import { loggedMessagesCreate } from '@/lib/llm-telemetry'
 import { BANNED_HEDGE_PHRASES } from './outreach-draft-guard'
+import { buildTrackedDemoLink } from './outreach-compliance'
 
 /**
- * Drafts the single allowed follow-up nudge for a cold-outreach lead in
- * TropiTech's own internal_sales workspace (issue #66 follow-on — outreach
- * autonomy roadmap step 2, decisions-log 2026-07-21). Sibling to
- * lib/caye-nudge.ts's generateCayeNudge, but deliberately separate: that
- * generator's prompt frame is warm/professional "service business replying
- * to its own customer," which is the wrong register for a founder chasing
- * a cold prospect. This reuses lib/caye-reply.ts's internal_sales voice
- * instead (drawn from the workspace's own system_prompt, seeded by
+ * Drafts a follow-up nudge for a cold-outreach lead in TropiTech's own
+ * internal_sales workspace. Sibling to lib/caye-nudge.ts's
+ * generateCayeNudge, but deliberately separate: that generator's prompt
+ * frame is warm/professional "service business replying to its own
+ * customer," which is the wrong register for a founder chasing a cold
+ * prospect. This reuses lib/caye-reply.ts's internal_sales voice instead
+ * (drawn from the workspace's own system_prompt, seeded by
  * scripts/seed-tropitech-sales-workspace.ts).
  *
- * Always a draft — app/api/caye/outreach-nudge-scan holds every result for
- * founder review, never sends it. This function only produces the text.
+ * Up to 2 follow-ups per lead as of decisions-log 2026-08-12 (was capped
+ * at exactly 1) — touchNumber (2 or 3, first-touch being touch 1)
+ * distinguishes "checking if you saw this" from "last one, then I'll
+ * leave it" so the second nudge doesn't read like a copy-paste of the
+ * first. app/api/caye/outreach-autosend-scan sends the result directly
+ * (no held-for-review step) unless lib/outreach-draft-guard flags it.
  */
 
 export interface OutreachFollowupContext {
@@ -25,6 +29,9 @@ export interface OutreachFollowupContext {
   systemPrompt: string
   leadName: string
   businessName: string
+  demoToken: string
+  /** 2 = first follow-up (first-touch was touch 1), 3 = final follow-up. */
+  touchNumber: 2 | 3
 }
 
 export type OutreachFollowupResult =
@@ -32,14 +39,20 @@ export type OutreachFollowupResult =
   | { ok: false; reason: 'identity_guard' | 'empty_response'; detail?: string }
 
 function buildOutreachFollowupSystem(ctx: OutreachFollowupContext): string {
+  const trackedLink = buildTrackedDemoLink(ctx.demoToken)
+  const isFinal = ctx.touchNumber === 3
   return (
     ctx.systemPrompt +
     '\n\nTASK: Draft a short follow-up email to ' +
     `${ctx.leadName} at ${ctx.businessName}, a cold-outreach prospect who ` +
-    'has not replied to the founder\'s first-touch message sent a couple of days ago. ' +
-    'This is the ONE allowed follow-up per TropiTech\'s outreach policy (outreach-script.md) — ' +
-    'no chasing beyond this, so don\'t hint at future follow-ups either.\n\n' +
-    'Tone: direct and brief, no re-pitching Caye from scratch, no guilt trip about the silence. ' +
+    `has not replied to the founder's ${isFinal ? 'prior two messages' : 'first-touch message sent a few days ago'}. ` +
+    (isFinal
+      ? 'This is the LAST allowed follow-up per TropiTech\'s outreach policy — after this, no more chasing. ' +
+        'Make that plain without being harsh: this is the last check-in, not an open-ended "I\'ll keep following up."'
+      : 'This is the FIRST of at most one more allowed follow-up after this one — don\'t promise or hint at ' +
+        'further follow-ups beyond that.'
+    ) +
+    '\n\nTone: direct and brief, no re-pitching Caye from scratch, no guilt trip about the silence. ' +
     // Built from the shared ban list rather than restated inline, so the
     // instruction here and the pre-send check that enforces it (see
     // lib/outreach-draft-guard.ts) can never drift apart. A draft using any
@@ -51,10 +64,8 @@ function buildOutreachFollowupSystem(ctx: OutreachFollowupContext): string {
     'polite reminder email. Say plainly you\'re checking whether they saw the last message, restate ' +
     'the concrete next step, done. 2-3 sentences. If they\'re not interested that\'s fine, but state ' +
     'it flat, don\'t cushion it. ' +
-    'The soft restatement is the demo\'s call-to-action, and it must stay concrete, per the demo ' +
-    'mechanics in the voice above (the meetcaye.com "Try for Free" link, texts from WhatsApp, no ' +
-    'card/signup, ~5 minutes) — never fall back to a vague "I\'d love to show you what that looks ' +
-    'like" with no next step attached. ' +
+    `End with this exact tracked link so the click can be counted: ${trackedLink} — never invent a ` +
+    'different link or fall back to a vague "I\'d love to show you what that looks like" with no link attached. ' +
     'Do not invent details about their business you don\'t already know.\n\n' +
     'Write only the email body — no subject line, no markdown. Sign as the founder, never as ' +
     '"Caye" or an AI, per the voice above.'

@@ -95,17 +95,30 @@ export async function runMorningDigest() {
         .select('id', { count: 'exact', head: true })
         .eq('user_id', ws.workspace_id)
         .eq('booking_date', dayKey),
-      supabase.from('customers').select('full_name, business_name').eq('id', ws.workspace_id).maybeSingle(),
+      supabase.from('customers').select('full_name, business_name, workspace_kind').eq('id', ws.workspace_id).maybeSingle(),
     ])
 
     const bookings = bookingsCount ?? 0
-    if (held === 0 && bookings === 0) {
+    const isOutreachWorkspace = customer?.workspace_kind === 'internal_sales'
+    // internal_sales never has bookings and often has zero held items on a
+    // day everything sent cleanly — the one day the digest most needs to
+    // fire. Compute outreach activity before the skip check so a fully
+    // successful autonomous day doesn't go silent.
+    const outreachStats = isOutreachWorkspace ? await buildOutreachDigestStats(ws.workspace_id, now) : null
+    const outreachActivity = outreachStats
+      ? outreachStats.sourced + outreachStats.firstTouchSent + outreachStats.followupsSent + outreachStats.replies + outreachStats.tried
+      : 0
+
+    if (held === 0 && bookings === 0 && outreachActivity === 0 && !isOutreachWorkspace) {
       summary.skipped_no_state++
       continue
     }
+    // internal_sales always sends (even a "quiet 24 hours" line) once it
+    // has a connected outreach inbox — the reporting cadence is the whole
+    // point (decisions-log 2026-08-12), not conditional on there being news.
 
     const firstName = pickFirstName(customer?.full_name) ?? customer?.business_name ?? 'there'
-    const agingEscalationsSummary = await buildAgingEscalationsSummary(ws.workspace_id, now)
+    const agingEscalationsSummary = isOutreachWorkspace ? '' : await buildAgingEscalationsSummary(ws.workspace_id, now)
 
     // Narrative briefing is the real morning message whenever the WhatsApp
     // 24h window is open at send time (see outbound-worker's dispatch()) —
@@ -121,11 +134,23 @@ export async function runMorningDigest() {
     if (destPhone) {
       try {
         const operator = await resolveOperatorByPhone(supabase, ws.workspace_id, destPhone)
-        const oldestAgingHold = await findOldestAgingHold(ws.workspace_id, now)
+        // oldestAgingHold's "who's waiting" framing doesn't apply to
+        // internal_sales — its held items are paused-outreach-review
+        // items, not a customer waiting on a reply.
+        const oldestAgingHold = isOutreachWorkspace ? null : await findOldestAgingHold(ws.workspace_id, now)
         narrativeBody = await composeMorningBriefing({
           workspaceId: ws.workspace_id,
           operatorName: operator?.name ?? null,
           oldestAgingHold,
+          outreachStats: outreachStats
+            ? {
+                sourced: outreachStats.sourced,
+                firstTouchSent: outreachStats.firstTouchSent,
+                followupsSent: outreachStats.followupsSent,
+                replies: outreachStats.replies,
+                tried: outreachStats.tried,
+              }
+            : null,
         })
       } catch (err) {
         console.error(`[morning-digest] composeMorningBriefing failed for ${ws.workspace_id}:`, err)
@@ -141,6 +166,7 @@ export async function runMorningDigest() {
         bookingsTodayCount: bookings,
         agingEscalationsSummary,
         narrativeBody,
+        ...(outreachStats ? { outreachStats } : {}),
       },
       scheduledFor: now,
       idempotencyKey: `digest-${ws.workspace_id}-${dayKey}`,
@@ -150,6 +176,60 @@ export async function runMorningDigest() {
 
   return summary
   })
+}
+
+interface OutreachDigestStats {
+  sourced: number
+  firstTouchSent: number
+  followupsSent: number
+  replies: number
+  tried: number
+}
+
+/**
+ * Trailing-24h autonomous-outreach counts for the daily digest (decisions-
+ * log 2026-08-12) — internal_sales only. `replies` counts conversations
+ * (not individual messages) whose most recent message in the window was
+ * customer-sent — an approximation (a lead who replies twice in 24h only
+ * counts once), acceptable for a ballpark daily number, not a precision
+ * metric anything else depends on.
+ */
+async function buildOutreachDigestStats(workspaceId: string, now: Date): Promise<OutreachDigestStats> {
+  const supabase = createServiceClient()
+  const cutoff = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString()
+
+  const { data: account } = await supabase
+    .from('connected_accounts')
+    .select('id')
+    .eq('user_id', workspaceId)
+    .eq('channel_type', 'email')
+    .eq('is_active', true)
+    .maybeSingle()
+
+  const [sourced, firstTouchSent, followupsSent, tried, replies] = await Promise.all([
+    supabase.from('outreach_leads').select('id', { count: 'exact', head: true })
+      .eq('workspace_id', workspaceId).eq('status', 'sourced').gte('created_at', cutoff),
+    supabase.from('outreach_leads').select('id', { count: 'exact', head: true })
+      .eq('workspace_id', workspaceId).gte('first_touch_sent_at', cutoff),
+    supabase.from('outreach_leads').select('id', { count: 'exact', head: true })
+      .eq('workspace_id', workspaceId).gte('last_nudge_at', cutoff),
+    supabase.from('outreach_leads').select('id', { count: 'exact', head: true })
+      .eq('workspace_id', workspaceId).gte('tried_at', cutoff),
+    account
+      ? supabase.from('unified_conversations').select('id', { count: 'exact', head: true })
+          .eq('connected_account_id', account.id)
+          .eq('last_sender_type', 'customer')
+          .gte('last_message_at', cutoff)
+      : Promise.resolve({ count: 0 }),
+  ])
+
+  return {
+    sourced: sourced.count ?? 0,
+    firstTouchSent: firstTouchSent.count ?? 0,
+    followupsSent: followupsSent.count ?? 0,
+    tried: tried.count ?? 0,
+    replies: replies.count ?? 0,
+  }
 }
 
 function pickFirstName(fullName: string | null | undefined): string | null {

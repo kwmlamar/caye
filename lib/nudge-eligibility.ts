@@ -12,10 +12,13 @@
  * These functions just decide "given this row, should we nudge now?"
  *
  * A third, separate kind lives here too — OUTREACH FOLLOW-UP — for
- * TropiTech's own internal_sales workspace (issue #66 follow-on, outreach
- * autonomy roadmap step 2, decisions-log 2026-07-21). It never sends
- * directly; app/api/caye/outreach-nudge-scan drafts a held item instead,
- * since autosend_enabled is hard-false for internal_sales workspaces.
+ * TropiTech's own internal_sales workspace. Originally capped at exactly
+ * one follow-up, drafted-and-held only (outreach autonomy roadmap step 2,
+ * decisions-log 2026-07-21). As of decisions-log 2026-08-12 (full-autonomy
+ * reversal), up to OUTREACH_MAX_FOLLOWUPS follow-ups are allowed and
+ * app/api/caye/outreach-autosend-scan sends them directly rather than
+ * holding for review, subject to lib/outreach-draft-guard and the
+ * workspace's outreach_autosend_paused/daily-cap gates.
  */
 
 export const REVIEW_REQUEST_MIN_HOURS_AFTER_BOOKING = 24
@@ -107,12 +110,18 @@ export function shouldSendGhostedLeadNudge(
 
 // ── Outreach follow-up (cold-outreach leads, internal_sales workspace) ──────
 
-export const OUTREACH_FOLLOWUP_MIN_DAYS_SILENCE = 2
+/** Days silent since first-touch before the 2nd touch (1st follow-up) fires. */
+export const OUTREACH_FOLLOWUP_1_MIN_DAYS_SILENCE = 3
+/** Days silent since the 2nd touch before the 3rd (final) touch fires. */
+export const OUTREACH_FOLLOWUP_2_MIN_DAYS_SILENCE = 7
+/** Days silent since the last (3rd) touch before giving up and marking cold. */
 export const OUTREACH_FOLLOWUP_COLD_AFTER_DAYS = 14
+/** 3 touches total (first-touch + this many follow-ups) — decisions-log 2026-08-12. */
+export const OUTREACH_MAX_FOLLOWUPS = 2
 
 export interface OutreachLeadCandidate {
   first_touch_sent_at: string | null
-  /** How many follow-ups have already gone out — capped at 1, see below. */
+  /** How many follow-ups have already gone out — capped at OUTREACH_MAX_FOLLOWUPS. */
   nudge_count: number
   last_nudge_at: string | null
   /** Explicit decline/unsubscribe or manual founder override — hard stop. */
@@ -126,14 +135,15 @@ export interface OutreachLeadCandidate {
 export type OutreachLeadAction = 'nudge' | 'mark_cold' | 'none'
 
 /**
- * TropiTech's own cold-outreach follow-up policy (outreach-script.md §5:
- * "one follow-up, then stop — chasing ghosts is wasted outreach"). Never
- * more than one nudge per lead, ever:
- *   - 'nudge': first touch sent 2+ days ago, no reply, no nudge sent yet.
- *   - 'mark_cold': the one allowed nudge already went out 14+ days ago,
- *     still no reply — bookkeeping only, no second message. Mirrors
+ * TropiTech's own cold-outreach follow-up policy — 3 touches total, then
+ * stop (decisions-log 2026-08-12, was 2 touches/1 follow-up before that):
+ *   - 'nudge': the next touch (2nd or 3rd) is due — caller computes which
+ *     one from nudge_count (0 → 2nd touch, 1 → 3rd/final touch) to pick
+ *     the right wording via generateOutreachFollowupDraft's touchNumber.
+ *   - 'mark_cold': all 3 touches sent, 14+ days since the last one, still
+ *     no reply — bookkeeping only, no further message. Mirrors
  *     escalation-followup.ts's log-only expiry rather than a re-pitch.
- *   - 'none': not yet due, already replied/converted/cold, or opted out.
+ *   - 'none': not yet due, already replied/tried/converted/cold, or opted out.
  */
 export function decideOutreachLeadAction(
   candidate: OutreachLeadCandidate,
@@ -141,13 +151,15 @@ export function decideOutreachLeadAction(
 ): OutreachLeadAction {
   if (candidate.opted_out_at) return 'none'
   if (candidate.has_replied) return 'none'
+  // status flips away from 'sent' on reply/tried/converted/cold — a single
+  // check here covers all of those without enumerating each one.
   if (candidate.status !== 'sent') return 'none'
   if (!candidate.first_touch_sent_at) return 'none'
 
   const firstTouchMs = Date.parse(candidate.first_touch_sent_at)
   if (isNaN(firstTouchMs)) return 'none'
 
-  if (candidate.nudge_count >= 1) {
+  if (candidate.nudge_count >= OUTREACH_MAX_FOLLOWUPS) {
     const anchor = candidate.last_nudge_at ?? candidate.first_touch_sent_at
     const anchorMs = Date.parse(anchor)
     if (isNaN(anchorMs)) return 'none'
@@ -155,8 +167,16 @@ export function decideOutreachLeadAction(
     return daysSinceAnchor >= OUTREACH_FOLLOWUP_COLD_AFTER_DAYS ? 'mark_cold' : 'none'
   }
 
-  const daysSinceFirstTouch = (now.getTime() - firstTouchMs) / (1000 * 60 * 60 * 24)
-  return daysSinceFirstTouch >= OUTREACH_FOLLOWUP_MIN_DAYS_SILENCE ? 'nudge' : 'none'
+  const anchorMs = candidate.nudge_count === 0
+    ? firstTouchMs
+    : Date.parse(candidate.last_nudge_at ?? candidate.first_touch_sent_at)
+  if (isNaN(anchorMs)) return 'none'
+
+  const minDays = candidate.nudge_count === 0
+    ? OUTREACH_FOLLOWUP_1_MIN_DAYS_SILENCE
+    : OUTREACH_FOLLOWUP_2_MIN_DAYS_SILENCE
+  const daysSinceAnchor = (now.getTime() - anchorMs) / (1000 * 60 * 60 * 24)
+  return daysSinceAnchor >= minDays ? 'nudge' : 'none'
 }
 
 // ── Auto-complete sweep ─────────────────────────────────────────────────────

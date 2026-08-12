@@ -157,15 +157,27 @@ export async function POST(request: NextRequest) {
 
     const { data: lead } = await supabase
       .from('outreach_leads')
-      .select('business_name')
+      .select('business_name, demo_token, nudge_count')
       .eq('workspace_id', workspaceId)
       .eq('lead_email', customerEmail)
       .maybeSingle()
 
+    if (!lead?.demo_token) {
+      return NextResponse.json(
+        { error: 'No outreach_leads row (or no demo_token) for this address — write this one by hand.' },
+        { status: 422 }
+      )
+    }
+
     const followup = await generateOutreachFollowupDraft({
       systemPrompt,
       leadName: customerName,
-      businessName: lead?.business_name || customerName,
+      businessName: lead.business_name || customerName,
+      demoToken: lead.demo_token,
+      // Manual "draft me something" button, not the strict autosend
+      // cadence — best-effort touch number from nudge_count so the copy
+      // ("last one" vs "checking in") is at least directionally right.
+      touchNumber: (lead.nudge_count ?? 0) >= 1 ? 3 : 2,
     })
 
     if (!followup.ok) {

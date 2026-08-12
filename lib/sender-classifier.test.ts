@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { isNoReplySender, isCalendarInvite, isOutOfOffice } from './sender-classifier'
+import { isNoReplySender, isCalendarInvite, isOutOfOffice, isBounceNotification } from './sender-classifier'
 
 describe('isNoReplySender', () => {
   it('flags classic noreply local-parts', () => {
@@ -117,5 +117,30 @@ describe('isOutOfOffice', () => {
   it('is case-insensitive', () => {
     expect(isOutOfOffice('OUT OF OFFICE: reply', '')).toBe(true)
     expect(isOutOfOffice('out of office: reply', '')).toBe(true)
+  })
+})
+
+describe('isBounceNotification', () => {
+  it('flags standard NDR subject lines', () => {
+    expect(isBounceNotification('Undelivered Mail Returned to Sender')).toBe(true)
+    expect(isBounceNotification('Delivery Status Notification (Failure)')).toBe(true)
+    expect(isBounceNotification('Mail delivery failed: returning message to sender')).toBe(true)
+    expect(isBounceNotification('Failure Notice')).toBe(true)
+    expect(isBounceNotification('Returned mail: see transcript for details')).toBe(true)
+  })
+
+  it('flags a reply-prefixed NDR subject', () => {
+    expect(isBounceNotification('Re: Undeliverable: quick question about your booking messages')).toBe(true)
+  })
+
+  it('does NOT flag a normal reply', () => {
+    expect(isBounceNotification('Re: quick question about your booking messages')).toBe(false)
+    expect(isBounceNotification('Interested — tell me more')).toBe(false)
+  })
+
+  it('handles null and empty subjects', () => {
+    expect(isBounceNotification(null)).toBe(false)
+    expect(isBounceNotification(undefined)).toBe(false)
+    expect(isBounceNotification('')).toBe(false)
   })
 })

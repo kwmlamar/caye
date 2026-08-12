@@ -43,6 +43,9 @@ interface WorkspaceConfig {
   autosend_enabled: boolean
   workspace_kind: string | null
   ai_voice_profile: VoiceProfileState | null
+  outreach_autosend_paused: boolean
+  outreach_bounce_threshold: number
+  outreach_bounce_window_hours: number
 }
 
 const DAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S']
@@ -164,6 +167,7 @@ export default function SettingsCard({ workspaceId, compact }: { workspaceId: st
   const [voiceSaving, setVoiceSaving] = useState(false)
   const [daySaving, setDaySaving] = useState(false)
   const [autosendSaving, setAutosendSaving] = useState(false)
+  const [outreachPauseSaving, setOutreachPauseSaving] = useState(false)
 
   const fetchConfig = useCallback(async () => {
     setLoading(true)
@@ -217,7 +221,10 @@ export default function SettingsCard({ workspaceId, compact }: { workspaceId: st
   }
 
   async function toggleAutosend() {
-    if (!config || autosendSaving || config.workspace_kind === 'internal_sales') return
+    // No workspace_kind special-casing here — the 2026-07-21 lock forcing
+    // this off for internal_sales was reversed 2026-08-12 (decisions-log):
+    // reply-handling is autonomous there too now, same as any workspace.
+    if (!config || autosendSaving) return
     const next = !config.autosend_enabled
     setAutosendSaving(true)
     setConfig({ ...config, autosend_enabled: next })
@@ -228,6 +235,25 @@ export default function SettingsCard({ workspaceId, compact }: { workspaceId: st
       setError(err instanceof Error ? err.message : 'Save failed')
     } finally {
       setAutosendSaving(false)
+    }
+  }
+
+  async function toggleOutreachPause() {
+    // Same switch app/api/caye/outreach-autosend-scan checks and
+    // lib/outreach-kill-switch.ts trips automatically on a bounce spike —
+    // gates only cold first-touch/follow-up sends, not reply-handling
+    // (that's the autosend_enabled toggle above, deliberately separate).
+    if (!config || outreachPauseSaving) return
+    const next = !config.outreach_autosend_paused
+    setOutreachPauseSaving(true)
+    setConfig({ ...config, outreach_autosend_paused: next })
+    try {
+      await patch({ outreach_autosend_paused: next })
+    } catch (err) {
+      setConfig((prev) => prev ? { ...prev, outreach_autosend_paused: !next } : prev)
+      setError(err instanceof Error ? err.message : 'Save failed')
+    } finally {
+      setOutreachPauseSaving(false)
     }
   }
 
@@ -259,7 +285,7 @@ export default function SettingsCard({ workspaceId, compact }: { workspaceId: st
 
   const promptDirty = config !== null && systemPrompt !== (config.system_prompt ?? '')
   const voiceDirty = config !== null && JSON.stringify(voice) !== JSON.stringify(config.ai_voice_profile ?? EMPTY_VOICE)
-  const isLockedAutosend = config?.workspace_kind === 'internal_sales'
+  const isOutreachWorkspace = config?.workspace_kind === 'internal_sales'
 
   return (
     <div style={{
@@ -297,34 +323,66 @@ export default function SettingsCard({ workspaceId, compact }: { workspaceId: st
             </div>
           </div>
 
-          {/* Autosend — always visible, locked for internal_sales. */}
+          {/* Autosend — reply-handling autonomy. Reversed 2026-08-12: no
+              longer locked for internal_sales (was permanently off through
+              the 2026-07-21 roadmap; decisions-log 2026-08-12 made replies
+              to leads who've already written back autonomous there too). */}
           <div>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <FieldLabel>Autosend</FieldLabel>
+              <FieldLabel>Autosend{isOutreachWorkspace ? ' (replies)' : ''}</FieldLabel>
               <Pill
-                color={isLockedAutosend ? LABEL_COLOR : config.autosend_enabled ? '#34d399' : '#fca5a5'}
-                label={isLockedAutosend ? 'Always holds' : config.autosend_enabled ? 'On' : 'Off — holds for review'}
+                color={config.autosend_enabled ? '#34d399' : '#fca5a5'}
+                label={config.autosend_enabled ? 'On' : 'Off — holds for review'}
               />
             </div>
-            {isLockedAutosend ? (
-              <p style={{ fontSize: 11, color: LABEL_COLOR, margin: '4px 0 0', lineHeight: 1.4 }}>
-                Permanently locked off for the cold-outreach workspace — first-touch/follow-up sends always go through manual review.
+            <button
+              type="button"
+              onClick={toggleAutosend}
+              disabled={autosendSaving}
+              style={{
+                marginTop: 6, border: 'none', borderRadius: 7, padding: '5px 12px', fontSize: 10.5, fontWeight: 600,
+                fontFamily: 'var(--font-mono)', letterSpacing: '0.02em', cursor: autosendSaving ? 'default' : 'pointer',
+                background: 'rgba(255,255,255,0.06)', color: '#d4d4d8',
+              }}
+            >
+              {autosendSaving ? 'Saving…' : config.autosend_enabled ? 'Turn off' : 'Turn on'}
+            </button>
+          </div>
+
+          {/* Outreach autosend — cold first-touch/follow-up sends only.
+              internal_sales-only, deliberately separate from the Autosend
+              toggle above (decisions-log 2026-08-12): this is the kill
+              switch lib/outreach-kill-switch.ts also trips automatically
+              on a bounce spike, so it must not also gate reply-handling —
+              an auto-trip here shouldn't silently stop Caye from answering
+              a lead who already wrote back. */}
+          {isOutreachWorkspace && (
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <FieldLabel>Outreach autosend (cold sends)</FieldLabel>
+                <Pill
+                  color={config.outreach_autosend_paused ? '#fca5a5' : '#34d399'}
+                  label={config.outreach_autosend_paused ? 'Paused' : 'Live'}
+                />
+              </div>
+              <p style={{ fontSize: 11, color: LABEL_COLOR, margin: '4px 0 6px', lineHeight: 1.4 }}>
+                Gates autonomous first-touch + follow-up sends only — reply-handling above is unaffected.
+                Auto-pauses on a bounce spike ({config.outreach_bounce_threshold} in {config.outreach_bounce_window_hours}h).
               </p>
-            ) : (
               <button
                 type="button"
-                onClick={toggleAutosend}
-                disabled={autosendSaving}
+                onClick={toggleOutreachPause}
+                disabled={outreachPauseSaving}
                 style={{
-                  marginTop: 6, border: 'none', borderRadius: 7, padding: '5px 12px', fontSize: 10.5, fontWeight: 600,
-                  fontFamily: 'var(--font-mono)', letterSpacing: '0.02em', cursor: autosendSaving ? 'default' : 'pointer',
+                  border: 'none', borderRadius: 7, padding: '5px 12px', fontSize: 10.5, fontWeight: 600,
+                  fontFamily: 'var(--font-mono)', letterSpacing: '0.02em', cursor: outreachPauseSaving ? 'default' : 'pointer',
                   background: 'rgba(255,255,255,0.06)', color: '#d4d4d8',
                 }}
               >
-                {autosendSaving ? 'Saving…' : config.autosend_enabled ? 'Turn off' : 'Turn on'}
+                {outreachPauseSaving ? 'Saving…' : config.outreach_autosend_paused ? 'Resume sending' : 'Pause sending'}
               </button>
-            )}
-          </div>
+            </div>
+          )}
 
           {compact ? (
             <div>

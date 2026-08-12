@@ -16,13 +16,14 @@ interface SendOutreachBatchInput {
   items: SendOutreachBatchItem[]
 }
 
-/** hold_kind values eligible for batch send — first-touch opens (roadmap
- *  step 3) and their one allowed follow-up nudge (roadmap step 2, which
- *  decisions-log called "graduated to autosend" but was never actually
- *  wired to send — outreach-nudge-scan only ever holds it, same as
- *  first-touch). Both are a single Caye-drafted message the operator
- *  reviews once before it ships; neither is the permanently-gated step-4
- *  "zero review" case.
+/** hold_kind values eligible for batch send — first-touch opens and follow-up
+ *  nudges. As of decisions-log 2026-08-12, most first-touch/follow-up
+ *  drafts never reach this tool at all: app/api/caye/outreach-autosend-scan
+ *  sends them directly with no review, unless the workspace is paused
+ *  (outreach_autosend_paused) or a draft fails lib/outreach-draft-guard's
+ *  content check — those two cases still land here as held items, so this
+ *  tool remains the manual fallback/escape hatch, not the primary path it
+ *  was through 2026-08-01.
  *
  *  Shared with the read layer (lib/hold-kinds.ts), which uses the same set
  *  to keep these out of the "needs your call" queue. The two MUST agree: a
@@ -32,14 +33,16 @@ interface SendOutreachBatchInput {
 const BATCHABLE_HOLD_KINDS = QUEUE_HOLD_KINDS
 
 /**
- * Batch-approved cold-outreach sends — first-touch opens (roadmap step 3)
- * and their one allowed follow-up nudge (roadmap step 2) — from the
- * 2026-07-21 staged-autonomy roadmap (decisions-log): the operator approves
- * a list once, Caye sends all of them, instead of per-message review. Step
- * 4 (fully autonomous first-touch with no review at all) stays permanently
- * off the roadmap — this tool never runs without the code-enforced
- * gateHighRisk confirmation round-trip (see registry.ts), same mechanism
- * as send_reply/cancel_booking/etc.
+ * Batch-approved cold-outreach sends — first-touch opens and follow-up
+ * nudges — originally built 2026-08-01 as step 3 of the 2026-07-21
+ * staged-autonomy roadmap. As of decisions-log 2026-08-12, that roadmap's
+ * step 4 ("fully autonomous first-touch, zero review, permanently off")
+ * was explicitly reversed — app/api/caye/outreach-autosend-scan now sends
+ * first-touch and follow-up drafts directly. This tool still exists and
+ * still runs through the code-enforced gateHighRisk confirmation
+ * round-trip (see registry.ts) — it's now the fallback for whatever the
+ * autosend-scan cron couldn't send itself (paused workspace, daily cap
+ * reached, or a draft that failed the content guard), not the everyday path.
  *
  * Deliberately re-reads metadata.proposed_reply from the conversation row
  * rather than trusting any body text the model might pass — the

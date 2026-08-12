@@ -31,6 +31,7 @@ interface WorkspaceConfigPatch {
   digest_days?: number[]
   autosend_enabled?: boolean
   ai_voice_profile?: VoiceProfile | null
+  outreach_autosend_paused?: boolean
 }
 
 async function requireFounder(req: NextRequest) {
@@ -59,7 +60,7 @@ export async function GET(req: NextRequest) {
   const [{ data: aiConfig, error: aiConfigErr }, { data: customer, error: customerErr }] = await Promise.all([
     supabase
       .from('workspace_ai_config')
-      .select('system_prompt, digest_days')
+      .select('system_prompt, digest_days, outreach_autosend_paused, outreach_bounce_threshold, outreach_bounce_window_hours')
       .eq('workspace_id', workspaceId)
       .maybeSingle(),
     supabase
@@ -78,6 +79,11 @@ export async function GET(req: NextRequest) {
     autosend_enabled: customer?.autosend_enabled ?? false,
     workspace_kind: customer?.workspace_kind ?? null,
     ai_voice_profile: customer?.ai_voice_profile ?? null,
+    // Only meaningful for workspace_kind === 'internal_sales' — present
+    // regardless so the settings UI doesn't need a second round-trip.
+    outreach_autosend_paused: aiConfig?.outreach_autosend_paused ?? true,
+    outreach_bounce_threshold: aiConfig?.outreach_bounce_threshold ?? 5,
+    outreach_bounce_window_hours: aiConfig?.outreach_bounce_window_hours ?? 24,
   })
 }
 
@@ -107,23 +113,22 @@ export async function PATCH(req: NextRequest) {
 
   const customerPatch: Record<string, unknown> = {}
   if (body.ai_voice_profile !== undefined) customerPatch.ai_voice_profile = body.ai_voice_profile
+  // The 2026-07-21 hard lock forcing autosend_enabled=false for
+  // internal_sales was reversed 2026-08-12 (decisions-log) — reply-handling
+  // is now meant to be autonomous there too. autosend_enabled is a plain
+  // per-workspace toggle again, no workspace_kind special-casing.
   if (body.autosend_enabled !== undefined) {
-    // Hard lock, not just a default — staged-autonomy roadmap (decisions-
-    // log 2026-07-21) keeps internal_sales permanently manual-send
-    // regardless of draft quality. Check current workspace_kind rather
-    // than trusting the caller not to send this for that workspace.
-    const { data: kindRow } = await supabase
-      .from('customers')
-      .select('workspace_kind')
-      .eq('id', workspaceId)
-      .maybeSingle()
-    if (kindRow?.workspace_kind === 'internal_sales') {
-      return NextResponse.json(
-        { error: 'autosend_enabled is permanently locked off for the cold-outreach workspace.' },
-        { status: 422 }
-      )
-    }
     customerPatch.autosend_enabled = body.autosend_enabled
+  }
+  if (body.outreach_autosend_paused !== undefined) {
+    // outreach_autosend_paused lives on workspace_ai_config, not customers
+    // — deliberately separate from autosend_enabled above. It only gates
+    // cold first-touch/follow-up sends (app/api/caye/outreach-autosend-scan)
+    // and is the same flag lib/outreach-kill-switch.ts trips automatically
+    // on a bounce spike. Meaningful only for internal_sales, but not
+    // rejected for other workspace_kinds — it simply does nothing there
+    // since no autosend-scan cron reads it for a non-internal_sales row.
+    aiConfigPatch.outreach_autosend_paused = body.outreach_autosend_paused
   }
 
   if (Object.keys(aiConfigPatch).length === 0 && Object.keys(customerPatch).length === 0) {

@@ -34,14 +34,18 @@ interface CreateOutreachLeadsInput {
  * follow-up nudges (lib/outreach-nudge.ts), just hold_kind='outreach_
  * first_touch' so CommandConversations' compose box auto-fills it too.
  *
- * Deliberately NEVER sends anything — this is create-and-hold only.
- * Fully autonomous first-touch to brand-new cold contacts is permanently
- * off the table regardless of draft quality (decisions-log 2026-07-21,
- * staged autonomy roadmap, step 4) — the founder reviews and sends each
- * one from the dashboard compose box. Sending is what flips outreach_
- * leads.status from 'draft' to 'sent' and sets first_touch_sent_at (see
- * /api/messages/send), which is what makes the follow-up-nudge cron
- * correctly pick these up 2 days later if they go quiet.
+ * Deliberately NEVER sends anything — this is create-and-hold only. This
+ * is the manual, operator-fed path for a lead someone researched by hand;
+ * app/api/caye/outreach-sourcing-scan + outreach-autosend-scan are the
+ * autonomous path (decisions-log 2026-08-12, which reversed the prior
+ * "step 4 permanently off" rule for that autonomous path — this tool's
+ * own always-hold behavior is unrelated and unchanged by that reversal,
+ * it's just a different, still-manual entry point into the same
+ * outreach_leads table). The founder reviews and sends each one from the
+ * dashboard compose box. Sending is what flips outreach_leads.status from
+ * 'draft' to 'sent' and sets first_touch_sent_at (see /api/messages/send),
+ * which is what makes the follow-up cadence correctly pick these up if
+ * they go quiet.
  */
 export const createOutreachLeads: Tool<CreateOutreachLeadsInput> = {
   name: 'create_outreach_leads',

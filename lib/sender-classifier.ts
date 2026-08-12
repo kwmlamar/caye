@@ -113,3 +113,20 @@ export function isPaymentReceipt(subject: string | null | undefined, body: strin
     /^\s*Customer Name:/im.test(body)
   )
 }
+
+/**
+ * Detect a bounce / non-delivery notification (NDR). Used by
+ * lib/outreach-kill-switch.ts (decisions-log 2026-08-12) as the deliverability
+ * signal for the autonomous cold-outreach kill switch — Zoho Mail doesn't
+ * expose a dedicated bounce/complaint webhook the way a transactional ESP
+ * (Postmark/SendGrid) would, so this subject-pattern classifier is the best
+ * available proxy, not a true bounce API. No complaint-rate (spam-report)
+ * signal exists at all; this only catches hard/soft bounces, matching the
+ * standard NDR subject wording every major mail system uses.
+ */
+const BOUNCE_SUBJECT_RE =
+  /^(?:re:\s*|fwd?:\s*)?(?:undeliverable\b|undeliver(?:able|ed) mail|undelivered mail returned to sender|delivery status notification\s*\(failure\)|delivery (?:has )?failed|mail delivery failed|failure notice|returned mail|message (?:could not be|was not) delivered|delivery (?:incomplete|problem))/i
+
+export function isBounceNotification(subject: string | null | undefined): boolean {
+  return !!subject && BOUNCE_SUBJECT_RE.test(subject.trim())
+}

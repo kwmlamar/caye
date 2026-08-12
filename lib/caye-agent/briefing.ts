@@ -116,6 +116,20 @@ export async function composeMorningBriefing(args: {
    *  5 escalations all expired, hold never cleared). Null when nothing's
    *  been held 3+ days. */
   oldestAgingHold?: { customer: string; daysHeld: number } | null
+  /** internal_sales only (decisions-log 2026-08-12) — daily autonomous
+   *  outreach counts. When present, skips the booking-business tool loop
+   *  below entirely and returns a deterministic templated line instead: the
+   *  numbers are already computed by the caller, and formatting 5 counts
+   *  into a sentence doesn't need an LLM call (or its hallucination risk) —
+   *  unlike the held-item narrative selection above, which genuinely needs
+   *  judgment about what's "most pressing." */
+  outreachStats?: {
+    sourced: number
+    firstTouchSent: number
+    followupsSent: number
+    replies: number
+    tried: number
+  } | null
 }): Promise<string> {
   const supabase = createServiceClient()
 
@@ -128,6 +142,10 @@ export async function composeMorningBriefing(args: {
   const operator =
     args.operatorName?.trim() || (customer?.full_name as string | null)?.trim() || 'the owner'
   const business = (customer?.business_name as string | null)?.trim() || 'their business'
+
+  if (args.outreachStats) {
+    return formatOutreachDigestLine(operator, args.outreachStats)
+  }
 
   const systemPrompt = [
     `You are Caye — the AI assistant ${operator} hired to handle the front desk for ${business}.`,
@@ -184,4 +202,35 @@ export async function composeMorningBriefing(args: {
   })
 
   return replyText
+}
+
+/**
+ * Deterministic (no LLM) daily outreach summary line — decisions-log
+ * 2026-08-12: "she just pings me about how much emails, follow ups or
+ * responses she got." Bahamian-direct: numbers, no hedge, no filler when
+ * there's nothing to report.
+ */
+function formatOutreachDigestLine(
+  operator: string,
+  stats: { sourced: number; firstTouchSent: number; followupsSent: number; replies: number; tried: number }
+): string {
+  const { sourced, firstTouchSent, followupsSent, replies, tried } = stats
+
+  if (sourced === 0 && firstTouchSent === 0 && followupsSent === 0 && replies === 0 && tried === 0) {
+    return `Morning, ${operator}. Quiet 24 hours — nothing sourced, sent, or replied to.`
+  }
+
+  const sendParts: string[] = []
+  if (sourced > 0) sendParts.push(`sourced ${sourced} lead${sourced === 1 ? '' : 's'}`)
+  if (firstTouchSent > 0) sendParts.push(`sent ${firstTouchSent} first-touch email${firstTouchSent === 1 ? '' : 's'}`)
+  if (followupsSent > 0) sendParts.push(`${followupsSent} follow-up${followupsSent === 1 ? '' : 's'}`)
+  const line1 = sendParts.length > 0
+    ? `Morning, ${operator}. Last 24h: ${sendParts.join(', ')}.`
+    : `Morning, ${operator}.`
+
+  const replyParts: string[] = []
+  if (replies > 0) replyParts.push(`${replies} repl${replies === 1 ? 'y' : 'ies'} came in`)
+  if (tried > 0) replyParts.push(`${tried} tried the demo`)
+
+  return replyParts.length > 0 ? `${line1} ${replyParts.join(', ')}.` : line1
 }

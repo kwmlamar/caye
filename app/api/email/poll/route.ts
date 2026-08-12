@@ -25,7 +25,8 @@ import { maybeRefreshOwnerVoiceProfile } from '@/lib/owner-voice-learning'
 import { maybeSuggestBusinessFacts } from '@/lib/business-fact-suggestions'
 import { clearStaleOutreachAutofill } from '@/lib/outreach-autofill'
 import { detectOwnerCorrection } from '@/lib/owner-correction'
-import { isNoReplySender, isCalendarInvite, isPaymentReceipt, isOutOfOffice } from '@/lib/sender-classifier'
+import { isNoReplySender, isCalendarInvite, isPaymentReceipt, isOutOfOffice, isBounceNotification } from '@/lib/sender-classifier'
+import { recordBounceAndMaybeTrip } from '@/lib/outreach-kill-switch'
 import {
   isWeb3FormsNotification,
   parseWeb3FormsFields,
@@ -645,6 +646,25 @@ async function processMessage(
   const ownEmail = String(account.channel_account_name || '').toLowerCase().trim()
   const meta = (account.metadata || {}) as Record<string, string>
   const accountId = meta.zoho_account_id || String(account.channel_account_id)
+
+  // Bounce/NDR detection for the autonomous cold-outreach kill switch
+  // (decisions-log 2026-08-12). Cheap subject check first — only spends a
+  // DB round-trip confirming workspace_kind on the rare message that
+  // actually looks like a bounce. Runs before the self-loop guard below
+  // since a bounce comes from mailer-daemon@, not our own address, so it'd
+  // never trip that guard anyway — but keep this ahead of it defensively.
+  if (isBounceNotification(subject)) {
+    const { data: ws } = await supabase
+      .from('customers')
+      .select('workspace_kind')
+      .eq('id', workspaceId)
+      .maybeSingle()
+    if (ws?.workspace_kind === 'internal_sales') {
+      await recordBounceAndMaybeTrip(workspaceId).catch(err =>
+        console.error('[email/poll] recordBounceAndMaybeTrip failed:', err)
+      )
+    }
+  }
 
   // Self-loop guard
   if (!fromEmail || fromEmail === ownEmail) return 'skipped'

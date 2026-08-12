@@ -100,6 +100,11 @@ export const MONITORED_CRONS: CronExpectation[] = [
   // 12600 = 8.75 days — pads a week-cadence job so ordinary tick jitter
   // doesn't false-positive right at the 7-day boundary.
   { cronName: 'business-insights', label: 'Business insights', maxStalenessMinutes: 12600 },
+  // Fully-autonomous outreach (decisions-log 2026-08-12). Sourcing is
+  // daily (1560 = 26h, padding a day's cadence); autosend runs hourly like
+  // the old outreach-nudge-scan it replaced.
+  { cronName: 'outreach-sourcing-scan', label: 'Outreach sourcing scan', maxStalenessMinutes: 1560 },
+  { cronName: 'outreach-autosend-scan', label: 'Outreach autosend scan', maxStalenessMinutes: 150 },
 ]
 
 // Once alerted, don't re-alert for the same stall for 4h — a stuck
