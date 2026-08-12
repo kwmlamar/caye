@@ -17,9 +17,27 @@ export async function resolveOpenEscalations(
   supabase: ReturnType<typeof createServiceClient>,
   conversationId: string
 ): Promise<void> {
+  const now = new Date().toISOString()
   await supabase
     .from('caye_escalations')
-    .update({ owner_responded_at: new Date().toISOString() })
+    .update({ owner_responded_at: now })
     .eq('conversation_id', conversationId)
     .is('owner_responded_at', null)
+
+  // Drop the item out of the shared attention ledger at the same instant
+  // (2026-08-12). This is the one chokepoint every disposal route already
+  // funnels through — mark_handled, skip_held_item, send_reply, and the
+  // mobile inbox — so resolving here means a handled thread stops being
+  // briefed about no matter which surface handled it.
+  //
+  // Inlined rather than calling lib/owner-attention.ts's
+  // resolveAttentionForConversation because this module is deliberately
+  // free of the `server-only` guard (see the note above — lib/data/mobile.ts
+  // bundles it into a client component) and that module is not. Same table,
+  // same statuses, same semantics; keep the two in step.
+  await supabase
+    .from('caye_owner_attention')
+    .update({ status: 'resolved', completed_at: now, last_changed_at: now, updated_at: now })
+    .eq('conversation_id', conversationId)
+    .in('status', ['open', 'acknowledged', 'decided'])
 }

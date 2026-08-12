@@ -35,6 +35,7 @@ import { extractErrorCode } from '@/lib/whatsapp/delivery-errors'
 import { resyncTemplatesAfterParamMismatch } from '@/lib/whatsapp/template-sync'
 import { detectInternalLeak } from '@/lib/operator-text-guard'
 import { drainPendingOperationsSafely } from '@/lib/pending-operations-worker'
+import { markAttentionNotified, SUBJECT_CONVERSATION } from '@/lib/owner-attention'
 
 // Kinds that represent Caye proactively messaging an operator about
 // something (as opposed to system plumbing like otp/welcome/ack) — these
@@ -503,7 +504,30 @@ function operatorSafe(text: string, fallback: string): string {
 // take it off their hands — say the word and Caye runs with it, same
 // yes/no confirmation flow as back-office chat. Purely informational kinds
 // (same-day booking, digest) don't get a nudge — nothing to decide there.
-function operatorPingLogBody(kind: string, payload: Record<string, unknown>): string {
+//
+// DERIVES FROM THE SEND, DOESN'T RE-IMPLEMENT IT (2026-08-12). This used to
+// be a switch that ran in parallel with freeFormBodyForKind, and the two
+// drifted: `operator_reminder` had a case there (so WhatsApp got real text)
+// and none here, so it fell through to `default: return "[" + kind + "]"`
+// and put the literal string "[operator_reminder]" in Mrs. Max's Caye Direct
+// thread. `dropped_confirmation` had the identical hole. Mirroring the
+// free-form body FIRST closes the whole class rather than the two instances
+// — any kind that composes a real body at enqueue time now shows that exact
+// body, which is also what the escalation/morning_digest cases below were
+// hand-rolling. The switch is now only the template-fallback path: what to
+// say when the operator got a canned template instead of composed prose.
+export function operatorPingLogBody(kind: string, payload: Record<string, unknown>): string {
+  const composed = freeFormBodyForKind(kind, payload)
+  if (composed?.trim()) return operatorSafe(composed, fallbackPingLogBody(kind, payload))
+  return operatorSafe(fallbackPingLogBody(kind, payload), NEUTRAL_PING_LOG_BODY)
+}
+
+/**
+ * What the thread shows when the operator received a TEMPLATE rather than
+ * composed prose — the window was closed, or composition failed at enqueue
+ * time. Mirrors the template's meaning in Caye's voice.
+ */
+function fallbackPingLogBody(kind: string, payload: Record<string, unknown>): string {
   const str = (k: string, fallback = ''): string =>
     typeof payload[k] === 'string' ? (payload[k] as string) : fallback
 
@@ -514,14 +538,14 @@ function operatorPingLogBody(kind: string, payload: Record<string, unknown>): st
       return `${who} came in — ${reason}. Want me to take a first pass, or you got this one?`
     }
     case 'escalation': {
-      // Mirror the composed brief (lib/operator-brief.ts) verbatim when
-      // it's what actually went out over WhatsApp — otherwise Caye
-      // Direct's dashboard thread shows different text than the message
-      // the operator received (same mismatch concern as morning_digest's
-      // narrative case, below). Only synthesize the old one-liner when the
-      // brief is missing (legacy rows / a compose failure at enqueue time).
-      const brief = str('brief')
-      if (brief) return brief
+      // NO `if (payload.brief) return payload.brief` here. The composed
+      // brief is already mirrored by operatorPingLogBody above, which runs
+      // it through operatorSafe first. Re-reading the same field here made
+      // this branch the leak's escape hatch: a brief carrying machinery got
+      // rejected by operatorSafe, fell through to this fallback, and this
+      // fallback handed the identical string straight back. Caught by
+      // ping-log-body.test.ts. A fallback must never reconstruct the thing
+      // it is a fallback FOR.
       const who = str('contactName', 'A guest')
       const summary =
         str('ping_summary') || operatorSafe(str('internalContext'), 'needs your call')
@@ -540,15 +564,10 @@ function operatorPingLogBody(kind: string, payload: Record<string, unknown>): st
     case 'booking_created':
       return `Just booked — ${str('guest', 'A guest')}, ${str('summary', 'details in the dashboard')}.`
     case 'morning_digest': {
-      // Mirror the narrative body verbatim when that's what actually went
-      // out over WhatsApp — otherwise Caye Direct's dashboard thread shows
-      // different text than the message the operator received, which is
-      // exactly the kind of mismatch that erodes trust in what Caye says
-      // she did. Only synthesize the count-based line when the template
-      // fallback was the one actually sent (closed window / composition
-      // failure at enqueue time).
-      const narrative = str('narrativeBody')
-      if (narrative) return narrative
+      // Same as 'escalation' above — the narrative body is mirrored by
+      // operatorPingLogBody, guarded. This branch is only the count-based
+      // line for when the template was what actually went out (closed
+      // window, or composition failed at enqueue time).
       const aging = str('agingEscalationsSummary')
       const agingLine = aging ? ` Oldest waiting: ${aging}` : ''
       return `${payload.heldCount ?? 0} threads holding for you, ${payload.bookingsTodayCount ?? 0} booked today.${agingLine} Want me to work through the held ones with you?`
@@ -566,20 +585,73 @@ function operatorPingLogBody(kind: string, payload: Record<string, unknown>): st
     case 'business_insights':
       return `Heads up — this week's business insights are ready. The full write-up is in Caye Direct; say the word and I'll walk you through it here.`
     default:
-      return `[${kind}]`
+      // NEVER echo the kind. An unmapped kind reaching an operator-facing
+      // surface is a bug in this file, and the old `[${kind}]` turned that
+      // bug into a system token sitting in a paying customer's message
+      // thread. Degrade to something a human would say and shout in the
+      // logs, where the diagnostic actually belongs.
+      console.error(
+        `[outbound-worker] no operator-facing log body for kind=${kind} — using neutral fallback. Add a case to fallbackPingLogBody.`
+      )
+      return NEUTRAL_PING_LOG_BODY
   }
 }
+
+/**
+ * Last-resort operator-facing text. Says something true (a ping went out)
+ * without inventing urgency we can't substantiate for an unmapped kind.
+ */
+const NEUTRAL_PING_LOG_BODY = `Sent you a heads-up just now — ask me and I'll pull up the details.`
+
+/**
+ * Ping kinds that mean "the owner has now been told about a specific item",
+ * so the attention ledger's notified stamp should move. urgent_hold belongs
+ * here as much as escalation does — it is the same conversation reaching the
+ * same owner, just via the other trigger path.
+ */
+const ATTENTION_NOTIFYING_KINDS = new Set([
+  'escalation',
+  'escalation_followup',
+  'urgent_hold',
+])
 
 async function logOperatorPing(
   workspaceId: string,
   phone: string,
   kind: string,
+  conversationId: string | null,
   payload: Record<string, unknown>,
   messageId: string | null
 ): Promise<void> {
   if (!OPERATOR_LOGGABLE_KINDS.has(kind)) return
   const supabase = createServiceClient()
   const operator = await resolveOperatorByPhone(supabase, workspaceId, phone)
+  const logBody = operatorPingLogBody(kind, payload)
+
+  // Stamp the shared attention ledger with what the owner was just told
+  // (2026-08-12). This is the write that stops the morning digest from
+  // announcing "nothing needs your attention" half an hour after this ping
+  // said otherwise — the digest reads notified_fingerprint to tell news from
+  // repetition. Best-effort; a bookkeeping failure must not fail the send
+  // that already happened.
+  //
+  // Keyed by conversation to match SUBJECT_CONVERSATION (lib/owner-attention.ts):
+  // the ledger row for an escalated thread is the THREAD's row, the same one
+  // owner-attention-sync maintains from the held queue. Escalation id is the
+  // fallback for a conversation-less escalation, mirroring escalation.ts.
+  if (ATTENTION_NOTIFYING_KINDS.has(kind)) {
+    const escalationId = typeof payload.escalationId === 'string' ? payload.escalationId : null
+    const subjectId = conversationId ?? escalationId
+    if (subjectId) {
+      await markAttentionNotified({
+        workspaceId,
+        subjectType: conversationId ? SUBJECT_CONVERSATION : 'escalation',
+        subjectId,
+        summary: logBody,
+      })
+    }
+  }
+
   await supabase.from('caye_operator_messages').insert({
     workspace_id: workspaceId,
     direction: 'outbound',
@@ -590,7 +662,7 @@ async function logOperatorPing(
     wa_message_id: messageId,
     wa_delivery_status: 'sent',
     wa_delivery_error: null,
-    body: operatorPingLogBody(kind, payload),
+    body: logBody,
     intent: null,
     operator_allowlist_id: operator?.id ?? null,
     operator_name: operator?.name ?? null,
@@ -619,7 +691,7 @@ async function handleResult(
         last_whatsapp_outbound_status: 'sent',
       })
       .eq('workspace_id', row.workspace_id)
-    await logOperatorPing(row.workspace_id, phone, row.kind, row.payload, result.messageId)
+    await logOperatorPing(row.workspace_id, phone, row.kind, row.conversation_id, row.payload, result.messageId)
     return 'sent'
   }
 

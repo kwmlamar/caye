@@ -2,8 +2,9 @@ import { describe, it, expect, vi } from 'vitest'
 
 vi.mock('server-only', () => ({}))
 
-import { detectInternalLeak, stripToolMarkers } from './operator-text-guard'
+import { detectInternalLeak, stripToolMarkers, mediaPlaceholder } from './operator-text-guard'
 import { detectForcedEscalation } from './forced-escalation'
+import { QUIET_SENTINEL } from './quiet-scan'
 
 // The two strings that actually reached Mrs. Max's Caye Direct thread on
 // 2026-08-07. Kept verbatim so these tests fail if either leak returns.
@@ -48,5 +49,101 @@ describe('detectInternalLeak', () => {
     expect(
       detectInternalLeak('Ruslan Prakapovich wrote: "Dear Karenda, Maxwell and Team…"')
     ).toBeNull()
+  })
+
+  // Requirements 1, 2 and 10. The literal string "[operator_reminder]" was in
+  // Mrs. Max's Caye Direct thread on 2026-08-12 — operatorPingLogBody's
+  // `default:` branch returned `[${kind}]` for every kind it had no case for.
+  // The composer is fixed; this is the net under it, because the composer
+  // being fixed is not the same as the class being closed.
+  describe('bracketed internal event tokens', () => {
+    it('flags the exact tokens that leaked', () => {
+      expect(detectInternalLeak('[operator_reminder]')).toMatch(/internal event token/)
+      expect(detectInternalLeak('[dropped_confirmation]')).toMatch(/internal event token/)
+    })
+
+    it('flags a token embedded in otherwise clean prose', () => {
+      expect(
+        detectInternalLeak("Morning, Mrs. Max — calendar's empty today.\n\n[operator_reminder]")
+      ).toMatch(/internal event token/)
+    })
+
+    it('flags every kind the outbound worker can enqueue', () => {
+      // Enumerated rather than sampled: the point of the pattern is that a
+      // kind added tomorrow is covered without anyone remembering to add it.
+      for (const kind of [
+        'urgent_hold',
+        'escalation',
+        'escalation_followup',
+        'booking_created',
+        'morning_digest',
+        'auth_failure',
+        'opportunity_scan',
+        'business_insights',
+        'operator_reminder',
+        'dropped_confirmation',
+      ]) {
+        // Single-word kinds have no underscore and are intentionally not
+        // matched — see the "ordinary bracketed prose" case below.
+        if (!kind.includes('_')) continue
+        expect(detectInternalLeak(`[${kind}]`), kind).toMatch(/internal event token/)
+      }
+    })
+
+    it('flags the [empty] turn marker', () => {
+      expect(detectInternalLeak('[empty]')).toMatch(/internal event token/)
+    })
+
+    it('leaves ordinary bracketed prose alone', () => {
+      // The pattern requires snake_case precisely so a human aside survives.
+      expect(detectInternalLeak('Quoted her the group rate [see attached] and held it.')).toBeNull()
+      expect(detectInternalLeak('Left it as a [draft] until you say go.')).toBeNull()
+      expect(detectInternalLeak('Tour is $180 [per person] on the sunset run.')).toBeNull()
+    })
+  })
+
+  it('flags the quiet-scan protocol sentinel', () => {
+    // lib/quiet-scan.ts scrubs this belt-and-braces; this is the third layer,
+    // so a new consumer of scan text that forgets fails a test rather than
+    // shipping "NOTHING_TO_REPORT" to a phone. It leaked once, 2026-08-08.
+    expect(detectInternalLeak('NOTHING_TO_REPORT — quiet round.')).toMatch(/quiet-scan sentinel/)
+    expect(detectInternalLeak(QUIET_SENTINEL)).toMatch(/quiet-scan sentinel/)
+  })
+})
+
+/**
+ * Found in the 2026-08-12b audit. Four sites interpolated the raw WhatsApp
+ * API enum into owner-facing text: two into caye_operator_messages.body
+ * (Caye Direct), one into unified_conversations.last_message_preview — which
+ * get_held_queue returns as `preview` for Caye to read out loud — and one
+ * into unified_messages.content.
+ */
+describe('mediaPlaceholder — no raw message-type enums reach a human', () => {
+  it('renders each known type as something a person would say', () => {
+    expect(mediaPlaceholder('image')).toBe('Photo')
+    expect(mediaPlaceholder('video')).toBe('Video')
+    expect(mediaPlaceholder('audio')).toBe('Voice note')
+    expect(mediaPlaceholder('ptt')).toBe('Voice note')
+    expect(mediaPlaceholder('document')).toBe('Document')
+    expect(mediaPlaceholder('sticker')).toBe('Sticker')
+    expect(mediaPlaceholder('location')).toBe('Location')
+    expect(mediaPlaceholder('contacts')).toBe('Contact card')
+  })
+
+  it('never echoes an unmapped type', () => {
+    // Same rule as operatorPingLogBody's default: an unmapped value is a gap
+    // in the renderer, not something to show a customer.
+    expect(mediaPlaceholder('reaction')).toBe('Attachment')
+    expect(mediaPlaceholder('some_future_type')).toBe('Attachment')
+    expect(mediaPlaceholder(null)).toBe('Attachment')
+    expect(mediaPlaceholder(undefined)).toBe('Attachment')
+  })
+
+  it('never returns brackets or an underscore token', () => {
+    for (const t of ['image', 'audio', 'sticker', 'reaction', 'some_future_type', '', null]) {
+      const out = mediaPlaceholder(t)
+      expect(out, String(t)).not.toMatch(/[[\]]/)
+      expect(detectInternalLeak(out), String(t)).toBeNull()
+    }
   })
 })

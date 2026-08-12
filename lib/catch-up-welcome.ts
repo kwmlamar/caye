@@ -289,6 +289,32 @@ function renderBulletsAsMarkdown(bullets: CatchUpBullet[]): string {
   }).join('\n')
 }
 
+/**
+ * Human label for an InboundCategory. Never returns the raw enum — an
+ * unmapped value degrades to a neutral word, same rule as mediaPlaceholder
+ * and operatorPingLogBody's default branch.
+ */
+function categoryLabel(category: InboundCategory): string {
+  switch (category) {
+    case 'complaint':
+      return 'complaint'
+    case 'gratitude':
+      return 'thank-you'
+    case 'cancellation_request':
+      return 'cancellation'
+    case 'rescheduling':
+      return 'reschedule'
+    case 'b2b_partnership':
+      return 'partnership enquiry'
+    case 'booking_inquiry':
+      return 'booking enquiry'
+    case 'general_question':
+      return 'question'
+    default:
+      return 'enquiry'
+  }
+}
+
 function channelLabel(ch: string): string {
   switch (ch) {
     case 'email': return 'email'
@@ -331,7 +357,12 @@ async function composeNarrative(input: NarrativeInput): Promise<string> {
       b.status === 'unread' ? 'UNREAD' :
       b.status === 'ai_handled' ? 'I HANDLED THIS' :
       'OPEN'
-    const cat = b.category ? ` [${b.category}]` : ''
+    // Human label, not the raw enum. This block only feeds the LLM prompt
+    // (the owner-facing list is renderBulletsAsMarkdown, which omits
+    // category) — but a model handed "[booking_inquiry]" can echo it, and
+    // that is precisely the shape that reached Mrs. Max as
+    // "[operator_reminder]". Cheaper to never put the enum in front of it.
+    const cat = b.category ? ` — ${categoryLabel(b.category)}` : ''
     return `- ${b.customerName} (${channelLabel(b.channel)})${cat} — ${status}: "${b.preview.slice(0, 160)}"`
   }).join('\n')
 

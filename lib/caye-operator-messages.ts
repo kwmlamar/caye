@@ -24,29 +24,50 @@ export function summarizeTurnBody(turn: Anthropic.MessageParam): string {
 }
 
 /**
- * A turn whose body is nothing but tool_use/tool_result markers (see
- * summarizeTurnBody above) — real for the agent's own history replay via
- * claude_format, but internal scratch that a human reading Caye Direct
- * shouldn't see as a raw "[tool_use: get_customer_history]" bubble. Used
- * to filter the human-facing GET response, not to skip persisting the row.
+ * True when a persisted turn is INTERMEDIATE — part of the agent's tool
+ * loop rather than the answer it produced — and so must not render as a
+ * bubble in Caye Direct. Filters the human-facing GET; never skips the
+ * insert, since claude_format replay and the audit trail want every turn.
+ *
+ * THE RULE: a turn that contains a tool call is not a final answer.
+ *
+ * Any text sharing a turn with a tool_use block is, by the shape of the
+ * Anthropic API, spoken BEFORE the tool result exists — it is a preamble
+ * ("Let me check both the held queue and pending quotes at the same
+ * time."), never a conclusion. runToolLoop encodes the same fact: it
+ * returns replyText only from a turn with zero tool_use blocks
+ * (lib/caye-agent/execute.ts), and that is the one turn WhatsApp sends.
+ * So the owner-facing transcript should show exactly what WhatsApp sent,
+ * and nothing that preceded it.
+ *
+ * WHY THIS REPLACED MARKER-STRIPPING (2026-08-12). The 2026-08-07 fix hid
+ * turns that were NOTHING BUT markers and stripped markers off the rest —
+ * which un-leaked the "[tool_use: …]" token but left the narration it was
+ * attached to. Mrs. Max's thread then showed "Let me check both the held
+ * queue and pending quotes at the same time." as its own bubble above the
+ * actual answer. Stripping the marker treated the symptom; the turn itself
+ * was the thing that shouldn't be there.
+ *
+ * This is deliberately a property of the TURN, not a phrase list — it
+ * holds for narration Caye hasn't invented yet, and needs no prompt
+ * cooperation to work.
  */
-export function isInternalOnlyBody(body: string): boolean {
+export function isInternalTurnBody(body: string): boolean {
   if (body === '[empty]') return true
+  if (TOOL_MARKER_PRESENT.test(body)) return true
   return stripToolMarkers(body).length === 0
 }
 
+/** Matches any marker summarizeTurnBody emits for a tool block. */
+const TOOL_MARKER_PRESENT = /\[tool_use:|\[tool_result\]/
+
 /**
- * The text of a persisted turn as a human should see it in Caye Direct.
+ * The text of a persisted turn as a human should see it.
  *
- * Hiding all-marker rows (isInternalOnlyBody) was never sufficient: Claude
- * routinely emits ONE turn carrying both text and a tool call, which
- * summarizeTurnBody renders as "You're welcome! Anytime. [tool_use:
- * get_held_queue]". That strips to non-empty, so the row was shown — with
- * the marker still glued to the end. Live in Mrs. Max's thread, 2026-08-07.
- *
- * Callers must filter with isInternalOnlyBody first and render this; the
- * persisted `body` column keeps the markers, since claude_format replay and
- * the audit trail both want the unedited turn.
+ * Defence in depth behind isInternalTurnBody, which should already have
+ * dropped every marker-bearing row. Kept so a future caller that renders
+ * without filtering still can't put a raw marker on screen. The persisted
+ * `body` column keeps its markers either way.
  */
 export function visibleBody(body: string): string {
   return stripToolMarkers(body)

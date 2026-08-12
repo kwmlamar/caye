@@ -29,6 +29,7 @@ import { syncBookingToCalendar } from '@/lib/calendar-sync'
 import type { VoiceProfile } from '@/lib/voice-profile'
 import { alertFounderOfDeliveryFailure } from '@/lib/whatsapp/founder-alert'
 import { OPERATOR_LOGGABLE_KINDS } from '@/app/api/caye/outbound-worker/route'
+import { mediaPlaceholder } from '@/lib/operator-text-guard'
 
 // ─── GET — webhook verification ──────────────────────────────────────────────
 
@@ -255,7 +256,7 @@ async function processInboundWhatsApp(payload: Record<string, unknown>): Promise
           contact_id: contactRow?.id,
           status: 'open',
           last_message_at: sentAt,
-          last_message_preview: isTextMessage ? body.slice(0, 100) : `[${message.type}]`,
+          last_message_preview: isTextMessage ? body.slice(0, 100) : mediaPlaceholder(message.type),
           last_sender_type: 'customer',
           metadata: { wa_id: from, phone_number_id },
           ...(isTextMessage
@@ -292,7 +293,7 @@ async function processInboundWhatsApp(payload: Record<string, unknown>): Promise
         conversation_id: conversation.id,
         channel_message_id: messageId,
         sender_type: 'customer',
-        content: isTextMessage ? body : `[${message.type} message]`,
+        content: isTextMessage ? body : mediaPlaceholder(message.type),
         message_type: isTextMessage ? 'text' : message.type,
         sent_at: sentAt,
         status: 'delivered',
