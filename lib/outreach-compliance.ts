@@ -2,19 +2,18 @@ import 'server-only'
 
 /**
  * CAN-SPAM footer for TropiTech's own cold-outreach email (internal_sales
- * workspace only — see lib/outreach-email.ts, which is the only caller).
- * Deliberately NOT injected into lib/email-ai.ts's sendZohoEmail/
- * sendZohoReply directly: those are shared primitives used by every
- * workspace's Caye deployment (e.g. Bimini's booking correspondence via
- * the dashboard's send_email tool), and a commercial-email compliance
- * footer has no business appearing on a tour operator's customer emails.
+ * workspace only — appended inline in app/api/caye/outreach-autosend-scan
+ * before calling dispatchOperatorReply). Deliberately NOT injected into
+ * lib/email-ai.ts's sendZohoEmail/sendZohoReply directly: those are shared
+ * primitives used by every workspace's Caye deployment (e.g. Bimini's
+ * booking correspondence via the dashboard's send_email tool), and a
+ * commercial-email compliance footer has no business appearing on a tour
+ * operator's customer emails.
  *
- * ⚠ TROPITECH_MAILING_ADDRESS is a placeholder. CAN-SPAM requires a real
- * physical postal address on commercial email — this must be replaced with
- * TropiTech's actual mailing address before outreach_autosend_paused is
- * ever flipped off. Search for this constant before going live.
+ * TropiTech Solutions' registered mailing address (Wyoming LLC) — real,
+ * not a placeholder, confirmed by Lamar 2026-08-12.
  */
-const TROPITECH_MAILING_ADDRESS = '[TROPITECH ADDRESS — REPLACE BEFORE GOING LIVE]'
+const TROPITECH_MAILING_ADDRESS = '30 N Gould St, STE R, Sheridan, WY 82801, USA'
 
 function appUrl(): string {
   return process.env.NEXT_PUBLIC_APP_URL ?? 'https://meetcaye.com'
