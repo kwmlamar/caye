@@ -1,46 +1,28 @@
 /**
  * GET /api/caye/outreach-autosend-scan
  *
- * Replaces app/api/caye/outreach-nudge-scan (deleted 2026-08-12) — fully
- * autonomous cold outreach (decisions-log 2026-08-12, reversing the
- * 2026-07-21 "step 4 permanently off" decision). Hourly cron, two jobs per
- * internal_sales workspace:
- *   1. FIRST TOUCH — drafts + sends outreach_leads rows with
- *      status='sourced' (created by outreach-sourcing-scan).
- *   2. FOLLOW-UP — up to 2 more touches (3 total) per
- *      lib/nudge-eligibility.ts's decideOutreachLeadAction, sent directly
- *      instead of held (was hold-only through 2026-08-12).
+ * Caye working her pipeline. One tick = one pass over every live lead,
+ * asking the same question for each: given what I know about this person
+ * right now, what is the most useful thing I can do next, and am I allowed
+ * to do it myself?
  *
- * Both send paths route through lib/whatsapp/channel-dispatch.ts's
- * dispatchOperatorReply rather than calling sendZohoEmail/sendZohoReply
- * directly — that function already owns Zoho threading (the 2026-08-01
- * unthreaded-follow-up incident), unified_messages recording, and the
- * outreach_leads status/first_touch_sent_at bookkeeping on the first-touch
- * branch. Reinventing a parallel send path here would risk the exact
- * threading bug that function's own doc comment warns about. The CAN-SPAM
- * footer (lib/outreach-compliance.ts) is appended to the body text before
- * calling it, since dispatchOperatorReply itself is generic across every
- * workspace's Caye deployment and shouldn't know about outreach compliance.
+ *   observe state ─> decideNextAction ─> decideAuthority ─> act / stage / escalate
+ *        ^                                                            │
+ *        └──────────── record outcome + signals ──────────────────────┘
  *
- * SAFETY GATES, checked once per workspace per run:
- *   - workspace_ai_config.outreach_autosend_paused — if true (default),
- *     drafts still get generated and content-guard-checked, but land as a
- *     held item for manual review/send instead of sending. Tripped
- *     automatically by lib/outreach-kill-switch.ts on a bounce spike, or
- *     manually via the founder dashboard settings.
- *   - lib/outreach-send-limits.ts's OUTREACH_DAILY_SEND_CAP (50/day) — a
- *     live remaining-budget counter tracked locally across this run (not
- *     re-queried per send), since a single run could otherwise blow past
- *     the cap processing one batch.
- *   - lib/outreach-draft-guard.ts's findOutreachDraftIssues — a draft that
- *     fails content checks (banned hedge phrases, unfilled placeholders)
- *     always falls back to held-for-review, regardless of the gates above.
- *     Fails closed, never sends a suspect draft on the assumption it's
- *     probably fine (mirrors send-outreach-batch.ts's same check).
+ * The cron tick IS the loop's "keep going" step. That is deliberate: this
+ * codebase's standing architecture decision is background jobs rather than
+ * an agent framework, and a per-lead state machine re-entered on a schedule
+ * gives genuine continuity without a runtime that can wander.
  *
- * Authenticated via CRON_SECRET. Accepts either `x-cron-secret: <secret>`
- * or `Authorization: Bearer <secret>`. Registered on cron-job.org via
- * scripts/register-outreach-crons.ts.
+ * What changed 2026-08-12 (decisions-log): this route used to answer "is a
+ * nudge due?" and nothing else. Every judgment now lives in a pure,
+ * unit-tested module under lib/sales/ — funnel stage, next action,
+ * authority tier, truthfulness — and this file is the I/O shell that runs
+ * them. Nothing here decides policy; it observes, calls the policy, and
+ * carries out the verdict.
+ *
+ * Authenticated via CRON_SECRET (Bearer or x-cron-secret).
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -51,14 +33,16 @@ import { enqueueHoldPing } from '@/lib/whatsapp/triggers'
 import { generateOutreachFirstTouchDraft } from '@/lib/outreach-first-touch'
 import { generateOutreachFollowupDraft } from '@/lib/outreach-nudge'
 import { findOutreachDraftIssues, describeDraftIssues } from '@/lib/outreach-draft-guard'
+import { findClaimIssues, describeClaimIssues } from '@/lib/sales/claims'
 import { buildComplianceFooter } from '@/lib/outreach-compliance'
 import { countSentToday, OUTREACH_DAILY_SEND_CAP } from '@/lib/outreach-send-limits'
-import { decideOutreachLeadAction, type OutreachLeadCandidate } from '@/lib/nudge-eligibility'
+import { decideNextAction, type LeadState, type SalesAction } from '@/lib/sales/next-action'
+import { decideAuthority, founderNoteFor, type SalesActionKind } from '@/lib/sales/authority'
+import { recordSignal } from '@/lib/sales/signals'
+import type { SalesStage } from '@/lib/sales/funnel'
 
-const DEFAULT_SALES_SYSTEM_PROMPT =
-  'You are TropiTech\'s founder reaching out to prospective Caye customers.'
-
-const FIRST_TOUCH_BATCH_SIZE = 20
+/** Leads examined per tick. Bounds runtime; the next tick picks up the rest. */
+const LEAD_BATCH_SIZE = 40
 
 export async function GET(request: NextRequest) {
   const secret = process.env.CRON_SECRET
@@ -69,27 +53,47 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
   }
-
   try {
     return NextResponse.json(await runOutreachAutosendScan())
   } catch (err) {
-    return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : String(err) },
+      { status: 500 }
+    )
   }
 }
 
-export async function runOutreachAutosendScan() {
+/** Index signature satisfies recordCronRun's Record<string, unknown> bound,
+ *  which persists this straight into caye_cron_runs.last_summary. */
+export interface ScanSummary {
+  [key: string]: number | string[]
+  workspaces_scanned: number
+  leads_examined: number
+  first_touch_sent: number
+  followups_sent: number
+  held_for_review: number
+  escalated: number
+  disqualified: number
+  marked_cold: number
+  no_action: number
+  errors: string[]
+}
+
+export async function runOutreachAutosendScan(): Promise<ScanSummary> {
   return recordCronRun('outreach-autosend-scan', async () => {
     const supabase = createServiceClient()
     const now = new Date()
-
-    const summary = {
+    const summary: ScanSummary = {
       workspaces_scanned: 0,
+      leads_examined: 0,
       first_touch_sent: 0,
-      first_touch_held: 0,
       followups_sent: 0,
-      followups_held: 0,
+      held_for_review: 0,
+      escalated: 0,
+      disqualified: 0,
       marked_cold: 0,
-      errors: [] as string[],
+      no_action: 0,
+      errors: [],
     }
 
     const { data: workspaces } = await supabase
@@ -100,38 +104,39 @@ export async function runOutreachAutosendScan() {
     for (const workspace of workspaces ?? []) {
       summary.workspaces_scanned++
       try {
-        const r = await processWorkspace(workspace.id, now)
-        summary.first_touch_sent += r.first_touch_sent
-        summary.first_touch_held += r.first_touch_held
-        summary.followups_sent += r.followups_sent
-        summary.followups_held += r.followups_held
-        summary.marked_cold += r.marked_cold
+        await processWorkspace(workspace.id, now, summary)
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
         summary.errors.push(`workspace ${workspace.id}: ${msg}`)
-        console.error(`[outreach-autosend-scan] workspace ${workspace.id} failed:`, err)
+        console.error(`[outreach-autosend-scan] workspace ${workspace.id}:`, err)
       }
     }
-
     return summary
   })
 }
 
-interface WorkspaceCounts {
-  first_touch_sent: number
-  first_touch_held: number
-  followups_sent: number
-  followups_held: number
-  marked_cold: number
+interface LeadRow {
+  id: string
+  lead_email: string
+  business_name: string | null
+  contact_name: string | null
+  demo_token: string | null
+  stage: SalesStage
+  first_touch_sent_at: string | null
+  touches_sent: number
+  last_touch_sent_at: string | null
+  opted_out_at: string | null
+  disqualified_reason: string | null
 }
 
-async function processWorkspace(workspaceId: string, now: Date): Promise<WorkspaceCounts> {
+async function processWorkspace(
+  workspaceId: string,
+  now: Date,
+  summary: ScanSummary
+): Promise<void> {
   const supabase = createServiceClient()
-  const counts: WorkspaceCounts = {
-    first_touch_sent: 0, first_touch_held: 0, followups_sent: 0, followups_held: 0, marked_cold: 0,
-  }
 
-  const [{ data: account }, { data: aiConfig }] = await Promise.all([
+  const [{ data: account }, { data: aiConfig }, { data: customer }] = await Promise.all([
     supabase
       .from('connected_accounts')
       .select('id')
@@ -141,281 +146,316 @@ async function processWorkspace(workspaceId: string, now: Date): Promise<Workspa
       .maybeSingle(),
     supabase
       .from('workspace_ai_config')
-      .select('system_prompt, outreach_autosend_paused')
+      .select('outreach_autosend_paused')
       .eq('workspace_id', workspaceId)
       .maybeSingle(),
+    supabase.from('customers').select('ai_voice_profile').eq('id', workspaceId).maybeSingle(),
   ])
 
-  // Zoho not connected yet — nothing to draft or send from.
-  if (!account) return counts
+  if (!account) return // no mailbox connected; nothing to send from
 
-  const paused = aiConfig?.outreach_autosend_paused ?? true
-  const systemPrompt = aiConfig?.system_prompt ?? DEFAULT_SALES_SYSTEM_PROMPT
+  const outreachPaused = aiConfig?.outreach_autosend_paused ?? true
+  const workspaceVoice = renderVoiceProfile(customer?.ai_voice_profile)
 
-  // Live remaining-budget counter for this run — see route doc comment.
-  let remaining = paused ? 0 : OUTREACH_DAILY_SEND_CAP - (await countSentToday(workspaceId))
+  // Budget observed once, then tracked locally across the run. Re-reading
+  // per send would only ever reflect state from before the tick started.
+  const sentToday = await countSentToday(workspaceId)
+  let remaining = Math.max(0, OUTREACH_DAILY_SEND_CAP - sentToday)
 
-  // ── First touch ──────────────────────────────────────────────────────
-  const { data: sourcedLeads } = await supabase
+  const { data: leads } = await supabase
     .from('outreach_leads')
-    .select('id, lead_email, business_name, contact_name, demo_token')
+    .select(
+      'id, lead_email, business_name, contact_name, demo_token, stage, first_touch_sent_at, touches_sent, last_touch_sent_at, opted_out_at, disqualified_reason'
+    )
     .eq('workspace_id', workspaceId)
-    .eq('status', 'sourced')
-    .is('opted_out_at', null)
-    .limit(FIRST_TOUCH_BATCH_SIZE)
+    .not('stage', 'in', '("won","lost","disqualified")')
+    .order('created_at', { ascending: true })
+    .limit(LEAD_BATCH_SIZE)
 
-  for (const lead of sourcedLeads ?? []) {
+  for (const lead of (leads ?? []) as LeadRow[]) {
+    summary.leads_examined++
     try {
-      const canSend = remaining > 0
-      const outcome = await processFirstTouch(account.id, systemPrompt, lead, canSend)
-      if (outcome === 'sent') { counts.first_touch_sent++; remaining-- }
-      if (outcome === 'held') counts.first_touch_held++
+      const consumed = await processLead({
+        lead,
+        workspaceId,
+        accountId: account.id,
+        workspaceVoice,
+        outreachPaused,
+        remaining,
+        now,
+        summary,
+      })
+      remaining -= consumed
     } catch (err) {
-      console.error(`[outreach-autosend-scan] first-touch ${lead.lead_email} failed:`, err)
+      console.error(`[outreach-autosend-scan] lead ${lead.lead_email}:`, err)
+      summary.errors.push(`lead ${lead.lead_email}: ${err instanceof Error ? err.message : String(err)}`)
     }
   }
-
-  // ── Follow-ups ───────────────────────────────────────────────────────
-  const { data: sentLeads } = await supabase
-    .from('outreach_leads')
-    .select('id, lead_email, business_name, contact_name, demo_token, first_touch_sent_at, nudge_count, last_nudge_at, opted_out_at, status')
-    .eq('workspace_id', workspaceId)
-    .is('opted_out_at', null)
-    .eq('status', 'sent')
-
-  for (const lead of sentLeads ?? []) {
-    try {
-      const canSend = remaining > 0
-      const outcome = await processFollowup(workspaceId, account.id, systemPrompt, lead, now, canSend)
-      if (outcome === 'sent') { counts.followups_sent++; remaining-- }
-      if (outcome === 'held') counts.followups_held++
-      if (outcome === 'marked_cold') counts.marked_cold++
-    } catch (err) {
-      console.error(`[outreach-autosend-scan] follow-up ${lead.lead_email} failed:`, err)
-    }
-  }
-
-  return counts
 }
 
-interface SourcedLeadRow {
-  id: string
-  lead_email: string
-  business_name: string | null
-  contact_name: string | null
-  demo_token: string | null
-}
-
-async function processFirstTouch(
-  accountId: string,
-  systemPrompt: string,
-  lead: SourcedLeadRow,
-  canSend: boolean
-): Promise<'sent' | 'held' | 'skipped'> {
-  const supabase = createServiceClient()
-  if (!lead.demo_token) return 'skipped'
-
-  const generated = await generateOutreachFirstTouchDraft({
-    systemPrompt,
-    leadName: lead.contact_name ?? lead.lead_email,
-    businessName: lead.business_name ?? lead.lead_email,
-    demoToken: lead.demo_token,
-  })
-  if (!generated.ok) {
-    console.warn(`[outreach-autosend-scan] first-touch draft failed (${generated.reason}) for ${lead.lead_email}`)
-    return 'skipped'
-  }
-
-  const issues = findOutreachDraftIssues(generated.body)
-  const metadata = {
-    source: 'outreach_leads',
-    lead_id: lead.id,
-    hold_kind: 'outreach_first_touch',
-    subject: generated.subject,
-    proposed_reply: generated.body,
-  }
-
-  const { data: created, error: convErr } = await supabase
-    .from('unified_conversations')
-    .insert({
-      connected_account_id: accountId,
-      channel_type: 'email',
-      channel_conversation_id: `outreach_${lead.id}`,
-      customer_name: lead.contact_name || lead.business_name || lead.lead_email,
-      customer_id: lead.lead_email,
-      status: 'open',
-      is_archived: false,
-      human_agent_enabled: true,
-      human_agent_reason: issues.length > 0
-        ? `First-touch draft failed content guard: ${describeDraftIssues(issues)}`
-        : (canSend ? 'Autonomous first-touch — sending' : 'Autonomous first-touch drafted — outreach autosend is paused or at today\'s cap, review and send from the dashboard'),
-      metadata,
-    })
-    .select('id')
-    .single()
-
-  if (convErr || !created) {
-    console.error('[outreach-autosend-scan] first-touch conversation create failed:', convErr)
-    return 'skipped'
-  }
-
-  if (issues.length > 0 || !canSend) {
-    await supabase.from('outreach_leads').update({ status: 'draft' }).eq('id', lead.id)
-    return 'held'
-  }
-
-  const bodyWithFooter = generated.body + buildComplianceFooter(lead.demo_token)
-  // dispatchOperatorReply flips outreach_leads.status='sent' +
-  // first_touch_sent_at itself (channel-dispatch.ts's own bookkeeping) —
-  // nothing more to update here.
-  await dispatchOperatorReply(created.id, bodyWithFooter, 'caye-dashboard')
-  return 'sent'
-}
-
-interface SentLeadRow {
-  id: string
-  lead_email: string
-  business_name: string | null
-  contact_name: string | null
-  demo_token: string | null
-  first_touch_sent_at: string | null
-  nudge_count: number
-  last_nudge_at: string | null
-  opted_out_at: string | null
-  status: string
-}
-
-async function processFollowup(
-  workspaceId: string,
-  accountId: string,
-  systemPrompt: string,
-  lead: SentLeadRow,
-  now: Date,
-  canSend: boolean
-): Promise<'sent' | 'held' | 'marked_cold' | 'none'> {
+/** @returns how much send budget this lead consumed (0 or 1). */
+async function processLead(args: {
+  lead: LeadRow
+  workspaceId: string
+  accountId: string
+  workspaceVoice: string
+  outreachPaused: boolean
+  remaining: number
+  now: Date
+  summary: ScanSummary
+}): Promise<number> {
+  const { lead, workspaceId, accountId, workspaceVoice, outreachPaused, remaining, now, summary } = args
   const supabase = createServiceClient()
 
+  // ── OBSERVE ────────────────────────────────────────────────────────────
+  // Reply state is computed from the inbox rather than trusted from a
+  // column, per the original outreach_leads design note: one join, not a
+  // second source of truth that can drift from what actually happened.
   const { data: conversation } = await supabase
     .from('unified_conversations')
-    .select('id, metadata')
+    .select('id, metadata, last_sender_type, human_agent_enabled')
     .eq('connected_account_id', accountId)
     .eq('channel_type', 'email')
     .eq('customer_id', lead.lead_email)
     .maybeSingle()
 
-  let hasReplied = false
-  if (conversation) {
-    const { count } = await supabase
-      .from('unified_messages')
-      .select('*', { count: 'exact', head: true })
-      .eq('conversation_id', conversation.id)
-      .eq('sender_type', 'customer')
-    hasReplied = (count ?? 0) > 0
+  const hasUnansweredReply = conversation?.last_sender_type === 'customer'
+
+  // A draft already parked on this thread means someone (the hand-fed
+  // create_outreach_leads path, or an earlier held run) has an unsent
+  // message waiting. Writing a second one and sending it would contact the
+  // prospect twice with different copy. Leave it alone: it is either
+  // waiting for Lamar deliberately, or it will be sent from the queue.
+  const meta = (conversation?.metadata ?? {}) as Record<string, unknown>
+  const hasParkedDraft =
+    conversation?.human_agent_enabled === true && typeof meta.proposed_reply === 'string'
+  if (hasParkedDraft && !hasUnansweredReply) {
+    summary.no_action++
+    return 0
   }
 
-  const candidate: OutreachLeadCandidate = {
-    first_touch_sent_at: lead.first_touch_sent_at,
-    nudge_count: lead.nudge_count,
-    last_nudge_at: lead.last_nudge_at,
-    opted_out_at: lead.opted_out_at,
-    status: lead.status,
-    has_replied: hasReplied,
+  const state: LeadState = {
+    stage: lead.stage,
+    firstTouchSentAt: lead.first_touch_sent_at,
+    touchesSent: lead.touches_sent,
+    lastTouchSentAt: lead.last_touch_sent_at,
+    optedOutAt: lead.opted_out_at,
+    hasUnansweredReply,
+    disqualifyingSignal: lead.disqualified_reason,
   }
 
-  const action = decideOutreachLeadAction(candidate, now)
-  if (action === 'none') return 'none'
-
-  if (action === 'mark_cold') {
-    await supabase.from('outreach_leads').update({ status: 'cold' }).eq('id', lead.id)
-    return 'marked_cold'
+  // ── DECIDE ─────────────────────────────────────────────────────────────
+  const action = decideNextAction(state, now)
+  if (action.kind === 'do_nothing') {
+    summary.no_action++
+    return 0
   }
 
-  if (!lead.demo_token) return 'none'
-
-  // action === 'nudge'. nudge_count 0 → this is the 2nd touch overall
-  // (1st follow-up); nudge_count 1 → 3rd/final touch.
-  const touchNumber: 2 | 3 = lead.nudge_count === 0 ? 2 : 3
-
-  const generated = await generateOutreachFollowupDraft({
-    systemPrompt,
-    leadName: lead.contact_name ?? lead.lead_email,
-    businessName: lead.business_name ?? lead.lead_email,
-    demoToken: lead.demo_token,
-    touchNumber,
-  })
-  if (!generated.ok) {
-    console.warn(`[outreach-autosend-scan] follow-up draft failed (${generated.reason}) for ${lead.lead_email}`)
-    return 'none'
+  // Bookkeeping actions need no draft and no send budget.
+  if (action.kind === 'mark_disqualified') {
+    await supabase
+      .from('outreach_leads')
+      .update({ stage: 'disqualified', disqualified_reason: action.reason })
+      .eq('id', lead.id)
+    await recordSignal({
+      workspaceId, leadId: lead.id, kind: 'disqualifier', label: action.reason,
+    })
+    summary.disqualified++
+    return 0
+  }
+  if (action.kind === 'mark_cold') {
+    await supabase.from('outreach_leads').update({ stage: 'lost', status: 'cold' }).eq('id', lead.id)
+    await recordSignal({
+      workspaceId, leadId: lead.id, kind: 'outcome', label: 'cadence_exhausted_no_reply',
+    })
+    summary.marked_cold++
+    return 0
   }
 
-  let conversationId = conversation?.id
-  let baseMetadata: Record<string, unknown> = (conversation?.metadata as Record<string, unknown>) ?? {}
-  if (!conversationId) {
-    baseMetadata = { source: 'outreach_leads', lead_id: lead.id }
-    const { data: created, error: convErr } = await supabase
-      .from('unified_conversations')
-      .insert({
-        connected_account_id: accountId,
-        channel_type: 'email',
-        channel_conversation_id: `outreach_${lead.id}`,
-        customer_name: lead.contact_name ?? lead.business_name ?? lead.lead_email,
-        customer_id: lead.lead_email,
-        status: 'open',
-        is_archived: false,
-        metadata: baseMetadata,
-      })
-      .select('id')
-      .single()
-    if (convErr || !created) {
-      console.error('[outreach-autosend-scan] follow-up conversation create failed:', convErr)
-      return 'none'
+  // Answering an inbound reply is the front-desk engine's job, not this
+  // cron's — it has the thread context and the conversational tools. The
+  // reply path picks this up on its own; the scan only notes that the lead
+  // has moved and stays out of the way.
+  if (action.kind === 'reply_to_prospect') {
+    if (lead.stage === 'contacted' || lead.stage === 'sourced') {
+      await supabase.from('outreach_leads').update({ stage: 'engaged', status: 'replied' }).eq('id', lead.id)
+      await recordSignal({ workspaceId, leadId: lead.id, kind: 'outcome', label: 'reply_received' })
     }
-    conversationId = created.id
+    summary.no_action++
+    return 0
   }
 
-  const issues = findOutreachDraftIssues(generated.content)
-  // baseMetadata carries `subject` forward if this conversation was
-  // created by processFirstTouch above — dispatchOperatorReply's reply
-  // branch reads meta.subject for the "Re: " line.
-  const proposedMetadata = { ...baseMetadata, hold_kind: 'outreach_followup', proposed_reply: generated.content }
+  if (!lead.demo_token) return 0
 
-  // Bump counters at draft-attempt time regardless of send/hold outcome —
-  // each touch is attempted at most once. If bumped only on actual send,
-  // a later manual send of a held draft via send_outreach_batch (which
-  // doesn't bump nudge_count itself) would leave the cadence under-counted
-  // and risk a duplicate touch generating on top of it.
-  await supabase
-    .from('outreach_leads')
-    .update({ nudge_count: lead.nudge_count + 1, last_nudge_at: now.toISOString() })
-    .eq('id', lead.id)
+  // ── DRAFT ──────────────────────────────────────────────────────────────
+  const leadName = lead.contact_name || lead.lead_email
+  const businessName = lead.business_name || lead.lead_email
+  let subject: string
+  let body: string
 
-  if (issues.length > 0 || !canSend) {
+  if (action.kind === 'send_first_touch') {
+    const drafted = await generateOutreachFirstTouchDraft({
+      workspaceVoice, leadName, businessName, demoToken: lead.demo_token,
+    })
+    if (!drafted.ok) {
+      console.warn(`[outreach-autosend-scan] first-touch draft failed (${drafted.reason}) for ${lead.lead_email}`)
+      return 0
+    }
+    subject = drafted.subject
+    body = drafted.body
+  } else {
+    const drafted = await generateOutreachFollowupDraft({
+      workspaceVoice, leadName, businessName,
+      demoToken: lead.demo_token,
+      touchNumber: (action as Extract<SalesAction, { kind: 'send_followup' }>).touchNumber,
+    })
+    if (!drafted.ok) {
+      console.warn(`[outreach-autosend-scan] follow-up draft failed (${drafted.reason}) for ${lead.lead_email}`)
+      return 0
+    }
+    subject = deriveFollowupSubject(conversation?.metadata)
+    body = drafted.content
+  }
+
+  // ── AUTHORITY ──────────────────────────────────────────────────────────
+  // Both guards run before the tier is decided, so a draft that is untrue
+  // or off-voice can never be classified as routine.
+  const styleIssues = findOutreachDraftIssues(body)
+  const claimIssues = findClaimIssues(body)
+  const guardFailure =
+    styleIssues.length > 0 || claimIssues.length > 0
+      ? [
+          styleIssues.length ? describeDraftIssues(styleIssues) : '',
+          claimIssues.length ? describeClaimIssues(claimIssues) : '',
+        ].filter(Boolean).join('; ')
+      : null
+
+  const actionKind: SalesActionKind =
+    action.kind === 'send_first_touch' ? 'send_first_touch' : 'send_followup'
+
+  const verdict = decideAuthority({
+    action: actionKind,
+    draftFailedGuards: Boolean(guardFailure),
+    outreachPaused,
+    atDailyCap: remaining <= 0,
+  })
+
+  const conversationId = conversation?.id ?? (await createLeadConversation({
+    accountId, lead, subject, leadName, businessName,
+  }))
+  if (!conversationId) return 0
+
+  const baseMetadata = (conversation?.metadata as Record<string, unknown>) ?? {
+    source: 'outreach_leads',
+    lead_id: lead.id,
+  }
+  const holdKind = action.kind === 'send_first_touch' ? 'outreach_first_touch' : 'outreach_followup'
+  const metadata = { ...baseMetadata, hold_kind: holdKind, subject, proposed_reply: body }
+
+  // ── ACT ────────────────────────────────────────────────────────────────
+  if (verdict.tier !== 'auto') {
+    const note = founderNoteFor(
+      verdict,
+      guardFailure
+        ? `Draft for ${businessName} did not pass: ${guardFailure}.`
+        : `Draft ready for ${businessName}.`
+    )
     await supabase
       .from('unified_conversations')
-      .update({
-        human_agent_enabled: true,
-        human_agent_reason: issues.length > 0
-          ? `Follow-up draft failed content guard: ${describeDraftIssues(issues)}`
-          : 'Autonomous follow-up drafted — outreach autosend is paused or at today\'s cap, review and send from the dashboard',
-        metadata: proposedMetadata,
-      })
+      .update({ human_agent_enabled: true, human_agent_reason: note, metadata })
       .eq('id', conversationId)
-
+    await recordSignal({
+      workspaceId, leadId: lead.id, kind: 'outcome',
+      label: `held_${verdict.reasons[0] ?? 'unknown'}`, detail: guardFailure,
+    })
     await enqueueHoldPing({
-      workspaceId,
-      conversationId,
-      contactName: lead.contact_name ?? lead.business_name ?? lead.lead_email,
-      reason: 'outreach_followup_drafted',
-      proposedReply: generated.content,
-      inboundBody: '(no inbound message — cold-outreach follow-up nudge)',
+      workspaceId, conversationId, contactName: businessName,
+      reason: 'outreach_draft_held', proposedReply: body,
+      inboundBody: '(no inbound message, outbound draft held for review)',
       urgency: 'routine',
-    }).catch(err => console.error('[outreach-autosend-scan] enqueueHoldPing failed:', err))
-
-    return 'held'
+    }).catch((err) => console.error('[outreach-autosend-scan] hold ping failed:', err))
+    summary.held_for_review++
+    return 0
   }
 
-  await supabase.from('unified_conversations').update({ metadata: proposedMetadata }).eq('id', conversationId)
-  const bodyWithFooter = generated.content + buildComplianceFooter(lead.demo_token)
-  await dispatchOperatorReply(conversationId, bodyWithFooter, 'caye-dashboard')
-  return 'sent'
+  await supabase.from('unified_conversations').update({ metadata }).eq('id', conversationId)
+  await dispatchOperatorReply(conversationId, body + buildComplianceFooter(lead.demo_token), 'caye-dashboard')
+
+  // ── RECORD ─────────────────────────────────────────────────────────────
+  // touches_sent/last_touch_sent_at move only on an ACTUAL send. The older
+  // nudge_count/last_nudge_at pair is kept in step for the daily-cap query,
+  // which still reads it, but it counts attempts and must never be used to
+  // decide what to send next.
+  const nowISO = now.toISOString()
+  await supabase
+    .from('outreach_leads')
+    .update({
+      stage: 'contacted',
+      touches_sent: lead.touches_sent + 1,
+      last_touch_sent_at: nowISO,
+      last_nudge_at: nowISO,
+      ...(action.kind === 'send_first_touch' ? {} : { nudge_count: lead.touches_sent }),
+    })
+    .eq('id', lead.id)
+
+  await recordSignal({
+    workspaceId, leadId: lead.id, kind: 'outcome',
+    label: action.kind === 'send_first_touch' ? 'first_touch_sent' : `followup_${action.touchNumber}_sent`,
+  })
+
+  if (action.kind === 'send_first_touch') summary.first_touch_sent++
+  else summary.followups_sent++
+  return 1
+}
+
+async function createLeadConversation(args: {
+  accountId: string
+  lead: LeadRow
+  subject: string
+  leadName: string
+  businessName: string
+}): Promise<string | null> {
+  const supabase = createServiceClient()
+  const { data, error } = await supabase
+    .from('unified_conversations')
+    .insert({
+      connected_account_id: args.accountId,
+      channel_type: 'email',
+      channel_conversation_id: `outreach_${args.lead.id}`,
+      customer_name: args.lead.contact_name || args.lead.business_name || args.lead.lead_email,
+      customer_id: args.lead.lead_email,
+      status: 'open',
+      is_archived: false,
+      metadata: { source: 'outreach_leads', lead_id: args.lead.id, subject: args.subject },
+    })
+    .select('id')
+    .single()
+  if (error || !data) {
+    console.error('[outreach-autosend-scan] conversation create failed:', error)
+    return null
+  }
+  return data.id
+}
+
+/** Follow-ups thread onto the original subject so they land in the same thread. */
+function deriveFollowupSubject(metadata: unknown): string {
+  const meta = (metadata ?? {}) as Record<string, unknown>
+  return typeof meta.subject === 'string' && meta.subject.trim() ? meta.subject : 'Following up'
+}
+
+/**
+ * Flattens the stored voice profile into prose for the prompt. Kept narrow
+ * on purpose: only fields that describe HOW to write. Policy never comes
+ * from here, so an edit in the dashboard cannot widen Caye's authority.
+ */
+function renderVoiceProfile(profile: unknown): string {
+  const p = (profile ?? {}) as Record<string, unknown>
+  const parts: string[] = []
+  const str = (k: string) => (typeof p[k] === 'string' ? (p[k] as string).trim() : '')
+  if (str('writing_style')) parts.push(`Writing style: ${str('writing_style')}`)
+  if (str('tone_notes')) parts.push(`Tone: ${str('tone_notes')}`)
+  if (Array.isArray(p.common_phrases) && p.common_phrases.length) {
+    parts.push(`Phrases that sound like him: ${(p.common_phrases as string[]).slice(0, 10).join('; ')}`)
+  }
+  return parts.length ? `HOW LAMAR SOUNDS\n${parts.join('\n')}` : ''
 }

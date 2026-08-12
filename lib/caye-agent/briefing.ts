@@ -129,6 +129,8 @@ export async function composeMorningBriefing(args: {
     followupsSent: number
     replies: number
     tried: number
+    pipeline?: Record<string, number>
+    objections?: { label: string; count: number }[]
   } | null
 }): Promise<string> {
   const supabase = createServiceClient()
@@ -205,32 +207,67 @@ export async function composeMorningBriefing(args: {
 }
 
 /**
- * Deterministic (no LLM) daily outreach summary line — decisions-log
- * 2026-08-12: "she just pings me about how much emails, follow ups or
- * responses she got." Bahamian-direct: numbers, no hedge, no filler when
- * there's nothing to report.
+ * Deterministic (no LLM) daily sales report.
+ *
+ * Composed rather than generated on purpose: these are counts, and a model
+ * asked to narrate counts is a model given the opportunity to round one up.
+ * Reported in funnel order — where the pipeline stands first, then what
+ * moved, then what got in the way — because "how many emails went out" is an
+ * activity metric, and the standing complaint about activity metrics is that
+ * they let a system look busy while going nowhere.
  */
 function formatOutreachDigestLine(
   operator: string,
-  stats: { sourced: number; firstTouchSent: number; followupsSent: number; replies: number; tried: number }
+  stats: {
+    sourced: number
+    firstTouchSent: number
+    followupsSent: number
+    replies: number
+    tried: number
+    pipeline?: Record<string, number>
+    objections?: { label: string; count: number }[]
+  }
 ): string {
-  const { sourced, firstTouchSent, followupsSent, replies, tried } = stats
+  const { sourced, firstTouchSent, followupsSent, replies, tried, pipeline, objections } = stats
+  const lines: string[] = []
 
-  if (sourced === 0 && firstTouchSent === 0 && followupsSent === 0 && replies === 0 && tried === 0) {
-    return `Morning, ${operator}. Quiet 24 hours — nothing sourced, sent, or replied to.`
+  // Where things stand. Live counts, not deltas.
+  const live = pipeline ?? {}
+  const inPlay = (live.contacted ?? 0) + (live.engaged ?? 0) + (live.qualified ?? 0)
+  const warm = (live.engaged ?? 0) + (live.qualified ?? 0)
+  const inDemo = (live.demo_started ?? 0) + (live.activated ?? 0)
+
+  if (inPlay + inDemo === 0) {
+    lines.push(`Morning, ${operator}. Pipeline is empty right now.`)
+  } else {
+    const bits = [`${inPlay} still in play`]
+    if (warm > 0) bits.push(`${warm} warm`)
+    if (inDemo > 0) bits.push(`${inDemo} in the demo`)
+    if (live.won) bits.push(`${live.won} closed`)
+    lines.push(`Morning, ${operator}. ${bits.join(', ')}.`)
   }
 
-  const sendParts: string[] = []
-  if (sourced > 0) sendParts.push(`sourced ${sourced} lead${sourced === 1 ? '' : 's'}`)
-  if (firstTouchSent > 0) sendParts.push(`sent ${firstTouchSent} first-touch email${firstTouchSent === 1 ? '' : 's'}`)
-  if (followupsSent > 0) sendParts.push(`${followupsSent} follow-up${followupsSent === 1 ? '' : 's'}`)
-  const line1 = sendParts.length > 0
-    ? `Morning, ${operator}. Last 24h: ${sendParts.join(', ')}.`
-    : `Morning, ${operator}.`
+  // What actually moved in the last day.
+  const moved: string[] = []
+  if (replies > 0) moved.push(`${replies} wrote back`)
+  if (tried > 0) moved.push(`${tried} tried the demo`)
+  if (moved.length > 0) lines.push(`${moved.join(', ')}.`)
 
-  const replyParts: string[] = []
-  if (replies > 0) replyParts.push(`${replies} repl${replies === 1 ? 'y' : 'ies'} came in`)
-  if (tried > 0) replyParts.push(`${tried} tried the demo`)
+  const activity: string[] = []
+  if (sourced > 0) activity.push(`sourced ${sourced}`)
+  if (firstTouchSent > 0) activity.push(`${firstTouchSent} first touch${firstTouchSent === 1 ? '' : 'es'}`)
+  if (followupsSent > 0) activity.push(`${followupsSent} follow-up${followupsSent === 1 ? '' : 's'}`)
+  if (activity.length > 0) lines.push(`I ${activity.join(', ')}.`)
+  else if (moved.length === 0) lines.push('Nothing moved in the last 24 hours.')
 
-  return replyParts.length > 0 ? `${line1} ${replyParts.join(', ')}.` : line1
+  // What keeps coming up. This is the part worth acting on.
+  if (objections?.length) {
+    const top = objections
+      .filter((o) => o.count > 1)
+      .slice(0, 2)
+      .map((o) => `${o.label.replace(/_/g, ' ')} (${o.count})`)
+    if (top.length > 0) lines.push(`Keeps coming up: ${top.join(', ')}.`)
+  }
+
+  return lines.join(' ')
 }

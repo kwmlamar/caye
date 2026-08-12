@@ -113,7 +113,7 @@ export const createOutreachLeads: Tool<CreateOutreachLeadsInput> = {
     "Pass the " +
     "subject as `subject` and the body as `draft`. This tool ONLY creates the lead + a held thread with " +
     "your draft sitting in the dashboard's Review tab for the operator to read, edit, and send " +
-    "themselves — it never sends anything and never will, regardless of how many leads are in the list " +
+    "themselves — this tool itself does not send, regardless of how many leads are in the list " +
     "or how the operator phrases the request. Only available on the internal_sales (cold-outreach) " +
     "workspace — will error on any other workspace.",
   risk: 'low',

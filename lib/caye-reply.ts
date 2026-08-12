@@ -40,6 +40,10 @@ import {
 } from './customer-history'
 import { classifyInbound, toneHintFor, type InboundCategory } from './inbound-classifier'
 import { formatCustomerFactsBlock, type CustomerFacts } from './customer-facts'
+import { renderFactsBlock } from './sales/facts'
+import { recentSignalsFor, renderSignalsBlock } from './sales/signals'
+import { findEscalationTriggers, customerFacingHandoff } from './sales/escalation-triggers'
+import { holdKindOf, isQueueHold } from './hold-kinds'
 import {
   fetchBusinessFacts,
   formatBusinessFactsBlock,
@@ -641,14 +645,22 @@ const TOOLS: Anthropic.Tool[] = [
   },
 ]
 
-// Reduced tool list for workspace_kind='internal_sales' (issue #66) — no
+// Reduced tool list for workspace_kind='internal_sales' — no
 // booking/pricing/calendar concept exists for TropiTech's own cold-outreach
 // reply inbox, so those tools are never offered rather than left for the
 // model to (incorrectly) consider. Filtered from TOOLS rather than
 // duplicated so the schemas stay a single source of truth; escalate_to_team
 // being last here preserves its cache_control breakpoint.
+//
+// send_reply added 2026-08-12 (decisions-log). Before that this list was
+// hold_for_human + escalate_to_team only, and the prompt required every
+// turn to end in one of them — so a prospect who wrote "yes, how do I start"
+// got a draft parked in a queue instead of an answer. Caye could not act on
+// her own inbox by construction. She answers now; lib/sales/authority.ts
+// decides when that is not appropriate, and applyAutosendGate remains the
+// code-level backstop underneath.
 const SALES_TOOLS: Anthropic.Tool[] = TOOLS.filter(
-  t => t.name === 'hold_for_human' || t.name === 'escalate_to_team'
+  t => t.name === 'send_reply' || t.name === 'hold_for_human' || t.name === 'escalate_to_team'
 )
 
 function formatServicesList(services: ServiceRow[]): string {
@@ -1055,36 +1067,43 @@ function buildSystem(
 }
 
 /**
- * System prompt for workspace_kind='internal_sales' (issue #66) — TropiTech's
- * own cold-outreach reply inbox. Deliberately NOT buildSystem: there's no
- * business/services/booking/cancellation-policy concept here, and buildSystem
- * ends by requiring send_reply, which this workspace never offers as a tool
- * (see SALES_TOOLS). Every turn ends in hold_for_human (or escalate_to_team)
- * — draft-and-hold only, no autosend. lib/autosend-gate.ts is the code-level
- * backstop; this prompt is the first line of defense, not the only one.
+ * System prompt for workspace_kind='internal_sales' — TropiTech's own
+ * cold-outreach reply inbox. Deliberately NOT buildSystem: there's no
+ * business/services/booking/cancellation-policy concept here.
+ *
+ * Rewritten 2026-08-12 (decisions-log). The previous version told Caye that
+ * every draft was read by Lamar before going out, and that pricing was
+ * always his call. Both were false by then, and were being fed to a model
+ * that was in fact answering prospects directly. Authority
+ * now lives in lib/sales/authority.ts and product truth in
+ * lib/sales/facts.ts, both enforced in code; this prompt carries context and
+ * voice, and states the same rules those modules enforce so the model is not
+ * working against them.
  */
 function buildSalesSystem(
   systemPrompt: string,
   voiceProfile: VoiceProfile | undefined,
-  todayISO: string
+  todayISO: string,
+  leadMemory?: string
 ): { stable: string; dynamic: string } {
   let stable = systemPrompt
 
   stable +=
     '\n\nWHAT THIS INBOX IS:\n' +
-    '- This is hello@getcaye.com — replies to TropiTech\'s own cold outreach ' +
-    'campaign (WhatsApp + email) pitching Caye to Bahamian tour operators/SMBs. ' +
-    'You are drafting reply SUGGESTIONS for the founder to review, edit, and send ' +
-    'himself. Nothing you draft here ever ships without him reading it first.\n' +
-    '- There is no calendar, no services catalog, no pricing tiers, no bookings ' +
-    'to look up for this workspace — those tools do not exist here because this ' +
-    'is a sales inbox, not a customer-facing business inbox. Don\'t reference or ' +
-    'imply any of that machinery.\n' +
-    '- The reply is signed and sent as the FOUNDER (Lamar), never as "Caye" — ' +
-    'you are drafting on his behalf, not replying as an AI. You may reference ' +
-    'Caye/TropiTech by name as the product being pitched (e.g. "Caye already ' +
-    'handles this for Bimini Island Tours") — that is fine and expected. What\'s ' +
-    'not allowed is signing as Caye or writing as if you are the one who sent it.'
+    '- hello@getcaye.com, the replies to your own cold outreach pitching Caye ' +
+    'to owner-operated small businesses. These are your prospects and this is ' +
+    'your desk.\n' +
+    '- You answer them yourself. You are not drafting suggestions for someone ' +
+    'else to send.\n' +
+    '- There is no calendar, services catalog, pricing tier table or booking ' +
+    'to look up here — this is a sales inbox, not a customer-facing business ' +
+    'inbox. Do not reference or imply any of that machinery.\n' +
+    '- Messages go out signed as Lamar, first name only. You may talk about ' +
+    'Caye and TropiTech by name as the product being pitched. What you may not ' +
+    'do is sign as Caye or write as though you are a person. If someone asks ' +
+    'you outright whether they are talking to an AI, answer honestly.'
+
+  stable += '\n\n' + renderFactsBlock()
 
   if (voiceProfile) {
     stable +=
@@ -1096,30 +1115,66 @@ function buildSalesSystem(
   }
 
   stable +=
-    '\n\nCLASSIFY, THEN DRAFT:\n' +
-    'Every inbound reply falls roughly into one of: interested (wants to talk ' +
-    'more / book a demo / ask next steps), question (about Caye, pricing, how ' +
-    'it works, fit for their business), or not interested (declining, unsubscribe, ' +
-    'hostile). Put your read of which one this is at the start of hold_for_human\'s ' +
-    '`reason` field (e.g. "Interested — asked about next steps"), then draft ' +
-    'accordingly in `proposed_reply`:\n' +
-    '- Interested: warm, low-friction next step. No feature-list dump.\n' +
-    '- Question: answer directly and briefly, then a light next step.\n' +
-    '- Not interested: gracious, short, no pushback, no re-pitching.\n\n' +
-    'PRICING / CONTRACT TERMS:\n' +
-    'Never draft a committed offer, custom price, or contract term as if final — ' +
-    'that is always the founder\'s call, even if you\'re confident what he\'d say. ' +
-    'Acknowledge the interest and note in hold_for_human\'s `note` field that ' +
-    'pricing/terms need his direct reply.'
+    '\n\nHOW TO HANDLE A REPLY:\n' +
+    'Read what they actually want, then answer it. Interested means give them ' +
+    'the one next step with no feature dump. A question means answer it ' +
+    'directly and briefly from the verified facts, then a light next step. ' +
+    'Not interested means be gracious and short, no pushback and no ' +
+    're-pitching, and leave them alone afterwards.\n' +
+    'Answering well is the job. Do not park an easy question in a queue for ' +
+    'Lamar just because it involves the product.\n\n' +
+    'WHEN TO STOP AND HAND IT TO LAMAR:\n' +
+    'Use escalate_to_team, and do not answer, when the reply involves ' +
+    'negotiating price or terms, anything contractual or legal, a partnership ' +
+    'or investment approach, press or media, refunds or billing disputes, ' +
+    'security or data-privacy questions you cannot answer from verified facts, ' +
+    'a prospect much larger than a single owner-operated business, or someone ' +
+    'genuinely angry. These are his call, not yours. Quoting the standard ' +
+    'published price is not negotiation and does not need him.\n' +
+    'Use hold_for_human when you have written something but are not confident ' +
+    'it is right. Being unsure is a legitimate reason to stop; guessing is not.'
+
+  if (leadMemory) stable += `\n\n${leadMemory}`
 
   const dynamic =
     `\n\nToday's date: ${todayISO}\n\n` +
     'Write only the reply body — no markdown, no signature block unless the ' +
-    'voice profile specifies one. Never mention that you are an AI, assistant, ' +
-    'or automated. You MUST end every turn by calling either hold_for_human or ' +
-    'escalate_to_team — send_reply is not available on this workspace.'
+    'voice profile specifies one. Never claim to be a human. End your turn by ' +
+    'calling send_reply to answer them, escalate_to_team to hand it to Lamar, ' +
+    'or hold_for_human if you drafted something you are not sure enough to send.'
 
   return { stable, dynamic }
+}
+
+/**
+ * Per-lead memory block for the sales reply prompt. Best-effort: if the
+ * lead row or its signals cannot be read, Caye replies without the history
+ * rather than not replying at all.
+ */
+async function buildSalesLeadMemory(
+  workspaceId: string,
+  senderEmail: string | null | undefined
+): Promise<string | undefined> {
+  const email = senderEmail?.trim().toLowerCase()
+  if (!email) return undefined
+  try {
+    const supabase = createServiceClient()
+    const { data: lead } = await supabase
+      .from('outreach_leads')
+      .select('id, stage, business_name')
+      .eq('workspace_id', workspaceId)
+      .eq('lead_email', email)
+      .maybeSingle()
+    if (!lead) return undefined
+
+    const signals = await recentSignalsFor(lead.id)
+    const header = `Where this prospect stands: ${lead.stage}${lead.business_name ? ` (${lead.business_name})` : ''}.`
+    const block = renderSignalsBlock(signals)
+    return block ? `${header}\n${block}` : header
+  } catch (err) {
+    console.error('[caye-reply] sales lead memory failed:', err)
+    return undefined
+  }
 }
 
 interface AvailabilityRow {
@@ -2115,6 +2170,27 @@ async function generateCayeAutoReplyCore(
     // chance Caye drafts something commercial she shouldn't.
     let forced: ForcedEscalation | null = detectForcedEscalation(inbound.body, inboundCategory)
 
+    // Sales-specific escalation categories, evaluated after the platform
+    // triggers above so a complaint keeps its empathy template. These cover
+    // what a PROSPECT raises that the tour-operator-shaped triggers do not:
+    // price negotiation, legal/contract, press, security questions, and
+    // accounts too big for a $79 flat plan to be the obvious answer.
+    // Deliberately pre-LLM and literal — an escalation the model can be
+    // talked out of is not an escalation.
+    if (!forced && isSalesWorkspace) {
+      const [salesTrigger] = findEscalationTriggers(inbound.body)
+      if (salesTrigger) {
+        forced = {
+          trigger: 'b2b_partnership',
+          category: 'sensitive',
+          routeTo: 'founder',
+          customerFacingMessage: customerFacingHandoff(salesTrigger.category),
+          internalContext: `${salesTrigger.why} (matched "${salesTrigger.phrase}")`,
+          pingSummary: `${salesTrigger.category.replace(/_/g, ' ')}: ${inbound.body.slice(0, 60)}`,
+        }
+      }
+    }
+
     // Owner-taught constraints (caye_standing_rules), evaluated AFTER the
     // hardcoded triggers so platform safety always outranks a workspace rule
     // — a complaint stays a complaint even if it also mentions a ruled
@@ -2233,7 +2309,14 @@ async function generateCayeAutoReplyCore(
     )
   }
 
-  const businessFacts = isSalesWorkspace ? [] : await fetchBusinessFacts(inbound.workspaceId)
+  // Business facts are read on every workspace including internal_sales.
+  // They used to be skipped there, on the reasoning that a sales inbox has
+  // no operational knowledge worth teaching Caye — but that assumed a human
+  // was reviewing every reply and could supply the missing context himself.
+  // Now that she answers prospects directly, anything Lamar teaches her
+  // about how to sell has to reach her the same way it reaches any other
+  // workspace.
+  const businessFacts = await fetchBusinessFacts(inbound.workspaceId)
 
 
   // Grounding text for the payment-figure guard. Every business fact is
@@ -2295,8 +2378,17 @@ async function generateCayeAutoReplyCore(
     businessFacts.map((f) => f.fact).join('\n'),
   ]
 
+  // What Caye already learned about this specific prospect — objections
+  // raised, questions asked, where they are in the funnel. Without it every
+  // reply restarts the relationship from nothing, which is precisely what
+  // makes a system feel like a mail merge rather than someone who has been
+  // talking to you.
+  const leadMemory = isSalesWorkspace
+    ? await buildSalesLeadMemory(inbound.workspaceId, inbound.senderEmail)
+    : undefined
+
   const { stable: systemStable, dynamic: systemDynamic } = isSalesWorkspace
-    ? buildSalesSystem(systemPrompt, effectiveVoiceProfile, todayISO)
+    ? buildSalesSystem(systemPrompt, effectiveVoiceProfile, todayISO, leadMemory)
     : buildSystem(
         systemPrompt,
         effectiveVoiceProfile,
@@ -2785,7 +2877,10 @@ export async function generateCayeAutoReply(
     inbound.conversationId
       ? supabase
           .from('unified_conversations')
-          .select('human_agent_enabled')
+          // metadata is needed for holdKindOf below — without it every hold
+          // reads as an attention hold and a parked outreach draft would
+          // block Caye from answering that prospect.
+          .select('human_agent_enabled, metadata')
           .eq('id', inbound.conversationId)
           .maybeSingle()
       : Promise.resolve({ data: null }),
@@ -2803,12 +2898,19 @@ export async function generateCayeAutoReply(
   // mean "a person owes the next move on this thread" — but until now nothing
   // read it before generating, so Caye would autonomously reply straight into
   // a thread an operator had already taken over (Emily Sherman / Full Bimini,
-  // 2026-08-08). Gate on the raw flag, not getAttentionHolds(): the
-  // queue-hold split in lib/hold-kinds.ts exists to stop Caye *nagging* the
-  // operator about drafted outreach, not to license *sending* into a held
-  // thread. Queue holds only occur on the internal_sales workspace, where
-  // autosend is permanently locked off anyway.
-  const isHumanHeld = conversationRow?.human_agent_enabled === true
+  // 2026-08-08).
+  //
+  // Queue holds are excluded as of 2026-08-12. The original gate read the raw
+  // flag, reasoning that queue holds only ever appeared on internal_sales,
+  // which could not autosend at the time. That premise no longer holds: that
+  // workspace sends now. A queue hold means Caye parked an OUTBOUND draft (paused, at
+  // cap, or guard-failed), not that a human took over the conversation. Left
+  // as the raw flag it produces a trap: a parked cold draft would silently
+  // block Caye from answering that same prospect when they write in, which
+  // is the worst possible moment to go quiet.
+  const heldKind = holdKindOf(conversationRow?.metadata)
+  const isHumanHeld =
+    conversationRow?.human_agent_enabled === true && !isQueueHold(heldKind)
 
   const autosendEnabled = (workspaceRow?.autosend_enabled ?? true) && !isMuted && !isHumanHeld
   const holdReason = isHumanHeld

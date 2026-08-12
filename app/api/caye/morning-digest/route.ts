@@ -26,6 +26,7 @@ import { recordCronRun } from '@/lib/cron-run-log'
 import { composeMorningBriefing } from '@/lib/caye-agent/briefing'
 import { resolveOperatorByPhone } from '@/lib/operator-identity'
 import { getAttentionHoldCount, getAttentionHolds } from '@/lib/hold-kinds'
+import { topObjections } from '@/lib/sales/signals'
 import {
   AGING_LIST_MAX_ITEMS,
   ESCALATION_FOLLOWUP_HOURS,
@@ -142,15 +143,7 @@ export async function runMorningDigest() {
           workspaceId: ws.workspace_id,
           operatorName: operator?.name ?? null,
           oldestAgingHold,
-          outreachStats: outreachStats
-            ? {
-                sourced: outreachStats.sourced,
-                firstTouchSent: outreachStats.firstTouchSent,
-                followupsSent: outreachStats.followupsSent,
-                replies: outreachStats.replies,
-                tried: outreachStats.tried,
-              }
-            : null,
+          outreachStats,
         })
       } catch (err) {
         console.error(`[morning-digest] composeMorningBriefing failed for ${ws.workspace_id}:`, err)
@@ -184,15 +177,26 @@ interface OutreachDigestStats {
   followupsSent: number
   replies: number
   tried: number
+  /** Live funnel: how many leads sit at each stage right now. */
+  pipeline: Record<string, number>
+  /** Recurring objections over the window, most common first. */
+  objections: { label: string; count: number }[]
 }
 
 /**
- * Trailing-24h autonomous-outreach counts for the daily digest (decisions-
- * log 2026-08-12) — internal_sales only. `replies` counts conversations
- * (not individual messages) whose most recent message in the window was
- * customer-sent — an approximation (a lead who replies twice in 24h only
- * counts once), acceptable for a ballpark daily number, not a precision
- * metric anything else depends on.
+ * What Caye did and what she learned, for the daily digest — internal_sales
+ * only.
+ *
+ * Two changes from the first version (2026-08-12): activity counts now read
+ * last_touch_sent_at rather than last_nudge_at, because the latter is
+ * stamped on every ATTEMPT including drafts that were held, which meant the
+ * digest reported work that never actually happened. And it now carries the
+ * pipeline and the objection rollup, so the report is about the funnel
+ * rather than about volume — the whole point of the redesign is that emails
+ * sent is not the number that matters.
+ *
+ * `replies` counts conversations, not messages: a lead who writes twice in a
+ * day counts once. Fine for a daily read, not a precision metric.
  */
 async function buildOutreachDigestStats(workspaceId: string, now: Date): Promise<OutreachDigestStats> {
   const supabase = createServiceClient()
@@ -206,13 +210,15 @@ async function buildOutreachDigestStats(workspaceId: string, now: Date): Promise
     .eq('is_active', true)
     .maybeSingle()
 
-  const [sourced, firstTouchSent, followupsSent, tried, replies] = await Promise.all([
+  const [sourced, firstTouchSent, followupsSent, tried, replies, stages, objections] = await Promise.all([
     supabase.from('outreach_leads').select('id', { count: 'exact', head: true })
-      .eq('workspace_id', workspaceId).eq('status', 'sourced').gte('created_at', cutoff),
+      .eq('workspace_id', workspaceId).eq('stage', 'sourced').gte('created_at', cutoff),
     supabase.from('outreach_leads').select('id', { count: 'exact', head: true })
       .eq('workspace_id', workspaceId).gte('first_touch_sent_at', cutoff),
+    // touches_sent > 1 excludes first touches, so this counts follow-ups
+    // that genuinely went out rather than every attempted touch.
     supabase.from('outreach_leads').select('id', { count: 'exact', head: true })
-      .eq('workspace_id', workspaceId).gte('last_nudge_at', cutoff),
+      .eq('workspace_id', workspaceId).gt('touches_sent', 1).gte('last_touch_sent_at', cutoff),
     supabase.from('outreach_leads').select('id', { count: 'exact', head: true })
       .eq('workspace_id', workspaceId).gte('tried_at', cutoff),
     account
@@ -221,7 +227,14 @@ async function buildOutreachDigestStats(workspaceId: string, now: Date): Promise
           .eq('last_sender_type', 'customer')
           .gte('last_message_at', cutoff)
       : Promise.resolve({ count: 0 }),
+    supabase.from('outreach_leads').select('stage').eq('workspace_id', workspaceId),
+    topObjections(workspaceId, cutoff),
   ])
+
+  const pipeline: Record<string, number> = {}
+  for (const row of (stages.data ?? []) as { stage: string }[]) {
+    pipeline[row.stage] = (pipeline[row.stage] ?? 0) + 1
+  }
 
   return {
     sourced: sourced.count ?? 0,
@@ -229,6 +242,8 @@ async function buildOutreachDigestStats(workspaceId: string, now: Date): Promise
     followupsSent: followupsSent.count ?? 0,
     tried: tried.count ?? 0,
     replies: replies.count ?? 0,
+    pipeline,
+    objections,
   }
 }
 
