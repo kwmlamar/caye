@@ -81,12 +81,32 @@ export async function recentSignalsFor(leadId: string, limit = 12): Promise<Lead
   return (data ?? []) as LeadSignal[]
 }
 
+/**
+ * Plain-English phrasing per signal kind.
+ *
+ * Deliberately not `[${kind}] ${label}`: that shape is banned by
+ * no-internal-leak-paths.test.ts, and rightly so. Bracketed internal
+ * identifiers in a prompt are one careless copy away from appearing in a
+ * message to a prospect, and "[objection] price_too_high" is not something
+ * a human should ever receive. Same discipline as ownerNoteFor in
+ * lib/caye-agent/evidence.ts.
+ */
+const SIGNAL_PHRASING: Record<SignalKind, string> = {
+  objection: 'They pushed back on',
+  question: 'They asked about',
+  intent: 'Buying signal',
+  disqualifier: 'Not a fit because of',
+  escalation: 'Handed to Lamar over',
+  outcome: 'Already happened',
+}
+
 /** Rendered into a reply prompt so Caye does not re-tread covered ground. */
 export function renderSignalsBlock(signals: LeadSignal[]): string {
   if (signals.length === 0) return ''
   const lines = signals.map((s) => {
-    const detail = s.detail ? `: ${s.detail.slice(0, 200)}` : ''
-    return `- [${s.kind}] ${s.label}${detail}`
+    const readable = s.label.replace(/_/g, ' ')
+    const detail = s.detail ? `. ${s.detail.slice(0, 200)}` : ''
+    return `- ${SIGNAL_PHRASING[s.kind]} ${readable}${detail}`
   })
   return ['WHAT YOU ALREADY KNOW ABOUT THIS PROSPECT', ...lines].join('\n')
 }
