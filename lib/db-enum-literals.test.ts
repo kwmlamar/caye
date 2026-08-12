@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { stripTsComments } from './db/strip-ts-comments'
 
 /**
  * Every `sender_type: '<literal>'` written anywhere in the repo must be a real
@@ -83,7 +84,9 @@ describe('enum literals written to the database', () => {
       const offenders: string[] = []
 
       for (const file of files) {
-        const src = readFileSync(file, 'utf8')
+        // Comments are blanked first: documenting a bad literal must not
+        // trip the guard for that literal (2026-08-12).
+        const src = stripTsComments(readFileSync(file, 'utf8'))
         for (const m of src.matchAll(pattern)) {
           if (!values.has(m[1])) {
             const line = src.slice(0, m.index).split('\n').length
@@ -152,7 +155,7 @@ describe('enqueueOutbound kind matches caye_outbound_queue_kind_check', () => {
     const offenders: string[] = []
 
     for (const file of files) {
-      const src = readFileSync(file, 'utf8')
+      const src = stripTsComments(readFileSync(file, 'utf8'))
       for (const call of src.matchAll(/enqueueOutbound\(/g)) {
         // enqueueOutbound's object argument is small; a 400-char window past
         // the call comfortably covers every real call site in this repo
