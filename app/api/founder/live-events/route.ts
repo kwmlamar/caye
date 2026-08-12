@@ -1,10 +1,12 @@
 /**
- * GET /api/founder/live-events?workspaceId=<uuid>
+ * GET /api/founder/live-events?workspaceId=<uuid>&limit=<n>
  *
  * Recent real activity for one workspace, read from workspace_events (the
  * canonical event stream — see supabase/migrations/20260807d_workspace_events.sql).
- * Backs FounderHome's "live pulse" strip: a handful of genuinely recent
- * things that happened, not a synthetic activity feed.
+ * One route backs two dashboard surfaces at different depths: the "Live"
+ * strip (small limit, most recent few) and "Caye's Log" (larger limit, a
+ * scrollable history) — same real data, same labeling, just how far back
+ * the caller asked to look.
  *
  * Deliberately NOT reusing getWorkspaceFeed's isReportable filter — that
  * policy exists to keep the WhatsApp digest from interrupting founders with
@@ -83,17 +85,20 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
+  const limitParam = req.nextUrl.searchParams.get('limit')
+  const limit = Math.min(Math.max(parseInt(limitParam ?? '8', 10) || 8, 1), 40)
+
   const supabase = createServiceClient()
 
-  // Over-fetch a little: bounced inbound rows are dropped below, so the
-  // final list can come up short of the display limit without this.
+  // Over-fetch: bounced inbound rows are dropped below, so the final list
+  // can come up short of `limit` without some headroom.
   const { data, error } = await supabase
     .from('workspace_events')
     .select('id, occurred_at, type, conversation_id, payload')
     .eq('workspace_id', workspaceId)
     .in('type', EVENT_TYPES)
     .order('occurred_at', { ascending: false })
-    .limit(20)
+    .limit(limit * 2 + 5)
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
@@ -116,7 +121,7 @@ export async function GET(req: NextRequest) {
       const ctx = r.conversation_id ? convContext.get(r.conversation_id) : undefined
       return !isBounceAddress(ctx?.address)
     })
-    .slice(0, 8)
+    .slice(0, limit)
     .map((r) => {
       const ctx = r.conversation_id ? convContext.get(r.conversation_id) : undefined
       const { label, tone } = labelFor(r.type, r.payload ?? {}, ctx?.customer ?? null)

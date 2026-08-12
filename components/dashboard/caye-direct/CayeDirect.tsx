@@ -73,9 +73,25 @@ function storageKey(workspaceId: string): string {
   return `caye-direct-selected-operator:${workspaceId}`
 }
 
-export default function CayeDirect({ workspaceId }: { workspaceId: string }) {
+interface CayeDirectProps {
+  workspaceId: string
+  /** Passed through from TalkToCaye's bottom composer. Forces the founder's
+   *  own operator thread (never a staff member's read-only one) so the
+   *  message actually has somewhere to send. */
+  initialMessage?: string | null
+  onInitialMessageSent?: () => void
+}
+
+export default function CayeDirect({ workspaceId, initialMessage, onInitialMessageSent }: CayeDirectProps) {
   const [operators, setOperators] = useState<Operator[] | null>(null)
   const [selectedId, setSelectedId] = useState<number | null>(null)
+
+  useEffect(() => {
+    if (!initialMessage || !operators) return
+    const founder = operators.find((o) => o.role === 'founder')
+    if (founder && founder.id !== selectedId) selectOperator(founder.id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialMessage, operators])
 
   useEffect(() => {
     let cancelled = false
@@ -142,6 +158,8 @@ export default function CayeDirect({ workspaceId }: { workspaceId: string }) {
           operatorId={selected.id}
           operatorLabel={operatorLabel(selected)}
           readOnly={selected.role !== 'founder'}
+          initialMessage={selected.role === 'founder' ? initialMessage : null}
+          onInitialMessageSent={onInitialMessageSent}
         />
       ) : (
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#52525b', fontSize: 13 }}>

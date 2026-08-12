@@ -3,10 +3,10 @@
 import { useState, useEffect, useTransition, type ReactNode, type CSSProperties } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { CayeMark } from '@/components/brand/CayeMark'
-import { getSession } from '@/lib/supabase'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useCommandOverview } from '@/lib/useCommandOverview'
 import { useWorkspacesActivity } from '@/lib/useWorkspacesActivity'
+import { useWorkspaceChannels } from '@/lib/useWorkspaceChannels'
 import type { FounderRailId } from '@/lib/types'
 import CommandCalendar from '@/components/dashboard/command-calendar/CommandCalendar'
 import CommandConversations from '@/components/dashboard/command-conversations/CommandConversations'
@@ -20,8 +20,15 @@ import CostPage from '@/components/dashboard/founder-home/CostPage'
 import HealthPage from '@/components/dashboard/founder-home/HealthPage'
 import ToolsPage from '@/components/dashboard/founder-home/ToolsPage'
 import { CayeLoadingPulse } from '@/components/dashboard/founder-home/CayeLoadingPulse'
-import CayeLivePulse from '@/components/dashboard/founder-home/CayeLivePulse'
-import { Pill, GhostButton } from '@/components/dashboard/founder-home/console-ui'
+import { type CayeState } from '@/components/dashboard/founder-home/CayeCore'
+import FounderBriefing from '@/components/dashboard/founder-home/FounderBriefing'
+import BusinessPulse from '@/components/dashboard/founder-home/BusinessPulse'
+import LiveActivity from '@/components/dashboard/founder-home/LiveActivity'
+import CayeLog from '@/components/dashboard/founder-home/CayeLog'
+import DecisionRequired from '@/components/dashboard/founder-home/DecisionRequired'
+import TalkToCaye from '@/components/dashboard/founder-home/TalkToCaye'
+import FounderProfile from '@/components/dashboard/founder-home/FounderProfile'
+import { Pill } from '@/components/dashboard/founder-home/console-ui'
 import type { CustomerStatus } from '@/types/database'
 
 // Tokens lifted directly from Sandbox/caye-command (the reference
@@ -149,26 +156,6 @@ function ExpandButton({ expanded, onClick }: { expanded: boolean; onClick: () =>
   )
 }
 
-function StatCard({ label, value, valueColor = '#f4f4f5', action }: { label: string; value: string; valueColor?: string; action?: ReactNode }) {
-  return (
-    <div style={{
-      position: 'relative', overflow: 'hidden',
-      background: CARD_BG, borderRadius: 18, padding: '16px 18px',
-      display: 'flex', flexDirection: 'column', justifyContent: 'space-between', minHeight: 96,
-    }}>
-      <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', textTransform: 'uppercase', color: LABEL_COLOR, marginBottom: 8 }}>
-        {label}
-      </div>
-      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 8 }}>
-        <div style={{ fontSize: 20, fontFamily: 'var(--font-display)', fontWeight: 600, color: valueColor, fontVariantNumeric: 'tabular-nums' }}>
-          {value}
-        </div>
-        {action}
-      </div>
-    </div>
-  )
-}
-
 // Holds a panel's shape during a cold load. Previously these panels
 // rendered nothing at all until data arrived, so the console collapsed to
 // empty boxes and then reflowed — the single most jarring part of a
@@ -187,48 +174,6 @@ function PanelSkeleton() {
         }} />
       ))}
     </div>
-  )
-}
-
-// Founder-only pause/resume for a workspace's Caye deployment. Writes the
-// same workspace_ai_config fields the back-office mute_caye/unmute_caye
-// WhatsApp tools write (see app/api/founder/caye-toggle/route.ts) — a
-// second entry point onto the same switch, added at explicit founder
-// request even though the operating model otherwise routes controls like
-// this through Caye-on-WhatsApp. Scoped to founders only, never shown to
-// workspace owners.
-function DeploymentToggle({ workspaceId, active, onToggled }: { workspaceId: string; active: boolean; onToggled: () => void }) {
-  const [busy, setBusy] = useState(false)
-
-  async function handleClick() {
-    if (busy) return
-    setBusy(true)
-    try {
-      const { session } = await getSession()
-      if (!session) return
-      const res = await fetch('/api/founder/caye-toggle', {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`,
-        },
-        body: JSON.stringify({ workspaceId, active: !active }),
-      })
-      if (res.ok) onToggled()
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <GhostButton
-      label={active ? 'Pause' : 'Resume'}
-      color={active ? '#fca5a5' : '#34d399'}
-      onClick={handleClick}
-      disabled={busy}
-      busy={busy}
-      title={active ? 'Pause Caye for this workspace' : 'Resume Caye for this workspace'}
-    />
   )
 }
 
@@ -370,6 +315,21 @@ export default function FounderHome() {
   }
   const { data, revalidating, refetch } = useCommandOverview(workspaceId, weekOffset)
   const [isPending, startTransition] = useTransition()
+  // Real signal for CayeCore's 'error' state — a channel that's simply
+  // never been connected isn't an error (is_active false with no
+  // needs_reauth), only one that WAS working and now needs reauth is.
+  const { channels } = useWorkspaceChannels(workspaceId)
+  const hasChannelError = channels ? Object.values(channels).some((c) => c?.needs_reauth === true) : false
+  // Priority order: something broken outranks something merely pending,
+  // which outranks "a fetch happens to be in flight" — a working-state
+  // flicker shouldn't visually bump a real attention/error signal.
+  const cayeState: CayeState = hasChannelError
+    ? 'error'
+    : data && data.pending_escalation_count > 0
+    ? 'attention'
+    : revalidating || isPending
+    ? 'working'
+    : 'idle'
   // The workspace we're navigating TO. Held so the sidebar highlight moves
   // on click instead of waiting for the route to commit — the click used to
   // register as nothing at all for a beat, which is most of what made
@@ -377,6 +337,15 @@ export default function FounderHome() {
   const [pendingWorkspaceId, setPendingWorkspaceId] = useState<string | null>(null)
   const { hasActivity } = useWorkspacesActivity(workspaces.map((m) => m.workspace_id), workspaceId)
   const [expanded, setExpanded] = useState<'calendar' | 'conversations' | 'cayeDirect' | 'settings' | null>(null)
+  // Set by TalkToCaye's bottom composer — expands the real Caye Direct
+  // panel and hands it the typed text to auto-send, so "Ask Caye
+  // anything" is a launcher into the actual back-office thread rather
+  // than a second, fake chat surface.
+  const [talkToCayeDraft, setTalkToCayeDraft] = useState<string | null>(null)
+  function handleTalkToCaye(text: string) {
+    setExpanded('cayeDirect')
+    setTalkToCayeDraft(text)
+  }
   // A fullscreen panel has no visible close chrome besides its own
   // collapse button — Esc is the expected way out of a takeover like this.
   useEffect(() => {
@@ -477,12 +446,30 @@ export default function FounderHome() {
         .caye-founder *::-webkit-scrollbar-track { background: transparent; }
         .caye-founder *::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 3px; }
         .caye-founder *::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.25); }
+
+        /* Responsive — this console had no breakpoints at all before this
+           pass (fixed 64px rail + up to 250px sidebar + hard-coded 2-col
+           grids). These three breakpoints stack the panel grids and shed
+           the workspace sidebar rather than shrinking a desktop layout
+           in place. */
+        @media (max-width: 1100px) {
+          .caye-stack-grid { grid-template-columns: 1fr !important; }
+          .caye-cal-conv-grid {
+            grid-template-columns: 1fr !important;
+            height: auto !important;
+            grid-auto-rows: 380px !important;
+          }
+        }
+        @media (max-width: 780px) {
+          .caye-rail { width: 52px !important; }
+          .caye-workspace-sidebar { display: none !important; }
+        }
       `}</style>
       {/* ── Icon rail — Caye Command / Contacts are real, the rest are
           stub destinations matching how the reference mockup itself
           left them (unbuilt), per explicit direction to add the rail
           now with temp pages rather than wait for all of it. ── */}
-      <nav style={{
+      <nav className="caye-rail" style={{
         width: 64, flexShrink: 0, background: 'rgba(17,17,19,0.6)', borderRight: `1px solid ${CARD_BORDER}`,
         display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, padding: '16px 0',
         ...GLASS,
@@ -502,12 +489,15 @@ export default function FounderHome() {
         {RAIL_ITEMS.filter((item) => item.id !== 'dashboard').map((item) => (
           <RailButton key={item.id} item={item} active={railView === item.id} onClick={() => setRailView(item.id)} />
         ))}
+        <div style={{ marginTop: 'auto' }}>
+          <FounderProfile />
+        </div>
       </nav>
 
       {/* ── Workspaces sidebar — only on the two views it actually scopes,
           see showWorkspaceSidebar above ── */}
       {showWorkspaceSidebar && (
-      <aside style={{
+      <aside className="caye-workspace-sidebar" style={{
         width: sidebarCollapsed ? SIDEBAR_WIDTH_COLLAPSED : SIDEBAR_WIDTH_EXPANDED,
         flexShrink: 0, borderRight: `1px solid ${CARD_BORDER}`,
         padding: sidebarCollapsed ? '16px 8px' : 16, overflowY: 'auto', overflowX: 'hidden',
@@ -684,30 +674,45 @@ export default function FounderHome() {
           <StubConsole label={activeRailItem.label} />
         ) : (
           <div style={{ flex: 1, overflowY: expanded ? 'hidden' : 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 16, minHeight: 0 }}>
-            {/* Live pulse — real events off workspace_events (last message,
-                booking, escalation, channel blip), cycling through a
-                pulsing orb. Hidden alongside the overview strip while a
-                panel is expanded. */}
-            {!expanded && <CayeLivePulse workspaceId={workspaceId} />}
+            {/* Hero — greeting + the living Caye Core, real state
+                (working/attention/error) driven off command-overview and
+                channel health. Hidden while a panel is expanded. */}
+            {!expanded && (
+              <FounderBriefing data={data} workspaceName={workspace.business_name ?? 'New signup'} state={cayeState} />
+            )}
 
-            {/* Overview strip — hidden while a panel is expanded, so the
-                expanded panel gets the whole page under the top bar. */}
-            <div style={{ flexShrink: 0, display: expanded ? 'none' : 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
-              <StatCard
-                label="Deployment"
-                value={data ? (data.caye_active ? 'Active & Chatting' : 'Paused') : '—'}
-                valueColor={data?.caye_active ? '#34d399' : '#71717a'}
-                action={data && (
-                  <DeploymentToggle workspaceId={workspaceId} active={data.caye_active} onToggled={refetch} />
-                )}
+            {/* Decision Required — renders nothing today. No backend
+                concept of a human-approval queue exists yet (see
+                DecisionRequired's doc comment); this is the wiring point
+                for when one does, not a placeholder with fake data. */}
+            {!expanded && <DecisionRequired decisions={[]} />}
+
+            {/* Business Pulse — same 4 real numbers the old stat-card grid
+                showed, now a compact horizontal strip instead of 4 boxed
+                cards. */}
+            {!expanded && (
+              <BusinessPulse
+                data={data}
+                workspaceId={workspaceId}
+                weekLabel={weekOffset === 0 ? 'Bookings this week' : 'Bookings shown'}
+                onDeploymentToggled={refetch}
               />
-              <StatCard label={weekOffset === 0 ? 'Bookings this week' : 'Bookings shown'} value={data ? String(data.bookings.length) : '—'} />
-              <StatCard
-                label="Needs review"
-                value={data ? String(data.pending_escalation_count) : '—'}
-                valueColor={data && data.pending_escalation_count > 0 ? '#fb7185' : '#f4f4f5'}
-              />
-              <StatCard label="7-day spend" value={data ? `$${data.total_cost_usd.toFixed(2)}` : '—'} />
+            )}
+
+            {/* Live + Caye's Log — "is she working, what has she done" at
+                two depths off the same workspace_events read. Hidden
+                alongside the rest of the glance view while a panel is
+                expanded. */}
+            <div className="caye-stack-grid" style={{
+              display: expanded ? 'none' : 'grid',
+              gridTemplateColumns: '1fr 1fr', gap: 14, flexShrink: 0,
+            }}>
+              <div style={{ background: CARD_BG, borderRadius: 16, border: `1px solid ${CARD_BORDER}`, padding: '14px 16px', height: 260, overflowY: 'auto' }}>
+                <LiveActivity workspaceId={workspaceId} />
+              </div>
+              <div style={{ background: CARD_BG, borderRadius: 16, border: `1px solid ${CARD_BORDER}`, padding: '14px 16px', height: 260 }}>
+                <CayeLog workspaceId={workspaceId} />
+              </div>
             </div>
 
             {/* Calendar + Conversations. Either can expand to take the whole
@@ -716,7 +721,7 @@ export default function FounderHome() {
                 back rather than resetting. Caye Direct is hidden too while
                 one of these is expanded, so the expanded panel truly owns
                 the page. */}
-            <div style={{
+            <div className="caye-cal-conv-grid" style={{
               display: expanded === 'cayeDirect' || expanded === 'settings' ? 'none' : 'grid',
               gridTemplateColumns: expanded ? '1fr' : '1fr 1fr',
               gap: 14,
@@ -787,7 +792,11 @@ export default function FounderHome() {
                 <ExpandButton expanded={false} onClick={() => setExpanded('cayeDirect')} />
               )}
               <div style={expanded === 'cayeDirect' ? { flex: 1, minHeight: 0 } : { height: '100%' }}>
-                <CayeDirect workspaceId={workspaceId} />
+                <CayeDirect
+                  workspaceId={workspaceId}
+                  initialMessage={talkToCayeDraft}
+                  onInitialMessageSent={() => setTalkToCayeDraft(null)}
+                />
               </div>
             </div>
 
@@ -795,7 +804,7 @@ export default function FounderHome() {
                 Conversations above. Settings can expand to a full-page
                 editor (system prompt, voice profile); Channels doesn't
                 need that treatment (its content is already short). */}
-            <div style={{
+            <div className="caye-stack-grid" style={{
               display: expanded === 'calendar' || expanded === 'conversations' || expanded === 'cayeDirect' ? 'none' : 'grid',
               gridTemplateColumns: expanded === 'settings' ? '1fr' : '1fr 1fr',
               gap: 14,
@@ -820,6 +829,16 @@ export default function FounderHome() {
           </div>
         )}
         </div>
+
+        {/* Persistent across every rail tab — hidden only while a panel
+            has taken over the full viewport (it'd render underneath the
+            fullscreen overlay anyway). Launches the real Caye Direct
+            thread rather than being its own chat surface. */}
+        {!expanded && (
+          <div style={{ flexShrink: 0, padding: '0 20px 16px' }}>
+            <TalkToCaye onSend={handleTalkToCaye} />
+          </div>
+        )}
       </div>
     </div>
   )

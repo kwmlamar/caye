@@ -310,6 +310,12 @@ interface Props {
    *  happen over their own WhatsApp, not this dashboard, so there's
    *  nothing to type here; it's a monitoring view of their thread. */
   readOnly: boolean
+  /** Set by the dashboard's "Ask Caye anything" composer (TalkToCaye) —
+   *  sent once history has loaded, then the parent is told to clear it via
+   *  onInitialMessageSent. The parent owns clearing, not this component,
+   *  so a re-render with the same string can't fire a second send. */
+  initialMessage?: string | null
+  onInitialMessageSent?: () => void
 }
 
 // Web front end for the same back-office agent operators already text
@@ -318,7 +324,7 @@ interface Props {
 // Scoped to one operator's conversation at a time (see CayeDirect.tsx for
 // the operator switcher) so multiple people sharing a workspace's
 // back-office channel don't get merged into one confusing stream.
-export default function CayeDirectThread({ workspaceId, operatorId, operatorLabel, readOnly }: Props) {
+export default function CayeDirectThread({ workspaceId, operatorId, operatorLabel, readOnly, initialMessage, onInitialMessageSent }: Props) {
   const [messages, setMessages] = useState<OperatorMessage[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(true)
@@ -532,6 +538,17 @@ export default function CayeDirectThread({ workspaceId, operatorId, operatorLabe
       setSending(false)
     }
   }
+
+  // Fires the composer-supplied opener once history has settled — waiting
+  // on `loading` rather than mount avoids racing the initial fetchMessages
+  // call above (sending before history loads would land the optimistic
+  // bubble, then have it overwritten by the fetch that follows).
+  useEffect(() => {
+    if (loading || !initialMessage) return
+    send(initialMessage)
+    onInitialMessageSent?.()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, initialMessage])
 
   // Build render items: a date divider whenever the calendar day changes,
   // and a group position per message so consecutive messages from the
