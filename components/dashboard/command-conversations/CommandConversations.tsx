@@ -552,8 +552,11 @@ export default function CommandConversations({ workspaceId, selectedConversation
             {/* paddingBottom (not a reserved flex row anymore — see the
                 composer below) is what lets the last message actually
                 scroll clear of the floating reply composer instead of
-                permanently sitting behind it. */}
-            <div ref={threadContainerRef} style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '16px 18px 128px' }}>
+                permanently sitting behind it. 192px clears both the
+                reply composer AND the CayeLauncher stacked above it
+                (FounderHome, Inbox-only) — the launcher's collapsed/
+                expanded states both sit around bottom:116-166px. */}
+            <div ref={threadContainerRef} style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '16px 18px 192px' }}>
               {threadLoading ? (
                 <CayeLoadingPulse size={16} />
               ) : (

@@ -21,6 +21,7 @@ import WorkPage from './WorkPage'
 import MemoryPage from './MemoryPage'
 import SettingsPage from './SettingsPage'
 import TalkToCaye from './TalkToCaye'
+import CayeLauncher from './CayeLauncher'
 import FounderProfile from './FounderProfile'
 import { ENV_BG, AQUA, GRADIENT, glass, paneShadowSoft, focusResetCss } from '../surface'
 
@@ -397,28 +398,42 @@ export default function FounderHome() {
         )}
 
         {!expanded && (
-          // Root-caused (2026-08-14): making this wrapper's background
-          // transparent was NOT enough, because transparency was never
-          // the actual bug. This used to be a normal flex-flow sibling of
-          // the view-swap content div (flexShrink:0) — meaning it
-          // consumed its OWN reserved row at the bottom of Main. Nothing
-          // was ever painted in that row except padding, so what looked
-          // like "a dark footer" was genuinely empty canvas (Main/root's
-          // ENV_BG), not a leftover background color — the content area
-          // literally stopped short of it. Fixed by taking this out of
-          // flex flow entirely: absolutely positioned, anchored to the
-          // bottom of Main, so the view-swap div above naturally expands
-          // to fill the space this used to reserve, and page content can
-          // now genuinely scroll underneath this floating region.
-          // pointer-events:none on this wrapper (empty margin around the
-          // pill never blocks a click/scroll on content behind it);
-          // TalkToCaye's own root re-enables pointer-events:auto.
-          <div style={{
-            position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 15,
-            padding: '0 20px 14px', background: 'transparent', pointerEvents: 'none',
-          }}>
-            <TalkToCaye onSend={handleTalkToCaye} onOpenHistory={() => setExpanded('cayeDirect')} />
-          </div>
+          railView === 'inbox' ? (
+            // On Inbox, replying to the customer is the primary action —
+            // a second full-width "Ask Caye anything" bar at the same
+            // visual weight was directly competing with (and overlapping)
+            // the conversation reply composer. CayeLauncher owns its own
+            // bottom-right positioning, stacked above the reply
+            // composer's vertical span rather than beside it — see its
+            // own doc comment for why beside-it was rejected (the list/
+            // thread split is user-resizable, so a fixed side offset
+            // risked drifting into the reply composer at some ratios).
+            <CayeLauncher onSend={handleTalkToCaye} onOpenHistory={() => setExpanded('cayeDirect')} />
+          ) : (
+            // Root-caused (2026-08-14): making this wrapper's background
+            // transparent was NOT enough, because transparency was never
+            // the actual bug. This used to be a normal flex-flow sibling
+            // of the view-swap content div (flexShrink:0) — meaning it
+            // consumed its OWN reserved row at the bottom of Main.
+            // Nothing was ever painted in that row except padding, so
+            // what looked like "a dark footer" was genuinely empty
+            // canvas (Main/root's ENV_BG), not a leftover background
+            // color — the content area literally stopped short of it.
+            // Fixed by taking this out of flex flow entirely: absolutely
+            // positioned, anchored to the bottom of Main, so the
+            // view-swap div above naturally expands to fill the space
+            // this used to reserve, and page content can now genuinely
+            // scroll underneath this floating region. pointer-events:none
+            // on this wrapper (empty margin around the pill never blocks
+            // a click/scroll on content behind it); TalkToCaye's own root
+            // re-enables pointer-events:auto.
+            <div style={{
+              position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 15,
+              padding: '0 20px 14px', background: 'transparent', pointerEvents: 'none',
+            }}>
+              <TalkToCaye onSend={handleTalkToCaye} onOpenHistory={() => setExpanded('cayeDirect')} />
+            </div>
+          )
         )}
       </div>
     </div>
