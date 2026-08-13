@@ -3,20 +3,9 @@
 import { useState } from 'react'
 import { formatDistanceToNow } from '@/lib/utils'
 import { AQUA, GOLD, TEXT, TEXT_QUIET } from '@/components/dashboard/surface'
+import { conversationNeedsFounder, cleanHoldReason } from '@/lib/hold-kinds-shared'
 import { channelLabel } from './channel-meta'
 import type { ConversationSummary } from '@/lib/useFounderConversations'
-
-// human_agent_reason is built server-side from pingSummary/internalContext
-// (see lib/whatsapp/escalation.ts) — both are already prompted/templated
-// to be plain founder-readable prose as of this pass. The one thing worth
-// trimming client-side is the "Escalation (category): " label prefix
-// that gets prepended for the row/hold reason specifically — that's
-// internal taxonomy, not something worth spending row width on when the
-// state is already shown by the dot + "Needs you" text below it.
-function cleanReason(reason: string | null): string {
-  if (!reason) return 'Needs your review'
-  return reason.replace(/^Escalation \([a-z_]+\):\s*/i, '')
-}
 
 export default function ConversationRow({ c, active, onClick }: {
   c: ConversationSummary
@@ -25,7 +14,13 @@ export default function ConversationRow({ c, active, onClick }: {
 }) {
   const [hover, setHover] = useState(false)
   const name = c.customer_name || c.customer_id || 'Unknown'
-  const preview = c.human_agent_enabled ? cleanReason(c.human_agent_reason) : (c.last_message_preview || '')
+  // human_agent_enabled alone doesn't mean the founder owes the next move —
+  // drafted cold outreach parked for batch approval sets it too. This is the
+  // same predicate the Needs You tab's server query filters on
+  // (isAttentionHold(holdKindOf(metadata))), so a row badged "Needs you"
+  // here always appears in that tab, and vice versa.
+  const needsYou = conversationNeedsFounder(c)
+  const preview = c.human_agent_enabled ? cleanHoldReason(c.human_agent_reason) : (c.last_message_preview || '')
 
   return (
     <button
@@ -54,7 +49,7 @@ export default function ConversationRow({ c, active, onClick }: {
       </div>
       <p style={{
         fontSize: 12, marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-        color: c.human_agent_enabled ? 'rgba(255,228,175,0.75)' : TEXT_QUIET,
+        color: needsYou ? 'rgba(255,228,175,0.75)' : TEXT_QUIET,
       }}>
         {preview}
       </p>
@@ -63,7 +58,7 @@ export default function ConversationRow({ c, active, onClick }: {
           {channelLabel(c.channel_type)} · {formatDistanceToNow(c.last_message_at)}
         </span>
         <span style={{ color: 'rgba(255,255,255,0.15)' }}>·</span>
-        {c.human_agent_enabled ? (
+        {needsYou ? (
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10.5, fontWeight: 600, color: GOLD }}>
             <span aria-hidden style={{ width: 5, height: 5, borderRadius: '50%', background: GOLD }} />
             Needs you

@@ -16,13 +16,24 @@ import AskCayeComposer from './AskCayeComposer'
  * until the founder actually wants her, then expands into the exact same
  * AskCayeComposer pill TalkToCaye uses everywhere else.
  *
- * Positioned bottom-right, well above the reply composer's own vertical
- * span (see the `bottom` offset math in the comment below) rather than
- * beside it — the list/thread column split is user-resizable, so
- * anchoring by a fixed left/right offset next to a variable-width column
- * risked drifting into the reply composer on some split ratios. Stacking
- * vertically instead sidesteps that entirely, matching the reference
- * layout's own floating-panel-above-the-composer arrangement.
+ * Positioned bottom-right, above the reply composer's own vertical span,
+ * rather than beside it — the list/thread column split is user-resizable,
+ * so anchoring by a fixed left/right offset next to a variable-width
+ * column risked drifting into the reply composer on some split ratios.
+ * Stacking vertically instead sidesteps that entirely, matching the
+ * reference layout's own floating-panel-above-the-composer arrangement.
+ *
+ * The vertical offset itself tracks --caye-reply-composer-height, a CSS
+ * custom property CommandConversations publishes from a ResizeObserver on
+ * its actual composer element (see that file's composerWrapperRef comment)
+ * — not a fixed guess. A fixed offset was tuned for a one-line composer and
+ * started rendering CayeLauncher inside the composer once a draft grew past
+ * one line (2026-08-13); this reads the real, current height instead, so it
+ * tracks the composer through every state (collapsed, multiline, long
+ * drafts, window resizes) rather than one tuned snapshot of it. Falls back
+ * to 0px — sitting close to the bottom edge — when nothing publishes the
+ * property: no active conversation, or a channel with no composer at all
+ * (see CommandConversations' SEND_UNSUPPORTED).
  *
  * No conversation context is passed to Caye here — see the doc comment
  * on FounderHome's CayeLauncher usage for why (the backend route has no
@@ -65,8 +76,10 @@ export default function CayeLauncher({ onSend, onOpenHistory, busy }: {
     <div
       ref={rootRef}
       style={{
-        position: 'absolute', right: 20, bottom: 116, zIndex: 15,
+        position: 'absolute', right: 20,
+        bottom: 'calc(var(--caye-reply-composer-height, 0px) + 24px)', zIndex: 15,
         pointerEvents: 'none', display: 'flex', justifyContent: 'flex-end',
+        transition: 'bottom 0.15s ease',
       }}
     >
       <style>{`

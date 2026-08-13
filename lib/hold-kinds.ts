@@ -1,5 +1,7 @@
 import 'server-only'
 import type { createServiceClient } from '@/lib/supabase-server'
+import { isAttentionHold, holdKindOf } from './hold-kinds-shared'
+export { QUEUE_HOLD_KINDS, isQueueHold, isAttentionHold, holdKindOf, conversationNeedsFounder } from './hold-kinds-shared'
 
 /**
  * Two different things share the `human_agent_enabled` flag, and conflating
@@ -25,39 +27,13 @@ import type { createServiceClient } from '@/lib/supabase-server'
  * The distinction is already recorded — metadata.hold_kind is written by
  * create-outreach-leads and outreach-nudge-scan. Nothing new is stored here;
  * the readers were simply ignoring it.
- */
-
-/**
- * Hold kinds that represent drafted outreach awaiting batch approval.
  *
- * Single source of truth: send_outreach_batch gates on exactly this set (it
- * refuses to ship anything else), and the read layer must agree with it or a
- * thread could be hidden from the operator's queue while still being
- * batch-sendable, or vice versa.
+ * The pure predicates (QUEUE_HOLD_KINDS, isQueueHold, isAttentionHold,
+ * holdKindOf, conversationNeedsFounder) now live in hold-kinds-shared.ts,
+ * re-exported here, so client components can import them without pulling in
+ * this file's Supabase-client-taking functions — see that file's doc
+ * comment for why (2026-08-13 Inbox badge/filter consolidation).
  */
-export const QUEUE_HOLD_KINDS = new Set(['outreach_first_touch', 'outreach_followup'])
-
-export function isQueueHold(holdKind: unknown): boolean {
-  return typeof holdKind === 'string' && QUEUE_HOLD_KINDS.has(holdKind)
-}
-
-/**
- * True when this held thread means a person is actually waiting on the
- * operator. Anything without a queue hold_kind counts as real — the default
- * is deliberately conservative, so a hold path that forgets to set hold_kind
- * surfaces as an attention item rather than vanishing into a queue nobody
- * checks.
- */
-export function isAttentionHold(holdKind: unknown): boolean {
-  return !isQueueHold(holdKind)
-}
-
-/** Reads hold_kind out of a conversation's metadata blob. */
-export function holdKindOf(metadata: unknown): string | null {
-  if (!metadata || typeof metadata !== 'object') return null
-  const k = (metadata as Record<string, unknown>).hold_kind
-  return typeof k === 'string' ? k : null
-}
 
 type SupabaseClient = ReturnType<typeof createServiceClient>
 

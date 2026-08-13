@@ -9,6 +9,7 @@ import { CayeMark } from '@/components/brand/CayeMark'
 import { CayeLoadingPulse } from '@/components/dashboard/founder-home/CayeLoadingPulse'
 import { useFounderConversations, fetchConversationById, type ConversationSummary } from '@/lib/useFounderConversations'
 import { useFreshness, useRevalidateOnFocus } from '@/lib/founder-freshness'
+import { conversationNeedsFounder } from '@/lib/hold-kinds-shared'
 import { AQUA, TEXT, TEXT_QUIET, rowDivider } from '@/components/dashboard/surface'
 import { channelLabel } from './channel-meta'
 import ConversationRow from './ConversationRow'
@@ -258,7 +259,7 @@ export default function CommandConversations({ workspaceId, selectedConversation
   const [handoffState, setHandoffState] = useState<'hidden' | 'open' | 'resolving'>('hidden')
   useEffect(() => { setHandoffState('hidden') }, [activeId])
   useEffect(() => {
-    const nowOpen = !!activeSummary?.human_agent_enabled
+    const nowOpen = !!activeSummary && conversationNeedsFounder(activeSummary)
     setHandoffState((s) => {
       if (nowOpen) return 'open'
       return s === 'open' ? 'resolving' : 'hidden'
@@ -384,6 +385,36 @@ export default function CommandConversations({ workspaceId, selectedConversation
   function focusComposer() {
     replyTextareaRef.current?.focus()
   }
+
+  // Publishes the reply composer's real rendered height as a CSS custom
+  // property on :root, so CayeLauncher (a sibling under a different parent
+  // — see FounderHome, which renders it alongside this whole panel rather
+  // than inside it) can float itself just above the composer's actual top
+  // edge instead of guessing with a fixed bottom offset. That fixed offset
+  // was tuned for a single-line composer and started overlapping it once a
+  // draft grew past one line (2026-08-13) — this is the fix: one real
+  // measurement, not a bigger guess.
+  //
+  // A callback ref rather than a ref+effect pair: this wrapper mounts and
+  // unmounts per conversation (SEND_UNSUPPORTED channels, no active
+  // conversation) and a callback ref fires with the node — or null — on
+  // every one of those transitions, including full unmount, so the
+  // ResizeObserver is always attached to the live node and the property
+  // resets to 0 the instant there's no composer to clear above.
+  const composerResizeObserverRef = useRef<ResizeObserver | null>(null)
+  const composerWrapperRef = useCallback((el: HTMLDivElement | null) => {
+    composerResizeObserverRef.current?.disconnect()
+    if (!el) {
+      document.documentElement.style.setProperty('--caye-reply-composer-height', '0px')
+      return
+    }
+    const publish = () => document.documentElement.style.setProperty('--caye-reply-composer-height', `${el.offsetHeight}px`)
+    publish()
+    const ro = new ResizeObserver(publish)
+    ro.observe(el)
+    composerResizeObserverRef.current = ro
+  }, [])
+  useEffect(() => () => composerResizeObserverRef.current?.disconnect(), [])
 
   useEffect(() => {
     if (threadLoading) return
@@ -542,7 +573,7 @@ export default function CommandConversations({ workspaceId, selectedConversation
                   )}
                 </div>
               </div>
-              {activeSummary.human_agent_enabled ? (
+              {conversationNeedsFounder(activeSummary) ? (
                 <span style={{ fontSize: 11, fontWeight: 600, color: '#FFE4AF', flexShrink: 0 }}>Needs you</span>
               ) : (
                 <span style={{ fontSize: 11, color: TEXT_QUIET, flexShrink: 0 }}>Caye handling</span>
@@ -552,10 +583,15 @@ export default function CommandConversations({ workspaceId, selectedConversation
             {/* paddingBottom (not a reserved flex row anymore — see the
                 composer below) is what lets the last message actually
                 scroll clear of the floating reply composer instead of
-                permanently sitting behind it. 192px clears both the
-                reply composer AND the CayeLauncher stacked above it
-                (FounderHome, Inbox-only) — the launcher's collapsed/
-                expanded states both sit around bottom:116-166px. */}
+                permanently sitting behind it. 192px clears a typical
+                (collapsed-to-a-few-lines) reply composer plus CayeLauncher
+                stacked above it (FounderHome, Inbox-only — its bottom
+                offset now tracks the composer's real height, see
+                composerWrapperRef below). An unusually long draft can push
+                the composer taller than this fixed clearance; that's a
+                pre-existing characteristic of a static paddingBottom, not
+                something introduced by making CayeLauncher's own position
+                dynamic. */}
             <div ref={threadContainerRef} style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '16px 18px 192px' }}>
               {threadLoading ? (
                 <CayeLoadingPulse size={16} />
@@ -600,7 +636,7 @@ export default function CommandConversations({ workspaceId, selectedConversation
               // back there to begin with. Now absolutely positioned within
               // the (position:relative) thread column, so the scroll area
               // above genuinely extends underneath it.
-              <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, padding: '10px 18px 16px', pointerEvents: 'none' }}>
+              <div ref={composerWrapperRef} style={{ position: 'absolute', left: 0, right: 0, bottom: 0, padding: '10px 18px 16px', pointerEvents: 'none' }}>
                 <div style={{ pointerEvents: 'auto' }}>
                 {sendError && <div style={{ fontSize: 11.5, color: '#fb7185', marginBottom: 6 }}>{sendError}</div>}
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6, minHeight: 16 }}>
