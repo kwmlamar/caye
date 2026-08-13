@@ -22,8 +22,8 @@ const LABEL_COLOR = TEXT_QUIET
 // FounderHome.tsx's existing 1100/780 breakpoints (the 1100 split is also
 // where the hero stacks to one column) rather than inventing new ones;
 // 1600 is the one new threshold, purely for this size tier.
-const HERO_ORB_SIZE_WIDE = 880 // >=1600px — visible sphere ≈ 880*0.73 ≈ 640px
-const HERO_ORB_SIZE_DESKTOP = 710 // 1100–1599px — visible ≈ 520px
+const HERO_ORB_SIZE_WIDE = 820 // >=1600px — visible sphere ≈ 600px
+const HERO_ORB_SIZE_DESKTOP = 690 // 1100–1599px — visible ≈ 500px
 const HERO_ORB_SIZE_TABLET = 460 // 780–1099px (stacked layout) — visible ≈ 335px
 const HERO_ORB_SIZE_MOBILE = 230 // <780px — kept small and layout-safe
 // CayePresence's Canvas box doesn't fill edge-to-edge — ParticleSphere.tsx

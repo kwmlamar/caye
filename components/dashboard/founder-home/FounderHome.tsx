@@ -252,6 +252,30 @@ export default function FounderHome() {
           .caye-hero-text p { max-width: none !important; }
           .caye-stack-grid { grid-template-columns: 1fr !important; }
         }
+        /* The particle canvas is intentionally much larger than the
+           briefing copy. On wide screens it is a visual layer, not the
+           ruler for the document flow: allowing it to size the grid row
+           pushed the business pulse and activity panels below the fold.
+           Keep enough hero height for the briefing/attention card, then
+           let Caye occupy the right side independently so the lower
+           operational layer remains visible at a glance. */
+        @media (min-width: 1101px) {
+          .caye-hero {
+            position: relative;
+            display: block !important;
+            min-height: 500px;
+            padding-top: 8px !important;
+          }
+          .caye-hero-text {
+            width: min(44%, 520px);
+          }
+          .caye-hero-orb {
+            position: absolute;
+            top: 8px;
+            right: 2%;
+            width: 54%;
+          }
+        }
         @media (max-width: 780px) {
           .caye-rail { width: 52px !important; }
         }
