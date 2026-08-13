@@ -20,7 +20,8 @@ export default function WorkPage({
   onSelectConversation: (conversationId: string | null) => void
 }) {
   return (
-    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 24, display: 'flex', flexDirection: 'column', gap: 24 }}>
+    // paddingBottom clears the floating global composer.
+    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '24px 24px 96px', display: 'flex', flexDirection: 'column', gap: 24 }}>
       <div style={{ ...glass(0.018), flexShrink: 0, height: 460, borderRadius: 18, overflow: 'hidden' }}>
         {data ? (
           <CommandCalendar

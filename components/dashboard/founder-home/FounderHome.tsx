@@ -359,7 +359,10 @@ export default function FounderHome() {
             // pulse + working now), Level 3 (short log). Deliberately
             // shorter than the old dashboard — substantial negative
             // space is the point, not a gap to be filled.
-            <div className="caye-hero-wrap" style={{ flex: 1, overflowY: 'auto', padding: '8px 32px 32px', display: 'flex', flexDirection: 'column', gap: 36, minHeight: 0 }}>
+            // paddingBottom clears the floating global composer (~70px
+            // tall, anchored to Main's bottom) so the last row of content
+            // can still scroll fully into view above it.
+            <div className="caye-hero-wrap" style={{ flex: 1, overflowY: 'auto', padding: '8px 32px 96px', display: 'flex', flexDirection: 'column', gap: 36, minHeight: 0 }}>
               <FounderBriefing
                 data={data}
                 today={today}
@@ -394,13 +397,26 @@ export default function FounderHome() {
         )}
 
         {!expanded && (
-          // Explicitly transparent, no chrome of its own — this reserves
-          // vertical room for the composer without ever painting a footer
-          // band behind it. pointer-events:none so the empty margin around
-          // the centered pill never blocks a click on whatever's visually
-          // "behind" it; TalkToCaye's own root re-enables pointer-events
-          // for the actual composer.
-          <div style={{ flexShrink: 0, padding: '0 20px 14px', background: 'transparent', pointerEvents: 'none' }}>
+          // Root-caused (2026-08-14): making this wrapper's background
+          // transparent was NOT enough, because transparency was never
+          // the actual bug. This used to be a normal flex-flow sibling of
+          // the view-swap content div (flexShrink:0) — meaning it
+          // consumed its OWN reserved row at the bottom of Main. Nothing
+          // was ever painted in that row except padding, so what looked
+          // like "a dark footer" was genuinely empty canvas (Main/root's
+          // ENV_BG), not a leftover background color — the content area
+          // literally stopped short of it. Fixed by taking this out of
+          // flex flow entirely: absolutely positioned, anchored to the
+          // bottom of Main, so the view-swap div above naturally expands
+          // to fill the space this used to reserve, and page content can
+          // now genuinely scroll underneath this floating region.
+          // pointer-events:none on this wrapper (empty margin around the
+          // pill never blocks a click/scroll on content behind it);
+          // TalkToCaye's own root re-enables pointer-events:auto.
+          <div style={{
+            position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 15,
+            padding: '0 20px 14px', background: 'transparent', pointerEvents: 'none',
+          }}>
             <TalkToCaye onSend={handleTalkToCaye} onOpenHistory={() => setExpanded('cayeDirect')} />
           </div>
         )}

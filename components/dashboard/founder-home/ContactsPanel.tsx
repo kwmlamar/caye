@@ -360,7 +360,8 @@ export default function ContactsPanel({ workspaceId }: { workspaceId: string }) 
         </div>
       </div>
 
-      <div style={{ flex: 1, position: 'relative', overflowY: 'auto', minHeight: 0 }}>
+      {/* paddingBottom clears the floating global composer. */}
+      <div style={{ flex: 1, position: 'relative', overflowY: 'auto', minHeight: 0, paddingBottom: 96 }}>
         {loading && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
             {[0, 0.08, 0.16, 0.24, 0.32].map((d, i) => <ContactRowSkeleton key={i} delay={d} />)}

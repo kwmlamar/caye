@@ -469,8 +469,12 @@ export default function CommandConversations({ workspaceId, selectedConversation
             />
           </div>
         </div>
+        {/* paddingBottom clears the floating global composer, which spans
+            Main's full width (so it can sit over both this list column
+            and the thread pane), even though the list itself has no
+            composer of its own. */}
         <div
-          style={{ flex: 1, overflowY: 'auto', padding: '0 6px 8px' }}
+          style={{ flex: 1, overflowY: 'auto', padding: '0 6px 96px' }}
           onScroll={(e) => {
             const el = e.currentTarget
             if (!nextCursor || loadingMore) return
@@ -507,7 +511,7 @@ export default function CommandConversations({ workspaceId, selectedConversation
 
       {/* ── Thread ── */}
       {showThread && (
-      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+      <div style={{ position: 'relative', flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
         {!activeSummary ? (
           <div style={{ padding: 16, fontSize: 13, color: TEXT_QUIET }}>Select a conversation.</div>
         ) : (
@@ -545,7 +549,11 @@ export default function CommandConversations({ workspaceId, selectedConversation
               )}
             </div>
 
-            <div ref={threadContainerRef} style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '16px 18px' }}>
+            {/* paddingBottom (not a reserved flex row anymore — see the
+                composer below) is what lets the last message actually
+                scroll clear of the floating reply composer instead of
+                permanently sitting behind it. */}
+            <div ref={threadContainerRef} style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '16px 18px 128px' }}>
               {threadLoading ? (
                 <CayeLoadingPulse size={16} />
               ) : (
@@ -582,7 +590,15 @@ export default function CommandConversations({ workspaceId, selectedConversation
             </div>
 
             {!SEND_UNSUPPORTED.has(activeSummary.channel_type) && (
-              <div style={{ flexShrink: 0, padding: '10px 18px 16px' }}>
+              // Root-caused the same way as the global composer: this used
+              // to be a flexShrink:0 sibling of the message-scroll div,
+              // reserving its own row — so scrolling could never bring the
+              // last message "behind" it, because there was no content
+              // back there to begin with. Now absolutely positioned within
+              // the (position:relative) thread column, so the scroll area
+              // above genuinely extends underneath it.
+              <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, padding: '10px 18px 16px', pointerEvents: 'none' }}>
+                <div style={{ pointerEvents: 'auto' }}>
                 {sendError && <div style={{ fontSize: 11.5, color: '#fb7185', marginBottom: 6 }}>{sendError}</div>}
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6, minHeight: 16 }}>
                   {!replyText.trim() && DRAFT_SUPPORTED_CHANNELS.has(activeSummary.channel_type) && (
@@ -615,6 +631,7 @@ export default function CommandConversations({ workspaceId, selectedConversation
                   maxHeight={REPLY_MAX_HEIGHT}
                   customerLabel={customerLabel}
                 />
+                </div>
               </div>
             )}
           </>
@@ -638,11 +655,20 @@ function ReplyBox({
 }) {
   const [focused, setFocused] = useState(false)
   return (
+    // This pill now floats directly over scrolled message content (see
+    // the thread-column comment above) rather than sitting on empty
+    // background — it needed a real surface (blur + a baseline shadow),
+    // not just a faint alpha wash, to stay legible against whatever's
+    // behind it at any given scroll position.
     <div style={{
       display: 'flex', alignItems: 'flex-end', gap: 8, flex: 1,
       borderRadius: 20, padding: '8px 8px 8px 14px',
-      background: focused ? 'rgba(255,255,255,0.045)' : 'rgba(255,255,255,0.028)',
-      boxShadow: focused ? `0 0 0 1px ${AQUA}44, 0 0 20px rgba(78,190,206,0.12)` : 'none',
+      background: focused ? 'rgba(30,30,34,0.92)' : 'rgba(24,24,28,0.88)',
+      backdropFilter: 'blur(18px) saturate(150%)',
+      WebkitBackdropFilter: 'blur(18px) saturate(150%)',
+      boxShadow: focused
+        ? `0 1px 0 rgba(255,255,255,0.05) inset, 0 0 0 1px ${AQUA}44, 0 0 20px rgba(78,190,206,0.12), 0 10px 24px rgba(0,0,0,0.35)`
+        : '0 1px 0 rgba(255,255,255,0.04) inset, 0 8px 20px rgba(0,0,0,0.3)',
       transition: 'background 0.15s ease, box-shadow 0.2s ease',
     }}>
       <textarea

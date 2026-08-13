@@ -68,7 +68,8 @@ export default function SettingsPage({ workspaceId }: { workspaceId: string }) {
           <TabButton key={t.id} label={t.label} active={tab === t.id} onClick={() => setTab(t.id)} />
         ))}
       </nav>
-      <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflowY: 'auto' }}>
+      {/* paddingBottom clears the floating global composer. */}
+      <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflowY: 'auto', paddingBottom: 96 }}>
         {body}
       </div>
     </div>

@@ -71,7 +71,8 @@ export default function MemoryPage({ workspaceId }: { workspaceId: string }) {
     : []
 
   return (
-    <div style={{ flex: 1, overflowY: 'auto', padding: '28px 32px', maxWidth: 880 }}>
+    // paddingBottom clears the floating global composer.
+    <div style={{ flex: 1, overflowY: 'auto', padding: '28px 32px 96px', maxWidth: 880 }}>
       <h1 style={{ fontSize: 20, fontWeight: 600, fontFamily: 'var(--font-display)', margin: '0 0 4px' }}>Memory</h1>
       <p style={{ fontSize: 13, color: LABEL_COLOR, margin: '0 0 28px' }}>
         What Caye has learned about this business. Teach her something new by messaging her — nothing here is editable.
