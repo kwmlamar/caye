@@ -79,6 +79,23 @@ describe('decideNextAction', () => {
     expect(decideNextAction(engaged, NOW).kind).toBe('reply_to_prospect')
   })
 
+  it('never sends a scheduled follow-up to an engaged/qualified prospect once their reply has been answered', () => {
+    // Found 2026-08-13 wiring the People page onto this function: with only
+    // demo_started/activated excluded from the cadence math, a lead whose
+    // stage is 'engaged' or 'qualified' but whose current message has
+    // already been answered (hasUnansweredReply: false) fell through to the
+    // same touch-2/touch-3 math as a plain 'contacted' lead — i.e. Caye
+    // would draft "did you see my email" to someone she is already
+    // mid-conversation with. firstTouchSentAt here is 3 days old, which
+    // would otherwise be exactly touch-2-due.
+    for (const stage of ['engaged', 'qualified'] as const) {
+      expect(decideNextAction(lead({ stage, hasUnansweredReply: false }), NOW)).toEqual({
+        kind: 'do_nothing',
+        reason: 'stage_beyond_cadence',
+      })
+    }
+  })
+
   it('does not crash on unparseable timestamps', () => {
     expect(decideNextAction(lead({ firstTouchSentAt: 'not-a-date' }), NOW).kind).toBe('do_nothing')
   })

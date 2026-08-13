@@ -342,7 +342,7 @@ export default function FounderHome() {
           {railView === 'inbox' ? (
             <InboxPage workspaceId={workspaceId} selectedConversationId={selectedConversationId} onSent={refetch} />
           ) : railView === 'people' ? (
-            <PeoplePage workspaceId={workspaceId} />
+            <PeoplePage workspaceId={workspaceId} onReviewConversation={goToConversation} />
           ) : railView === 'work' ? (
             <WorkPage
               workspaceId={workspaceId}

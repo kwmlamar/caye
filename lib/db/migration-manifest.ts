@@ -93,4 +93,5 @@ export const REPO_MIGRATIONS: readonly string[] = [
   '20260812_outreach_autonomy',
   '20260812b_outreach_bounce_log',
   '20260812c_caye_owner_attention',
+  '20260812d_sales_funnel_and_memory',
 ]

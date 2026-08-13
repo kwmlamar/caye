@@ -104,11 +104,21 @@ export function decideNextAction(lead: LeadState, now: Date): SalesAction {
       : { kind: 'do_nothing', reason: 'awaiting_first_touch_prerequisites' }
   }
 
-  // Someone who opened the demo is mid-consideration. Chasing them with a
-  // "did you see my email" is the wrong move, and the tracked click already
-  // told us they are alive.
-  if (lead.stage === 'demo_started' || lead.stage === 'activated') {
-    return { kind: 'do_nothing', reason: 'prospect_in_demo' }
+  // The cold-outreach cadence (this file's whole reason to exist) only
+  // makes sense while nobody has replied yet — that's what 'contacted'
+  // means. Any stage past it (engaged, qualified, demo_started, activated)
+  // means a real conversation already started, so a scheduled "did you see
+  // my email" would land on someone Caye is already mid-conversation with.
+  // Originally this only excluded demo_started/activated ("mid-
+  // consideration, don't chase" — the comment below), which correctly
+  // covers a prospect who clicked through but never replied on email, but
+  // left the identical case for engaged/qualified (replied, then answered,
+  // so hasUnansweredReply is false again) still falling through to the
+  // cadence math below. Found 2026-08-13 while wiring the People page's
+  // display onto this function — no known live incident, but it does send
+  // real email.
+  if (lead.stage !== 'contacted') {
+    return { kind: 'do_nothing', reason: 'stage_beyond_cadence' }
   }
 
   const anchorISO = lead.lastTouchSentAt ?? lead.firstTouchSentAt
