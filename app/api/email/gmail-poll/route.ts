@@ -518,9 +518,61 @@ async function processGmailMessage(
       generated_by: 'caye',
       hold_reason: reason,
       proposed_reply: proposedReply,
+      customer_acknowledgement:
+        decision.action === 'hold' ? (decision.customerAcknowledgement ?? null) : null,
       decision_action: decision.action,
     },
   })
+
+  // Match the other email ingestion paths: holding a real customer request
+  // should acknowledge it promptly, even though the substantive reply waits
+  // for the owner. A reply-send failure deliberately has no acknowledgement:
+  // the customer may already have received part of the attempted response.
+  if (decision.action === 'hold' && decision.customerAcknowledgement) {
+    const ackSubject = subject.startsWith('Re:') ? subject : `Re: ${subject}`
+    const ackBody = decision.customerAcknowledgement
+    const ackSentAt = new Date().toISOString()
+    try {
+      const sent = await sendGmailReply({
+        to: fromEmail,
+        subject: ackSubject,
+        body: ackBody,
+        gmailThreadId: threadId,
+        conversationId,
+        workspaceId,
+      })
+      await supabase.from('unified_messages').insert({
+        conversation_id: conversationId,
+        channel_message_id: sent.gmailMessageId,
+        sender_type: 'business',
+        content: ackBody,
+        message_type: 'text',
+        sent_at: ackSentAt,
+        status: 'sent',
+        metadata: {
+          subject: ackSubject,
+          generated_by: 'caye',
+          gmail_message_id: sent.gmailMessageId,
+          gmail_thread_id: sent.threadId,
+          source: 'gmail',
+          is_automated: true,
+          is_hold_acknowledgement: true,
+        },
+      })
+      await supabase
+        .from('unified_conversations')
+        .update({
+          last_sender_type: 'business',
+          last_business_sender_kind: 'caye',
+          last_message_at: ackSentAt,
+          last_message_preview: ackBody.slice(0, 100),
+        })
+        .eq('id', conversationId)
+    } catch (err) {
+      // Preserve the hold and owner ping even when the acknowledgement fails.
+      console.error(`[gmail-poll] hold-ack send failed for ${messageId}:`, err)
+    }
+  }
 
   const urgency = decision.action === 'hold' ? decision.urgency : undefined
   // Awaited — see zoho-email webhook for why (unawaited promises can be

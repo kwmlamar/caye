@@ -78,6 +78,11 @@ import {
   type ForcedTrigger,
 } from './forced-escalation'
 import { applyAutosendGate } from './autosend-gate'
+import { resolveHoldAcknowledgement } from './hold-acknowledgement'
+import {
+  capabilityUncertainReplyFor,
+  TRANSPORT_CAPABILITY_OWNER_NOTE,
+} from './capability-uncertain-reply'
 
 export type EscalationCategory = 'gap' | 'policy' | 'knowledge' | 'sensitive'
 export type EscalationRouteTo = 'owner' | 'founder' | 'both'
@@ -544,18 +549,18 @@ const TOOLS: Anthropic.Tool[] = [
         customer_acknowledgement: {
           type: 'string',
           description:
-            'OPTIONAL short message sent IMMEDIATELY to the customer so they don\'t feel ' +
+            'REQUIRED for a real customer request: short message sent IMMEDIATELY to the customer so they don\'t feel ' +
             'dropped while the operator works the held thread. Warm, 1-2 short sentences, ' +
             'no commitments on timing, never invents a price/date. Examples: "Thanks — let ' +
             'me check on that and get back to you shortly." / "Got your note, will be in ' +
             'touch about timing later today." ' +
-            'LEAVE EMPTY when: the inbound is a newsletter, vendor pitch, automated bounce, ' +
+            'Use an empty string only when: the inbound is a newsletter, vendor pitch, automated bounce, ' +
             'or anything where the customer did not actually ask you a question — silence is ' +
             'correct there and any reply would compound the noise. Same voice rules as ' +
             'send_reply content. Never quote prices or promise specific times.',
         },
       },
-      required: ['reason', 'note'],
+      required: ['reason', 'note', 'customer_acknowledgement'],
     },
   },
   {
@@ -2694,14 +2699,49 @@ async function generateCayeAutoReplyCore(
         const ackRaw = input.customer_acknowledgement?.trim()
         const ack = ackRaw && ackRaw.length > 0 ? ackRaw : undefined
         const ackBlocked = ack ? guardDraft(ack) : null
-        const safeAck = ackBlocked ? undefined : ack
+        const safeAck = ackBlocked
+          ? undefined
+          : resolveHoldAcknowledgement({
+              acknowledgement: ack,
+              proposedReply: draftLeak ? undefined : draft,
+              reason: input.reason,
+            })
 
-        terminal = {
-          action: 'hold',
-          reason: input.reason,
-          note: input.note,
-          proposedReply: draftLeak ? undefined : draft,
-          customerAcknowledgement: safeAck,
+        // A transportation inquiry is a useful example of 2B's distinction:
+        // Caye must not imply Bimini Island Tours can provide it, but can
+        // safely collect the details the owner needs to check. Models can
+        // still choose hold_for_human despite the prompt's 2B instructions,
+        // so enforce this narrowly at the tool boundary.
+        const capabilityReply = capabilityUncertainReplyFor(inbound.body, inbound.subject)
+        if (capabilityReply && draft && !draftLeak) {
+          terminal = {
+            action: 'reply',
+            content: capabilityReply,
+            needsOwnerFollowup: true,
+            ownerNote: TRANSPORT_CAPABILITY_OWNER_NOTE,
+          }
+          if (inbound.conversationId) {
+            try {
+              await createServiceClient()
+                .from('unified_conversations')
+                .update({
+                  human_agent_enabled: true,
+                  human_agent_reason: TRANSPORT_CAPABILITY_OWNER_NOTE,
+                  human_agent_marked_at: new Date().toISOString(),
+                })
+                .eq('id', inbound.conversationId)
+            } catch (err) {
+              console.error('[caye-reply] Failed to flag transport inquiry for owner followup:', err)
+            }
+          }
+        } else {
+          terminal = {
+            action: 'hold',
+            reason: input.reason,
+            note: input.note,
+            proposedReply: draftLeak ? undefined : draft,
+            customerAcknowledgement: safeAck,
+          }
         }
         toolResults.push({ type: 'tool_result', tool_use_id: tool.id, content: 'ok' })
       } else if (tool.name === 'check_availability') {

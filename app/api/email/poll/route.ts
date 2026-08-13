@@ -25,6 +25,7 @@ import { maybeRefreshOwnerVoiceProfile } from '@/lib/owner-voice-learning'
 import { maybeSuggestBusinessFacts } from '@/lib/business-fact-suggestions'
 import { clearStaleOutreachAutofill } from '@/lib/outreach-autofill'
 import { detectOwnerCorrection } from '@/lib/owner-correction'
+import { sendZohoReply } from '@/lib/email-ai'
 import { isNoReplySender, isCalendarInvite, isPaymentReceipt, isOutOfOffice, isBounceNotification } from '@/lib/sender-classifier'
 import { recordBounceAndMaybeTrip } from '@/lib/outreach-kill-switch'
 import {
@@ -1482,9 +1483,52 @@ async function processMessage(
         generated_by: 'caye',
         hold_reason: decision.reason,
         proposed_reply: decision.proposedReply ?? null,
+        customer_acknowledgement: decision.customerAcknowledgement ?? null,
       },
     })
     console.log(`[email/poll] Held for human: ${effectiveEmail} — ${decision.reason}`)
+
+    // Keep the cron-poll path equivalent to the Zoho webhook path: a genuine
+    // customer hold gets a short acknowledgement immediately, while the
+    // substantive response remains with the owner. (No acknowledgement means
+    // Caye intentionally chose silence, such as for a newsletter or vendor
+    // pitch.)
+    if (decision.customerAcknowledgement) {
+      const ackSubject = subject.startsWith('Re:') ? subject : `Re: ${subject}`
+      const ackBody = decision.customerAcknowledgement
+      const ackSentAt = new Date().toISOString()
+      try {
+        await sendZohoReply(effectiveEmail, ackSubject, ackBody, threadId, workspaceId)
+        await supabase.from('unified_messages').insert({
+          conversation_id: conversation.id,
+          channel_message_id: `caye_ack_${Date.now()}`,
+          sender_type: 'business',
+          content: ackBody,
+          message_type: 'text',
+          sent_at: ackSentAt,
+          status: 'sent',
+          metadata: {
+            subject: ackSubject,
+            is_automated: true,
+            generated_by: 'caye',
+            is_hold_acknowledgement: true,
+          },
+        })
+        await supabase
+          .from('unified_conversations')
+          .update({
+            last_sender_type: 'business',
+            last_business_sender_kind: 'caye',
+            last_message_at: ackSentAt,
+            last_message_preview: ackBody.slice(0, 100),
+          })
+          .eq('id', conversation.id)
+      } catch (err) {
+        // The hold is still valid and the owner still receives their ping if
+        // an acknowledgement cannot be delivered.
+        console.error('[email/poll] hold-ack send failed:', err)
+      }
+    }
     // Awaited — see zoho-email webhook for why (unawaited promises can be
     // torn down mid-flight when the serverless handler returns).
     await enqueueHoldPing({
