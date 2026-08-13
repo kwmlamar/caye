@@ -30,6 +30,8 @@ export const REPO_MIGRATIONS: readonly string[] = [
   '20260625_voice_register_overrides',
   '20260626_extend_outbound_kind_for_escalations',
   '20260701_add_onboarding_whatsapp_progress',
+  '20260702214041_operator_message_identity',
+  '20260702222227_backfill_operator_pings',
   '20260703_caye_escalations_founder_tier',
   '20260703_contacts_channel_identity_unique',
   '20260703b_bookings_payment_and_reminders',
@@ -94,4 +96,5 @@ export const REPO_MIGRATIONS: readonly string[] = [
   '20260812b_outreach_bounce_log',
   '20260812c_caye_owner_attention',
   '20260812d_sales_funnel_and_memory',
+  '20260813_caye_direct_threads',
 ]

@@ -114,6 +114,19 @@ export interface ToolContext {
    * to Supabase behind a uniqueness constraint and don't need it.
    */
   operationKey?: string
+  /**
+   * Accumulator for relate_to_direct_thread (2026-08-13, back-office only).
+   * Tools that decide the current exchange belongs to a Caye Direct thread
+   * push the thread id here rather than linking a message directly —
+   * mid-loop, the turns that will end up in caye_operator_messages don't
+   * have row ids yet (persistAgentTurns runs after the loop, in the
+   * caller). index.ts initializes this to [] before invoking runToolLoop
+   * and reads it back afterward so the caller (webhook / Direct route) can
+   * link every newly-inserted turn to each requested thread once real ids
+   * exist. Optional — every other mode/context leaves it undefined and
+   * relate_to_direct_thread simply isn't registered there.
+   */
+  directThreadLinks?: string[]
 }
 
 /**

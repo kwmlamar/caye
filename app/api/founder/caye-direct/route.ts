@@ -1,20 +1,26 @@
 /**
- * GET  /api/founder/caye-direct?workspaceId=<uuid>&operatorId=<id>
- * POST /api/founder/caye-direct   { workspaceId, message }
+ * GET    /api/founder/caye-direct?workspaceId=<uuid>&operatorId=<id>
+ * POST   /api/founder/caye-direct   { workspaceId, message }
+ * DELETE /api/founder/caye-direct?workspaceId=<uuid>&operatorId=<id>
  *
- * Web equivalent of texting Caye's back-office WhatsApp number — same
- * agent (lib/caye-agent, mode: 'back-office'), same
- * caye_operator_messages history, same tools. This is not a toy replica:
- * it's the production back-office agent with a dashboard front end
- * instead of a WhatsApp webhook, so it carries the same real
- * capabilities (and the same trust level) as texting Caye directly.
+ * Operator-scoped view onto caye_operator_messages — same table, same
+ * agent (lib/caye-agent, mode: 'back-office') as every WhatsApp turn.
  *
- * A workspace can have multiple operators (owner, staff, founder) on the
- * back-office channel — GET is scoped to one operator's conversation at a
- * time via operatorId (see /api/founder/caye-operators for the list).
- * POST always sends as the founder viewing the dashboard; there's no way
- * to send as another operator from here — replies to Karenda's messages
- * still go out over her own WhatsApp, not the dashboard.
+ * As of the 2026-08-13 Caye Direct redesign, this route's job narrowed:
+ * it now backs the READ-ONLY operator-observability overlay ("Operators N"
+ * → "View operator conversations" in CayeDirect.tsx), letting the founder
+ * inspect Max/Mrs. Max's raw WhatsApp history with Caye. The founder's OWN
+ * authoring surface moved to the thread-scoped routes at
+ * /api/founder/caye-direct/threads — see lib/caye-direct-threads.ts and
+ * supabase/migrations/20260813_caye_direct_threads.sql for why (topic
+ * threads, not a per-operator switcher).
+ *
+ * POST is left in place (not deleted — not necessary for this pass) but is
+ * no longer wired into the redesigned UI. It still always sends as the
+ * founder; there is still no way to send as another operator from here —
+ * replies to Karenda's messages still go out over her own WhatsApp, never
+ * the dashboard. That invariant is unchanged and must stay unchanged: the
+ * observability overlay reusing this GET must never grow a composer.
  *
  * Auth: Bearer JWT, checked against FOUNDER_USER_IDS.
  */
@@ -23,27 +29,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase-server'
 import { requireFounder } from '@/lib/founder'
 import { cayeAgent } from '@/lib/caye-agent'
-import { persistAgentTurns, isInternalTurnBody, visibleBody } from '@/lib/caye-operator-messages'
+import { persistAgentTurns, isInternalTurnBody, visibleBody, dedupeConsecutive } from '@/lib/caye-operator-messages'
 import { resolveFounderOperator } from '@/lib/operator-identity'
-
-/**
- * Collapse immediate repeats (same direction + identical body back to
- * back) before rendering. Fixes duplicate-insert bugs upstream (e.g. two
- * racing cron runs writing the same closing note twice — see
- * decisions-log.md 2026-07-24) showing up as repeated bubbles, without
- * touching the underlying rows or the agent's history replay off this
- * same table. Only merges adjacent matches, so two genuinely separate
- * "yes" replies on different days won't get eaten.
- */
-function dedupeConsecutive<T extends { direction: string; body: string }>(rows: T[]): T[] {
-  const out: T[] = []
-  for (const row of rows) {
-    const prev = out[out.length - 1]
-    if (prev && prev.direction === row.direction && prev.body === row.body) continue
-    out.push(row)
-  }
-  return out
-}
+import { linkInsertedMessagesToThreads } from '@/lib/caye-direct-threads'
 
 export async function GET(req: NextRequest) {
   const workspaceId = req.nextUrl.searchParams.get('workspaceId')
@@ -122,6 +110,7 @@ export async function POST(req: NextRequest) {
     operator_allowlist_id: operator?.id ?? null,
     operator_name: operator?.name ?? null,
     operator_role: operator?.role ?? 'founder',
+    origin: 'dashboard',
   })
 
   try {
@@ -134,7 +123,14 @@ export async function POST(req: NextRequest) {
       operatorId: operator?.id ?? null,
     })
 
-    await persistAgentTurns(supabase, workspaceId, agentResult.newTurns, operator)
+    const inserted = await persistAgentTurns(supabase, workspaceId, agentResult.newTurns, operator, undefined, undefined, 'dashboard')
+    // This route is superseded by the thread-scoped routes and unused by
+    // the redesigned UI, but the back-office agent it calls still has
+    // relate_to_direct_thread available — link any turn it produces here
+    // the same way every other back-office call site does, so a stray
+    // call through this path can't leave a thread pointing at a message
+    // that was never actually linked to it.
+    await linkInsertedMessagesToThreads(supabase, inserted.map((r) => r.id), agentResult.linkedThreadIds)
 
     return NextResponse.json({ replyText: agentResult.replyText, operatorId: operator?.id ?? null })
   } catch (err) {

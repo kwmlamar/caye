@@ -7,6 +7,7 @@ import { resolveOperatorByPhone } from '@/lib/operator-identity'
 import { BOOKING_LOOKUP_FAILED } from './escalation-expiry'
 import { displayContactName } from './contact-display'
 import type { EscalationCategory } from '@/lib/caye-reply'
+import { createCayeInitiatedThreadMessage } from '@/lib/caye-direct-threads'
 
 export { shouldExpireOnTargetDate } from './escalation-expiry'
 
@@ -192,6 +193,22 @@ export async function maybeEscalateToFounder(
     .from('caye_escalations')
     .update({ founder_escalated_at: new Date().toISOString() })
     .eq('id', row.id)
+
+  // Founder backstop is exactly the kind of thing worth an ongoing Direct
+  // thread, not just a one-off ping — reuses the same thread on a later
+  // occurrence of this escalation (see getOrCreateDirectThread). Best-effort:
+  // a failure here must never undo the ping that already went out above.
+  try {
+    await createCayeInitiatedThreadMessage(supabase, {
+      workspaceId: row.workspace_id,
+      subjectType: 'escalation',
+      subjectId: row.id,
+      titleHint: `${contactName} — ${labelForCategory(row.category as EscalationCategory)}`,
+      message: `Looping you in — ${contactName} has been waiting on ${row.route_to === 'owner' ? 'the operator' : 'this'} for ${ageLabel}. ${pingSummary}`,
+    })
+  } catch (err) {
+    console.error('[escalation-followup] Direct thread creation failed:', err)
+  }
 
   return true
 }

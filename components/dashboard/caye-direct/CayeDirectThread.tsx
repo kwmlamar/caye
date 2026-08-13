@@ -21,6 +21,10 @@ interface OperatorMessage {
   created_at: string
   wa_delivery_status?: DeliveryStatus
   wa_delivery_error?: string | null
+  /** Present only on thread-mode responses — see app/api/founder/caye-direct/threads/[id]/route.ts. */
+  origin?: 'whatsapp' | 'dashboard'
+  operator_name?: string | null
+  operator_role?: string | null
 }
 
 // Only outbound messages carry these — inbound is what the operator sent
@@ -128,40 +132,6 @@ function CopyButton({
 
 type GroupPos = 'single' | 'first' | 'middle' | 'last'
 
-// Local slash commands, handled client-side in send() rather than sent to
-// the agent — add new ones here as they come up.
-interface SlashCommand { name: string; description: string }
-const SLASH_COMMANDS: SlashCommand[] = [
-  { name: 'clear', description: "Wipe this conversation — Caye won't remember it after" },
-]
-
-// Turns that are still running, keyed by workspace+operator. Deliberately
-// module scope rather than state, a ref, or context.
-//
-// Clicking another workspace navigates to a new /dashboard/[workspaceId]
-// route, which remounts this whole subtree — and per the note in
-// FounderHome.tsx, even hoisting to a layout-level context still reset on
-// param change, so there is no in-tree place to keep this. Losing it on
-// remount had two effects: the typing indicator vanished, and (the real
-// bug) the in-flight fetch was orphaned, so when Caye's reply finally
-// landed nothing was listening and the thread never updated — it looked
-// like she'd stopped mid-thought.
-//
-// The turn itself was always fine. Nothing aborts it (no AbortController
-// in this path), so the request runs to completion and the POST handler
-// persists the reply either way; it just had no live listener.
-//
-// A module-scope Map lives in the JS module registry, not the component
-// tree, so remounts can't touch it and a returning thread can find its own
-// still-running turn. It clears on hard reload, which is the right
-// behaviour: by then the reply is in the DB and the history fetch on mount
-// picks it up.
-const inFlightRuns = new Map<string, Promise<void>>()
-
-function runKey(workspaceId: string, operatorId: number): string {
-  return `${workspaceId}:${operatorId}`
-}
-
 function dayLabel(iso: string): string {
   const d = new Date(iso)
   const today = new Date()
@@ -239,49 +209,7 @@ function MessageSkeleton() {
   )
 }
 
-function CommandMenu({
-  commands, activeIndex, onHover, onSelect,
-}: {
-  commands: SlashCommand[]
-  activeIndex: number
-  onHover: (i: number) => void
-  onSelect: (cmd: SlashCommand) => void
-}) {
-  return (
-    <div
-      style={{
-        position: 'absolute', left: 0, right: 0, bottom: '100%', marginBottom: 8,
-        background: 'rgba(24,24,27,0.97)', ...GLASS,
-        borderRadius: 12, overflow: 'hidden',
-        boxShadow: '0 16px 36px -10px rgba(0,0,0,0.65)',
-        animation: 'caye-msg-in 0.15s ease-out',
-      }}
-    >
-      {commands.map((cmd, i) => (
-        <div
-          key={cmd.name}
-          onMouseDown={(e) => { e.preventDefault(); onSelect(cmd) }}
-          onMouseEnter={() => onHover(i)}
-          style={{
-            display: 'flex', alignItems: 'baseline', gap: 10, padding: '9px 12px',
-            background: i === activeIndex ? 'rgba(78,190,206,0.14)' : 'transparent',
-            cursor: 'pointer', transition: 'background 0.1s ease',
-          }}
-        >
-          <span style={{
-            fontFamily: 'var(--font-mono)', fontSize: 12.5, fontWeight: 600,
-            color: i === activeIndex ? '#4EBECE' : '#f4f4f5', flexShrink: 0,
-          }}>
-            /{cmd.name}
-          </span>
-          <span style={{ fontSize: 11.5, color: '#71717a' }}>{cmd.description}</span>
-        </div>
-      ))}
-    </div>
-  )
-}
-
-function EmptyState({ operatorLabel, readOnly }: { operatorLabel: string; readOnly: boolean }) {
+function EmptyState({ label, readOnly }: { label: string; readOnly: boolean }) {
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, textAlign: 'center', padding: '0 30px' }}>
       <div style={{ position: 'relative' }}>
@@ -290,71 +218,87 @@ function EmptyState({ operatorLabel, readOnly }: { operatorLabel: string; readOn
       </div>
       <div>
         <div style={{ fontSize: 14, fontFamily: 'var(--font-display)', fontWeight: 600, color: '#f4f4f5' }}>
-          {readOnly ? `No history with ${operatorLabel} yet` : 'Say hello to Caye'}
+          {readOnly ? `No history with ${label} yet` : 'Say hello to Caye'}
         </div>
         <p style={{ fontSize: 12.5, color: '#71717a', lineHeight: 1.55, marginTop: 6, maxWidth: 260 }}>
           {readOnly
-            ? `Nothing to show yet — this fills in once ${operatorLabel} texts Caye's back-office number.`
-            : "This is the same agent that runs your back office over WhatsApp. Send a message below to get going."}
+            ? `Nothing to show yet — this fills in once ${label} texts Caye's back-office number.`
+            : "This is the same agent that runs your back office over WhatsApp. Ask her anything about the business below."}
         </p>
       </div>
     </div>
   )
 }
 
-interface Props {
+// In-flight agent turns, keyed by a caller-supplied string (thread id or
+// operator id) rather than state/ref/context. Switching Direct threads or
+// workspaces remounts this subtree, and per the note that used to live
+// here, even a layout-level context resets on that navigation — a module-
+// scope Map is the only thing that survives it, so a returning thread can
+// re-attach to its own still-running turn instead of orphaning the fetch
+// (the typing indicator disappearing was the symptom; a reply landing with
+// no listener was the actual bug). Clears on hard reload, which is fine —
+// by then the reply is already in the DB and the next mount's fetch picks
+// it up.
+const inFlightRuns = new Map<string, Promise<void>>()
+
+interface ThreadModeProps {
+  mode: 'thread'
   workspaceId: string
-  operatorId: number
-  operatorLabel: string
-  /** True for any operator other than the founder — their real replies
-   *  happen over their own WhatsApp, not this dashboard, so there's
-   *  nothing to type here; it's a monitoring view of their thread. */
-  readOnly: boolean
-  /** Set by the dashboard's "Ask Caye anything" composer (TalkToCaye) —
-   *  sent once history has loaded, then the parent is told to clear it via
-   *  onInitialMessageSent. The parent owns clearing, not this component,
-   *  so a re-render with the same string can't fire a second send. */
+  threadId: string
+  threadTitle: string | null
+  /** Sidebar (CayeDirect.tsx) wants to know when the title lands so it can
+   *  resort/relabel without a full thread-list refetch. */
+  onThreadMeta?: (meta: { title: string | null }) => void
+  /** Fired after a successful archive PATCH — parent removes it from the
+   *  active list and clears selection. Archiving doesn't delete anything;
+   *  sending a new message into an archived thread un-archives it (see
+   *  the POST handler), so this is a visibility toggle, not a destroy. */
+  onArchive?: () => void
   initialMessage?: string | null
   onInitialMessageSent?: () => void
 }
 
-// Web front end for the same back-office agent operators already text
-// over WhatsApp (lib/caye-agent, mode: 'back-office') — same
-// history (caye_operator_messages), same tools, same trust level.
-// Scoped to one operator's conversation at a time (see CayeDirect.tsx for
-// the operator switcher) so multiple people sharing a workspace's
-// back-office channel don't get merged into one confusing stream.
-export default function CayeDirectThread({ workspaceId, operatorId, operatorLabel, readOnly, initialMessage, onInitialMessageSent }: Props) {
+interface OperatorModeProps {
+  mode: 'operator'
+  workspaceId: string
+  operatorId: number
+  operatorLabel: string
+}
+
+type Props = ThreadModeProps | OperatorModeProps
+
+// Web front end for the same back-office agent (lib/caye-agent, mode:
+// 'back-office') operators already text over WhatsApp — same
+// caye_operator_messages table, same tools, same trust level.
+//
+// Two modes, one component (2026-08-13 redesign):
+//   'thread'   — a founder Caye Direct topic thread. Read/write. Backed by
+//                /api/founder/caye-direct/threads/:id.
+//   'operator' — read-only observability into one business operator's raw
+//                WhatsApp history with Caye (Max, Mrs. Max). Backed by the
+//                legacy /api/founder/caye-direct route. ALWAYS read-only —
+//                there is no write path for this mode; the founder's own
+//                authoring surface is 'thread' mode.
+export default function CayeDirectThread(props: Props) {
+  const { mode, workspaceId } = props
+  const readOnly = mode === 'operator'
+  const runKey = mode === 'thread' ? `thread:${props.threadId}` : `op:${workspaceId}:${props.operatorId}`
+  const headerLabel = mode === 'thread' ? (props.threadTitle || 'New conversation') : props.operatorLabel
+
   const [messages, setMessages] = useState<OperatorMessage[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(true)
   // Seeded from the registry rather than plain `false` so a thread that
   // remounts onto a running turn shows the typing indicator (and keeps the
   // composer disabled) from its very first render, with no flicker.
-  const [sending, setSending] = useState(() => inFlightRuns.has(runKey(workspaceId, operatorId)))
+  const [sending, setSending] = useState(() => inFlightRuns.has(runKey))
   const [showJump, setShowJump] = useState(false)
-  const [clearing, setClearing] = useState(false)
-  const [commandIndex, setCommandIndex] = useState(0)
   const [hoveredKey, setHoveredKey] = useState<string | null>(null)
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const atBottomRef = useRef(true)
-
-  // Still typing the "/command" token itself (no space yet) — filter the
-  // registry against it and show the picker while there's a match.
-  const slashQuery = input.startsWith('/') && !input.includes(' ') ? input.slice(1).toLowerCase() : null
-  const filteredCommands = slashQuery !== null
-    ? SLASH_COMMANDS.filter((c) => c.name.startsWith(slashQuery))
-    : []
-  const showCommandMenu = filteredCommands.length > 0
-  const activeCommandIndex = Math.min(commandIndex, filteredCommands.length - 1)
-
-  function selectCommand(cmd: SlashCommand) {
-    setInput(`/${cmd.name} `)
-    setCommandIndex(0)
-    textareaRef.current?.focus()
-  }
 
   async function handleCopy(key: string, text: string) {
     try {
@@ -368,18 +312,36 @@ export default function CayeDirectThread({ workspaceId, operatorId, operatorLabe
     setTimeout(() => setCopiedKey((k) => (k === key ? null : k)), 1500)
   }
 
+  async function handleArchive() {
+    if (mode !== 'thread') return
+    const { session } = await getSession()
+    if (!session) return
+    await fetch(`/api/founder/caye-direct/threads/${props.threadId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+      body: JSON.stringify({ workspaceId, status: 'archived' }),
+    })
+    props.onArchive?.()
+  }
+
   // Returns the thread rather than setting it, so callers keep control of
   // their own cancellation and loading state — the initial load wants the
   // skeleton, the re-attach below explicitly does not.
   const fetchMessages = useCallback(async (): Promise<OperatorMessage[] | null> => {
     const { session } = await getSession()
     if (!session) return null
-    const res = await fetch(`/api/founder/caye-direct?workspaceId=${workspaceId}&operatorId=${operatorId}`, {
-      headers: { Authorization: `Bearer ${session.access_token}` },
-    })
+    const url = mode === 'thread'
+      ? `/api/founder/caye-direct/threads/${props.threadId}?workspaceId=${workspaceId}`
+      : `/api/founder/caye-direct?workspaceId=${workspaceId}&operatorId=${props.operatorId}`
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${session.access_token}` } })
     const json = await res.json()
-    return res.ok ? (json.messages as OperatorMessage[]) : null
-  }, [workspaceId, operatorId])
+    if (!res.ok) return null
+    if (mode === 'thread' && json.thread) {
+      props.onThreadMeta?.({ title: json.thread.title ?? null })
+    }
+    return (json.messages as OperatorMessage[]) ?? null
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, workspaceId, mode === 'thread' ? props.threadId : props.operatorId])
 
   useEffect(() => {
     let cancelled = false
@@ -400,7 +362,7 @@ export default function CayeDirectThread({ workspaceId, operatorId, operatorLabe
   // in which case that load already returned the reply and appending would
   // show it twice. Refetching is idempotent either way.
   useEffect(() => {
-    const run = inFlightRuns.get(runKey(workspaceId, operatorId))
+    const run = inFlightRuns.get(runKey)
     if (!run) return
     let cancelled = false
     run.then(async () => {
@@ -410,7 +372,8 @@ export default function CayeDirectThread({ workspaceId, operatorId, operatorLabe
       setSending(false)
     })
     return () => { cancelled = true }
-  }, [workspaceId, operatorId, fetchMessages])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runKey, fetchMessages])
 
   // Jump to the bottom instantly once history has finished loading —
   // no scroll animation on first paint.
@@ -453,29 +416,9 @@ export default function CayeDirectThread({ workspaceId, operatorId, operatorLabe
     setShowJump(false)
   }
 
-  async function handleClear() {
-    if (clearing) return
-    setClearing(true)
-    setMessages([])
-    const { session } = await getSession()
-    if (session) {
-      await fetch(`/api/founder/caye-direct?workspaceId=${workspaceId}&operatorId=${operatorId}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${session.access_token}` },
-      })
-    }
-    setClearing(false)
-  }
-
   async function send(text: string) {
     const trimmed = text.trim()
-    if (!trimmed || sending || readOnly) return
-
-    if (trimmed.toLowerCase() === '/clear') {
-      setInput('')
-      await handleClear()
-      return
-    }
+    if (!trimmed || sending || readOnly || mode !== 'thread') return
 
     setSending(true)
     setInput('')
@@ -486,21 +429,24 @@ export default function CayeDirectThread({ workspaceId, operatorId, operatorLabe
       direction: 'inbound',
       body: trimmed,
       created_at: new Date().toISOString(),
+      origin: 'dashboard',
+      operator_role: 'founder',
     }
     setMessages((prev) => [...prev, optimistic])
 
     // The whole round trip lives in a registered promise, not in this
-    // component, so switching workspaces mid-turn doesn't orphan it — a
-    // remounted thread picks it back up from inFlightRuns. Errors are
-    // swallowed rather than thrown: this promise is awaited by any number
-    // of remounts, and the operator's message is already persisted
+    // component, so switching threads/workspaces mid-turn doesn't orphan
+    // it — a remounted thread picks it back up from inFlightRuns. Errors
+    // are swallowed rather than thrown: this promise is awaited by any
+    // number of remounts, and the message is already persisted
     // server-side, so a refetch recovers the thread regardless.
-    const key = runKey(workspaceId, operatorId)
+    const key = runKey
+    const threadId = props.threadId
     const run = (async () => {
       try {
         const { session } = await getSession()
         if (!session) return
-        const res = await fetch('/api/founder/caye-direct', {
+        const res = await fetch(`/api/founder/caye-direct/threads/${threadId}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
           body: JSON.stringify({ workspaceId, message: trimmed }),
@@ -522,7 +468,13 @@ export default function CayeDirectThread({ workspaceId, operatorId, operatorLabe
         // than in send()'s finally so it fires once per turn no matter how
         // many mounts are awaiting it, and still fires if this component
         // unmounted mid-turn (the whole point of inFlightRuns).
-        if (res.ok) emitStale(workspaceId, ALL_TOPICS)
+        if (res.ok) {
+          emitStale(workspaceId, ALL_TOPICS)
+          // Title generation happens server-side after the first reply —
+          // one more fetch picks up the new title without polling.
+          const msgs = await fetchMessages()
+          if (msgs) setMessages(msgs)
+        }
       } catch {
         // Nothing to surface here — see above.
       }
@@ -544,11 +496,12 @@ export default function CayeDirectThread({ workspaceId, operatorId, operatorLabe
   // call above (sending before history loads would land the optimistic
   // bubble, then have it overwritten by the fetch that follows).
   useEffect(() => {
-    if (loading || !initialMessage) return
-    send(initialMessage)
-    onInitialMessageSent?.()
+    if (mode !== 'thread') return
+    if (loading || !props.initialMessage) return
+    send(props.initialMessage)
+    props.onInitialMessageSent?.()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading, initialMessage])
+  }, [loading, mode === 'thread' ? props.initialMessage : null])
 
   // Build render items: a date divider whenever the calendar day changes,
   // and a group position per message so consecutive messages from the
@@ -600,10 +553,22 @@ export default function CayeDirectThread({ workspaceId, operatorId, operatorLabe
       `}</style>
 
       <div style={{ padding: '14px 40px 14px 16px', display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(255,255,255,0.035)', ...GLASS }}>
-        <span style={{ fontSize: 12.5, fontWeight: 600 }}>{operatorLabel}</span>
-        <span style={{ fontSize: 11, color: '#52525b' }}>↔ Caye</span>
+        <span style={{ fontSize: 12.5, fontWeight: 600 }}>{headerLabel}</span>
+        {mode === 'operator' && <span style={{ fontSize: 11, color: '#52525b' }}>↔ Caye</span>}
         {readOnly && (
-          <div style={{ marginLeft: 'auto' }}><Pill color="#71717a" label="Read-only · replies via WhatsApp" dot={false} /></div>
+          <div style={{ marginLeft: 'auto' }}><Pill color="#71717a" label="Read only" dot={false} /></div>
+        )}
+        {mode === 'thread' && (
+          <button
+            onClick={handleArchive}
+            title="Archive — sending a new message here brings it back"
+            style={{
+              marginLeft: 'auto', border: 'none', cursor: 'pointer', background: 'transparent',
+              color: '#52525b', fontSize: 10.5, fontFamily: 'var(--font-mono)', padding: '4px 6px', borderRadius: 6,
+            }}
+          >
+            Archive
+          </button>
         )}
       </div>
 
@@ -617,7 +582,7 @@ export default function CayeDirectThread({ workspaceId, operatorId, operatorLabe
           {loading ? (
             <MessageSkeleton />
           ) : messages.length === 0 ? (
-            <EmptyState operatorLabel={operatorLabel} readOnly={readOnly} />
+            <EmptyState label={headerLabel} readOnly={readOnly} />
           ) : (
             items.map((item) => {
               if (item.kind === 'divider') return <DateDivider key={item.key} label={item.label} />
@@ -625,56 +590,72 @@ export default function CayeDirectThread({ workspaceId, operatorId, operatorLabe
               const isCaye = m.direction === 'outbound'
               const showAvatar = isCaye && (pos === 'single' || pos === 'last')
               const showMeta = pos === 'single' || pos === 'last'
+              // "Max · via WhatsApp" — only in thread mode, only for a
+              // non-founder operator's message that arrived over WhatsApp
+              // and got linked into this thread (relate_to_direct_thread).
+              // Shown once per group, not on every bubble in a run. Never
+              // shown for the founder's own dashboard-typed messages, and
+              // never in operator mode (the whole pane is already one
+              // operator's WhatsApp history — a per-bubble label would be
+              // redundant noise there).
+              const showOrigin = mode === 'thread' && !isCaye && m.origin === 'whatsapp' && m.operator_role !== 'founder' && (pos === 'first' || pos === 'single')
               return (
-                <div
-                  key={item.key}
-                  onMouseEnter={() => setHoveredKey(item.key)}
-                  onMouseLeave={() => setHoveredKey((k) => (k === item.key ? null : k))}
-                  style={{
-                    display: 'flex', alignItems: 'flex-end', gap: 8,
-                    alignSelf: isCaye ? 'flex-start' : 'flex-end',
-                    flexDirection: isCaye ? 'row' : 'row-reverse',
-                    maxWidth: '82%',
-                    marginTop: pos === 'first' || pos === 'single' ? 11 : 0,
-                    animation: 'caye-msg-in 0.28s ease-out',
-                  }}
-                >
-                  {isCaye && (showAvatar ? <CayeMark size={18} /> : <div style={{ width: 18, flexShrink: 0 }} />)}
-                  <div style={{ maxWidth: '100%' }}>
-                    {isCaye ? (
-                      // No box for Caye — her words sit in the open, so
-                      // long replies stay easy to read instead of fighting
-                      // a tinted container. Her mark (rendered alongside)
-                      // is what identifies the sender, not a rule. The
-                      // operator's own words keep the bubble, so the two
-                      // voices still read as visually distinct.
-                      <div style={{ padding: '1px 0' }}>
-                        <FormattedReplyText text={m.body} style={{ fontSize: 14, lineHeight: 1.6, color: '#f4f4f5' }} />
-                      </div>
-                    ) : (
-                      <div style={{
-                        background: 'rgba(255,255,255,0.08)',
-                        borderRadius: bubbleRadius(isCaye, pos), padding: '9px 12px',
-                      }}>
-                        <p style={{ fontSize: 13.5, lineHeight: 1.55, whiteSpace: 'pre-wrap', color: '#f4f4f5' }}>{m.body}</p>
-                      </div>
-                    )}
-                    {showMeta && (
-                      <div style={{
-                        display: 'flex', alignItems: 'center', gap: 5,
-                        fontSize: 9.5, fontFamily: 'var(--font-mono)', color: '#52525b', marginTop: 4,
-                        justifyContent: isCaye ? 'flex-start' : 'flex-end', padding: '0 2px',
-                      }}>
-                        {isCaye && <DeliveryStatusIcon status={m.wa_delivery_status ?? null} error={m.wa_delivery_error} />}
-                        {formatDistanceToNow(m.created_at)}
-                      </div>
-                    )}
-                    <CopyButton
-                      onCopy={() => handleCopy(item.key, m.body)}
-                      active={hoveredKey === item.key}
-                      copied={copiedKey === item.key}
-                      align={isCaye ? 'flex-start' : 'flex-end'}
-                    />
+                <div key={item.key} style={{ display: 'flex', flexDirection: 'column', alignSelf: isCaye ? 'flex-start' : 'flex-end', maxWidth: '82%' }}>
+                  {showOrigin && (
+                    <div style={{
+                      fontSize: 9.5, fontFamily: 'var(--font-mono)', color: '#71717a',
+                      textAlign: 'right', marginBottom: 3, marginTop: pos === 'first' || pos === 'single' ? 11 : 0,
+                    }}>
+                      {m.operator_name || 'Operator'} · via WhatsApp
+                    </div>
+                  )}
+                  <div
+                    onMouseEnter={() => setHoveredKey(item.key)}
+                    onMouseLeave={() => setHoveredKey((k) => (k === item.key ? null : k))}
+                    style={{
+                      display: 'flex', alignItems: 'flex-end', gap: 8,
+                      flexDirection: isCaye ? 'row' : 'row-reverse',
+                      marginTop: !showOrigin && (pos === 'first' || pos === 'single') ? 11 : 0,
+                      animation: 'caye-msg-in 0.28s ease-out',
+                    }}
+                  >
+                    {isCaye && (showAvatar ? <CayeMark size={18} /> : <div style={{ width: 18, flexShrink: 0 }} />)}
+                    <div style={{ maxWidth: '100%' }}>
+                      {isCaye ? (
+                        // No box for Caye — her words sit in the open, so
+                        // long replies stay easy to read instead of fighting
+                        // a tinted container. Her mark (rendered alongside)
+                        // is what identifies the sender, not a rule. The
+                        // operator's own words keep the bubble, so the two
+                        // voices still read as visually distinct.
+                        <div style={{ padding: '1px 0' }}>
+                          <FormattedReplyText text={m.body} style={{ fontSize: 14, lineHeight: 1.6, color: '#f4f4f5' }} />
+                        </div>
+                      ) : (
+                        <div style={{
+                          background: 'rgba(255,255,255,0.08)',
+                          borderRadius: bubbleRadius(isCaye, pos), padding: '9px 12px',
+                        }}>
+                          <p style={{ fontSize: 13.5, lineHeight: 1.55, whiteSpace: 'pre-wrap', color: '#f4f4f5' }}>{m.body}</p>
+                        </div>
+                      )}
+                      {showMeta && (
+                        <div style={{
+                          display: 'flex', alignItems: 'center', gap: 5,
+                          fontSize: 9.5, fontFamily: 'var(--font-mono)', color: '#52525b', marginTop: 4,
+                          justifyContent: isCaye ? 'flex-start' : 'flex-end', padding: '0 2px',
+                        }}>
+                          {isCaye && <DeliveryStatusIcon status={m.wa_delivery_status ?? null} error={m.wa_delivery_error} />}
+                          {formatDistanceToNow(m.created_at)}
+                        </div>
+                      )}
+                      <CopyButton
+                        onCopy={() => handleCopy(item.key, m.body)}
+                        active={hoveredKey === item.key}
+                        copied={copiedKey === item.key}
+                        align={isCaye ? 'flex-start' : 'flex-end'}
+                      />
+                    </div>
                   </div>
                 </div>
               )
@@ -705,18 +686,10 @@ export default function CayeDirectThread({ workspaceId, operatorId, operatorLabe
 
       {readOnly ? (
         <div style={{ padding: '12px 16px', fontSize: 11.5, color: '#52525b', textAlign: 'center', background: 'rgba(255,255,255,0.035)', ...GLASS }}>
-          {operatorLabel} texts Caye directly from their own WhatsApp — you can watch here, not send as them.
+          {headerLabel} texts Caye directly from their own WhatsApp — you can watch here, not send as them.
         </div>
       ) : (
         <div style={{ padding: 14, background: 'rgba(255,255,255,0.035)', position: 'relative', ...GLASS }}>
-          {showCommandMenu && (
-            <CommandMenu
-              commands={filteredCommands}
-              activeIndex={activeCommandIndex}
-              onHover={setCommandIndex}
-              onSelect={selectCommand}
-            />
-          )}
           <form onSubmit={(e) => { e.preventDefault(); send(input) }}>
             <div style={{
               display: 'flex', alignItems: 'flex-end', gap: 8,
@@ -726,17 +699,11 @@ export default function CayeDirectThread({ workspaceId, operatorId, operatorLabe
               <textarea
                 ref={textareaRef}
                 value={input}
-                onChange={(e) => { setInput(e.target.value); setCommandIndex(0) }}
+                onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => {
-                  if (showCommandMenu) {
-                    if (e.key === 'ArrowDown') { e.preventDefault(); setCommandIndex((i) => Math.min(i + 1, filteredCommands.length - 1)); return }
-                    if (e.key === 'ArrowUp') { e.preventDefault(); setCommandIndex((i) => Math.max(i - 1, 0)); return }
-                    if (e.key === 'Tab' || e.key === 'Enter') { e.preventDefault(); selectCommand(filteredCommands[activeCommandIndex]); return }
-                    if (e.key === 'Escape') { e.preventDefault(); setInput(''); return }
-                  }
                   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(input) }
                 }}
-                placeholder="Direct command to Caye…"
+                placeholder="Ask Caye anything…"
                 disabled={sending}
                 rows={1}
                 className="caye-direct-textarea"

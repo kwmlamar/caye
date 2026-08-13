@@ -74,6 +74,26 @@ export function visibleBody(body: string): string {
 }
 
 /**
+ * Collapse immediate repeats (same direction + identical body back to
+ * back) before rendering. Fixes duplicate-insert bugs upstream (e.g. two
+ * racing cron runs writing the same closing note twice — see
+ * decisions-log.md 2026-07-24) showing up as repeated bubbles, without
+ * touching the underlying rows or the agent's history replay off this
+ * same table. Only merges adjacent matches, so two genuinely separate
+ * "yes" replies on different days won't get eaten. Shared by the
+ * operator-scoped route and the thread-scoped Direct routes.
+ */
+export function dedupeConsecutive<T extends { direction: string; body: string }>(rows: T[]): T[] {
+  const out: T[] = []
+  for (const row of rows) {
+    const prev = out[out.length - 1]
+    if (prev && prev.direction === row.direction && prev.body === row.body) continue
+    out.push(row)
+  }
+  return out
+}
+
+/**
  * Persists every turn produced during a cayeAgent tool loop so the next
  * sliding-window load reconstructs the full Claude history. direction
  * maps from the MessageParam role: assistant→outbound, user→inbound.
@@ -95,6 +115,14 @@ export function visibleBody(body: string): string {
  * finalSendResult; ignored if both are passed. Renders in Caye Direct as an
  * explicit "not sent" warning rather than no icon, and the reason string
  * becomes the tooltip. See 20260805_operator_messages_not_sent_status.sql.
+ *
+ * origin distinguishes a dashboard-typed turn (Caye Direct) from a real
+ * WhatsApp turn — defaults to 'whatsapp' so the two existing callers
+ * (the operator webhook) keep their behavior unchanged; the Direct routes
+ * pass 'dashboard' explicitly. See 20260813_caye_direct_threads.sql.
+ *
+ * Returns the inserted rows' ids in turn order, so a thread-aware caller
+ * can link them into caye_direct_thread_messages without a second query.
  */
 export async function persistAgentTurns(
   supabase: ReturnType<typeof createServiceClient>,
@@ -102,9 +130,11 @@ export async function persistAgentTurns(
   turns: Anthropic.MessageParam[],
   operator: OperatorIdentity | null,
   finalSendResult?: SendResult,
-  notSentReason?: string
-): Promise<void> {
+  notSentReason?: string,
+  origin: 'whatsapp' | 'dashboard' = 'whatsapp'
+): Promise<{ id: string }[]> {
   const lastAssistantIndex = turns.map((t) => t.role).lastIndexOf('assistant')
+  const inserted: { id: string }[] = []
   for (let i = 0; i < turns.length; i++) {
     const turn = turns[i]
     const direction = turn.role === 'assistant' ? 'outbound' : 'inbound'
@@ -115,16 +145,23 @@ export async function persistAgentTurns(
         : notSentReason && isLastAssistant
           ? { wa_message_id: null, wa_delivery_status: 'not_sent' as const, wa_delivery_error: notSentReason }
           : { wa_message_id: null, wa_delivery_status: null, wa_delivery_error: null }
-    await supabase.from('caye_operator_messages').insert({
-      workspace_id: workspaceId,
-      direction,
-      ...delivery,
-      body: summarizeTurnBody(turn),
-      intent: null,
-      claude_format: turn,
-      operator_allowlist_id: operator?.id ?? null,
-      operator_name: operator?.name ?? null,
-      operator_role: operator?.role ?? null,
-    })
+    const { data, error } = await supabase
+      .from('caye_operator_messages')
+      .insert({
+        workspace_id: workspaceId,
+        direction,
+        ...delivery,
+        body: summarizeTurnBody(turn),
+        intent: null,
+        claude_format: turn,
+        operator_allowlist_id: operator?.id ?? null,
+        operator_name: operator?.name ?? null,
+        operator_role: operator?.role ?? null,
+        origin,
+      })
+      .select('id')
+      .single()
+    if (!error && data) inserted.push({ id: data.id as string })
   }
+  return inserted
 }

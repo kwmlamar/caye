@@ -35,6 +35,7 @@ import { isWhatsAppWindowOpen } from '@/lib/whatsapp/window'
 import { loadScheduleConfig, inQuietHours, type WorkspaceScheduleConfig } from '@/lib/whatsapp/schedule'
 import { resolveOperatorByPhone } from '@/lib/operator-identity'
 import { persistAgentTurns } from '@/lib/caye-operator-messages'
+import { linkInsertedMessagesToThreads } from '@/lib/caye-direct-threads'
 import { recordCronRun } from '@/lib/cron-run-log'
 import {
   QUIET_SENTINEL,
@@ -199,12 +200,13 @@ async function processWorkspace(
     // log-only row — no delivery status, no send, no ping, no alert. A
     // quiet round is a non-event, and every downstream noise source below
     // exists to surface findings, not to announce that there weren't any.
-    await persistAgentTurns(
+    const insertedQuiet = await persistAgentTurns(
       supabase,
       row.workspace_id,
       stripQuietSentinelFromTurns(agentResult.newTurns),
       operator
     )
+    await linkInsertedMessagesToThreads(supabase, insertedQuiet.map((r) => r.id), agentResult.linkedThreadIds)
     return { status: 'ok', detail: 'nothing to report' }
   }
 
@@ -225,7 +227,8 @@ async function processWorkspace(
     // the status webhooks call alertFounderOfDeliveryFailure themselves
     // ('opportunity_scan' is in OPERATOR_LOGGABLE_KINDS).
     const notSentReason = `Not sent — ${row.operator_whatsapp_number}'s 24h WhatsApp window is closed`
-    await persistAgentTurns(supabase, row.workspace_id, agentResult.newTurns, operator, undefined, notSentReason)
+    const insertedClosed = await persistAgentTurns(supabase, row.workspace_id, agentResult.newTurns, operator, undefined, notSentReason)
+    await linkInsertedMessagesToThreads(supabase, insertedClosed.map((r) => r.id), agentResult.linkedThreadIds)
     // Queue a short template-based "something's waiting" ping through the
     // normal outbound pipeline — inherits retries/template fallback/delivery
     // correlation for free. Never carries the real analysis (Meta blocks
@@ -256,7 +259,8 @@ async function processWorkspace(
     console.error(`[opportunity-scan] send failed for ${row.workspace_id}:`, sendResult.error)
   }
 
-  await persistAgentTurns(supabase, row.workspace_id, agentResult.newTurns, operator, sendResult)
+  const insertedSent = await persistAgentTurns(supabase, row.workspace_id, agentResult.newTurns, operator, sendResult)
+  await linkInsertedMessagesToThreads(supabase, insertedSent.map((r) => r.id), agentResult.linkedThreadIds)
 
   return sendResult.status === 'failed'
     ? { status: 'send_failed', detail: sendResult.error }

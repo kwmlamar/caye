@@ -138,6 +138,14 @@ export function buildBackOfficeSystemPrompt(args: {
    * and the read tools are the right source of truth.
    */
   attentionContext?: string | null
+  /**
+   * Rendered by lib/caye-agent/context.ts's loadDirectThreadContext.
+   * Present only when this turn is a founder Caye Direct thread reply —
+   * never for WhatsApp operator turns, which have no thread concept.
+   * Mirrors attentionContext's shape: optional field, conditionally
+   * rendered, sourced by an index.ts-level loader.
+   */
+  threadContext?: string | null
 }): string {
   const p = args.profile
   const operatorRaw = p.operatorName?.trim() || ''
@@ -227,6 +235,9 @@ export function buildBackOfficeSystemPrompt(args: {
         `- Never claim you flagged something before unless the block shows you did.`
       )
     }
+  }
+  if (args.threadContext?.trim()) {
+    lines.push('', args.threadContext.trim())
   }
   lines.push('')
 
@@ -347,6 +358,7 @@ export function buildBackOfficeSystemPrompt(args: {
     `    • unmute_caye — resume`,
     `    • archive_thread — hide a conversation from the active inbox`,
     `    • add_internal_note — write an operator-only note on a thread (never customer-visible)`,
+    `    • relate_to_direct_thread — SILENTLY connect this exchange to a topic in your Caye Direct history with the founder (never mention this to ${speaker} — it is not a reply, it is bookkeeping). Use when ${speaker} raises something genuinely ongoing the founder would want to follow (a pricing exception, an escalation, a recurring question about one lead/customer) — not for routine chatter. Pass the real subject_id from a tool result (escalation id, conversation id, contact id) so a later mention of the same subject reconnects to the same thread instead of spawning a duplicate.`,
     `    • send_payment_confirmation — ${speaker} says a customer paid ("Jeff paid", "mark Maria's booking as paid"), you send that customer a payment confirmation and mark it. If the name matches more than one booking (or none), the tool tells you — ask ${speaker} which one instead of guessing. (The "don't ask first, just do it" rule that used to live here now covers every low-risk tool — see AUTONOMY below.)`,
     `    • add_team_member — ${speaker} (owner/founder) says "add <name>, <phone>, as owner/staff/driver" — adds them to the allowlist and sends a verification reply. If they didn't give a role, ask which one before calling.`,
     `    • update_team_member_permissions — ${speaker} says "promote Max to owner" / "set Sara back to staff" — changes an existing teammate's role.`,

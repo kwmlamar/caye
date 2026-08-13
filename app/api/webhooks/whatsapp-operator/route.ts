@@ -41,6 +41,7 @@ import { emailFallbackForFailedPing } from '@/lib/whatsapp/email-fallback'
 import { OPERATOR_LOGGABLE_KINDS, EMAIL_FALLBACK_KINDS, UNREACHABLE_STREAK_THRESHOLD } from '@/app/api/caye/outbound-worker/route'
 import { cayeAgent } from '@/lib/caye-agent'
 import { persistAgentTurns } from '@/lib/caye-operator-messages'
+import { linkInsertedMessagesToThreads } from '@/lib/caye-direct-threads'
 import {
   extractSignupCode,
   tryAutoProvisionOwner,
@@ -1023,7 +1024,8 @@ async function handleOneInbound(
           )
         }
       }
-      await persistAgentTurns(supabase, workspaceId, agentResult.newTurns, operator, emptyReplySendResult)
+      const insertedEmpty = await persistAgentTurns(supabase, workspaceId, agentResult.newTurns, operator, emptyReplySendResult)
+      await linkInsertedMessagesToThreads(supabase, insertedEmpty.map((r) => r.id), agentResult.linkedThreadIds)
       return
     }
 
@@ -1058,7 +1060,8 @@ async function handleOneInbound(
     // the web-based Caye Direct route (app/api/founder/caye-direct) so
     // both persist identically — that route never sends over WhatsApp, so
     // it always calls this with no finalSendResult.
-    await persistAgentTurns(supabase, workspaceId, agentResult.newTurns, operator, backOfficeSendResult)
+    const insertedBackOffice = await persistAgentTurns(supabase, workspaceId, agentResult.newTurns, operator, backOfficeSendResult)
+    await linkInsertedMessagesToThreads(supabase, insertedBackOffice.map((r) => r.id), agentResult.linkedThreadIds)
   } catch (err) {
     console.error(
       `[whatsapp-operator] back-office agent failed for ${workspaceId}:`,
@@ -1229,7 +1232,8 @@ async function handleImageInbound(
       console.error(`[whatsapp-operator] Meta send failed (image) for ${workspaceId}:`, sendResult.error)
     }
 
-    await persistAgentTurns(supabase, workspaceId, agentResult.newTurns, operator, sendResult)
+    const insertedImage = await persistAgentTurns(supabase, workspaceId, agentResult.newTurns, operator, sendResult)
+    await linkInsertedMessagesToThreads(supabase, insertedImage.map((r) => r.id), agentResult.linkedThreadIds)
   } catch (err) {
     console.error(`[whatsapp-operator] back-office agent failed (image) for ${workspaceId}:`, err)
     await sendFreeFormWhatsApp(

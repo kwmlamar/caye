@@ -5,7 +5,7 @@ import { createServiceClient } from '@/lib/supabase-server'
 import type { VoiceProfile } from '@/lib/voice-profile'
 import { loadAttentionDelta, renderAttentionContext } from '@/lib/owner-attention'
 import { syncOwnerAttention } from '@/lib/owner-attention-sync'
-import { loadOperatorContext } from './context'
+import { loadOperatorContext, loadDirectThreadContext } from './context'
 import { buildBackOfficeSystemPrompt } from './modes/back-office'
 import { buildDriverSystemPrompt } from './modes/driver'
 import { buildAdminShellSystemPrompt } from './modes/admin-shell'
@@ -82,6 +82,17 @@ export interface CayeAgentInput {
    * high-risk action. Undefined (real chat) everywhere else.
    */
   origin?: 'chat' | 'scan'
+  /**
+   * Set when this back-office turn is a founder Caye Direct thread reply
+   * (2026-08-13) — routes context loading through loadDirectThreadContext
+   * (messages linked into this thread) instead of loadOperatorContext (the
+   * operator's global sliding window), and renders the thread's
+   * title/summary/linked-entities into the prompt. Undefined for every
+   * WhatsApp operator turn and for a founder message sent before any
+   * thread exists — those keep using the operator window exactly as
+   * before. Back-office mode only; other modes ignore this field.
+   */
+  threadId?: string | null
 }
 
 export interface CayeAgentResult {
@@ -95,6 +106,16 @@ export interface CayeAgentResult {
    * load reconstructs the full Claude history.
    */
   newTurns: Anthropic.MessageParam[]
+  /**
+   * Caye Direct thread ids the relate_to_direct_thread tool asked to be
+   * linked to this exchange (2026-08-13), deduped. Empty on every turn
+   * that didn't call the tool — which is most WhatsApp turns, by design.
+   * The caller links each newly-persisted turn (from persistAgentTurns'
+   * return value) into every thread listed here via
+   * lib/caye-direct-threads.ts's linkMessageToThread, since the turns
+   * don't have row ids yet at the point the tool ran.
+   */
+  linkedThreadIds: string[]
 }
 
 /**
@@ -218,6 +239,12 @@ export async function cayeAgent(input: CayeAgentInput): Promise<CayeAgentResult>
     businessHoursDisplay = briefAvailability
   }
 
+  // Thread-scoped context replaces the operator sliding window only when
+  // this is a founder Direct thread turn — see CayeAgentInput.threadId.
+  const threadCtx = input.threadId
+    ? await loadDirectThreadContext(input.workspaceId, input.threadId)
+    : null
+
   const systemPrompt = buildBackOfficeSystemPrompt({
     profile: {
       operatorName: (customer?.full_name as string | null) ?? null,
@@ -249,9 +276,12 @@ export async function cayeAgent(input: CayeAgentInput): Promise<CayeAgentResult>
       input.origin === 'scan'
         ? renderAttentionContext(await reconciledAttention(input.workspaceId))
         : null,
+    threadContext: threadCtx?.promptBlock ?? null,
   })
 
-  const history = await loadOperatorContext(input.workspaceId, input.operatorId)
+  const history = threadCtx
+    ? threadCtx.history
+    : await loadOperatorContext(input.workspaceId, input.operatorId)
   const currentUserTurn: Anthropic.MessageParam = {
     role: 'user',
     content: input.userMessage,
@@ -260,6 +290,7 @@ export async function cayeAgent(input: CayeAgentInput): Promise<CayeAgentResult>
 
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
+  const directThreadLinks: string[] = []
   const { replyText, newTurns } = await runToolLoop({
     client,
     model: MODEL,
@@ -272,11 +303,12 @@ export async function cayeAgent(input: CayeAgentInput): Promise<CayeAgentResult>
       operatorId: input.operatorId,
       requestId: randomUUID(),
       origin: input.origin,
+      directThreadLinks,
     },
     mode: 'back-office',
   })
 
-  return { replyText, newTurns }
+  return { replyText, newTurns, linkedThreadIds: [...new Set(directThreadLinks)] }
 }
 
 /**
@@ -306,7 +338,7 @@ async function runDriverAgent(input: CayeAgentInput): Promise<CayeAgentResult> {
 
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
-  return runToolLoop({
+  const { replyText, newTurns } = await runToolLoop({
     client,
     model: MODEL,
     maxTokens: MAX_OUTPUT_TOKENS,
@@ -321,6 +353,7 @@ async function runDriverAgent(input: CayeAgentInput): Promise<CayeAgentResult> {
     },
     mode: 'driver',
   })
+  return { replyText, newTurns, linkedThreadIds: [] }
 }
 
 /**
@@ -342,7 +375,7 @@ async function runAdminShellAgent(input: CayeAgentInput): Promise<CayeAgentResul
 
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
-  return runToolLoop({
+  const { replyText, newTurns } = await runToolLoop({
     client,
     model: MODEL,
     maxTokens: MAX_OUTPUT_TOKENS,
@@ -356,6 +389,7 @@ async function runAdminShellAgent(input: CayeAgentInput): Promise<CayeAgentResul
     },
     mode: 'admin-shell',
   })
+  return { replyText, newTurns, linkedThreadIds: [] }
 }
 
 export { loadOperatorContext } from './context'
