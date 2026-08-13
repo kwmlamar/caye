@@ -47,16 +47,19 @@ export function glass(alpha = 0.04): CSSProperties {
 
 /** Popovers, dropdowns, menus — floating surfaces that overlay arbitrary
  *  page content (including large bold text) and MUST stay legible no
- *  matter what's behind them. Deliberately no backdrop-filter: at 97%
- *  background opacity nothing behind it shows through anyway, and
- *  Chromium/Brave can paint a stray blurred rectangle from the filter's
- *  sampling padding when it's combined with border-radius + a nearby
- *  sibling that also blurs (the icon rail) — that's what the "ghost box"
- *  in the rail was. A plain opaque panel has no such artifact and reads
- *  identically. */
+ *  matter what's behind them. Deliberately no backdrop-filter of its own.
+ *  `isolation: isolate` is load-bearing, not decorative: this panel is
+ *  typically a child of something that DOES have backdrop-filter (the
+ *  header's glass treatment) or sits near a sibling that does (the icon
+ *  rail), and nested/adjacent backdrop-filter contexts can bleed through
+ *  an "opaque" child in Chromium/Brave — confirmed live: the workspace
+ *  switcher popover showed conversation-list text through it despite a
+ *  97%-opaque background. Isolation forces this panel into its own
+ *  stacking context so it can't inherit any ancestor's blur compositing. */
 export function popoverSurface(): CSSProperties {
   return {
-    background: 'rgba(20,20,24,0.97)',
+    background: 'rgba(15,15,18,0.99)',
+    isolation: 'isolate',
   }
 }
 
