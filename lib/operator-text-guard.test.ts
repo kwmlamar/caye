@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 
 vi.mock('server-only', () => ({}))
 
-import { detectInternalLeak, stripToolMarkers, mediaPlaceholder } from './operator-text-guard'
+import { detectInternalLeak, founderBriefingLeak, stripToolMarkers, mediaPlaceholder } from './operator-text-guard'
 import { detectForcedEscalation } from './forced-escalation'
 import { QUIET_SENTINEL } from './quiet-scan'
 
@@ -125,6 +125,45 @@ describe('detectInternalLeak', () => {
     // shipping "NOTHING_TO_REPORT" to a phone. It leaked once, 2026-08-08.
     expect(detectInternalLeak('NOTHING_TO_REPORT — quiet round.')).toMatch(/quiet-scan sentinel/)
     expect(detectInternalLeak(QUIET_SENTINEL)).toMatch(/quiet-scan sentinel/)
+  })
+})
+
+// The exact jargon that reached FounderHome's "Needs You" card live
+// (2026-08-11/12) — the escalate_to_team tool path passes internal_context
+// straight through from whatever the model generated, so a model narrating
+// its own tool calls reaches the dashboard verbatim unless something catches
+// it. Kept as hand-written fixtures, same reasoning as the forced-escalation
+// ones above.
+describe('founderBriefingLeak', () => {
+  it('flags a bare snake_case tool/reason token in otherwise plain prose', () => {
+    expect(founderBriefingLeak('lookup_price returned group_size_below_minimum for the golf cart tour.')).not.toBeNull()
+    expect(founderBriefingLeak("check_availability shows the slot is open, but I wasn't sure.")).not.toBeNull()
+  })
+
+  it('flags self-rated confidence language', () => {
+    expect(
+      founderBriefingLeak('Caye self-rated confidence=medium on her reply, so it needs a check.')
+    ).toMatch(/confidence-model language/)
+  })
+
+  it('flags an internal spec/layer reference', () => {
+    expect(founderBriefingLeak('Per the Layer 2 spec, drafts ship even at medium confidence.')).toMatch(/spec reference/)
+  })
+
+  it('still catches everything detectInternalLeak catches', () => {
+    expect(founderBriefingLeak('[operator_reminder]')).not.toBeNull()
+  })
+
+  it('passes clean, plain-English escalation notes', () => {
+    expect(
+      founderBriefingLeak(
+        "Emily wants to book the Guided Golf Cart Tour for 3 people, but that's below the normal group " +
+        "minimum. Can I offer her a private rate, or would you rather she join a bigger group?"
+      )
+    ).toBeNull()
+    expect(
+      founderBriefingLeak("I answered her, but I wasn't fully sure of what I said. Worth a read in case it needs correcting.")
+    ).toBeNull()
   })
 })
 

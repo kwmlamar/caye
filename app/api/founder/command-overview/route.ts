@@ -101,6 +101,66 @@ export async function GET(req: NextRequest) {
   if (llmErr) return NextResponse.json({ error: llmErr.message }, { status: 500 })
   if (bookingsErr) return NextResponse.json({ error: bookingsErr.message }, { status: 500 })
 
+  // Enrichment for the "Needs You" briefing on FounderHome: a real customer
+  // name and, where one exists, a real booking (service/date/party size) to
+  // put next to the escalation — instead of AttentionCard trying to parse
+  // "3 guests · Aug 20" out of internal_context free text. Both queries are
+  // scoped to open escalations' conversation_ids only, not every escalation
+  // in the 20-row window, and skipped entirely when there are none.
+  const stillOpenIds = Array.from(
+    new Set(
+      (escalations ?? [])
+        .filter((e) => !e.owner_responded_at && !e.expired_at && e.conversation_id)
+        .map((e) => e.conversation_id as string)
+    )
+  )
+
+  let customerNameByConversation = new Map<string, string>()
+  let bookingByConversation = new Map<string, { service_name: string | null; booking_date: string; number_of_people: number }>()
+
+  if (stillOpenIds.length > 0) {
+    const [{ data: convRows }, { data: escBookingRows }] = await Promise.all([
+      supabase
+        .from('unified_conversations')
+        .select('id, customer_name')
+        .in('id', stillOpenIds),
+      supabase
+        .from('bookings')
+        .select('conversation_id, booking_date, number_of_people, status, service:booking_services(name)')
+        .in('conversation_id', stillOpenIds)
+        .neq('status', 'cancelled')
+        .order('booking_date', { ascending: true }),
+    ])
+
+    customerNameByConversation = new Map(
+      (convRows ?? [])
+        .filter((c) => c.customer_name)
+        .map((c) => [c.id as string, c.customer_name as string])
+    )
+
+    // First (soonest) non-cancelled booking per conversation — a customer
+    // can have more than one row, but the briefing only needs one.
+    for (const b of (escBookingRows ?? []) as unknown as {
+      conversation_id: string | null
+      booking_date: string
+      number_of_people: number
+      service: { name: string }[] | { name: string } | null
+    }[]) {
+      if (!b.conversation_id || bookingByConversation.has(b.conversation_id)) continue
+      bookingByConversation.set(b.conversation_id, {
+        service_name: Array.isArray(b.service) ? (b.service[0]?.name ?? null) : (b.service?.name ?? null),
+        booking_date: b.booking_date,
+        number_of_people: b.number_of_people,
+      })
+    }
+  }
+
+  const escalationsEnriched = (escalations ?? []).map((e) => ({
+    ...e,
+    customer_name: e.conversation_id ? customerNameByConversation.get(e.conversation_id) ?? null : null,
+    booking_meta: e.conversation_id ? bookingByConversation.get(e.conversation_id) ?? null : null,
+  }))
+
   // Bucket cost by day (UTC date) for a 7-point trend, oldest first.
   const dayBuckets = new Map<string, number>()
   for (let i = 6; i >= 0; i--) {
@@ -208,7 +268,7 @@ export async function GET(req: NextRequest) {
   const cayeActive = !isMuted
 
   return NextResponse.json({
-    escalations: escalations ?? [],
+    escalations: escalationsEnriched,
     pending_escalation_count: pendingEscalations,
     daily_cost: dailyCost,
     total_cost_usd: Number(totalCost.toFixed(4)),

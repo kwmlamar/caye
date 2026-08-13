@@ -138,6 +138,36 @@ export function detectInternalLeak(text: string): string | null {
 }
 
 /**
+ * Stricter sibling of detectInternalLeak for FounderHome's "Needs You" card
+ * (AttentionCard.tsx) — the one surface where an escalation's internal_context
+ * (mostly plain-English per evidence.ts's ownerNoteFor, but for the
+ * escalate_to_team tool path it's model-generated text passed straight
+ * through, see caye-reply.ts) renders on a dashboard the founder reads in
+ * five seconds, not in a WhatsApp thread she can scroll past.
+ *
+ * detectInternalLeak's patterns are deliberately narrow (exact machine
+ * strings) to stay false-positive-free across every operator-facing surface.
+ * This one adds two broader, still-low-risk signals that are specific to a
+ * model narrating its own tool calls — which is what actually reached this
+ * card live (2026-08-11/12): a bare snake_case token ("lookup_price",
+ * "group_size_below_minimum" — ordinary English essentially never contains
+ * an underscore) and self-referential confidence/spec language
+ * ("self-rated confidence", "Layer 2 spec"). AttentionCard falls back to a
+ * category-based generic line when this returns non-null, rather than
+ * rendering the raw text.
+ */
+export function founderBriefingLeak(text: string): string | null {
+  const base = detectInternalLeak(text)
+  if (base) return base
+
+  if (/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/.test(text)) return 'contains internal identifier (snake_case)'
+  if (/\bself-rated confidence\b/i.test(text)) return 'contains confidence-model language'
+  if (/\bLayer\s*\d+\b/i.test(text)) return 'contains internal spec reference'
+
+  return null
+}
+
+/**
  * Remove tool markers from a rendered turn body, leaving the human-readable
  * text. Returns an empty string when the body was nothing but markers, which
  * is how callers detect "this turn has nothing to show a human."

@@ -18,6 +18,13 @@ export interface Escalation {
   // "timed out" apart (owner_responded_at null alone isn't enough — an
   // expired escalation is also unanswered but no longer actionable).
   expired_at: string | null
+  // Real enrichment the route joins in for still-open escalations only
+  // (see command-overview/route.ts) — a customer name off
+  // unified_conversations, and, where one exists, the nearest non-cancelled
+  // booking. Both null when there's nothing to join, e.g. a resolved/expired
+  // row, or a conversation with no linked booking.
+  customer_name: string | null
+  booking_meta: { service_name: string | null; booking_date: string; number_of_people: number } | null
 }
 
 export interface Booking {
