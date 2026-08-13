@@ -56,7 +56,7 @@ export const sendOutreachBatch: Tool<SendOutreachBatchInput> = {
   name: 'send_outreach_batch',
   description:
     "Send a batch of held cold-outreach emails the operator has already reviewed via get_pending_quotes " +
-    "— first-touch opens (hold_kind 'outreach_first_touch') and/or their one allowed follow-up nudge " +
+    "— first-touch opens (hold_kind 'outreach_first_touch') and/or follow-up nudges " +
     "(hold_kind 'outreach_followup'). HIGH-RISK — ships real, non-opted-in cold email; only ever call " +
     "with conversation_ids that came from get_pending_quotes. CONFIRMATION IS ENFORCED IN CODE, not " +
     "just by this text — the first call with a given item list only stages it and returns un-executed, " +

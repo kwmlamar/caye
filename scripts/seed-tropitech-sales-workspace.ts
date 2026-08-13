@@ -51,7 +51,7 @@ const VOICE_PROFILE: VoiceProfile = {
     'want me to show you',
   ],
   greeting_style: 'First name only ("Hey [name]" or "Hey,") — never "Dear" or a formal salutation.',
-  signoff_style: 'Just "Lamar" — no "Best,", "Warm regards,", or a company signature block on first-touch/cold messages.',
+  signoff_style: 'Just "Lamar" — never a company name on a second line, on any prospect-facing message.',
   formality_level: 'casual',
   tone_notes:
     'Voice-note friendly per outreach-script.md — short, conversational, like texting someone, not ' +
@@ -69,13 +69,31 @@ const VOICE_PROFILE: VoiceProfile = {
   standard_opener: null,
 }
 
-const SYSTEM_PROMPT = `You are drafting reply suggestions for Lamar, founder of TropiTech Solutions — a Bahamian tech company. This inbox (hello@getcaye.com) receives replies to TropiTech's own cold outreach campaign pitching Caye, an AI receptionist product, to Bahamian tour operators, restaurants, salons, and other owner-operated SMBs.
+/**
+ * Scope note (2026-08-12): this prompt describes VOICE and CONTEXT only.
+ *
+ * It deliberately no longer contains authority rules ("Lamar reviews every
+ * draft"), pricing policy ("the founder decides when to bring up price"),
+ * or cadence. All three were false at the time they were being fed to a
+ * model that was in fact sending autonomously, and prose in a prompt cannot
+ * enforce a rule anyway. Policy now lives in lib/sales/{authority,
+ * next-action,claims,facts}.ts where it is deterministic and unit-tested,
+ * and the outbound style rules live in lib/sales/voice.ts.
+ *
+ * Anything added back here that grants or withdraws authority will be
+ * ignored by the code and will only serve to contradict it.
+ */
+const SYSTEM_PROMPT = `You are Caye, working sales for TropiTech Solutions, a Bahamian tech company founded by Lamar. This inbox (hello@getcaye.com) is your desk. It carries your own cold outreach to owner-operated small businesses, mostly Caribbean tour operators, restaurants, salons and guesthouses, and the replies that come back.
 
-Every draft you write is reviewed and sent by Lamar himself — you are never sending anything directly. Write the way he writes to prospects: direct, warm, no corporate jargon, first-name casual, short. He signs as himself ("I run TropiTech, a Bahamian tech company") — never as Caye, never revealing an AI wrote the draft. Never use em dashes — use commas or periods instead.
+You are responsible for an outcome, not a task list: get Caye in front of owners who would genuinely benefit from her, and move the interested ones toward actually trying her. Sending an email is not success. A reply is not success. Someone trying Caye and becoming a customer is success. Judge your own work against that.
 
-What Caye (the product) actually is, so you represent it accurately: a receptionist that answers a business's messages and books their customers for them, 24/7, in the owner's own voice — not a dashboard or inbox tool they have to operate themselves. Sell the outcome (stop missing bookings, get your evenings back), not a feature list. Bimini Island Tours and Karenda are the standing proof point when social proof helps. Price is $79/mo flat, no founding discount — but the founder, not you, decides when and how to bring up price or terms in any given reply.
+You write as Lamar. He signs as himself, first name only. You never sign as Caye and you never claim in writing to be a person. If a prospect asks you directly whether they are talking to a human or an AI, tell them the truth plainly and carry on. Never deny it and never dodge it. Not leading with the technology is a marketing choice; lying about what you are would destroy the exact trust this product is sold on.
 
-The demo is self-serve and this is the concrete, correct way to describe it — use these specifics, not a vague "I'd love to show you": tell them to go to https://www.meetcaye.com and hit "Try for Free." That texts them from Caye's real WhatsApp number, she asks a few quick questions about their business, no card, no signup form, takes about 5 minutes, and by the end they've seen exactly how she'd sound handling their own customers. Lead with this link whenever a reply or follow-up needs a next step or call-to-action — it's lower friction than trying to find 10 minutes with Lamar, so don't fall back to offering a live walkthrough call unless they've specifically asked for one.`
+What you are selling: Caye is a hire, not a tool. She answers a business's messages and books their customers, around the clock, in the owner's own voice, and she is not a dashboard the owner has to learn and operate. Sell what having her feels like, which is that customers get answered, leads stop disappearing, bookings stop getting forgotten, follow-ups actually happen, and the owner gets their evenings back. Describe the job, not the category, and never recite a feature list.
+
+Voice: short, direct, conversational, Bahamian business register rather than American customer service. Confident without hype. No em dashes, commas or periods instead. Never invent urgency, deadlines or scarcity.
+
+Two things you must never do. Never state anything about price, customers, capabilities or integrations that you have not been given as a verified fact, and if you do not know, say you will check rather than filling the gap. Never make a commitment that is not yours to make, including discounts, custom terms, contracts, refunds or partnerships, all of which go to Lamar.`
 
 async function main() {
   const workspaceId = process.argv[2]
@@ -101,18 +119,23 @@ async function main() {
     process.exit(1)
   }
 
-  console.log(`Configuring workspace "${workspace.business_name ?? workspace.id}" for draft-and-hold sales replies…`)
+  console.log(`Configuring workspace "${workspace.business_name ?? workspace.id}" for autonomous sales…`)
 
+  // autosend_enabled = true since 2026-08-12: Caye answers prospects who
+  // write back without a human in between. Cold OUTBOUND is gated
+  // separately by workspace_ai_config.outreach_autosend_paused, which this
+  // script deliberately does not touch — re-seeding voice config must never
+  // silently switch cold sending on.
   const { error: updateErr } = await supabase
     .from('customers')
-    .update({ workspace_kind: 'internal_sales', autosend_enabled: false })
+    .update({ workspace_kind: 'internal_sales', autosend_enabled: true })
     .eq('id', workspaceId)
 
   if (updateErr) {
     console.error('Failed to set workspace_kind/autosend_enabled:', updateErr.message)
     process.exit(1)
   }
-  console.log('  workspace_kind = internal_sales, autosend_enabled = false')
+  console.log('  workspace_kind = internal_sales, autosend_enabled = true')
 
   const { error: configErr } = await supabase
     .from('workspace_ai_config')
@@ -121,11 +144,11 @@ async function main() {
         workspace_id: workspaceId,
         system_prompt: SYSTEM_PROMPT,
         tone: 'Direct, warm, first-name casual — founder writing to a prospect, not a company writing to a customer.',
-        pricing_info: 'Not applicable — this workspace drafts sales replies, not customer bookings. Pricing terms are always deferred to the founder in the draft itself.',
+        pricing_info: 'Price facts live in lib/sales/facts.ts (SALES_FACTS) and are injected at generation time, so they can also be checked against the finished draft by lib/sales/claims.ts. Do not restate a price here; a second copy is a second thing to go stale.',
         common_questions: [],
         cancellation_policy: 'Not applicable to this workspace.',
-        escalation_rules: 'Not applicable — every draft holds for the founder regardless (autosend_enabled=false).',
-        never_say: 'Never sign as Caye. Never self-identify as AI/automated. Never commit to a price or contract term as final.',
+        escalation_rules: 'Enforced in code, not prose: lib/sales/escalation-triggers.ts matches the categories (pricing negotiation, legal, partnership, press, refunds, security, large accounts, complaints) and lib/sales/authority.ts routes them to the founder before the model is consulted.',
+        never_say: 'Never sign as Caye. Never claim in writing to be a person, but answer honestly if asked directly whether you are an AI. Never commit to a price, discount or contract term.',
         raw_onboarding_answers: [],
         updated_at: new Date().toISOString(),
       },

@@ -157,7 +157,7 @@ export async function POST(request: NextRequest) {
 
     const { data: lead } = await supabase
       .from('outreach_leads')
-      .select('business_name, demo_token, nudge_count')
+      .select('business_name, demo_token, touches_sent')
       .eq('workspace_id', workspaceId)
       .eq('lead_email', customerEmail)
       .maybeSingle()
@@ -170,14 +170,17 @@ export async function POST(request: NextRequest) {
     }
 
     const followup = await generateOutreachFollowupDraft({
-      systemPrompt,
+      // Voice only. Policy comes from lib/sales/voice.ts, not from the
+      // workspace prompt, so this manual path and the autonomous cron
+      // cannot drift into telling Caye two different things.
+      workspaceVoice: systemPrompt,
       leadName: customerName,
       businessName: lead.business_name || customerName,
       demoToken: lead.demo_token,
       // Manual "draft me something" button, not the strict autosend
-      // cadence — best-effort touch number from nudge_count so the copy
-      // ("last one" vs "checking in") is at least directionally right.
-      touchNumber: (lead.nudge_count ?? 0) >= 1 ? 3 : 2,
+      // cadence — best-effort touch number from touches actually delivered,
+      // so the copy ("last one" vs "checking in") is directionally right.
+      touchNumber: (lead.touches_sent ?? 0) >= 2 ? 3 : 2,
     })
 
     if (!followup.ok) {
