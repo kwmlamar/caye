@@ -45,15 +45,16 @@ export function glass(alpha = 0.04): CSSProperties {
 
 /** Popovers, dropdowns, menus — floating surfaces that overlay arbitrary
  *  page content (including large bold text) and MUST stay legible no
- *  matter what's behind them. A thin blur wash isn't enough contrast once
- *  what's behind it is a 34px headline, not the plain page background —
- *  this is a dark, nearly-opaque base with just enough blur/saturation
- *  left to still read as glass at the edges, not a flat card. */
+ *  matter what's behind them. Deliberately no backdrop-filter: at 97%
+ *  background opacity nothing behind it shows through anyway, and
+ *  Chromium/Brave can paint a stray blurred rectangle from the filter's
+ *  sampling padding when it's combined with border-radius + a nearby
+ *  sibling that also blurs (the icon rail) — that's what the "ghost box"
+ *  in the rail was. A plain opaque panel has no such artifact and reads
+ *  identically. */
 export function popoverSurface(): CSSProperties {
   return {
     background: 'rgba(20,20,24,0.97)',
-    backdropFilter: 'blur(20px) saturate(160%)',
-    WebkitBackdropFilter: 'blur(20px) saturate(160%)',
   }
 }
 
