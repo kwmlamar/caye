@@ -12,7 +12,7 @@ import type { CSSProperties } from 'react'
  *   environment  — near-black, nearly invisible
  *   information  — clean text, minimal chrome, separated by spacing and
  *                  tonal difference rather than borders
- *   Caye         — luminous, alive (CayeCore owns this)
+ *   Caye         — luminous, alive (CayePresence owns this)
  *   attention    — warm, selective, never alarming
  *
  * Borders are not banned — they're the wrong DEFAULT. A border earns its

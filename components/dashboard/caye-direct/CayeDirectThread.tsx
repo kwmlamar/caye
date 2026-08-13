@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { getSession } from '@/lib/supabase'
 import { formatDistanceToNow } from '@/lib/utils'
 import { CayeMark } from '@/components/brand/CayeMark'
+import { CayePresence } from '@/components/caye-presence/CayePresence'
 import { FormattedReplyText } from '@/components/ui/FormattedReplyText'
 import { Pill } from '@/components/dashboard/founder-home/console-ui'
 import { emitStale, ALL_TOPICS } from '@/lib/founder-freshness'
@@ -212,10 +213,7 @@ function MessageSkeleton() {
 function EmptyState({ label, readOnly }: { label: string; readOnly: boolean }) {
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, textAlign: 'center', padding: '0 30px' }}>
-      <div style={{ position: 'relative' }}>
-        <div aria-hidden style={{ position: 'absolute', inset: -10, borderRadius: '50%', background: 'radial-gradient(circle, rgba(78,190,206,0.18), transparent 70%)' }} />
-        <CayeMark size={40} />
-      </div>
+      <CayePresence state="idle" size="small" interactive={false} />
       <div>
         <div style={{ fontSize: 14, fontFamily: 'var(--font-display)', fontWeight: 600, color: '#f4f4f5' }}>
           {readOnly ? `No history with ${label} yet` : 'Say hello to Caye'}

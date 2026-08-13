@@ -9,9 +9,8 @@ import { useWorkspaceChannels } from '@/lib/useWorkspaceChannels'
 import { useTodayStats } from '@/lib/useTodayStats'
 import type { FounderRailId } from '@/lib/types'
 import CayeDirect from '@/components/dashboard/caye-direct/CayeDirect'
-import { type CayeState } from './CayeCore'
 import WorkspaceSwitcher from './WorkspaceSwitcher'
-import FounderBriefing from './FounderBriefing'
+import FounderBriefing, { type CayeActivityState } from './FounderBriefing'
 import BusinessPulse from './BusinessPulse'
 import LiveActivity from './LiveActivity'
 import CayeLog from './CayeLog'
@@ -148,7 +147,7 @@ export default function FounderHome() {
   const { hasActivity } = useWorkspacesActivity(workspaces.map((m) => m.workspace_id), workspaceId)
   const { channels } = useWorkspaceChannels(workspaceId)
   const hasChannelError = channels ? Object.values(channels).some((c) => c?.needs_reauth === true) : false
-  const cayeState: CayeState = hasChannelError
+  const cayeState: CayeActivityState = hasChannelError
     ? 'error'
     : data && data.pending_escalation_count > 0
     ? 'attention'
@@ -244,7 +243,10 @@ export default function FounderHome() {
            DOM/for assistive tech) so a glance at a laptop or tablet still
            sees Caye's state before the paragraph. Panel grids stack. */
         @media (max-width: 1100px) {
-          .caye-hero { flex-direction: column; text-align: center; gap: 20px; }
+          /* !important: grid-template-columns is set inline on .caye-hero
+             (FounderBriefing.tsx) for the desktop two-column split, which
+             an unqualified rule here can't outrank. */
+          .caye-hero { grid-template-columns: 1fr !important; text-align: center; gap: 20px; }
           .caye-hero-orb { order: -1; }
           .caye-hero-text { align-items: center; text-align: center; }
           .caye-hero-text p { max-width: none !important; }
