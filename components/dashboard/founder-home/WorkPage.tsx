@@ -3,7 +3,7 @@
 import CommandCalendar from '@/components/dashboard/command-calendar/CommandCalendar'
 import CayeLog from './CayeLog'
 import type { CommandOverview } from '@/lib/useCommandOverview'
-import { glass, TEXT_QUIET } from './surface'
+import { glass, TEXT_QUIET } from '../surface'
 
 // What Caye is doing (Home's "Working now"), has done (the full log
 // here), and plans to do (the calendar here) — the calendar and the

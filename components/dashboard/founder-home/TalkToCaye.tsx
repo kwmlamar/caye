@@ -2,7 +2,7 @@
 
 import { useState, type KeyboardEvent } from 'react'
 import { CayeMark } from '@/components/brand/CayeMark'
-import { AQUA, TEXT, TEXT_QUIET } from './surface'
+import { AQUA, TEXT, TEXT_QUIET } from '../surface'
 
 /**
  * "Ask Caye anything…" — closer to messaging an employee than a generic

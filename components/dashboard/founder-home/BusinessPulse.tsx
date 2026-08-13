@@ -2,7 +2,7 @@
 
 import type { CommandOverview } from '@/lib/useCommandOverview'
 import type { TodayStats } from '@/lib/useTodayStats'
-import { TEXT, TEXT_QUIET } from './surface'
+import { TEXT, TEXT_QUIET } from '../surface'
 
 // Level 2: real, secondary, small. Deployment status lives in the hero
 // (it's Caye's own state, not a business metric) and "needs review" is

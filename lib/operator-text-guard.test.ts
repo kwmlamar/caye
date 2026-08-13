@@ -31,12 +31,29 @@ describe('detectInternalLeak', () => {
     expect(detectInternalLeak(LEAKED_TURN)).toMatch(/tool marker/)
   })
 
-  it('flags the forced-escalation internalContext verbatim', () => {
-    // Built through the real producer rather than a hand-copied string, so
-    // this test tracks forced-escalation.ts if its wording changes.
+  it('flags the historical forced-escalation stem if it ever reappears', () => {
+    // Hand-written fixture (not derived from the live producer) — this is
+    // the literal machine-templated string that leaked into Mrs. Max's
+    // Caye Direct thread on 2026-08-07. forced-escalation.ts was rewritten
+    // 2026-08-14 to stop producing this shape (see the Inbox-redesign
+    // pass), so the guard can no longer be exercised through the real
+    // producer — but the pattern itself must keep catching this exact
+    // shape if it's ever reintroduced anywhere else.
+    const historicalLeak =
+      'Forced escalation — b2b_partnership (inbound classifier — B2B / partnership voice). ' +
+      'Customer message excerpt: "hi". Caye did not draft a substantive reply; the customer-facing ' +
+      'send was a controlled template. Owner: review the thread and respond directly.'
+    expect(detectInternalLeak(historicalLeak)).not.toBeNull()
+  })
+
+  it('the real forced-escalation producer no longer leaks (2026-08-14 fix)', () => {
+    // Built through the real producer, now asserting the opposite of the
+    // pre-fix test above: internalContext is plain founder-readable prose
+    // (see TRIGGER_REASON / humanEscalationNote in forced-escalation.ts),
+    // so it should never trip this guard in the first place.
     const forced = detectForcedEscalation('Partnership enquiry.', 'b2b_partnership')
     expect(forced).not.toBeNull()
-    expect(detectInternalLeak(forced!.internalContext)).not.toBeNull()
+    expect(detectInternalLeak(forced!.internalContext)).toBeNull()
   })
 
   it('passes clean operator prose, including prose that mentions escalating', () => {

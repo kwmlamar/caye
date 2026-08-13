@@ -25,12 +25,13 @@ import { isFounderUserId } from '@/lib/founder'
 import { holdKindOf, isAttentionHold } from '@/lib/hold-kinds'
 
 const CONVERSATION_COLUMNS =
-  'id, channel_type, customer_name, last_message_preview, last_message_at, human_agent_enabled, human_agent_reason, metadata'
+  'id, channel_type, customer_name, customer_id, last_message_preview, last_message_at, human_agent_enabled, human_agent_reason, metadata'
 
 interface ConversationRow {
   id: string
   channel_type: string
   customer_name: string | null
+  customer_id: string | null
   last_message_preview: string | null
   last_message_at: string | null
   human_agent_enabled: boolean

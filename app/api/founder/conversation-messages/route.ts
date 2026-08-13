@@ -38,7 +38,7 @@ export async function GET(req: NextRequest) {
 
   const { data: conversation } = await supabase
     .from('unified_conversations')
-    .select('id, connected_account_id, customer_name, channel_type, connected_accounts!inner(user_id)')
+    .select('id, connected_account_id, customer_name, customer_id, channel_type, connected_accounts!inner(user_id)')
     .eq('id', conversationId)
     .single()
 
@@ -59,6 +59,7 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({
     customer_name: conversation.customer_name,
+    customer_id: conversation.customer_id,
     channel_type: conversation.channel_type,
     messages: messages ?? [],
   })

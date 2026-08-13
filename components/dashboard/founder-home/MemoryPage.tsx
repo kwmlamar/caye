@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { getSession } from '@/lib/supabase'
 import { CayeLoadingPulse } from './CayeLoadingPulse'
-import { rowDivider, TEXT_QUIET } from './surface'
+import { rowDivider, TEXT_QUIET } from '../surface'
 
 const LABEL_COLOR = TEXT_QUIET
 

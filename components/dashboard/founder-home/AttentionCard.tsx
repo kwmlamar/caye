@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import type { Escalation } from '@/lib/useCommandOverview'
-import { GOLD, TEXT } from './surface'
+import { GOLD, TEXT } from '../surface'
 
 /**
  * "Surface the decision, not merely its existence." Open caye_escalations

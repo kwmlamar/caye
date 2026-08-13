@@ -7,7 +7,7 @@ import type { CommandOverview } from '@/lib/useCommandOverview'
 import type { TodayStats } from '@/lib/useTodayStats'
 import { CayeCore, type CayeState } from './CayeCore'
 import AttentionCard from './AttentionCard'
-import { AQUA, TEXT, TEXT_MUTED, TEXT_QUIET, GRADIENT, EMERALD } from './surface'
+import { AQUA, TEXT, TEXT_MUTED, TEXT_QUIET, GRADIENT, EMERALD } from '../surface'
 
 const LABEL_COLOR = TEXT_QUIET
 

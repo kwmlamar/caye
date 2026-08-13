@@ -132,38 +132,55 @@ export function detectForcedEscalation(
   classifierCategory: InboundCategory | null
 ): ForcedEscalation | null {
   if (classifierCategory === 'complaint') {
-    return build('complaint', 'policy', 'owner', body, 'inbound classifier — complaint keywords')
+    return build('complaint', 'policy', 'owner', body)
   }
   if (classifierCategory === 'b2b_partnership') {
-    return build(
-      'b2b_partnership',
-      'sensitive',
-      'owner',
-      body,
-      'inbound classifier — B2B / partnership voice'
-    )
+    return build('b2b_partnership', 'sensitive', 'owner', body)
   }
   if (REFUND_PATTERN.test(body)) {
-    return build('refund', 'policy', 'owner', body, 'refund / money-back keyword in body')
+    return build('refund', 'policy', 'owner', body)
   }
   if (CUSTOM_REQUEST_PATTERN.test(body)) {
-    return build(
-      'custom_request',
-      'policy',
-      'owner',
-      body,
-      'custom / private / exception language in body'
-    )
+    return build('custom_request', 'policy', 'owner', body)
   }
   return null
+}
+
+// Plain-English lead sentence per trigger — no "forced escalation",
+// "inbound classifier", "controlled template". This is what a founder
+// reads in the Inbox handoff card, so it has to read like Caye
+// explaining herself, not a log line. See humanEscalationNote below for
+// how it's assembled with the rest of the note.
+const TRIGGER_REASON: Record<ForcedTrigger, string> = {
+  b2b_partnership: "This reads like a business or partnership inquiry rather than a normal customer question, so I didn't try to negotiate or answer on your behalf.",
+  complaint: "This customer sounds unhappy, so I wanted you to see it and respond personally rather than have me smooth it over.",
+  refund: "They're asking about a refund or getting money back — that's your call, not mine.",
+  custom_request: "They're asking for something custom, private, or outside our normal offering, so I didn't want to improvise on pricing or availability.",
+  standing_rule: "This matches a rule you asked me to always bring to you before responding.",
+}
+
+/**
+ * Assembles a founder-readable handoff note: why Caye stopped, what the
+ * customer actually said, and what she already did about it. Shared by
+ * every forced-escalation path (this file's four hardcoded triggers, plus
+ * lib/standing-rules.ts's owner-taught and sticky-hold variants) so the
+ * quality bar is the same regardless of which trigger fired.
+ *
+ * Deliberately not "no internal vocabulary" as an afterthought — the
+ * whole point of `reason` being an argument (not derived from `trigger`
+ * inside here) is that every call site has to supply real prose, not a
+ * label this function could accidentally leak.
+ */
+export function humanEscalationNote(reason: string, customerMessage: string): string {
+  const excerpt = customerMessage.replace(/\s+/g, ' ').trim().slice(0, 280)
+  return `${reason} They wrote: "${excerpt}". I sent a short holding reply and let them know the team would follow up, rather than answer in detail myself.`
 }
 
 function build(
   trigger: ForcedTrigger,
   category: ForcedEscalation['category'],
   routeTo: ForcedEscalation['routeTo'],
-  body: string,
-  why: string
+  body: string
 ): ForcedEscalation {
   // Distill the customer's first sentence for the ping summary — strip newlines
   // and trim so the WhatsApp template renders cleanly.
@@ -183,11 +200,7 @@ function build(
     routeTo,
     customerFacingMessage,
     pingSummary: `${PING_LABELS[trigger]} — "${customerAsk}"`,
-    internalContext:
-      `Forced escalation — ${trigger} (${why}). ` +
-      `Customer message excerpt: "${body.slice(0, 280)}". ` +
-      `Caye did not draft a substantive reply; the customer-facing send was a controlled template. ` +
-      `Owner: review the thread and respond directly.`,
+    internalContext: humanEscalationNote(TRIGGER_REASON[trigger], body),
   }
 }
 
@@ -258,11 +271,5 @@ export async function detectSubtleComplaint(
  * caller can treat them identically.
  */
 export function buildSubtleComplaintEscalation(body: string): ForcedEscalation {
-  return build(
-    'complaint',
-    'policy',
-    'owner',
-    body,
-    'hybrid sentiment cascade — Haiku flagged subtle dissatisfaction'
-  )
+  return build('complaint', 'policy', 'owner', body)
 }

@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { CayeMark } from '@/components/brand/CayeMark'
 import { Pill } from '@/components/dashboard/founder-home/console-ui'
-import { popoverSurface, AQUA, TEXT, TEXT_QUIET } from './surface'
+import { popoverSurface, AQUA, TEXT, TEXT_QUIET } from '../surface'
 import type { WorkspaceMembership } from '@/lib/workspace-context'
 import type { CustomerStatus } from '@/types/database'
 

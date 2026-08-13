@@ -1,6 +1,7 @@
 import 'server-only'
 import { createServiceClient } from './supabase-server'
 import type { ForcedEscalation } from './forced-escalation'
+import { humanEscalationNote } from './forced-escalation'
 
 /**
  * Owner-taught constraints, enforced deterministically before the front-desk
@@ -83,17 +84,17 @@ export function buildStandingRuleEscalation(
   body: string
 ): ForcedEscalation {
   const customerAsk = body.replace(/\s+/g, ' ').trim().slice(0, 100)
+  const what = rule.trigger_type === 'service_mention' ? 'mentions' : 'says'
   return {
     trigger: 'standing_rule',
     category: 'policy',
     routeTo: rule.route_to,
     customerFacingMessage: STANDING_RULE_TEMPLATE,
     pingSummary: `${rule.match_value} — "${customerAsk}"`,
-    internalContext:
-      `Forced escalation — standing rule (owner-taught: ${rule.trigger_type} "${rule.match_value}"). ` +
-      `Customer message excerpt: "${body.slice(0, 280)}". ` +
-      `Caye did not draft a substantive reply; the customer-facing send was a controlled template. ` +
-      `Owner: review the thread and respond directly.`,
+    internalContext: humanEscalationNote(
+      `You asked me to always bring you anything that ${what} "${rule.match_value}", so I held this rather than answer it myself.`,
+      body
+    ),
   }
 }
 
@@ -126,10 +127,10 @@ export function buildStickyEscalation(body: string): ForcedEscalation {
     routeTo: 'owner',
     customerFacingMessage: STANDING_RULE_TEMPLATE,
     pingSummary: `Follow-up while you decide — "${customerAsk}"`,
-    internalContext:
-      `Forced escalation — thread already has an unresolved escalation, so Caye's authority here stays ` +
-      `suspended until you respond. Customer follow-up: "${body.slice(0, 280)}". ` +
-      `Caye did not draft a substantive reply; the customer-facing send was a controlled template.`,
+    internalContext: humanEscalationNote(
+      "You already have a decision pending on this conversation, so I'm holding this new message too rather than answering on my own before you've responded to the first one.",
+      body
+    ),
   }
 }
 

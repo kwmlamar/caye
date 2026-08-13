@@ -8,6 +8,10 @@ export interface ConversationSummary {
   id: string
   channel_type: string
   customer_name: string | null
+  /** Raw address/handle (email, phone) — shown when customer_name is
+   *  null instead of a bare "Unknown", and as secondary identity in the
+   *  thread header. */
+  customer_id: string | null
   last_message_preview: string | null
   last_message_at: string
   human_agent_enabled: boolean

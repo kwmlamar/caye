@@ -2,7 +2,7 @@
 
 import { useLiveEvents } from '@/lib/useLiveEvents'
 import { clockTime, TONE_COLOR } from './event-visuals'
-import { glass, rowDivider, TEXT_QUIET, AQUA } from './surface'
+import { glass, rowDivider, TEXT_QUIET, AQUA } from '../surface'
 
 // A founder reading what their employee got done, not a server log —
 // plain sentences, no operation_id, no status=true. Same workspace_events

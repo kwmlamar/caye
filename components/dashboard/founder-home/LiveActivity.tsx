@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useLiveEvents } from '@/lib/useLiveEvents'
 import { splitLabel, relTime, TONE_COLOR } from './event-visuals'
-import { glass, rowDivider, TEXT_QUIET, TEXT } from './surface'
+import { glass, rowDivider, TEXT_QUIET, TEXT } from '../surface'
 
 // "Observing an employee working" — the last handful of real things Caye
 // has touched, off the same workspace_events stream as CayeLog, just

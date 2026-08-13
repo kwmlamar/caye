@@ -22,7 +22,7 @@ import MemoryPage from './MemoryPage'
 import SettingsPage from './SettingsPage'
 import TalkToCaye from './TalkToCaye'
 import FounderProfile from './FounderProfile'
-import { ENV_BG, AQUA, GRADIENT, glass, paneShadowSoft, focusResetCss } from './surface'
+import { ENV_BG, AQUA, GRADIENT, glass, paneShadowSoft, focusResetCss } from '../surface'
 
 // 2026-08-13 visual pass: moved from "cards on a black page" toward one
 // continuous environment. Hard 1px outlines are the exception now, not

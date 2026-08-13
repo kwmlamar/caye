@@ -3,23 +3,22 @@
 import { useState, useEffect, useRef, useLayoutEffect, useCallback } from 'react'
 import { getSession } from '@/lib/supabase'
 import { formatDistanceToNow } from '@/lib/utils'
+import { useFounderIdentity } from '@/lib/useFounderIdentity'
+import { useMediaQuery } from '@/lib/useMediaQuery'
 import { CayeMark } from '@/components/brand/CayeMark'
-import { FormattedReplyText } from '@/components/ui/FormattedReplyText'
 import { CayeLoadingPulse } from '@/components/dashboard/founder-home/CayeLoadingPulse'
-import { Pill } from '@/components/dashboard/founder-home/console-ui'
 import { useFounderConversations, fetchConversationById, type ConversationSummary } from '@/lib/useFounderConversations'
 import { useFreshness, useRevalidateOnFocus } from '@/lib/founder-freshness'
+import { AQUA, TEXT, TEXT_QUIET, rowDivider } from '@/components/dashboard/surface'
+import { channelLabel } from './channel-meta'
+import ConversationRow from './ConversationRow'
+import CayeHandoff from './CayeHandoff'
+import Message, { type ThreadMessage } from './Message'
 
-const GLASS = { backdropFilter: 'blur(20px) saturate(140%)', WebkitBackdropFilter: 'blur(20px) saturate(140%)' } as const
-
-interface ThreadMessage {
-  id: string
-  sender_type: string
-  content: string
-  sent_at: string
-  metadata?: { generated_by?: string; proposed_reply?: string } | null
-  is_internal?: boolean
-}
+// Channels /api/messages/send doesn't dispatch for yet — matches its
+// switch statement's default 422 case (lib SMS send never got wired to
+// that endpoint, only inbound).
+const SEND_UNSUPPORTED = new Set(['sms'])
 
 // hold_kinds whose auto-generated draft is safe to pre-fill into the
 // compose box unattended — both are the same repeatable, policy-
@@ -27,24 +26,26 @@ interface ThreadMessage {
 // templates), not a founder judgment call like a general escalation.
 const AUTO_FILL_HOLD_KINDS = new Set(['outreach_followup', 'outreach_first_touch'])
 
-// Channels /api/messages/send doesn't dispatch for yet — matches its
-// switch statement's default 422 case (lib SMS send never got wired to
-// that endpoint, only inbound).
-const SEND_UNSUPPORTED = new Set(['sms'])
+// /api/founder/draft-reply hard-rejects everything but email today (see
+// its own doc comment) — showing "Draft with Caye" on a WhatsApp/IG/FB
+// thread would just produce a 400. Gated here rather than left for the
+// founder to discover by clicking it.
+const DRAFT_SUPPORTED_CHANNELS = new Set(['email'])
 
-const CHANNEL_LABEL: Record<string, string> = {
-  whatsapp: 'WA',
-  email: 'Mail',
-  instagram: 'IG',
-  messenger: 'FB',
-  sms: 'SMS',
+function isEscalationNote(m: ThreadMessage): boolean {
+  return !!m.is_internal && m.content.startsWith('[Caye escalation')
 }
-const CHANNEL_COLOR: Record<string, string> = {
-  whatsapp: '#22c55e',
-  email: '#4EBECE',
-  instagram: '#FFE4AF',
-  messenger: '#4EBECE',
-  sms: 'rgba(245,245,244,0.5)',
+function escalationNoteBody(m: ThreadMessage): string {
+  return m.content.replace(/^\[[^\]]*\]\s*/, '')
+}
+
+function InternalNoteMarker({ isEscalation, at }: { isEscalation: boolean; at: string }) {
+  return (
+    <div style={{ alignSelf: 'center', display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: TEXT_QUIET, padding: '2px 0' }}>
+      <span aria-hidden style={{ width: 4, height: 4, borderRadius: '50%', background: 'rgba(255,255,255,0.22)' }} />
+      {isEscalation ? 'Escalated' : 'Internal note'} · {formatDistanceToNow(at)}
+    </div>
+  )
 }
 
 function SearchIcon({ color }: { color: string }) {
@@ -56,7 +57,11 @@ function SearchIcon({ color }: { color: string }) {
   )
 }
 
-function TabPill({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+// Real, truthfully-derivable states only — 'all' vs 'review' matches
+// exactly what useFounderConversations/the backend filter supports. No
+// "waiting on customer" / "paused" tab: nothing in the data model
+// distinguishes those from "Caye handling" today.
+function FilterPill({ label, count, active, onClick }: { label: string; count?: number; active: boolean; onClick: () => void }) {
   const [hover, setHover] = useState(false)
   return (
     <button
@@ -65,51 +70,21 @@ function TabPill({ label, active, onClick }: { label: string; active: boolean; o
       onMouseLeave={() => setHover(false)}
       style={{
         border: 'none', cursor: 'pointer', padding: '5px 12px', borderRadius: 999,
-        fontSize: 11, fontWeight: 600,
-        background: active ? '#f5f5f4' : hover ? 'rgba(255,255,255,0.11)' : 'rgba(255,255,255,0.06)',
-        color: active ? '#0a0a0b' : hover ? 'rgba(245,245,244,0.85)' : 'rgba(245,245,244,0.55)',
+        display: 'flex', alignItems: 'center', gap: 6,
+        fontSize: 11.5, fontWeight: 600,
+        background: active ? 'rgba(255,255,255,0.1)' : hover ? 'rgba(255,255,255,0.05)' : 'transparent',
+        color: active ? TEXT : TEXT_QUIET,
         transition: 'background 0.15s ease, color 0.15s ease',
       }}
     >
       {label}
-    </button>
-  )
-}
-
-function ConversationRow({ c, active, onClick }: { c: ConversationSummary; active: boolean; onClick: () => void }) {
-  const [hover, setHover] = useState(false)
-  const label = CHANNEL_LABEL[c.channel_type] ?? c.channel_type
-  const color = CHANNEL_COLOR[c.channel_type] ?? 'rgba(245,245,244,0.5)'
-  return (
-    <button
-      onClick={onClick}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      style={{
-        position: 'relative',
-        display: 'block', width: '100%', textAlign: 'left', border: 'none', cursor: 'pointer',
-        background: active ? 'rgba(78,190,206,0.09)' : hover ? 'rgba(255,255,255,0.04)' : 'transparent',
-        borderRadius: 10, padding: '10px 10px 10px 14px', marginBottom: 2,
-        transition: 'background 0.12s ease',
-      }}
-    >
-      {active && (
-        <span aria-hidden style={{ position: 'absolute', left: 3, top: 8, bottom: 8, width: 2.5, borderRadius: 3, background: '#4EBECE' }} />
-      )}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
-        <span style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-          {c.customer_name || 'Unknown'}
+      {typeof count === 'number' && count > 0 && (
+        <span aria-hidden style={{
+          fontSize: 10, fontWeight: 700, color: '#FFE4AF', background: 'rgba(255,228,175,0.16)',
+          borderRadius: 999, padding: '1px 6px',
+        }}>
+          {count}
         </span>
-        <Pill color={color} label={label} dot={false} />
-      </div>
-      <p style={{
-        fontSize: 11.5, marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-        color: c.human_agent_enabled ? 'rgba(251,113,133,0.85)' : 'rgba(245,245,244,0.4)',
-      }}>
-        {c.human_agent_enabled ? (c.human_agent_reason || 'Needs review') : c.last_message_preview}
-      </p>
-      {c.human_agent_enabled && (
-        <div style={{ marginTop: 4 }}><Pill color="#fb7185" label="Needs review" /></div>
       )}
     </button>
   )
@@ -125,19 +100,6 @@ interface Props {
    *  (pending escalation count, etc.) can refetch — this panel patches
    *  its own conversation list locally via useFounderConversations. */
   onSent?: () => void
-  /** True in the small grid-card layout (unexpanded dashboard tile) —
-   *  shows the conversation list only, full width, with no thread pane or
-   *  compose box: none of that fits the tile's width/height without
-   *  crowding it. The ExpandButton at FounderHome's card level is how the
-   *  founder gets to the full view where reading/sending actually makes
-   *  sense. */
-  compact?: boolean
-  /** Called when a conversation row is clicked while compact — lets the
-   *  parent (FounderHome) expand the card to fullscreen so the thread
-   *  that was just selected is actually visible, instead of silently
-   *  setting activeId behind a hidden thread pane. No-op while already
-   *  expanded. */
-  onRequestExpand?: () => void
 }
 
 // Search re-queries the server (it covers every conversation, not just
@@ -147,13 +109,13 @@ const SEARCH_DEBOUNCE_MS = 300
 // Pixels from the bottom of the list column at which the next page loads.
 const LOAD_MORE_THRESHOLD_PX = 120
 
-// List column width while expanded, as a % of the row — draggable via the
-// divider, remembered across sessions. Default favors the thread (the
-// thing you're actually reading) over the list.
+// List column width — draggable via the divider, remembered across
+// sessions. Default favors the thread (the thing you're actually
+// reading) over the list.
 const LIST_WIDTH_KEY = 'cayeConversationsListWidthPct'
-const LIST_WIDTH_DEFAULT = 30
+const LIST_WIDTH_DEFAULT = 28
 const LIST_WIDTH_MIN = 20
-const LIST_WIDTH_MAX = 60
+const LIST_WIDTH_MAX = 55
 
 function readStoredListWidth(): number {
   if (typeof window === 'undefined') return LIST_WIDTH_DEFAULT
@@ -172,41 +134,41 @@ function ColumnDivider({ onMouseDown, active }: { onMouseDown: (e: React.MouseEv
       role="separator"
       aria-orientation="vertical"
       title="Drag to resize"
-      style={{
-        width: 9, flexShrink: 0, cursor: 'col-resize', position: 'relative',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-      }}
+      style={{ width: 9, flexShrink: 0, cursor: 'col-resize', position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
     >
       <div style={{
-        width: lit ? 2 : 1, height: '100%', background: lit ? '#4EBECE' : 'rgba(255,255,255,0.08)',
+        width: lit ? 2 : 1, height: '100%', background: lit ? AQUA : 'rgba(255,255,255,0.06)',
         transition: active ? 'none' : 'background 0.15s ease, width 0.15s ease',
       }} />
       <div style={{
         position: 'absolute', width: 3, height: 22, borderRadius: 2,
-        background: lit ? 'rgba(78,190,206,0.9)' : 'rgba(255,255,255,0.18)',
+        background: lit ? 'rgba(78,190,206,0.9)' : 'rgba(255,255,255,0.14)',
         transition: active ? 'none' : 'background 0.15s ease',
       }} />
     </div>
   )
 }
 
-export default function CommandConversations({ workspaceId, selectedConversationId, onSent, compact = false, onRequestExpand }: Props) {
+export default function CommandConversations({ workspaceId, selectedConversationId, onSent }: Props) {
+  const { firstName } = useFounderIdentity()
+  const founderLabel = firstName ?? 'You'
+  const isNarrow = useMediaQuery('(max-width: 760px)')
+  const [mobileView, setMobileView] = useState<'list' | 'thread'>('list')
+
   const [tab, setTab] = useState<'all' | 'review'>('all')
   const [query, setQuery] = useState('')
   const [debouncedQuery, setDebouncedQuery] = useState('')
   const [activeId, setActiveId] = useState<string | null>(null)
-  const [thread, setThread] = useState<{ customer_name: string | null; messages: ThreadMessage[] } | null>(null)
+  const [thread, setThread] = useState<{ customer_name: string | null; customer_id: string | null; messages: ThreadMessage[] } | null>(null)
   const [threadLoading, setThreadLoading] = useState(false)
   const [searchFocused, setSearchFocused] = useState(false)
   const [replyText, setReplyText] = useState('')
+  const [draftSource, setDraftSource] = useState<'caye' | null>(null)
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
   const [drafting, setDrafting] = useState(false)
   const threadContainerRef = useRef<HTMLDivElement | null>(null)
   const replyTextareaRef = useRef<HTMLTextAreaElement | null>(null)
-  // List-column width while expanded — draggable, persisted in
-  // localStorage. Lazy-init only reads it once; irrelevant in compact
-  // mode, where the list is always 100% regardless of this value.
   const [listWidthPct, setListWidthPct] = useState(readStoredListWidth)
   const [resizing, setResizing] = useState(false)
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -235,14 +197,13 @@ export default function CommandConversations({ workspaceId, selectedConversation
 
   // A booking click in CommandCalendar routes here — jump straight to that
   // customer's thread, clearing any tab/search filter that would hide it.
-  // The target conversation can be arbitrarily old, so it isn't assumed to
-  // already be in the loaded page — fetch it directly and merge it in.
   useEffect(() => {
     if (!selectedConversationId) return
     let cancelled = false
     setActiveId(selectedConversationId)
     setTab('all')
     setQuery('')
+    setMobileView('thread')
     fetchConversationById(workspaceId, selectedConversationId).then((conv) => {
       if (!cancelled && conv) upsert(conv)
     })
@@ -256,9 +217,6 @@ export default function CommandConversations({ workspaceId, selectedConversation
     setActiveId(list[0].id)
   }, [list, selectedConversationId])
 
-  // `quiet` skips the loading flag so a background refresh swaps the
-  // messages in place instead of collapsing the open thread to a skeleton
-  // under whoever's reading it.
   const loadThread = useCallback(async (quiet = false) => {
     if (!activeId) return
     const requestId = ++threadRequestIdRef.current
@@ -281,64 +239,62 @@ export default function CommandConversations({ workspaceId, selectedConversation
     loadThread()
   }, [activeId, loadThread])
 
-  // The open thread is stale for the same reasons the list is — Caye can
-  // append to the conversation you're looking at (a drafted first touch, an
-  // auto-reply) without this pane hearing about it.
   const refreshThread = useCallback(() => { loadThread(true) }, [loadThread])
   useFreshness(workspaceId, ['conversations'], refreshThread)
   useRevalidateOnFocus(refreshThread)
 
   const activeSummary = list.find((c) => c.id === activeId)
 
-  // Row click while compact: selecting a thread with the thread pane
-  // hidden would otherwise be a no-op the founder can't see, so it also
-  // asks the parent to expand the card to fullscreen.
   function handleSelectConversation(id: string) {
     setActiveId(id)
-    if (compact) onRequestExpand?.()
+    setMobileView('thread')
   }
 
+  // Caye's handoff card fades out (rather than just vanishing) the moment
+  // an open escalation clears — but only when that transition happens
+  // WHILE the founder is looking at it. An already-resolved escalation
+  // loaded fresh (page load, conversation switch) never plays the exit
+  // animation; it just renders as a quiet historical marker instead.
+  const [handoffState, setHandoffState] = useState<'hidden' | 'open' | 'resolving'>('hidden')
+  useEffect(() => { setHandoffState('hidden') }, [activeId])
+  useEffect(() => {
+    const nowOpen = !!activeSummary?.human_agent_enabled
+    setHandoffState((s) => {
+      if (nowOpen) return 'open'
+      return s === 'open' ? 'resolving' : 'hidden'
+    })
+  }, [activeSummary?.human_agent_enabled])
+  useEffect(() => {
+    if (handoffState !== 'resolving') return
+    const t = setTimeout(() => setHandoffState('hidden'), 380)
+    return () => clearTimeout(t)
+  }, [handoffState])
+
   // Auto-fill is scoped narrowly to AUTO_FILL_HOLD_KINDS — the repeatable,
-  // policy-constrained cold-outreach cases (outreach-script.md's opener
-  // and "one follow-up, low-pressure, then stop" templates) that are safe
-  // to have sitting ready for a one-click send/edit. General holds/
-  // escalations (a founder judgment call — the Gwyn/charity-partnership
-  // case) still open empty on purpose: only "Draft with Caye" puts text
-  // there, and only when explicitly asked for.
-  //
-  // This also stashes whatever's in the box for the conversation being
-  // left (typed by hand or drafted) into draftsRef, and restores it if you
-  // come back — so switching threads never silently wipes an in-progress
-  // reply. A stashed value (including one you've edited down to empty
-  // after auto-fill) always wins over re-deriving the auto-fill again.
-  // replyText is read via closure rather than listed as a dependency
-  // (it's the previous conversation's value at the moment this runs, which
-  // is exactly what needs saving) — same pattern as ChannelsPanel's
-  // one-time param-cleanup effect elsewhere in this codebase.
+  // policy-constrained cold-outreach cases that are safe to have sitting
+  // ready for a one-click send/edit. General holds/escalations still open
+  // empty on purpose: only "Draft with Caye" puts text there.
   useEffect(() => {
     const prevId = prevActiveIdRef.current
     if (prevId) draftsRef.current.set(prevId, replyText)
 
     if (!activeId) {
       setReplyText('')
+      setDraftSource(null)
     } else if (draftsRef.current.has(activeId)) {
       setReplyText(draftsRef.current.get(activeId) ?? '')
+      setDraftSource(null)
     } else {
       const entering = list.find((c) => c.id === activeId)
-      const autoFill =
-        entering?.human_agent_enabled && AUTO_FILL_HOLD_KINDS.has(entering.metadata?.hold_kind ?? '')
-          ? entering.metadata?.proposed_reply ?? ''
-          : ''
-      setReplyText(autoFill)
+      const isAutoFill = entering?.human_agent_enabled && AUTO_FILL_HOLD_KINDS.has(entering.metadata?.hold_kind ?? '')
+      setReplyText(isAutoFill ? entering?.metadata?.proposed_reply ?? '' : '')
+      setDraftSource(isAutoFill ? 'caye' : null)
     }
     setSendError(null)
     prevActiveIdRef.current = activeId
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId])
 
-  // Auto-grow the compose box to fit its content (up to a cap, then it
-  // scrolls internally) instead of a fixed row count — a drafted nudge
-  // can be 6+ lines and a static 2-row box was hiding most of it.
   const REPLY_MAX_HEIGHT = 220
   useLayoutEffect(() => {
     const el = replyTextareaRef.current
@@ -347,11 +303,6 @@ export default function CommandConversations({ workspaceId, selectedConversation
     el.style.height = `${Math.min(el.scrollHeight, REPLY_MAX_HEIGHT)}px`
   }, [replyText])
 
-  // On-demand draft, distinct from the auto-populated hold draft above —
-  // this is for conversations with no proposed_reply already sitting there
-  // (a normal thread, not a held escalation) where the founder wants a
-  // starting point instead of writing from scratch. Only offered while the
-  // box is empty so it can never silently clobber something being typed.
   async function handleDraft() {
     if (!activeId || drafting) return
     setDrafting(true)
@@ -370,6 +321,7 @@ export default function CommandConversations({ workspaceId, selectedConversation
         return
       }
       setReplyText(json.draft)
+      setDraftSource('caye')
     } catch {
       setSendError('Failed to generate a draft')
     } finally {
@@ -406,13 +358,13 @@ export default function CommandConversations({ workspaceId, selectedConversation
         }],
       } : prev)
       setReplyText('')
+      setDraftSource(null)
       if (activeId) draftsRef.current.delete(activeId)
       onSent?.()
-      // /api/messages/send clears human_agent_enabled and updates the
-      // preview server-side — patch the row in place rather than a full
-      // list refetch so scroll position and the loaded page survive. If
-      // that clears it out of the Review tab's filter, drop it locally
-      // too instead of leaving it visible until the next refetch.
+      // /api/messages/send clears human_agent_enabled and resolves the
+      // open escalation server-side — this is the real "hand back to
+      // Caye" action; there's no separate takeover/handback endpoint to
+      // wire a second button to.
       const sentId = activeId
       fetchConversationById(workspaceId, sentId).then((conv) => {
         if (!conv) return
@@ -429,30 +381,19 @@ export default function CommandConversations({ workspaceId, selectedConversation
     }
   }
 
-  // Scroll the thread container to the bottom whenever the thread
-  // finishes loading, new messages arrive, or the pane itself just
-  // mounted (compact -> expanded, e.g. clicking a row on the collapsed
-  // card) so the newest messages are visible by default. `compact` is a
-  // dependency even though it's not read in the body: the thread pane
-  // doesn't exist in the DOM at all while compact (see the `!compact &&`
-  // guard below), so the ref only attaches on the transition to
-  // expanded — without `compact` here, a thread that was already loaded
-  // before expanding (nothing else in this array changes) would mount
-  // at the browser's default scrollTop of 0 instead of the bottom.
+  function focusComposer() {
+    replyTextareaRef.current?.focus()
+  }
+
   useEffect(() => {
     if (threadLoading) return
     const el = threadContainerRef.current
     if (!el) return
-    // small timeout to allow rendering to complete before measuring
     requestAnimationFrame(() => {
       el.scrollTop = el.scrollHeight
     })
-  }, [threadLoading, thread?.messages?.length, compact])
+  }, [threadLoading, thread?.messages?.length, mobileView])
 
-  // Drag-to-resize the list/thread split. Tracked on window (not the
-  // divider itself) so the drag keeps following the cursor even once it
-  // leaves the thin handle — a mousedown on a 9px-wide strip loses the
-  // pointer on the very first move otherwise.
   const handleDividerMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
     setResizing(true)
@@ -483,40 +424,53 @@ export default function CommandConversations({ workspaceId, selectedConversation
     }
   }, [resizing])
 
+  const showList = !isNarrow || mobileView === 'list'
+  const showThread = !isNarrow || mobileView === 'thread'
+  const messages = thread?.messages ?? []
+  const lastEscalationIdx = (() => {
+    for (let i = messages.length - 1; i >= 0; i--) if (isEscalationNote(messages[i])) return i
+    return -1
+  })()
+  const customerLabel = activeSummary?.customer_name || activeSummary?.customer_id || thread?.customer_name || 'the customer'
+
   return (
-    <div ref={containerRef} style={{ height: '100%', display: 'flex', color: '#f5f5f4' }}>
-      {/* ── List column — full width while compact (the small dashboard
-          tile has no room for a thread pane too); a draggable split once
-          expanded gives it space, defaulting narrower so the thread (what
-          you're actually reading) gets the bigger share. ── */}
-      <div style={{ width: compact ? '100%' : `${listWidthPct}%`, flexShrink: 0, background: 'rgba(255,255,255,0.015)', display: 'flex', flexDirection: 'column' }}>
-        <div style={{ padding: '16px 16px 10px' }}>
-          <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
-            {(['all', 'review'] as const).map((t) => (
-              <TabPill key={t} label={t === 'all' ? 'All chats' : `Review (${reviewCount})`} active={tab === t} onClick={() => setTab(t)} />
-            ))}
+    <div ref={containerRef} style={{ height: '100%', display: 'flex', color: TEXT }}>
+      <style>{`
+        @keyframes caye-resolve-out { to { opacity: 0; transform: scale(0.98); } }
+      `}</style>
+
+      {/* ── List — Inbox rail. No outer card, no border; separation from
+          the thread is the vertical divider (or nothing at all on
+          mobile, where only one pane shows at a time). ── */}
+      {showList && (
+      <div style={{ width: isNarrow ? '100%' : `${listWidthPct}%`, flexShrink: 0, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+        <div style={{ padding: '16px 14px 10px' }}>
+          <div style={{ fontSize: 15, fontWeight: 600, fontFamily: 'var(--font-display)', marginBottom: 10 }}>Inbox</div>
+          <div style={{ display: 'flex', gap: 2, marginBottom: 10 }}>
+            <FilterPill label="All" active={tab === 'all'} onClick={() => setTab('all')} />
+            <FilterPill label="Needs you" count={reviewCount} active={tab === 'review'} onClick={() => setTab('review')} />
           </div>
           <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
             <span style={{ position: 'absolute', left: 11, display: 'flex', pointerEvents: 'none' }}>
-              <SearchIcon color={searchFocused ? 'rgba(78,190,206,0.9)' : 'rgba(245,245,244,0.3)'} />
+              <SearchIcon color={searchFocused ? AQUA : 'rgba(245,245,244,0.3)'} />
             </span>
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onFocus={() => setSearchFocused(true)}
               onBlur={() => setSearchFocused(false)}
-              placeholder="Search by name…"
+              placeholder="Search conversations…"
+              aria-label="Search conversations"
               style={{
-                width: '100%', background: searchFocused ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.035)',
-                border: '1px solid transparent',
-                borderRadius: 999, padding: '7px 10px 7px 30px', fontSize: 12.5, color: '#f5f5f4', outline: 'none',
+                width: '100%', background: searchFocused ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.028)',
+                border: 'none', borderRadius: 999, padding: '7px 10px 7px 30px', fontSize: 12.5, color: TEXT, outline: 'none',
                 transition: 'background 0.15s ease',
               }}
             />
           </div>
         </div>
         <div
-          style={{ flex: 1, overflowY: 'auto', padding: '0 8px 8px' }}
+          style={{ flex: 1, overflowY: 'auto', padding: '0 6px 8px' }}
           onScroll={(e) => {
             const el = e.currentTarget
             if (!nextCursor || loadingMore) return
@@ -526,188 +480,212 @@ export default function CommandConversations({ workspaceId, selectedConversation
           {listLoading && list.length === 0 ? (
             <div style={{ padding: '8px 10px' }}><CayeLoadingPulse size={14} /></div>
           ) : list.length === 0 ? (
-            <div style={{ fontSize: 12.5, color: 'rgba(245,245,244,0.35)', padding: '8px 10px' }}>No conversations.</div>
+            tab === 'review' ? (
+              // Calm, not broken — nothing needing review is the good
+              // outcome, not an empty state to apologize for.
+              <div style={{ padding: '24px 14px', textAlign: 'center' }}>
+                <p style={{ fontSize: 12.5, color: TEXT_QUIET, lineHeight: 1.6, margin: 0 }}>
+                  Caye has everything handled.<br />No conversations need you.
+                </p>
+              </div>
+            ) : (
+              <div style={{ fontSize: 12.5, color: TEXT_QUIET, padding: '8px 10px' }}>No conversations yet.</div>
+            )
           ) : (
             <>
               {list.map((c) => (
                 <ConversationRow key={c.id} c={c} active={activeId === c.id} onClick={() => handleSelectConversation(c.id)} />
               ))}
-              {loadingMore && (
-                <div style={{ padding: '8px 10px' }}><CayeLoadingPulse size={12} /></div>
-              )}
+              {loadingMore && <div style={{ padding: '8px 10px' }}><CayeLoadingPulse size={12} /></div>}
             </>
           )}
         </div>
       </div>
+      )}
 
-      {/* ── Thread detail — hidden while compact (list-only tile); header
-          stays pinned when shown, only the message list scrolls, so
-          landing scrolled-to-bottom never hides who/what channel this is
-          (matches CayeDirectThread's pattern). ── */}
-      {!compact && (
-      <>
-      <ColumnDivider onMouseDown={handleDividerMouseDown} active={resizing} />
+      {!isNarrow && <ColumnDivider onMouseDown={handleDividerMouseDown} active={resizing} />}
+
+      {/* ── Thread ── */}
+      {showThread && (
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
         {!activeSummary ? (
-          <div style={{ padding: 16, fontSize: 13, color: 'rgba(245,245,244,0.35)' }}>Select a conversation.</div>
+          <div style={{ padding: 16, fontSize: 13, color: TEXT_QUIET }}>Select a conversation.</div>
         ) : (
           <>
-            <div style={{ padding: '14px 16px', flexShrink: 0, background: 'rgba(255,255,255,0.035)', ...GLASS }}>
-              <div style={{ fontSize: 14, fontWeight: 700 }}>{activeSummary.customer_name || 'Unknown'}</div>
-              <div style={{ fontSize: 11, color: 'rgba(245,245,244,0.35)', marginTop: 2 }}>
-                Channel: {CHANNEL_LABEL[activeSummary.channel_type] ?? activeSummary.channel_type}
+            <div style={{ padding: '13px 18px', flexShrink: 0, borderBottom: rowDivider, display: 'flex', alignItems: 'center', gap: 10 }}>
+              {isNarrow && (
+                <button
+                  onClick={() => setMobileView('list')}
+                  aria-label="Back to conversation list"
+                  style={{ border: 'none', background: 'transparent', cursor: 'pointer', display: 'flex', padding: 0, flexShrink: 0, color: TEXT_QUIET }}
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="15 18 9 12 15 6" />
+                  </svg>
+                </button>
+              )}
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {activeSummary.customer_name || activeSummary.customer_id || 'Unknown'}
+                </div>
+                <div style={{ fontSize: 11.5, color: TEXT_QUIET, marginTop: 2, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span>{channelLabel(activeSummary.channel_type)}</span>
+                  {activeSummary.customer_name && activeSummary.customer_id && (
+                    <>
+                      <span style={{ color: 'rgba(255,255,255,0.15)' }}>·</span>
+                      <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{activeSummary.customer_id}</span>
+                    </>
+                  )}
+                </div>
               </div>
+              {activeSummary.human_agent_enabled ? (
+                <span style={{ fontSize: 11, fontWeight: 600, color: '#FFE4AF', flexShrink: 0 }}>Needs you</span>
+              ) : (
+                <span style={{ fontSize: 11, color: TEXT_QUIET, flexShrink: 0 }}>Caye handling</span>
+              )}
             </div>
-            <div ref={threadContainerRef} style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 16 }}>
-            {threadLoading ? (
-              <CayeLoadingPulse size={16} />
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {(thread?.messages ?? []).map((m) => {
-                  const isBusiness = m.sender_type === 'business'
-                  const isCayeMsg = isBusiness && m.metadata?.generated_by === 'caye'
 
-                  // Internal notes (escalation flags, held-message context)
-                  // never went to the customer — they don't belong on
-                  // either side of the thread as a "spoken" bubble. Full-
-                  // width annotation card instead, so it can't be mistaken
-                  // for something Caye actually sent.
-                  if (m.is_internal) {
-                    // proposed_reply intentionally not rendered here — the
-                    // auto-generated hold draft still exists (it feeds the
-                    // WhatsApp ping) but surfacing it in-thread just invited
-                    // one-click-sending filler before actually deciding
-                    // anything. "Draft with Caye" below is opt-in instead.
-                    const noteBody = m.content.replace(/^\[[^\]]*\]\s*/, '')
+            <div ref={threadContainerRef} style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '16px 18px' }}>
+              {threadLoading ? (
+                <CayeLoadingPulse size={16} />
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  {messages.map((m, i) => {
+                    if (m.is_internal) {
+                      if (i === lastEscalationIdx && (handoffState === 'open' || handoffState === 'resolving')) {
+                        return (
+                          <CayeHandoff
+                            key={m.id}
+                            note={escalationNoteBody(m)}
+                            category={(m.metadata as { category?: string } | null)?.category ?? null}
+                            routeTo={(m.metadata as { route_to?: string } | null)?.route_to ?? null}
+                            at={m.sent_at}
+                            onReply={focusComposer}
+                            resolved={handoffState === 'resolving'}
+                          />
+                        )
+                      }
+                      return <InternalNoteMarker key={m.id} isEscalation={isEscalationNote(m)} at={m.sent_at} />
+                    }
                     return (
-                      <div key={m.id} style={{
-                        alignSelf: 'stretch', display: 'flex', gap: 8, alignItems: 'flex-start',
-                        background: 'rgba(255,228,175,0.06)', border: '1px solid rgba(255,228,175,0.25)',
-                        borderRadius: 10, padding: '8px 12px',
-                      }}>
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#FFE4AF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginTop: 3, flexShrink: 0 }}>
-                          <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" /><line x1="4" y1="22" x2="4" y2="15" />
-                        </svg>
-                        <div style={{ flex: 1 }}>
-                          <div style={{ fontSize: 9, fontFamily: 'var(--font-mono)', fontWeight: 700, letterSpacing: '0.08em', color: '#FFE4AF', textTransform: 'uppercase', marginBottom: 2 }}>
-                            Internal note — not sent to customer
-                          </div>
-                          <p style={{ fontSize: 12.5, lineHeight: 1.45, whiteSpace: 'pre-wrap', color: 'rgba(245,245,244,0.7)' }}>{noteBody}</p>
-                          <span style={{ fontSize: 10, color: 'rgba(245,245,244,0.3)' }}>{formatDistanceToNow(m.sent_at)}</span>
-                        </div>
-                      </div>
+                      <Message
+                        key={m.id}
+                        message={m}
+                        channelType={activeSummary.channel_type}
+                        customerLabel={customerLabel}
+                        founderLabel={founderLabel}
+                      />
                     )
-                  }
+                  })}
+                </div>
+              )}
+            </div>
 
-                  // Same language as Caye Direct: her replies sit in the
-                  // open with her mark, no box, no accent rule — a
-                  // human's words (owner or customer) stay boxed. That
-                  // keeps "who actually said this" unambiguous without
-                  // adding a name/label to every line.
-                  if (isCayeMsg) {
-                    return (
-                      <div key={m.id} style={{ alignSelf: 'flex-end', maxWidth: '80%', display: 'flex', alignItems: 'flex-start', gap: 6, flexDirection: 'row-reverse' }}>
-                        <div style={{ paddingTop: 2, flexShrink: 0 }}><CayeMark size={14} /></div>
-                        <div style={{ padding: '1px 0', textAlign: 'left' }}>
-                          <FormattedReplyText text={m.content} style={{ fontSize: 13.5, lineHeight: 1.5, color: '#f4f4f5' }} />
-                          <span style={{ display: 'block', textAlign: 'right', fontSize: 10, color: 'rgba(245,245,244,0.35)', marginTop: 2 }}>{formatDistanceToNow(m.sent_at)}</span>
-                        </div>
-                      </div>
-                    )
-                  }
-
-                  return (
-                    <div
-                      key={m.id}
+            {!SEND_UNSUPPORTED.has(activeSummary.channel_type) && (
+              <div style={{ flexShrink: 0, padding: '10px 18px 16px' }}>
+                {sendError && <div style={{ fontSize: 11.5, color: '#fb7185', marginBottom: 6 }}>{sendError}</div>}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6, minHeight: 16 }}>
+                  {!replyText.trim() && DRAFT_SUPPORTED_CHANNELS.has(activeSummary.channel_type) && (
+                    <button
+                      onClick={handleDraft}
+                      disabled={drafting}
                       style={{
-                        alignSelf: isBusiness ? 'flex-end' : 'flex-start',
-                        maxWidth: '80%',
-                        background: 'rgba(255,255,255,0.07)',
-                        borderRadius: isBusiness ? '12px 3px 12px 12px' : '3px 12px 12px 12px',
-                        padding: '8px 12px',
+                        display: 'flex', alignItems: 'center', gap: 5,
+                        border: 'none', background: 'transparent', cursor: drafting ? 'default' : 'pointer',
+                        padding: 0, fontSize: 11.5, fontWeight: 600,
+                        color: drafting ? TEXT_QUIET : AQUA,
                       }}
                     >
-                      <p style={{ fontSize: 13, lineHeight: 1.4, whiteSpace: 'pre-wrap' }}>{m.content}</p>
-                      <span style={{ fontSize: 10, color: 'rgba(245,245,244,0.35)' }}>{formatDistanceToNow(m.sent_at)}</span>
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-            </div>
-            {!compact && !SEND_UNSUPPORTED.has(activeSummary.channel_type) && (
-              <div style={{ flexShrink: 0, padding: 12, borderTop: '1px solid rgba(255,255,255,0.08)', ...GLASS }}>
-                {sendError && (
-                  <div style={{ fontSize: 11.5, color: '#fb7185', marginBottom: 6 }}>{sendError}</div>
-                )}
-                {!replyText.trim() && (
-                  <button
-                    onClick={handleDraft}
-                    disabled={drafting}
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: 5, marginBottom: 6,
-                      border: 'none', background: 'transparent', cursor: drafting ? 'default' : 'pointer',
-                      padding: '2px 4px', fontSize: 11.5, fontWeight: 600,
-                      color: drafting ? 'rgba(245,245,244,0.3)' : 'rgba(78,190,206,0.85)',
-                    }}
-                  >
-                    {drafting ? <CayeLoadingPulse size={11} /> : <CayeMark size={12} />}
-                    {drafting ? 'Drafting…' : 'Draft with Caye'}
-                  </button>
-                )}
-                <div style={{
-                  display: 'flex', alignItems: 'flex-end', gap: 8,
-                  borderRadius: 20,
-                  background: 'rgba(255,255,255,0.04)', padding: '8px 8px 8px 14px',
-                }}>
-                  <textarea
-                    ref={replyTextareaRef}
-                    value={replyText}
-                    onChange={(e) => setReplyText(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); handleSend() }
-                    }}
-                    placeholder={`Reply to ${activeSummary.customer_name || 'this conversation'}… (⌘/Ctrl+Enter to send)`}
-                    rows={1}
-                    disabled={sending}
-                    style={{
-                      flex: 1, resize: 'none', overflowY: 'auto',
-                      maxHeight: REPLY_MAX_HEIGHT,
-                      background: 'transparent', border: 'none',
-                      padding: '6px 0', fontSize: 13.5, lineHeight: 1.5, color: '#f5f5f4',
-                      outline: 'none', fontFamily: 'inherit',
-                    }}
-                  />
-                  <button
-                    onClick={handleSend}
-                    disabled={sending || !replyText.trim()}
-                    title="Send (⌘/Ctrl+Enter)"
-                    style={{
-                      flexShrink: 0, width: 32, height: 32, borderRadius: '50%', border: 'none',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      cursor: sending || !replyText.trim() ? 'default' : 'pointer',
-                      background: sending || !replyText.trim() ? 'rgba(255,255,255,0.08)' : '#4EBECE',
-                      transition: 'background 0.15s ease',
-                    }}
-                  >
-                    {sending ? (
-                      <CayeLoadingPulse size={12} />
-                    ) : (
-                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
-                        stroke={!replyText.trim() ? 'rgba(245,245,244,0.35)' : '#0a0a0b'}
-                        strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M12 19V5" /><path d="M5 12l7-7 7 7" />
-                      </svg>
-                    )}
-                  </button>
+                      {drafting ? <CayeLoadingPulse size={11} /> : <CayeMark size={12} />}
+                      {drafting ? 'Drafting…' : 'Ask Caye to draft'}
+                    </button>
+                  )}
+                  {draftSource === 'caye' && replyText.trim() && (
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: TEXT_QUIET }}>
+                      <CayeMark size={11} /> Drafted with Caye
+                    </span>
+                  )}
                 </div>
+                <ReplyBox
+                  replyTextareaRef={replyTextareaRef}
+                  replyText={replyText}
+                  onChange={(v) => { setReplyText(v); setDraftSource(null) }}
+                  onSend={handleSend}
+                  sending={sending}
+                  maxHeight={REPLY_MAX_HEIGHT}
+                  customerLabel={customerLabel}
+                />
               </div>
             )}
           </>
         )}
       </div>
-      </>
       )}
+    </div>
+  )
+}
+
+function ReplyBox({
+  replyTextareaRef, replyText, onChange, onSend, sending, maxHeight, customerLabel,
+}: {
+  replyTextareaRef: React.RefObject<HTMLTextAreaElement | null>
+  replyText: string
+  onChange: (v: string) => void
+  onSend: () => void
+  sending: boolean
+  maxHeight: number
+  customerLabel: string
+}) {
+  const [focused, setFocused] = useState(false)
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'flex-end', gap: 8, flex: 1,
+      borderRadius: 20, padding: '8px 8px 8px 14px',
+      background: focused ? 'rgba(255,255,255,0.045)' : 'rgba(255,255,255,0.028)',
+      boxShadow: focused ? `0 0 0 1px ${AQUA}44, 0 0 20px rgba(78,190,206,0.12)` : 'none',
+      transition: 'background 0.15s ease, box-shadow 0.2s ease',
+    }}>
+      <textarea
+        ref={replyTextareaRef}
+        value={replyText}
+        onChange={(e) => onChange(e.target.value)}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); onSend() }
+        }}
+        placeholder={`Reply to ${customerLabel}…`}
+        aria-label={`Reply to ${customerLabel}`}
+        rows={1}
+        disabled={sending}
+        style={{
+          flex: 1, resize: 'none', overflowY: 'auto', maxHeight,
+          background: 'transparent', border: 'none',
+          padding: '6px 0', fontSize: 13.5, lineHeight: 1.5, color: TEXT,
+          outline: 'none', fontFamily: 'inherit',
+        }}
+      />
+      <button
+        onClick={onSend}
+        disabled={sending || !replyText.trim()}
+        title="Send (⌘/Ctrl+Enter)"
+        aria-label="Send reply"
+        style={{
+          flexShrink: 0, width: 32, height: 32, borderRadius: '50%', border: 'none',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          cursor: sending || !replyText.trim() ? 'default' : 'pointer',
+          background: sending || !replyText.trim() ? 'rgba(255,255,255,0.08)' : AQUA,
+          transition: 'background 0.15s ease',
+        }}
+      >
+        {sending ? <CayeLoadingPulse size={12} /> : (
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+            stroke={!replyText.trim() ? 'rgba(245,245,244,0.35)' : '#0a0a0b'}
+            strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 19V5" /><path d="M5 12l7-7 7 7" />
+          </svg>
+        )}
+      </button>
     </div>
   )
 }

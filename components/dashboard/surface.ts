@@ -4,7 +4,9 @@ import type { CSSProperties } from 'react'
  * Shared visual language for the founder Command Center — a systematic
  * surface hierarchy instead of one-off borders/backgrounds per component.
  * 2026-08-13 pass: "the interface should almost disappear; Caye should
- * feel alive inside it."
+ * feel alive inside it." Moved from founder-home/ to here (2026-08-14)
+ * once the Inbox redesign needed the same tokens — this is genuinely
+ * shared across every founder-facing surface, not Home-specific.
  *
  * Hierarchy:
  *   environment  — near-black, nearly invisible
@@ -70,8 +72,8 @@ export const attentionSurface: CSSProperties = {
   boxShadow: 'inset 0 0 0 1px rgba(255,228,175,0.07)',
 }
 
-/** Faint row separator for lists (Working Now, Caye's Log) — a tonal
- *  hint, not a boxed table. */
+/** Faint row separator for lists (Working Now, Caye's Log, conversation
+ *  threads) — a tonal hint, not a boxed table. */
 export const rowDivider = '1px solid rgba(255,255,255,0.045)'
 
 /** Baseline outline reset + focus-visible restoration. Applied once at
