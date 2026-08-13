@@ -8,10 +8,16 @@ const LABEL_COLOR = '#71717a'
 
 // A founder reading what their employee got done, not a server log —
 // plain sentences, no operation_id, no status=true. Same workspace_events
-// data as LiveActivity, just deeper (25 rows vs 4) and rendered as history
-// instead of "in motion right now."
-export default function CayeLog({ workspaceId }: { workspaceId: string }) {
-  const { events, loading } = useLiveEvents(workspaceId, 25)
+// data as LiveActivity, just deeper and rendered as history instead of
+// "in motion right now." Home uses a short `limit` + onViewAll link into
+// the full history on the Work page; Work itself passes a large limit and
+// no onViewAll, since it IS the full view.
+export default function CayeLog({ workspaceId, limit = 25, onViewAll }: {
+  workspaceId: string
+  limit?: number
+  onViewAll?: () => void
+}) {
+  const { events, loading } = useLiveEvents(workspaceId, limit)
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minHeight: 0, overflowY: 'auto' }}>
@@ -46,6 +52,18 @@ export default function CayeLog({ workspaceId }: { workspaceId: string }) {
           <span style={{ fontSize: 13, color: '#e4e4e7', lineHeight: 1.4 }}>{e.label}.</span>
         </div>
       ))}
+
+      {onViewAll && events.length > 0 && (
+        <button
+          onClick={onViewAll}
+          style={{
+            alignSelf: 'flex-start', marginTop: 8, border: 'none', background: 'transparent', cursor: 'pointer',
+            fontSize: 12, color: '#4EBECE', padding: '4px 2px', fontFamily: 'var(--font-sans)',
+          }}
+        >
+          View activity →
+        </button>
+      )}
     </div>
   )
 }

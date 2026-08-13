@@ -13,6 +13,11 @@ export interface Escalation {
   internal_context: string | null
   created_at: string
   owner_responded_at: string | null
+  // Already selected by /api/founder/command-overview, just not typed
+  // through until AttentionCard needed to tell "open" from "resolved" and
+  // "timed out" apart (owner_responded_at null alone isn't enough — an
+  // expired escalation is also unanswered but no longer actionable).
+  expired_at: string | null
 }
 
 export interface Booking {

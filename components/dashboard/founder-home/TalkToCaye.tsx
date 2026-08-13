@@ -17,7 +17,11 @@ const CARD_BORDER = '#28282d'
  * No mic/voice affordance — WhatsApp voice calling is "idea, not started"
  * (voice-calling-roadmap.md), so nothing here pretends otherwise.
  */
-export default function TalkToCaye({ onSend, busy }: { onSend: (text: string) => void; busy?: boolean }) {
+export default function TalkToCaye({ onSend, onOpenHistory, busy }: {
+  onSend: (text: string) => void
+  onOpenHistory?: () => void
+  busy?: boolean
+}) {
   const [value, setValue] = useState('')
   const [focused, setFocused] = useState(false)
 
@@ -45,7 +49,18 @@ export default function TalkToCaye({ onSend, busy }: { onSend: (text: string) =>
         borderRadius: 999, padding: '9px 10px 9px 16px',
         transition: 'border-color 0.15s ease',
       }}>
-        <CayeMark size={20} />
+        {onOpenHistory ? (
+          <button
+            onClick={onOpenHistory}
+            title="Open Caye Direct — full history"
+            aria-label="Open Caye Direct — full history"
+            style={{ border: 'none', background: 'transparent', cursor: 'pointer', display: 'flex', padding: 0, flexShrink: 0 }}
+          >
+            <CayeMark size={20} />
+          </button>
+        ) : (
+          <CayeMark size={20} />
+        )}
         <input
           value={value}
           onChange={(e) => setValue(e.target.value)}

@@ -29,12 +29,12 @@ export default function LiveActivity({ workspaceId }: { workspaceId: string }) {
           fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-mono)',
           letterSpacing: '0.08em', textTransform: 'uppercase', color: LABEL_COLOR,
         }}>
-          Live
+          Working now
         </span>
       </div>
 
       {!loading && events.length === 0 && (
-        <p style={{ fontSize: 12.5, color: LABEL_COLOR, padding: '4px 2px' }}>Nothing in motion right now.</p>
+        <p style={{ fontSize: 12.5, color: LABEL_COLOR, padding: '4px 2px' }}>Quiet — nothing in motion right now.</p>
       )}
 
       {events.map((e, i) => {
@@ -42,8 +42,10 @@ export default function LiveActivity({ workspaceId }: { workspaceId: string }) {
         return (
           <div
             key={e.id}
+            className="caye-activity-row"
             style={{
-              display: 'flex', alignItems: 'center', gap: 11, padding: '9px 4px',
+              display: 'flex', alignItems: 'center', gap: 11, padding: '9px 6px',
+              margin: '0 -6px', borderRadius: 10,
               borderTop: i === 0 ? 'none' : `1px solid ${CARD_BORDER}`,
               animation: 'caye-view-in 0.2s ease-out',
             }}
