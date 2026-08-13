@@ -46,7 +46,11 @@ export default function TalkToCaye({ onSend, onOpenHistory, busy }: {
   }
 
   return (
-    <div style={{ flexShrink: 0, display: 'flex', justifyContent: 'center', padding: '4px 0 2px' }}>
+    // pointerEvents:auto re-enables interaction here — the parent wrapper
+    // (FounderHome) sets pointerEvents:none on itself so the transparent
+    // margin around this centered pill never blocks a click on whatever's
+    // visible through it; this root is where clicks start working again.
+    <div style={{ flexShrink: 0, display: 'flex', justifyContent: 'center', padding: '4px 0 2px', background: 'transparent', pointerEvents: 'auto' }}>
       <div
         onMouseEnter={() => setHover(true)}
         onMouseLeave={() => setHover(false)}

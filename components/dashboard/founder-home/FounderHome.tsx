@@ -300,9 +300,20 @@ export default function FounderHome() {
         {/* Header — logo + current workspace + status, click to switch.
             Replaces both the old rail's logo button and the old top
             status bar's plain workspace name. Separation from content
-            below is tonal (glass) + a hairline inner shadow, not a border. */}
+            below is tonal (glass) + a hairline inner shadow, not a border.
+            zIndex is load-bearing, not decorative: backdrop-filter (in
+            GLASS) makes this element its own stacking context, but
+            without an explicit z-index that context still paints in DOM
+            order among siblings — meaning the view-swap content div right
+            after it (later in the DOM) was painting OVER the workspace
+            popover despite the popover's own z-index:100, since that
+            z-index only wins comparisons *inside* this header's stacking
+            context, not against the header's siblings. That was the real
+            "text bleeds through the popover" bug — not a transparency
+            problem, a paint-order one. Any opacity fix alone couldn't
+            have solved it. */}
         <div style={{
-          position: 'relative', padding: '10px 20px',
+          position: 'relative', zIndex: 20, padding: '10px 20px',
           boxShadow: 'inset 0 -1px 0 rgba(255,255,255,0.035)',
           display: 'flex', alignItems: 'center', flexShrink: 0,
           background: 'rgba(17,17,19,0.4)', ...GLASS,
@@ -383,7 +394,13 @@ export default function FounderHome() {
         )}
 
         {!expanded && (
-          <div style={{ flexShrink: 0, padding: '0 20px 16px' }}>
+          // Explicitly transparent, no chrome of its own — this reserves
+          // vertical room for the composer without ever painting a footer
+          // band behind it. pointer-events:none so the empty margin around
+          // the centered pill never blocks a click on whatever's visually
+          // "behind" it; TalkToCaye's own root re-enables pointer-events
+          // for the actual composer.
+          <div style={{ flexShrink: 0, padding: '0 20px 14px', background: 'transparent', pointerEvents: 'none' }}>
             <TalkToCaye onSend={handleTalkToCaye} onOpenHistory={() => setExpanded('cayeDirect')} />
           </div>
         )}

@@ -45,20 +45,23 @@ export function glass(alpha = 0.04): CSSProperties {
   }
 }
 
-/** Popovers, dropdowns, menus — floating surfaces that overlay arbitrary
- *  page content (including large bold text) and MUST stay legible no
- *  matter what's behind them. Deliberately no backdrop-filter of its own.
- *  `isolation: isolate` is load-bearing, not decorative: this panel is
- *  typically a child of something that DOES have backdrop-filter (the
- *  header's glass treatment) or sits near a sibling that does (the icon
- *  rail), and nested/adjacent backdrop-filter contexts can bleed through
- *  an "opaque" child in Chromium/Brave — confirmed live: the workspace
- *  switcher popover showed conversation-list text through it despite a
- *  97%-opaque background. Isolation forces this panel into its own
- *  stacking context so it can't inherit any ancestor's blur compositing. */
+/** LEVEL 3 of the surface hierarchy — temporary foreground overlays
+ *  (popovers, dropdowns, menus, command palettes) that MUST read as a
+ *  physical layer sitting above the application, not a tint over it.
+ *  Readability wins over glass purity here: high opacity (0.96, inside
+ *  the 0.94-0.98 "clearly foreground" band) with just enough blur left
+ *  to keep some material character at the edges.
+ *
+ *  `isolation: isolate` still matters even with the paint-order bug
+ *  fixed at its actual source (the header now has an explicit z-index —
+ *  see FounderHome's header comment): it guarantees this panel composites
+ *  independently of whatever ancestor/sibling glass surfaces are doing,
+ *  so a future layout change nearby can't reopen the same class of bug. */
 export function popoverSurface(): CSSProperties {
   return {
-    background: 'rgba(15,15,18,0.99)',
+    background: 'rgba(15,15,18,0.96)',
+    backdropFilter: 'blur(14px) saturate(140%)',
+    WebkitBackdropFilter: 'blur(14px) saturate(140%)',
     isolation: 'isolate',
   }
 }
