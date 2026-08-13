@@ -33,6 +33,7 @@ import {
   buildWeb3FormsContext,
   type Web3FormsParsed,
 } from '@/lib/email/web3forms'
+import { resolveOrCreateContact } from '@/lib/contacts/resolve-contact'
 
 const ZOHO_TOKEN_URL = 'https://accounts.zoho.com/oauth/v2/token'
 
@@ -1037,6 +1038,20 @@ async function processMessage(
   const effectiveEmail = web3FormsFields?.customerEmail ?? fromEmail
   const effectiveName  = web3FormsFields?.customerName  ?? fromName
 
+  // Resolve/create the canonical Person for this sender before touching the
+  // conversation, so every legitimate email relationship (including website
+  // intake relayed through web3forms) becomes addressable via People — this
+  // poller previously never wrote a contacts row at all (the Karin Roberts
+  // gap: a real conversation with no Person). Returns null for automated/
+  // noreply senders, same gate the archive check below uses.
+  const contact = await resolveOrCreateContact(supabase, {
+    workspaceId,
+    channelType: 'email',
+    channelId: effectiveEmail,
+    name: effectiveName,
+    at: receivedTime,
+  })
+
   // If the effective sender is a noreply/vendor address (Zoho calendar
   // invites, chargeanywhere automation, mailer-daemon bounces, etc.), still
   // save the message for audit but create the conversation pre-archived so
@@ -1170,6 +1185,7 @@ async function processMessage(
       .from('unified_conversations')
       .update({
         ...nameBackfill,
+        contact_id: contact?.id ?? null,
         metadata: {
           ...existingMeta,
           subject: existingMeta.subject ?? subject,
@@ -1192,6 +1208,7 @@ async function processMessage(
         channel_conversation_id: threadId,
         customer_name: effectiveName,
         customer_id: effectiveEmail,
+        contact_id: contact?.id ?? null,
         is_archived: archiveOnCreate,
         status: 'open',
         metadata: {

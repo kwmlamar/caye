@@ -86,7 +86,7 @@ function intakeFromMetadata(metadata: unknown): IntakeSummary | null {
 export const getCustomer: Tool<GetCustomerInput> = {
   name: 'get_customer',
   description:
-    "Look up a customer by name, phone, or email. Searches the contacts table AND conversation threads, since many customers exist only as a thread (on one workspace ZERO threads have a contact row). " +
+    "Look up a customer by name, phone, or email. Searches the contacts table AND conversation threads — every legitimate inbound conversation resolves a contact at ingest now (2026-08-13 identity-ingestion fix), so a thread with no contact_id is the rare exception (a backfill gap, an automated sender that was correctly skipped) rather than the norm; still check both so nothing recent falls through. " +
     "READ `match` FIRST. 'unique' -> `contact` holds the one person. 'ambiguous' -> `candidates` holds several and there is deliberately NO single contact: say who they might be and ask which, never pick one. 'none' -> nobody matched. " +
     "Contact details are `emails` and `phones` (each with provenance: verified = we have exchanged messages there, stated = an operator told us, claimed = typed into a form) plus `relay_only` for forwarding addresses that reach them but are not their own. " +
     "`absent` lists what we checked for and genuinely do not have — that is the ONLY basis for telling the operator we don't have something. `not_checked` lists what this call did not fetch; never report those as missing. " +

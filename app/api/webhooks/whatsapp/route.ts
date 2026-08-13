@@ -30,6 +30,7 @@ import type { VoiceProfile } from '@/lib/voice-profile'
 import { alertFounderOfDeliveryFailure } from '@/lib/whatsapp/founder-alert'
 import { OPERATOR_LOGGABLE_KINDS } from '@/app/api/caye/outbound-worker/route'
 import { mediaPlaceholder } from '@/lib/operator-text-guard'
+import { resolveOrCreateContact } from '@/lib/contacts/resolve-contact'
 
 // ─── GET — webhook verification ──────────────────────────────────────────────
 
@@ -217,31 +218,16 @@ async function processInboundWhatsApp(payload: Record<string, unknown>): Promise
     const contact = contacts?.find(c => c.wa_id === from)
     const customerName = contact?.profile?.name ?? from
 
-    // Upsert a contact row for this WhatsApp sender, keyed on
-    // (workspace, channel, wa number) — mirrors the email webhook's
-    // contact upsert (zoho-email/route.ts) so Caye's per-customer style
-    // learning also works for the primary front-desk channel.
-    const { data: contactRow, error: contactErr } = await supabase
-      .from('contacts')
-      .upsert(
-        {
-          customer_id: workspaceId,
-          name: customerName,
-          phone_number: from,
-          channel_type: 'whatsapp',
-          channel_id: from,
-          first_message_at: sentAt,
-          last_message_at: sentAt,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: 'customer_id,channel_type,channel_id', ignoreDuplicates: false }
-      )
-      .select('id')
-      .single()
-
-    if (contactErr) {
-      console.warn('[whatsapp webhook] Contact upsert failed (continuing):', contactErr.message)
-    }
+    // Resolve/create the canonical Person for this WhatsApp sender — the
+    // shared identity path every inbound channel goes through (see
+    // lib/contacts/resolve-contact.ts).
+    const contactRow = await resolveOrCreateContact(supabase, {
+      workspaceId,
+      channelType: 'whatsapp',
+      channelId: from,
+      name: customerName,
+      at: sentAt,
+    })
 
     // Upsert conversation keyed on sender's WA number
     const { data: conversation, error: convErr } = await supabase
