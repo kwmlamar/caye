@@ -31,6 +31,7 @@ import { resolveTurnOwner } from '@/lib/whatsapp/turn-ownership'
 import { withSlowTurnHeartbeat } from '@/lib/whatsapp/slow-turn-heartbeat'
 import { corroborateItemRef } from '@/lib/whatsapp/item-ref-guard'
 import { getPendingHeldItems } from '@/lib/whatsapp/pending'
+import { resolveAcknowledgedAttentionItems, acknowledgeAttentionItems } from '@/lib/whatsapp/attention-acknowledgement'
 import { dispatchOperatorIntent } from '@/lib/whatsapp/actions'
 import { sendFreeFormWhatsApp, deliveryFieldsFromResult, type SendResult } from '@/lib/whatsapp/outbound'
 import { downloadWhatsAppMedia, isSupportedImageMimeType } from '@/lib/whatsapp/media'
@@ -813,6 +814,22 @@ async function handleOneInbound(
   }
 
   const body = message.text.body.trim()
+
+  // Scoped acknowledgement (2026-08-13): a genuine operator reply resolves
+  // the SPECIFIC attention item(s) it addresses, never every open item in
+  // the workspace — see lib/whatsapp/attention-acknowledgement.ts for why a
+  // bare "what's on Saturday?" must not clear an unrelated Karin Roberts
+  // reminder. Best-effort and never blocks the real reply below.
+  try {
+    const acked = await resolveAcknowledgedAttentionItems({
+      workspaceId,
+      replyToMessageId: message.context?.id ?? null,
+      bodyText: body,
+    })
+    if (acked.length > 0) await acknowledgeAttentionItems(workspaceId, acked)
+  } catch (err) {
+    console.error(`[whatsapp-operator] attention acknowledgement failed for ${workspaceId}:`, err)
+  }
 
   // Classify against current pending state.
   const pending = await getPendingHeldItems(workspaceId)

@@ -23,14 +23,16 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+import { createHash } from 'crypto'
 import { createServiceClient } from '@/lib/supabase-server'
 import { cayeAgent } from '@/lib/caye-agent'
-import { sendFreeFormWhatsApp, enqueueOutbound } from '@/lib/whatsapp/outbound'
-import { isWhatsAppWindowOpen } from '@/lib/whatsapp/window'
+import { enqueueOutbound } from '@/lib/whatsapp/outbound'
 import { loadScheduleConfig, inQuietHours, localDayOfWeek, type WorkspaceScheduleConfig } from '@/lib/whatsapp/schedule'
 import { resolveOperatorByPhone } from '@/lib/operator-identity'
 import { persistAgentTurns } from '@/lib/caye-operator-messages'
 import { recordCronRun } from '@/lib/cron-run-log'
+import { decideOperatorNotification } from '@/lib/whatsapp/operator-notification-gate'
+import { markAttentionPending } from '@/lib/owner-attention'
 
 // Monday 9am local — once a week, well clear of the daily digest/EOD noise.
 const TARGET_WEEKDAY = 1
@@ -149,53 +151,87 @@ async function processWorkspace(
     return { status: 'ok', detail: 'nothing to report' }
   }
 
-  const windowOpen = await isWhatsAppWindowOpen(row.workspace_id, row.operator_whatsapp_number)
-  if (!windowOpen) {
-    // Mark as not-sent (not null) so Caye Direct shows an explicit warning
-    // instead of looking identical to a demo/log-only row. No founder
-    // alert — a closed window isn't a fault, and real dispatch/delivery
-    // failures of the notify ping below alert on their own; see the
-    // matching comment on runOpportunityScan.
-    const notSentReason = `Not sent — ${row.operator_whatsapp_number}'s 24h WhatsApp window is closed`
-    await persistAgentTurns(supabase, row.workspace_id, agentResult.newTurns, operator, undefined, notSentReason)
-    // Queue a short template-based "something's waiting" ping — see the
-    // matching comment on runOpportunityScan. Idempotency key is keyed by
-    // day, not by tick, since (unlike opportunity-scan) this branch doesn't
-    // mark itself done and legitimately re-runs every tick within the
-    // target hour until the window opens — enqueueOutbound's unique
-    // idempotency_key constraint absorbs the repeats into a no-op.
-    await enqueueOutbound({
-      workspaceId: row.workspace_id,
-      kind: 'business_insights',
-      payload: {},
-      idempotencyKey: `business-insights-notify-${row.workspace_id}-${now.toISOString().slice(0, 10)}`,
-    })
-    // Don't mark as sent — try again next tick within the same target
-    // hour rather than silently losing this week's insight entirely.
-    return { status: 'skipped_window_closed' }
-  }
+  // Same gate as opportunity-scan: does the operator need to know something
+  // NEW, not "did the weekly job run." Content-hash subject key — genuinely
+  // different week-over-week numbers naturally register as a new item;
+  // a same-week re-run with identical text collapses onto it instead of
+  // re-pinging (MIN_GAP_DAYS above already makes this rare, but the gate
+  // is the actual backstop, not the timing heuristic).
+  const normalizedInsight = agentResult.replyText.toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 400)
+  const subjectId = createHash('sha256').update(normalizedInsight).digest('hex').slice(0, 32)
 
-  const sendResult = await sendFreeFormWhatsApp(
-    row.operator_whatsapp_number,
-    agentResult.replyText,
-    `business-insights-${row.workspace_id}-${now.getTime()}`
-  )
-  if (sendResult.status === 'failed') {
-    console.error(`[business-insights] send failed for ${row.workspace_id}:`, sendResult.error)
-  }
+  const decision = await decideOperatorNotification({
+    workspaceId: row.workspace_id,
+    subjectType: 'business_insight',
+    subjectId,
+    title: agentResult.replyText.slice(0, 80),
+    priority: 'awareness', // pure observation by design — see the module doc comment
+    fingerprintParts: [normalizedInsight],
+    blockedOnOperator: false,
+    resolvableAutonomously: false,
+  })
 
-  await persistAgentTurns(supabase, row.workspace_id, agentResult.newTurns, operator, sendResult)
-
-  if (sendResult.status !== 'failed') {
+  if (
+    decision.outcome === 'SUPPRESS_NO_CHANGE' ||
+    decision.outcome === 'SUPPRESS_RECENTLY_NOTIFIED' ||
+    decision.outcome === 'RESOLVED_NO_NOTIFICATION'
+  ) {
+    await persistAgentTurns(
+      supabase,
+      row.workspace_id,
+      agentResult.newTurns,
+      operator,
+      undefined,
+      'Not sent — operator already told, nothing new'
+    )
     await supabase
       .from('workspace_ai_config')
       .update({ last_business_insights_sent_at: now.toISOString() })
       .eq('workspace_id', row.workspace_id)
+    return { status: 'ok', detail: `suppressed: ${decision.outcome}` }
   }
 
-  return sendResult.status === 'failed'
-    ? { status: 'send_failed', detail: sendResult.error }
-    : { status: 'sent' }
+  // Enqueued, not sent synchronously — dispatch() in the outbound worker
+  // picks free-form vs template per-recipient at actual send time, and
+  // either way now carries the real insight text, not a "check Caye
+  // Direct" placeholder.
+  const queued = await enqueueOutbound({
+    workspaceId: row.workspace_id,
+    kind: 'business_insights',
+    payload: {
+      freeFormBody: agentResult.replyText,
+      attentionSubjectType: 'business_insight',
+      attentionSubjectId: subjectId,
+    },
+    idempotencyKey: `business-insights-${row.workspace_id}-${subjectId}`,
+  })
+
+  // Notification in flight the instant it's queued, not once it's actually
+  // sent — see the matching comment in lib/whatsapp/triggers.ts.
+  if (queued) {
+    await markAttentionPending({
+      workspaceId: row.workspace_id,
+      subjectType: 'business_insight',
+      subjectId,
+      queueId: queued.id,
+    })
+  }
+
+  await persistAgentTurns(
+    supabase,
+    row.workspace_id,
+    agentResult.newTurns,
+    operator,
+    undefined,
+    queued ? 'Queued for delivery' : 'Not sent — already queued'
+  )
+
+  await supabase
+    .from('workspace_ai_config')
+    .update({ last_business_insights_sent_at: now.toISOString() })
+    .eq('workspace_id', row.workspace_id)
+
+  return { status: 'queued' }
 }
 
 function shouldSkip(args: {

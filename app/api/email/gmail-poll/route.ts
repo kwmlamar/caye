@@ -30,6 +30,7 @@ import { htmlToPlainText } from '@/lib/email-text'
 import { sendGmailReply } from '@/lib/gmail-send'
 import { isNoReplySender, isCalendarInvite, isOutOfOffice } from '@/lib/sender-classifier'
 import { recordCronRun } from '@/lib/cron-run-log'
+import { resolveOrCreateContact } from '@/lib/contacts/resolve-contact'
 
 const GMAIL_API_BASE = 'https://gmail.googleapis.com/gmail/v1/users/me'
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
@@ -222,6 +223,19 @@ async function processGmailMessage(
     ? receivedMs < new Date(accountConnectedAt).getTime()
     : false
 
+  // Resolve/create the canonical Person for this sender before touching the
+  // conversation — this poller previously never wrote a contacts row at all,
+  // the same gap that made Karin Roberts's website-intake conversation (via
+  // the Zoho poller) invisible to People. Returns null for automated/
+  // noreply senders (isNoReplySender), mirroring the archive gate below.
+  const contact = await resolveOrCreateContact(supabase, {
+    workspaceId,
+    channelType: 'gmail',
+    channelId: fromEmail,
+    name: fromName,
+    at: receivedTime,
+  })
+
   // Find or create conversation (one per email per account — same rule as Zoho)
   let conversationId: string
   const { data: existingConv } = await supabase
@@ -239,6 +253,7 @@ async function processGmailMessage(
     await supabase
       .from('unified_conversations')
       .update({
+        contact_id: contact?.id ?? null,
         metadata: {
           ...existingMeta,
           subject: existingMeta.subject ?? subject,
@@ -265,6 +280,7 @@ async function processGmailMessage(
         channel_conversation_id: threadId,
         customer_name: fromName,
         customer_id: fromEmail,
+        contact_id: contact?.id ?? null,
         status: 'open',
         is_archived: archiveOnCreate,
         metadata: {

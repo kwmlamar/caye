@@ -97,4 +97,9 @@ export const REPO_MIGRATIONS: readonly string[] = [
   '20260812c_caye_owner_attention',
   '20260812d_sales_funnel_and_memory',
   '20260813_caye_direct_threads',
+  '20260813b_track_contacts_email_workspace_unique',
+  '20260813c_workspace_payment_integrations',
+  '20260813d_add_payment_setup_needed_outbound_kind',
+  '20260813e_fix_contacts_email_workspace_unique_partial_bug',
+  '20260813f_owner_attention_notification_gate',
 ]

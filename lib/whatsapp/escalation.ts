@@ -131,7 +131,8 @@ export async function recordEscalation(
       ?.toISOString()
       .slice(0, 10) ?? null
 
-  // Guard against piling on: if this conversation already has an open
+  // Guard against piling on: if this conversation — or another open
+  // conversation belonging to the SAME contact — already has an open
   // escalation (not yet resolved, not expired), don't create a second row
   // or fire a second ping. Confirmed live: a customer (Marissa McGourthy)
   // followed up 3 times about one unresolved fishing-charter ask, and
@@ -143,11 +144,45 @@ export async function recordEscalation(
   // question. Still update the conversation's hold reason + drop an
   // internal audit note so the dashboard reflects the latest ask, just
   // without a second WhatsApp ping.
+  //
+  // Widened 2026-08-13: the original guard only matched the literal
+  // conversationId, which a contact-identity gap could defeat outright —
+  // Karin Roberts followed up about one deposit invoice through what the
+  // system saw as separate unified_conversations rows (fixed for new
+  // inbound traffic in 753828e, but conversations that already forked
+  // before that fix still exist), and each one independently escalated and
+  // pinged. Resolving the contact behind conversationId and checking every
+  // other open conversation for that same contact closes the gap for those
+  // pre-existing forks too, not just future ones.
   if (input.conversationId) {
+    let conversationIds = [input.conversationId]
+    const { data: thisConv } = await supabase
+      .from('unified_conversations')
+      .select('contact_id')
+      .eq('id', input.conversationId)
+      .maybeSingle()
+    const contactId = (thisConv as { contact_id: string | null } | null)?.contact_id ?? null
+    if (contactId) {
+      // contact_id alone is sufficient scoping — a contacts row belongs to
+      // exactly one workspace (contacts.customer_id), so every conversation
+      // referencing it is already implicitly workspace-scoped. unified_
+      // conversations has no workspace_id column of its own (it's reached
+      // via connected_account_id instead), so don't add one here.
+      const { data: siblingConvs } = await supabase
+        .from('unified_conversations')
+        .select('id')
+        .eq('contact_id', contactId)
+      if (siblingConvs?.length) {
+        conversationIds = Array.from(
+          new Set([input.conversationId, ...siblingConvs.map((c) => c.id as string)])
+        )
+      }
+    }
+
     const { data: existing } = await supabase
       .from('caye_escalations')
       .select('id')
-      .eq('conversation_id', input.conversationId)
+      .in('conversation_id', conversationIds)
       .is('owner_responded_at', null)
       .is('expired_at', null)
       .order('created_at', { ascending: false })
@@ -284,6 +319,15 @@ export async function recordEscalation(
     priority: 'decision',
     nextAction: 'Waiting on your call',
     digest,
+    // Caye escalated specifically because she couldn't handle this herself
+    // — feeds the notification gate's reminder cadence (blocking items get
+    // the shorter threshold) and its "rising autonomy resolves rather than
+    // pings" rule (brief §9), even though this create path doesn't itself
+    // route through the gate (see the dedupe guard above for why: a
+    // genuinely new escalation always sends, quiet-hours/cooldown don't
+    // apply to it by design, same as enqueueEscalationPings already does).
+    blockedOnOperator: true,
+    resolvableAutonomously: false,
     // What re-earns attention: a different ask, a different date, a
     // different category. Not the clock — an item that has merely aged is
     // handled by the unchanged bucket, not by a fresh fingerprint.

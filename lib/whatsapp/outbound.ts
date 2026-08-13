@@ -172,12 +172,13 @@ export type OutboundKind =
   | 'ack'
   | 'escalation'
   | 'escalation_followup'
-  // Window-closed notify-only ping for the scan crons (opportunity-scan,
-  // business-insights) — see the matching case in TEMPLATE_REQUIRED_KINDS
-  // and templateForKind in app/api/caye/outbound-worker/route.ts. Never
-  // carries the actual analysis text; that stays in caye_operator_messages
-  // via persistAgentTurns, marked wa_delivery_status='not_sent'. This kind
-  // only tells the operator something is waiting.
+  // The scan crons' operator-facing findings (opportunity-scan,
+  // business-insights). Carries the real finding/insight text in
+  // payload.freeFormBody either way — see freeFormBodyForKind and
+  // templateForKind in app/api/caye/outbound-worker/route.ts. Used to be a
+  // window-closed-only, content-free "come look" ping; as of 2026-08-13
+  // both crons enqueue unconditionally and dispatch() picks free-form vs
+  // template per-recipient at actual send time, same as 'escalation'.
   | 'opportunity_scan'
   | 'business_insights'
   // Operator-set reminder (schedule_reminder). Free-form only — there is no
@@ -191,6 +192,20 @@ export type OutboundKind =
   // means it lands in Caye Direct instead. In practice the operator was
   // mid-conversation minutes earlier, so the window is open.
   | 'dropped_confirmation'
+  // Caye's one-time proactive ping to the operator when a customer hits a
+  // payment request and Charge Anywhere isn't connected yet — see
+  // supabase/migrations/20260813d_add_payment_setup_needed_outbound_kind.sql
+  // and workspace_payment_integrations (20260813c). Type-level sync only:
+  // no call site enqueues this yet (the request_payment_setup function the
+  // migration references, lib/payments/payment-request.ts, doesn't exist),
+  // so this value is currently unreachable in practice — but the DB
+  // constraint already allows it, and leaving OutboundKind out of sync with
+  // the constraint is exactly the drift class db-enum-literals.test.ts and
+  // lib/outbound-kind-migration-sync.test.ts exist to catch. Do not add a
+  // freeFormBodyForKind/templateForKind case for this until the real
+  // enqueue call site is built — an unreachable case is untestable dead
+  // code before then.
+  | 'payment_setup_needed'
 
 export interface EnqueueOutboundInput {
   workspaceId: string

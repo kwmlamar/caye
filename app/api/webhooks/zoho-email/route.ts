@@ -30,6 +30,7 @@ import type { VoiceProfile } from '@/lib/voice-profile'
 import { ensureTagline } from '@/lib/voice-profile'
 import { maybeRefreshContactProfile } from '@/lib/contact-profile'
 import { htmlToPlainText } from '@/lib/email-text'
+import { resolveOrCreateContact } from '@/lib/contacts/resolve-contact'
 import {
   isNoReplySender,
   isCalendarInvite,
@@ -226,31 +227,18 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
 
   const voiceProfile = (customer?.ai_voice_profile ?? undefined) as VoiceProfile | undefined
 
-  // Upsert a contact row for this email sender so per-customer learning has
-  // somewhere to live. Keyed on (workspace, lowercase email) — the partial
-  // unique index `contacts_email_workspace_unique` enforces dedup.
-  const nowISO = new Date().toISOString()
-  const { data: contactRow, error: contactErr } = await supabase
-    .from('contacts')
-    .upsert(
-      {
-        customer_id: workspaceId,
-        email: effectiveEmail,
-        name: effectiveName || effectiveEmail,
-        channel_type: 'email',
-        channel_id: effectiveEmail,
-        first_message_at: sentAt,
-        last_message_at: sentAt,
-        updated_at: nowISO,
-      },
-      { onConflict: 'customer_id,email', ignoreDuplicates: false }
-    )
-    .select('id')
-    .single()
-
-  if (contactErr) {
-    console.warn('[zoho-email webhook] Contact upsert failed (continuing):', contactErr.message)
-  }
+  // Resolve/create the canonical Person for this sender so per-customer
+  // learning has somewhere to live. Automated/noreply senders (already
+  // routed to archiveOnCreate above) get no Person record — see
+  // lib/contacts/resolve-contact.ts, the shared identity path every
+  // inbound channel now goes through.
+  const contactRow = await resolveOrCreateContact(supabase, {
+    workspaceId,
+    channelType: 'email',
+    channelId: effectiveEmail,
+    name: effectiveName,
+    at: sentAt,
+  })
 
   // Find-or-create conversation by customer email (NOT by threadId).
   //

@@ -143,9 +143,11 @@ import {
   linkInsertedMessagesToThreads,
   listThreads,
   getThread,
+  getThreadEntities,
   getThreadMessages,
   createCayeInitiatedThreadMessage,
   setThreadStatus,
+  describeEntity,
 } from './caye-direct-threads'
 import { createServiceClient } from '@/lib/supabase-server'
 
@@ -153,7 +155,7 @@ const WS_A = 'workspace-a'
 const WS_B = 'workspace-b'
 
 beforeEach(() => {
-  DB = { caye_direct_threads: [], caye_direct_thread_entities: [], caye_direct_thread_messages: [], caye_operator_messages: [] }
+  DB = { caye_direct_threads: [], caye_direct_thread_entities: [], caye_direct_thread_messages: [], caye_operator_messages: [], contacts: [] }
   FOUNDER_OPERATOR = { id: 1, name: 'Lamar', role: 'founder' }
 })
 
@@ -333,5 +335,39 @@ describe('createCayeInitiatedThreadMessage (Test G, founder-backstop shape)', ()
 
     const thread = await getThread(supabase, WS_A, result!.thread.id)
     expect(thread?.created_by).toBe('caye')
+  })
+})
+
+describe('Direct threads reference canonical People, not a copy (Karin Roberts regression)', () => {
+  it('a thread linked to subject_type "person" resolves its label from the real contacts row', async () => {
+    // Simulates the post-identity-ingestion-fix state: Karin Roberts now
+    // has a real contacts row (see lib/contacts/resolve-contact.ts), so a
+    // Direct thread about her can reference that canonical Person by id
+    // instead of duplicating her name/email into the thread itself.
+    DB.contacts = [{ id: 'contact-karin', name: 'Karin Roberts', email: 'karinroberts63@gmail.com', phone_number: null }]
+    const supabase = createServiceClient()
+
+    const { thread } = await getOrCreateDirectThread(supabase, {
+      workspaceId: WS_A,
+      subjectType: 'person',
+      subjectId: 'contact-karin',
+      titleHint: 'Karin Roberts — deposit invoice',
+      createdBy: 'caye',
+    })
+
+    const entities = await getThreadEntities(supabase, thread.id)
+    expect(entities).toHaveLength(1)
+    expect(entities[0].subject_type).toBe('person')
+    expect(entities[0].subject_id).toBe('contact-karin')
+
+    const label = await describeEntity(supabase, entities[0])
+    expect(label).toBe('Karin Roberts')
+  })
+
+  it('falls back to email, then a generic label, when the contact has no name', async () => {
+    DB.contacts = [{ id: 'contact-noname', name: null, email: 'someone@example.com', phone_number: null }]
+    const supabase = createServiceClient()
+    const label = await describeEntity(supabase, { subject_type: 'person', subject_id: 'contact-noname' } as never)
+    expect(label).toBe('someone@example.com')
   })
 })
