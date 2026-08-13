@@ -3,9 +3,9 @@
 import { useState, useEffect } from 'react'
 import { getSession } from '@/lib/supabase'
 import { CayeLoadingPulse } from './CayeLoadingPulse'
+import { rowDivider, TEXT_QUIET } from './surface'
 
-const CARD_BORDER = '#28282d'
-const LABEL_COLOR = '#71717a'
+const LABEL_COLOR = TEXT_QUIET
 
 interface Fact {
   id: string
@@ -90,7 +90,7 @@ export default function MemoryPage({ workspaceId }: { workspaceId: string }) {
                 {rules.map((r, i) => (
                   <div key={r.id} style={{
                     display: 'flex', alignItems: 'center', gap: 12, padding: '11px 4px',
-                    borderTop: i === 0 ? 'none' : `1px solid ${CARD_BORDER}`,
+                    borderTop: i === 0 ? 'none' : rowDivider,
                   }}>
                     <span aria-hidden style={{ width: 6, height: 6, borderRadius: '50%', background: r.is_active ? '#34d399' : '#52525b', flexShrink: 0 }} />
                     <div style={{ flex: 1, minWidth: 0 }}>
@@ -118,7 +118,7 @@ export default function MemoryPage({ workspaceId }: { workspaceId: string }) {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                   {items.map((f, i) => (
                     <div key={f.id} style={{
-                      padding: '11px 4px', borderTop: i === 0 ? 'none' : `1px solid ${CARD_BORDER}`,
+                      padding: '11px 4px', borderTop: i === 0 ? 'none' : rowDivider,
                       fontSize: 13.5, color: '#e4e4e7', lineHeight: 1.5,
                     }}>
                       {f.fact}

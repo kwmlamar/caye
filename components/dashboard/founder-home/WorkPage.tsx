@@ -3,10 +3,7 @@
 import CommandCalendar from '@/components/dashboard/command-calendar/CommandCalendar'
 import CayeLog from './CayeLog'
 import type { CommandOverview } from '@/lib/useCommandOverview'
-
-const CARD_BG = '#1a1a1e'
-const CARD_BORDER = '#28282d'
-const LABEL_COLOR = '#71717a'
+import { glass, TEXT_QUIET } from './surface'
 
 // What Caye is doing (Home's "Working now"), has done (the full log
 // here), and plans to do (the calendar here) — the calendar and the
@@ -23,8 +20,8 @@ export default function WorkPage({
   onSelectConversation: (conversationId: string | null) => void
 }) {
   return (
-    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div style={{ flexShrink: 0, height: 460, borderRadius: 16, overflow: 'hidden', background: CARD_BG, border: `1px solid ${CARD_BORDER}` }}>
+    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 24, display: 'flex', flexDirection: 'column', gap: 24 }}>
+      <div style={{ ...glass(0.018), flexShrink: 0, height: 460, borderRadius: 18, overflow: 'hidden' }}>
         {data ? (
           <CommandCalendar
             workspaceId={workspaceId}
@@ -35,10 +32,10 @@ export default function WorkPage({
             onSelectConversation={onSelectConversation}
           />
         ) : (
-          <div style={{ padding: 20, fontSize: 12.5, color: LABEL_COLOR }}>Loading…</div>
+          <div style={{ padding: 20, fontSize: 12.5, color: TEXT_QUIET }}>Loading…</div>
         )}
       </div>
-      <div style={{ flex: 1, minHeight: 300, borderRadius: 16, background: CARD_BG, border: `1px solid ${CARD_BORDER}`, padding: '14px 16px', overflowY: 'auto' }}>
+      <div style={{ flex: 1, minHeight: 300 }}>
         <CayeLog workspaceId={workspaceId} limit={60} />
       </div>
     </div>

@@ -22,25 +22,12 @@ import MemoryPage from './MemoryPage'
 import SettingsPage from './SettingsPage'
 import TalkToCaye from './TalkToCaye'
 import FounderProfile from './FounderProfile'
+import { ENV_BG, AQUA, GRADIENT, glass, paneShadowSoft, focusResetCss } from './surface'
 
-// Tokens lifted directly from Sandbox/caye-command (the reference
-// mockup) via computed styles — bg-[#09090b]/[#121214]/border-[#1f1f23],
-// font-mono labels, font-display (Space Grotesk) values. The one thing
-// NOT copied from the mockup is its cyan/purple/rose accent gradient —
-// that's replaced with our own teal/gold mesh palette (matches the
-// landing hero + CayeMark orb), per the earlier gradient-consistency
-// decision. 2026-07-02 theme pass.
-const APP_BG = '#111113'
-const CARD_BG = '#1a1a1e'
-const CARD_BORDER = '#28282d'
-const GRADIENT = 'linear-gradient(90deg, #0766A3, #4EBECE, #FFE4AF)'
-
-// Glass treatment for chrome only (header, rail) — not data-dense
-// surfaces, which stay fully opaque so small text stays legible.
-const GLASS: CSSProperties = {
-  backdropFilter: 'blur(20px) saturate(140%)',
-  WebkitBackdropFilter: 'blur(20px) saturate(140%)',
-}
+// 2026-08-13 visual pass: moved from "cards on a black page" toward one
+// continuous environment. Hard 1px outlines are the exception now, not
+// the default — see surface.ts for the shared hierarchy this draws from.
+const GLASS: CSSProperties = glass(0.045)
 
 // The one remaining fullscreen takeover — Caye Direct's full history,
 // opened from the Talk to Caye composer. Calendar/Conversations/Settings
@@ -51,7 +38,7 @@ const GLASS: CSSProperties = {
 const FULLSCREEN_PANEL_STYLE: CSSProperties = {
   position: 'fixed', inset: 0, zIndex: 200,
   display: 'flex', flexDirection: 'column',
-  background: APP_BG,
+  background: ENV_BG,
 }
 
 function FullscreenPanelHeader({ title, workspaceName, onCollapse }: { title: string; workspaceName: string; onCollapse: () => void }) {
@@ -59,7 +46,7 @@ function FullscreenPanelHeader({ title, workspaceName, onCollapse }: { title: st
   return (
     <div style={{
       flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-      padding: '13px 20px', borderBottom: `1px solid ${CARD_BORDER}`,
+      padding: '13px 20px', boxShadow: 'inset 0 -1px 0 rgba(255,255,255,0.04)',
       background: 'rgba(17,17,19,0.55)', ...GLASS,
     }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 9, minWidth: 0 }}>
@@ -120,10 +107,11 @@ function RailButton({ item, active, onClick }: { item: (typeof RAIL_ITEMS)[numbe
       style={{
         width: 44, height: 44, borderRadius: 12, flexShrink: 0,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        background: active ? 'rgba(78,190,206,0.14)' : hover ? 'rgba(255,255,255,0.05)' : 'transparent',
-        color: active ? '#4EBECE' : hover ? '#a1a1aa' : '#52525b',
+        background: active ? 'rgba(78,190,206,0.09)' : hover ? 'rgba(255,255,255,0.04)' : 'transparent',
+        boxShadow: active ? '0 0 18px rgba(78,190,206,0.22)' : 'none',
+        color: active ? '#7DD8E0' : hover ? '#a1a1aa' : '#52525b',
         cursor: 'pointer',
-        transition: 'background 0.15s ease, color 0.15s ease',
+        transition: 'background 0.15s ease, color 0.15s ease, box-shadow 0.2s ease',
       }}
     >
       <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -217,7 +205,7 @@ export default function FounderHome() {
   const highlightedWorkspaceId = (isPending && pendingWorkspaceId) || workspaceId
 
   return (
-    <div className="caye-founder" style={{ display: 'flex', height: '100%', background: APP_BG, color: '#f4f4f5', overflow: 'hidden', fontFamily: 'var(--font-sans)' }}>
+    <div className="caye-founder" style={{ display: 'flex', height: '100%', background: ENV_BG, color: '#f4f4f5', overflow: 'hidden', fontFamily: 'var(--font-sans)' }}>
       <style>{`
         @keyframes caye-view-in {
           from { opacity: 0; transform: translateY(4px); }
@@ -227,6 +215,13 @@ export default function FounderHome() {
           0%   { transform: translateX(-100%); }
           100% { transform: translateX(360%); }
         }
+        @keyframes caye-popover-in {
+          from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+          to   { opacity: 1; transform: none; }
+        }
+        @keyframes caye-resolve-out {
+          to { opacity: 0; transform: scale(0.97); }
+        }
         .caye-nav-pending { opacity: 0.62; transition: opacity 0.16s ease; }
         .caye-nav-idle { opacity: 1; transition: opacity 0.16s ease; }
         .caye-activity-row { transition: background 0.15s ease; }
@@ -234,15 +229,14 @@ export default function FounderHome() {
         @media (prefers-reduced-motion: reduce) {
           .caye-view-swap { animation: none !important; }
           .caye-nav-pending, .caye-nav-idle { transition: none; }
+          [style*="caye-popover-in"], [style*="caye-view-in"], [style*="caye-resolve-out"] { animation: none !important; }
         }
         .caye-founder * { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.15) transparent; }
         .caye-founder *::-webkit-scrollbar { width: 6px; height: 6px; }
         .caye-founder *::-webkit-scrollbar-track { background: transparent; }
         .caye-founder *::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 3px; }
         .caye-founder *::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.25); }
-        .caye-founder a:focus-visible, .caye-founder button:focus-visible, .caye-founder input:focus-visible {
-          outline: 2px solid #4EBECE; outline-offset: 2px;
-        }
+        ${focusResetCss}
 
         /* Responsive. Desktop: hero side-by-side (text | orb). Below
            1100px the orb block visually leads (still text-first in the
@@ -266,7 +260,8 @@ export default function FounderHome() {
       {/* ── Icon rail — five destinations, Settings + identity pinned to
           the bottom. No workspace initials here anymore; see header. ── */}
       <nav className="caye-rail" style={{
-        width: 64, flexShrink: 0, background: 'rgba(17,17,19,0.6)', borderRight: `1px solid ${CARD_BORDER}`,
+        width: 64, flexShrink: 0, background: 'rgba(17,17,19,0.5)',
+        boxShadow: 'inset -1px 0 0 rgba(255,255,255,0.035)',
         display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, padding: '16px 0',
         ...GLASS,
       }}>
@@ -284,20 +279,33 @@ export default function FounderHome() {
 
       {/* ── Main ── */}
       <div style={{ position: 'relative', flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0 }}>
+        {/* Atmosphere — the environment should read as "Caye's light
+            falling on the room," not a designed gradient. Third glow is
+            loosely anchored near where the orb sits in the hero; the rest
+            is deliberately faint enough to be subconscious. */}
         <div aria-hidden style={{
           position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: -1,
           background:
-            'radial-gradient(ellipse 900px 500px at 100% -10%, rgba(7,102,163,0.14), transparent 60%), ' +
-            'radial-gradient(ellipse 700px 400px at -5% 110%, rgba(255,228,175,0.05), transparent 60%)',
+            'radial-gradient(ellipse 900px 500px at 100% -10%, rgba(7,102,163,0.13), transparent 60%), ' +
+            'radial-gradient(ellipse 620px 480px at 78% 20%, rgba(78,190,206,0.06), transparent 65%), ' +
+            'radial-gradient(ellipse 500px 380px at 82% 16%, rgba(255,228,175,0.035), transparent 60%), ' +
+            'radial-gradient(ellipse 700px 400px at -5% 110%, rgba(255,228,175,0.04), transparent 60%)',
+        }} />
+        <div aria-hidden style={{
+          position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: -1, opacity: 0.025,
+          mixBlendMode: 'overlay',
+          backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E\")",
         }} />
 
         {/* Header — logo + current workspace + status, click to switch.
             Replaces both the old rail's logo button and the old top
-            status bar's plain workspace name. */}
+            status bar's plain workspace name. Separation from content
+            below is tonal (glass) + a hairline inner shadow, not a border. */}
         <div style={{
-          position: 'relative', padding: '10px 20px', borderBottom: `1px solid ${CARD_BORDER}`,
+          position: 'relative', padding: '10px 20px',
+          boxShadow: 'inset 0 -1px 0 rgba(255,255,255,0.035)',
           display: 'flex', alignItems: 'center', flexShrink: 0,
-          background: 'rgba(17,17,19,0.55)', ...GLASS,
+          background: 'rgba(17,17,19,0.4)', ...GLASS,
         }}>
           {(isPending || revalidating) && (
             <div aria-hidden style={{ position: 'absolute', left: 0, right: 0, bottom: -1, height: 2, overflow: 'hidden' }}>
@@ -340,7 +348,7 @@ export default function FounderHome() {
             // pulse + working now), Level 3 (short log). Deliberately
             // shorter than the old dashboard — substantial negative
             // space is the point, not a gap to be filled.
-            <div className="caye-hero-wrap" style={{ flex: 1, overflowY: 'auto', padding: '4px 28px 28px', display: 'flex', flexDirection: 'column', gap: 28, minHeight: 0 }}>
+            <div className="caye-hero-wrap" style={{ flex: 1, overflowY: 'auto', padding: '8px 32px 32px', display: 'flex', flexDirection: 'column', gap: 36, minHeight: 0 }}>
               <FounderBriefing
                 data={data}
                 today={today}
@@ -353,13 +361,9 @@ export default function FounderHome() {
 
               <BusinessPulse data={data} today={today} weekLabel={weekOffset === 0 ? 'Bookings this week' : 'Bookings shown'} />
 
-              <div className="caye-stack-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-                <div style={{ background: CARD_BG, borderRadius: 16, border: `1px solid ${CARD_BORDER}`, padding: '16px 18px' }}>
-                  <LiveActivity workspaceId={workspaceId} />
-                </div>
-                <div style={{ background: CARD_BG, borderRadius: 16, border: `1px solid ${CARD_BORDER}`, padding: '16px 18px' }}>
-                  <CayeLog workspaceId={workspaceId} limit={6} onViewAll={() => setRailView('work')} />
-                </div>
+              <div className="caye-stack-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 36 }}>
+                <LiveActivity workspaceId={workspaceId} />
+                <CayeLog workspaceId={workspaceId} limit={6} onViewAll={() => setRailView('work')} />
               </div>
             </div>
           )}

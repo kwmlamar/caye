@@ -2,9 +2,7 @@
 
 import { useLiveEvents } from '@/lib/useLiveEvents'
 import { clockTime, TONE_COLOR } from './event-visuals'
-
-const CARD_BORDER = '#28282d'
-const LABEL_COLOR = '#71717a'
+import { glass, rowDivider, TEXT_QUIET, AQUA } from './surface'
 
 // A founder reading what their employee got done, not a server log —
 // plain sentences, no operation_id, no status=true. Same workspace_events
@@ -20,30 +18,30 @@ export default function CayeLog({ workspaceId, limit = 25, onViewAll }: {
   const { events, loading } = useLiveEvents(workspaceId, limit)
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minHeight: 0, overflowY: 'auto' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '2px 2px 10px' }}>
+    <div style={{ ...glass(0.018), borderRadius: 18, padding: '18px 20px', display: 'flex', flexDirection: 'column', minHeight: 0, overflowY: 'auto' }}>
+      <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 2px 12px' }}>
         <span style={{
           fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-mono)',
-          letterSpacing: '0.08em', textTransform: 'uppercase', color: LABEL_COLOR,
+          letterSpacing: '0.08em', textTransform: 'uppercase', color: TEXT_QUIET,
         }}>
           Caye's Log
         </span>
       </div>
 
       {!loading && events.length === 0 && (
-        <p style={{ fontSize: 12.5, color: LABEL_COLOR, padding: '4px 2px' }}>No activity recorded yet.</p>
+        <p style={{ fontSize: 12.5, color: TEXT_QUIET, padding: '4px 2px' }}>No activity recorded yet.</p>
       )}
 
       {events.map((e, i) => (
         <div
           key={e.id}
           style={{
-            display: 'flex', alignItems: 'baseline', gap: 12, padding: '8px 4px',
-            borderTop: i === 0 ? 'none' : `1px solid ${CARD_BORDER}`,
+            display: 'flex', alignItems: 'baseline', gap: 12, padding: '9px 4px',
+            borderTop: i === 0 ? 'none' : rowDivider,
           }}
         >
           <span style={{
-            fontSize: 11, fontFamily: 'var(--font-mono)', color: LABEL_COLOR,
+            fontSize: 11, fontFamily: 'var(--font-mono)', color: TEXT_QUIET,
             flexShrink: 0, width: 66,
           }}>
             {clockTime(e.at)}
@@ -57,8 +55,8 @@ export default function CayeLog({ workspaceId, limit = 25, onViewAll }: {
         <button
           onClick={onViewAll}
           style={{
-            alignSelf: 'flex-start', marginTop: 8, border: 'none', background: 'transparent', cursor: 'pointer',
-            fontSize: 12, color: '#4EBECE', padding: '4px 2px', fontFamily: 'var(--font-sans)',
+            alignSelf: 'flex-start', marginTop: 10, border: 'none', background: 'transparent', cursor: 'pointer',
+            fontSize: 12, color: AQUA, padding: '4px 2px', fontFamily: 'var(--font-sans)',
           }}
         >
           View activity →

@@ -3,12 +3,11 @@
 import { useState, useRef, useEffect } from 'react'
 import { CayeMark } from '@/components/brand/CayeMark'
 import { Pill } from '@/components/dashboard/founder-home/console-ui'
+import { glass, AQUA, TEXT, TEXT_QUIET } from './surface'
 import type { WorkspaceMembership } from '@/lib/workspace-context'
 import type { CustomerStatus } from '@/types/database'
 
-const CARD_BG = '#1a1a1e'
-const CARD_BORDER = '#28282d'
-const LABEL_COLOR = '#71717a'
+const LABEL_COLOR = TEXT_QUIET
 
 const STATUS_LABEL: Record<CustomerStatus, string> = {
   active: 'Live', trial: 'Trial', inactive: 'Dormant', suspended: 'Blocked',
@@ -92,10 +91,11 @@ export default function WorkspaceSwitcher({
         <div
           role="listbox"
           style={{
-            position: 'absolute', top: 'calc(100% + 8px)', left: 0, zIndex: 50,
-            width: 280, background: CARD_BG, border: `1px solid ${CARD_BORDER}`, borderRadius: 14,
-            padding: 6, boxShadow: '0 12px 32px rgba(0,0,0,0.45)',
-            animation: 'caye-view-in 0.15s ease-out',
+            position: 'absolute', top: 'calc(100% + 10px)', left: 0, zIndex: 50,
+            width: 280, borderRadius: 16, padding: 6,
+            ...glass(0.055),
+            boxShadow: '0 1px 0 rgba(255,255,255,0.07) inset, 0 20px 48px -8px rgba(0,0,0,0.55)',
+            animation: 'caye-popover-in 0.16s ease-out',
           }}
         >
           <div style={{ padding: '8px 10px 6px', fontSize: 10.5, fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', textTransform: 'uppercase', color: LABEL_COLOR }}>
@@ -112,21 +112,27 @@ export default function WorkspaceSwitcher({
                 style={{
                   display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, width: '100%',
                   textAlign: 'left', border: 'none', cursor: 'pointer', borderRadius: 10,
-                  padding: '9px 10px', background: active ? 'rgba(78,190,206,0.1)' : 'transparent',
+                  padding: '9px 10px', background: active ? 'rgba(78,190,206,0.08)' : 'transparent',
+                  transition: 'background 0.12s ease',
                 }}
-                onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = 'rgba(255,255,255,0.04)' }}
+                onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = 'rgba(255,255,255,0.035)' }}
                 onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = 'transparent' }}
               >
                 <span style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
-                  {hasActivity(m.workspace_id) && (
-                    <span aria-hidden title="New activity" style={{ width: 6, height: 6, borderRadius: '50%', background: '#4EBECE', flexShrink: 0, boxShadow: '0 0 0 2px rgba(78,190,206,0.25)' }} />
-                  )}
+                  <span aria-hidden style={{
+                    width: 5, height: 5, borderRadius: '50%', flexShrink: 0,
+                    background: active ? AQUA : 'transparent',
+                    boxShadow: active ? `0 0 6px ${AQUA}99` : 'none',
+                  }} />
                   <span style={{
-                    fontSize: 13, fontWeight: active ? 600 : 500, color: active ? '#f4f4f5' : '#a1a1aa',
+                    fontSize: 13, fontWeight: active ? 600 : 500, color: active ? TEXT : '#a1a1aa',
                     whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
                   }}>
                     {m.customer.business_name ?? 'New signup'}
                   </span>
+                  {hasActivity(m.workspace_id) && (
+                    <span aria-hidden title="New activity" style={{ width: 5, height: 5, borderRadius: '50%', background: AQUA, flexShrink: 0, boxShadow: `0 0 0 2px ${AQUA}33` }} />
+                  )}
                 </span>
                 <Pill color={STATUS_COLOR[m.customer.status]} label={STATUS_LABEL[m.customer.status]} />
               </button>

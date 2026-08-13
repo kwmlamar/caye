@@ -7,9 +7,9 @@ import type { CommandOverview } from '@/lib/useCommandOverview'
 import type { TodayStats } from '@/lib/useTodayStats'
 import { CayeCore, type CayeState } from './CayeCore'
 import AttentionCard from './AttentionCard'
+import { AQUA, TEXT, TEXT_MUTED, TEXT_QUIET, GRADIENT, EMERALD } from './surface'
 
-const LABEL_COLOR = '#71717a'
-const GRADIENT = 'linear-gradient(90deg, #0766A3, #4EBECE, #FFE4AF)'
+const LABEL_COLOR = TEXT_QUIET
 
 function timeGreeting(): string {
   const h = new Date().getHours()
@@ -69,7 +69,7 @@ function DeploymentLink({ workspaceId, active, onToggled }: { workspaceId: strin
       disabled={busy}
       style={{
         border: 'none', background: 'transparent', cursor: busy ? 'default' : 'pointer',
-        fontSize: 11, fontFamily: 'var(--font-mono)', color: active ? '#71717a' : '#34d399',
+        fontSize: 11, fontFamily: 'var(--font-mono)', color: active ? TEXT_QUIET : EMERALD,
         textDecoration: 'underline', textUnderlineOffset: 3, opacity: busy ? 0.5 : 1, padding: 0,
       }}
     >
@@ -93,30 +93,30 @@ export default function FounderBriefing({
 
   return (
     <div className="caye-hero" style={{
-      display: 'flex', alignItems: 'center', gap: 40, padding: '36px 4px 12px', flexWrap: 'wrap',
+      display: 'flex', alignItems: 'center', gap: 48, padding: '44px 4px 16px', flexWrap: 'wrap',
     }}>
-      <div className="caye-hero-text" style={{ flex: '1 1 380px', minWidth: 280, display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div className="caye-hero-text" style={{ flex: '1 1 380px', minWidth: 280, display: 'flex', flexDirection: 'column', gap: 20 }}>
         <div>
           <div style={{
             fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-mono)',
-            letterSpacing: '0.1em', textTransform: 'uppercase', color: '#4EBECE', marginBottom: 10,
+            letterSpacing: '0.1em', textTransform: 'uppercase', color: AQUA, marginBottom: 12,
           }}>
             {timeGreeting()}
           </div>
           <h1 style={{
-            fontSize: 32, fontWeight: 600, fontFamily: 'var(--font-display)',
-            margin: 0, lineHeight: 1.15, letterSpacing: '-0.01em', color: '#f4f4f5',
+            fontSize: 34, fontWeight: 600, fontFamily: 'var(--font-display)',
+            margin: 0, lineHeight: 1.15, letterSpacing: '-0.015em', color: TEXT,
           }}>
             {timeGreeting()}{firstName ? `, ${firstName}` : ''}.
           </h1>
           <h2 style={{
-            fontSize: 32, fontWeight: 600, fontFamily: 'var(--font-display)',
-            margin: '2px 0 14px', lineHeight: 1.15, letterSpacing: '-0.01em',
+            fontSize: 34, fontWeight: 600, fontFamily: 'var(--font-display)',
+            margin: '2px 0 16px', lineHeight: 1.15, letterSpacing: '-0.015em',
             backgroundImage: GRADIENT, WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent',
           }}>
             {headline(data)}
           </h2>
-          <p style={{ fontSize: 14.5, color: '#a1a1aa', lineHeight: 1.6, margin: 0, maxWidth: 420 }}>
+          <p style={{ fontSize: 14.5, color: TEXT_MUTED, lineHeight: 1.65, margin: 0, maxWidth: 420 }}>
             {summarize(data, today)}
           </p>
         </div>
@@ -126,10 +126,10 @@ export default function FounderBriefing({
         )}
       </div>
 
-      <div className="caye-hero-orb" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, flexShrink: 0, margin: '0 auto' }}>
+      <div className="caye-hero-orb" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, flexShrink: 0, margin: '0 auto' }}>
         <CayeCore state={state} size={340} />
         <div style={{ textAlign: 'center', marginTop: -12 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', color: '#f4f4f5' }}>
+          <div style={{ fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', color: TEXT }}>
             CAYE · {data?.caye_active ? 'ACTIVE' : 'PAUSED'}
           </div>
           <div style={{ fontSize: 11.5, color: LABEL_COLOR, marginTop: 3, display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center' }}>
