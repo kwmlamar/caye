@@ -3,6 +3,7 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { enqueueOutbound } from './outbound'
 import { classifyHoldUrgency } from './urgency'
 import { inQuietHours, loadScheduleConfig, nextDigestTime } from './schedule'
+import { markAttentionPending, SUBJECT_CONVERSATION } from '@/lib/owner-attention'
 
 /**
  * Trigger sites in the five webhook handlers call enqueueHoldPing() right
@@ -248,7 +249,7 @@ export async function enqueueEscalationPings(
   // payload so the dispatch doesn't need to re-resolve the route_to + override
   // logic; it just sends to payload.to_phone.
   for (const recipient of recipients) {
-    await enqueueOutbound({
+    const queued = await enqueueOutbound({
       workspaceId: input.workspaceId,
       kind,
       conversationId: input.conversationId,
@@ -276,6 +277,27 @@ export async function enqueueEscalationPings(
       scheduledFor: new Date(),
       idempotencyKey: `${kind}-${input.escalationId}-${recipient.role}-${ts}`,
     })
+
+    // Mark "notification in flight" the instant it's queued, not once it's
+    // actually sent (2026-08-13) — closes the gap where the morning digest
+    // composes before the outbound worker's next ~30s tick has dispatched
+    // this row, and would otherwise see notify_count=0 and independently
+    // narrate Karin as unreported while a ping for her is already on the
+    // way. Owner-recipient only: the owner's ping is what a composer like
+    // the digest cares about; a founder backstop row is a separate concern
+    // with its own dedup (founder_escalated_at). Same subject-key
+    // derivation recordEscalation used to register this item — see
+    // escalation.ts. A no-op update when no matching row exists (e.g. the
+    // driver-question caller, whose attention item lives under a different
+    // subject_type entirely) is harmless by construction.
+    if (queued && recipient.role === 'owner') {
+      await markAttentionPending({
+        workspaceId: input.workspaceId,
+        subjectType: input.conversationId ? SUBJECT_CONVERSATION : 'escalation',
+        subjectId: input.conversationId ?? input.escalationId,
+        queueId: queued.id,
+      })
+    }
   }
 }
 

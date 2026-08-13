@@ -59,8 +59,10 @@ describe('parsing CHECK constraints out of the migrations', () => {
   })
 
   it('handles the value list spanning multiple lines', () => {
-    // 20260812_fix_outbound_kind_check.sql writes its 13 values one per line.
-    expect(allowedValues(constraints, 'caye_outbound_queue', 'kind')!.size).toBe(13)
+    // 20260813d_add_payment_setup_needed_outbound_kind.sql (the latest
+    // drop+recreate of this constraint) writes its 14 values one per line —
+    // 13 from 20260812_fix_outbound_kind_check.sql plus 'payment_setup_needed'.
+    expect(allowedValues(constraints, 'caye_outbound_queue', 'kind')!.size).toBe(14)
   })
 
   it('handles both the IN (...) and = ANY (ARRAY[...]) forms', () => {

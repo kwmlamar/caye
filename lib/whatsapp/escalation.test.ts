@@ -53,6 +53,9 @@ function makeFakeSupabase() {
         eq() {
           return this
         },
+        in() {
+          return this
+        },
         is() {
           return this
         },

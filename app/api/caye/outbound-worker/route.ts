@@ -51,12 +51,11 @@ export const OPERATOR_LOGGABLE_KINDS = new Set([
   'booking_created',
   'morning_digest',
   'auth_failure',
-  // Scan-crons' window-closed notify ping — see TEMPLATE_REQUIRED_KINDS
-  // below. Logged here so it shows up in Caye Direct with a real delivery
-  // status, distinct from the reasoning-transcript row persistAgentTurns
-  // already wrote with wa_delivery_status='not_sent'. Two rows per skipped
-  // scan is accepted, not a bug — correlation between them is only by
-  // proximity in the thread, since wa_message_id isn't known until dispatch.
+  // Scan-crons' operator-facing findings (real content as of 2026-08-13 —
+  // see the note on TEMPLATE_REQUIRED_KINDS below). Logged here so a sent
+  // one shows up in Caye Direct with a real delivery status, distinct from
+  // the reasoning-transcript row persistAgentTurns already wrote (queued/
+  // suppressed rows get 'not_sent'/no row here at all).
   'opportunity_scan',
   'business_insights',
   // Operator-set reminders (schedule_reminder). Logged so a reminder that
@@ -83,6 +82,17 @@ const TEMPLATE_REQUIRED_KINDS = new Set([
   // hard-fail with "no free-form body" just because the window happened
   // to be open.
   'booking_created',
+  // 'opportunity_scan'/'business_insights' deliberately NOT here as of
+  // 2026-08-13 (were here before). They used to be unconditionally
+  // template-required because the enqueuing cron only ever wrote a row on
+  // its window-closed branch, with no free-form composer for the kind at
+  // all — so the template was the ONLY path, and it could never carry real
+  // content ("check Caye Direct"). Both crons now enqueue unconditionally
+  // (real finding text in payload.freeFormBody either way) and let dispatch()
+  // pick per-recipient window state at actual send time, same as
+  // 'escalation' below — so forcing a template here would silently regress
+  // back to content-free pings whenever the window happened to be open.
+  //
   // 'escalation' deliberately NOT here (2026-08-07, was here before). It
   // used to be forced to a template unconditionally because escalations
   // may route to the founder, who has no 24h window with the workspace's
@@ -98,11 +108,6 @@ const TEMPLATE_REQUIRED_KINDS = new Set([
   // sender is the founder backstop (maybeEscalateToFounder), which never
   // has an open window with the workspace's Caye number.
   'escalation_followup',
-  // Notify-only pings enqueued by the scan crons specifically because the
-  // window was closed at enqueue time — always template, same reasoning
-  // as booking_created (no free-form body composer for these kinds either).
-  'opportunity_scan',
-  'business_insights',
 ])
 
 // Kinds where silence is dangerous → email fallback if WhatsApp fails.
@@ -574,16 +579,19 @@ function fallbackPingLogBody(kind: string, payload: Record<string, unknown>): st
     }
     case 'auth_failure':
       return `${str('service', 'A connected service')} needs reconnecting — I can't see new messages there until you do. Want me to walk you through it?`
-    // "It's waiting for you above" was literally false on WhatsApp — there is
-    // no "above" there, the full text lives in Caye Direct. Worse, these fire
-    // right after unrelated pings do land, so the owner reads "I couldn't send
-    // it" directly beneath a long message that plainly did send (2026-08-09,
-    // 10:00 and 10:01). Name where the write-up actually is, and don't claim a
-    // send failed in a way that contradicts what's on her screen.
+    // This used to point at Caye Direct ("the full write-up is in Caye
+    // Direct; say the word..."), which was also literally false on WhatsApp
+    // outside the window (2026-08-09) AND told an operator who only ever
+    // uses WhatsApp to go open a dashboard she doesn't use (2026-08-13 —
+    // operators here are WhatsApp-only by design, see repo CLAUDE.md).
+    // freeFormBodyForKind now composes/mirrors the real finding text for
+    // this kind, so this branch is only reached if composition genuinely
+    // produced nothing — say something true and content-free instead of
+    // naming a surface the operator was never meant to visit.
     case 'opportunity_scan':
-      return `Heads up — my workspace scan turned something up. The full write-up is in Caye Direct; say the word and I'll walk you through it here.`
+      return `Noticed something during my rounds worth a look — I'll bring it up next time we talk.`
     case 'business_insights':
-      return `Heads up — this week's business insights are ready. The full write-up is in Caye Direct; say the word and I'll walk you through it here.`
+      return `This week's business insights are ready — ask me and I'll walk you through them.`
     default:
       // NEVER echo the kind. An unmapped kind reaching an operator-facing
       // surface is a bug in this file, and the old `[${kind}]` turned that
@@ -613,6 +621,12 @@ const ATTENTION_NOTIFYING_KINDS = new Set([
   'escalation',
   'escalation_followup',
   'urgent_hold',
+  // 2026-08-13: opportunity-scan/business-insights now enqueue through this
+  // same worker (see the note on TEMPLATE_REQUIRED_KINDS above) and their
+  // subject identity lives in payload.attentionSubjectType/Id, not
+  // conversationId/escalationId — see the generalized lookup below.
+  'opportunity_scan',
+  'business_insights',
 ])
 
 async function logOperatorPing(
@@ -621,7 +635,8 @@ async function logOperatorPing(
   kind: string,
   conversationId: string | null,
   payload: Record<string, unknown>,
-  messageId: string | null
+  messageId: string | null,
+  queueId: string
 ): Promise<void> {
   if (!OPERATOR_LOGGABLE_KINDS.has(kind)) return
   const supabase = createServiceClient()
@@ -635,19 +650,30 @@ async function logOperatorPing(
   // repetition. Best-effort; a bookkeeping failure must not fail the send
   // that already happened.
   //
-  // Keyed by conversation to match SUBJECT_CONVERSATION (lib/owner-attention.ts):
-  // the ledger row for an escalated thread is the THREAD's row, the same one
-  // owner-attention-sync maintains from the held queue. Escalation id is the
-  // fallback for a conversation-less escalation, mirroring escalation.ts.
+  // Subject identity: prefer payload.attentionSubjectType/Id when the
+  // producer set them explicitly (opportunity-scan/business-insights key by
+  // a content hash, not a conversation — see those crons and
+  // operator-notification-gate.ts). Otherwise fall back to the original
+  // conversation-or-escalation-id scheme: conversation to match
+  // SUBJECT_CONVERSATION (lib/owner-attention.ts) — the ledger row for an
+  // escalated thread is the THREAD's row, the same one owner-attention-sync
+  // maintains from the held queue — with escalation id as the fallback for
+  // a conversation-less escalation, mirroring escalation.ts.
   if (ATTENTION_NOTIFYING_KINDS.has(kind)) {
+    const explicitSubjectType =
+      typeof payload.attentionSubjectType === 'string' ? payload.attentionSubjectType : null
+    const explicitSubjectId =
+      typeof payload.attentionSubjectId === 'string' ? payload.attentionSubjectId : null
     const escalationId = typeof payload.escalationId === 'string' ? payload.escalationId : null
-    const subjectId = conversationId ?? escalationId
+    const subjectType = explicitSubjectType ?? (conversationId ? SUBJECT_CONVERSATION : 'escalation')
+    const subjectId = explicitSubjectId ?? conversationId ?? escalationId
     if (subjectId) {
       await markAttentionNotified({
         workspaceId,
-        subjectType: conversationId ? SUBJECT_CONVERSATION : 'escalation',
+        subjectType,
         subjectId,
         summary: logBody,
+        queueId,
       })
     }
   }
@@ -691,7 +717,7 @@ async function handleResult(
         last_whatsapp_outbound_status: 'sent',
       })
       .eq('workspace_id', row.workspace_id)
-    await logOperatorPing(row.workspace_id, phone, row.kind, row.conversation_id, row.payload, result.messageId)
+    await logOperatorPing(row.workspace_id, phone, row.kind, row.conversation_id, row.payload, result.messageId, row.id)
     return 'sent'
   }
 
@@ -920,20 +946,30 @@ async function templateForKind(
       }
     }
     // No dedicated template (same "reuse caye_urgent_hold" fallback as
-    // booking_created/escalation above) — this only ever fires when the
-    // window was closed at enqueue time, so it never carries the actual
-    // scan write-up. That stays in caye_operator_messages via
-    // persistAgentTurns; this is purely "something's waiting, come look."
-    case 'opportunity_scan':
+    // booking_created/escalation above). Used to be a content-free "check
+    // Caye Direct" pointer whenever the window was closed at send time —
+    // removed 2026-08-13: operators here are WhatsApp-only by design (see
+    // repo CLAUDE.md) and are never expected to open a dashboard. Now
+    // carries the actual finding, truncated to fit a template placeholder —
+    // same real text freeFormBodyForKind sends when the window's open, just
+    // shorter. If composition genuinely produced nothing (shouldn't happen —
+    // the enqueuing cron only gets here with real text), falls back to a
+    // truthful, contentless "something worth a look" rather than inventing
+    // detail or naming the dashboard.
+    case 'opportunity_scan': {
+      const finding = str('freeFormBody')
       return {
         name: 'caye_urgent_hold',
-        placeholders: ['Caye', 'spotted something during her workspace scan — check Caye Direct'],
+        placeholders: ['Caye', finding ? truncateForTemplate(finding) : 'noticed something during her rounds worth a look'],
       }
-    case 'business_insights':
+    }
+    case 'business_insights': {
+      const insight = str('freeFormBody')
       return {
         name: 'caye_urgent_hold',
-        placeholders: ['Caye', "has this week's business insights ready — check Caye Direct"],
+        placeholders: ['Caye', insight ? truncateForTemplate(insight) : "has this week's business insights ready"],
       }
+    }
     default:
       return null
   }
@@ -976,8 +1012,30 @@ function freeFormBodyForKind(kind: string, payload: Record<string, unknown>): st
       ? (payload.brief as string)
       : null
   }
+  // The scan crons' real finding/insight text (2026-08-13) — composed at
+  // enqueue time by the agent turn itself, same idiom as escalation's
+  // brief above. This is what lets the window-open path carry the actual
+  // content instead of falling through to templateForKind's truncated
+  // version; both now read from the same payload.freeFormBody field.
+  if (kind === 'opportunity_scan' || kind === 'business_insights') {
+    return typeof payload.freeFormBody === 'string' && payload.freeFormBody.trim()
+      ? (payload.freeFormBody as string)
+      : null
+  }
   // All other kinds prefer their template; this is only used when the 24h
   // window is open AND the kind isn't in TEMPLATE_REQUIRED_KINDS. In v1
-  // that's ack + morning_digest's narrative path + escalation's brief.
+  // that's ack + morning_digest's narrative path + escalation's brief +
+  // the scan crons' free-form finding.
   return null
+}
+
+// Meta template placeholders read poorly past a sentence or two on a phone
+// lock screen, and unlike the free-form path there's no length ceremony —
+// just cut cleanly at a word boundary with an ellipsis. The full text is
+// always what actually reaches the operator when the window's open; this
+// only shortens the closed-window fallback.
+function truncateForTemplate(text: string, maxLen = 180): string {
+  const clean = text.replace(/\s+/g, ' ').trim()
+  if (clean.length <= maxLen) return clean
+  return `${clean.slice(0, maxLen).replace(/\s+\S*$/, '')}…`
 }

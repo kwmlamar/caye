@@ -1,6 +1,8 @@
 import 'server-only'
 import { randomUUID } from 'crypto'
+import { createHash } from 'crypto'
 import { enqueueEscalationPings } from '@/lib/whatsapp/triggers'
+import { decideOperatorNotification, recordOperatorNotified } from '@/lib/whatsapp/operator-notification-gate'
 import type { Tool } from '../types'
 
 interface EscalateDriverQuestionInput {
@@ -42,6 +44,34 @@ export const escalateDriverQuestion: Tool<EscalateDriverQuestionInput> = {
     const question = args.question.trim()
     if (question.length < 3) return { ok: false, error: 'Question is too short to escalate.' }
 
+    // No unified_conversations row exists for a driver thread (see the
+    // module comment), so this can't reuse recordEscalation's conversation-
+    // scoped dedupe. Give it its own stable key instead — same driver +
+    // near-identical question shouldn't re-ping every time the driver
+    // repeats themselves or the model retries. Normalized (lowercased,
+    // whitespace-collapsed, truncated) so trivial rephrasing still collapses
+    // — deliberately cheap text normalization, not semantic classification.
+    const normalizedQuestion = question.toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 200)
+    const driverKey = ctx.operatorId != null ? String(ctx.operatorId) : ctx.callerPhone ?? 'unknown-driver'
+    const subjectId = createHash('sha256').update(`${driverKey}:${normalizedQuestion}`).digest('hex').slice(0, 32)
+
+    const decision = await decideOperatorNotification({
+      workspaceId: ctx.workspaceId,
+      subjectType: 'driver_question',
+      subjectId,
+      title: `Driver — ${question.slice(0, 80)}`,
+      priority: 'decision',
+      fingerprintParts: [normalizedQuestion],
+      blockedOnOperator: true,
+      resolvableAutonomously: false,
+    })
+
+    if (decision.outcome === 'SUPPRESS_NO_CHANGE' || decision.outcome === 'SUPPRESS_RECENTLY_NOTIFIED') {
+      // Already told the owner about this exact question recently — the
+      // driver still gets told Caye is checking, just without a second ping.
+      return { ok: true, data: { escalated: false, alreadyNotified: true } }
+    }
+
     await enqueueEscalationPings({
       workspaceId: ctx.workspaceId,
       escalationId: randomUUID(),
@@ -52,6 +82,19 @@ export const escalateDriverQuestion: Tool<EscalateDriverQuestionInput> = {
       suggestedReply: '',
       internalContext: `Driver asked: "${question}"`,
       pingSummary: question.slice(0, 100),
+    })
+
+    // enqueueEscalationPings' rows carry a fresh escalationId, not this
+    // tool's driver_question subjectId, so outbound-worker's generic
+    // escalation-kind stamping (keyed by conversationId-or-escalationId)
+    // can't find this item to mark it notified. Stamp it directly here
+    // instead — narrow, self-contained tool, enqueue failing after this
+    // point just means one redundant future ping, never a lost one.
+    await recordOperatorNotified({
+      workspaceId: ctx.workspaceId,
+      subjectType: 'driver_question',
+      subjectId,
+      summary: question.slice(0, 200),
     })
 
     return { ok: true, data: { escalated: true } }

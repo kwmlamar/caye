@@ -102,6 +102,30 @@ describe('operatorPingLogBody — no internal identifiers reach the operator', (
     spy.mockRestore()
   })
 
+  it('mirrors the scan crons\' real finding, not a "check Caye Direct" pointer', () => {
+    // 2026-08-13: operators here are WhatsApp-only by design (repo CLAUDE.md)
+    // and are never expected to open a dashboard — the vague "full write-up
+    // is in Caye Direct; say the word..." ping is exactly what the brief
+    // asked to remove.
+    const finding = "Karin's deposit invoice is still open — she followed up again this morning."
+    const scanBody = operatorPingLogBody('opportunity_scan', { freeFormBody: finding })
+    expect(scanBody).toBe(finding)
+    expect(scanBody.toLowerCase()).not.toContain('caye direct')
+
+    const insightBody = operatorPingLogBody('business_insights', { freeFormBody: 'Snorkel tours up 12% this month.' })
+    expect(insightBody).toBe('Snorkel tours up 12% this month.')
+    expect(insightBody.toLowerCase()).not.toContain('caye direct')
+  })
+
+  it('never mentions Caye Direct even on the no-content fallback path', () => {
+    const scanFallback = operatorPingLogBody('opportunity_scan', {})
+    const insightFallback = operatorPingLogBody('business_insights', {})
+    expect(scanFallback.toLowerCase()).not.toContain('caye direct')
+    expect(insightFallback.toLowerCase()).not.toContain('caye direct')
+    expect(detectInternalLeak(scanFallback)).toBeNull()
+    expect(detectInternalLeak(insightFallback)).toBeNull()
+  })
+
   it('produces clean text for every loggable kind, with and without a payload', () => {
     // The generalisation: no kind that can be logged may produce machinery,
     // whichever branch it takes.

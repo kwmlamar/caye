@@ -142,13 +142,19 @@ describe('enum literals written to the database', () => {
  *
  * Update OUTBOUND_KIND_VALUES only when 20260812_fix_outbound_kind_check.sql
  * (or a later migration on the same constraint) changes what's allowed.
+ * 'payment_setup_needed' added 2026-08-13
+ * (20260813d_add_payment_setup_needed_outbound_kind.sql) — no enqueueOutbound
+ * call site uses it yet (see the OutboundKind union's comment in
+ * lib/whatsapp/outbound.ts for why), so its absence from any call-site scan
+ * is expected; it's listed here purely so this set keeps matching the live
+ * constraint per check-constraints.test.ts.
  */
 describe('enqueueOutbound kind matches caye_outbound_queue_kind_check', () => {
   const OUTBOUND_KIND_VALUES = new Set([
     'urgent_hold', 'booking_created', 'auth_failure', 'morning_digest',
     'welcome', 'otp', 'ack', 'escalation', 'escalation_followup',
     'opportunity_scan', 'business_insights', 'operator_reminder',
-    'dropped_confirmation',
+    'dropped_confirmation', 'payment_setup_needed',
   ])
 
   it('only calls enqueueOutbound with a kind the database accepts', () => {

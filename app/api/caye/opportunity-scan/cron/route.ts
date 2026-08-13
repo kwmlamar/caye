@@ -28,15 +28,17 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+import { createHash } from 'crypto'
 import { createServiceClient } from '@/lib/supabase-server'
 import { cayeAgent } from '@/lib/caye-agent'
-import { sendFreeFormWhatsApp, enqueueOutbound } from '@/lib/whatsapp/outbound'
-import { isWhatsAppWindowOpen } from '@/lib/whatsapp/window'
+import { enqueueOutbound } from '@/lib/whatsapp/outbound'
 import { loadScheduleConfig, inQuietHours, type WorkspaceScheduleConfig } from '@/lib/whatsapp/schedule'
 import { resolveOperatorByPhone } from '@/lib/operator-identity'
 import { persistAgentTurns } from '@/lib/caye-operator-messages'
 import { linkInsertedMessagesToThreads } from '@/lib/caye-direct-threads'
 import { recordCronRun } from '@/lib/cron-run-log'
+import { decideOperatorNotification } from '@/lib/whatsapp/operator-notification-gate'
+import { markAttentionPending } from '@/lib/owner-attention'
 import {
   QUIET_SENTINEL,
   isQuietScan,
@@ -210,61 +212,88 @@ async function processWorkspace(
     return { status: 'ok', detail: 'nothing to report' }
   }
 
-  const windowOpen = await isWhatsAppWindowOpen(row.workspace_id, row.operator_whatsapp_number)
-  if (!windowOpen) {
-    // Don't hard-fail — the pending action (if any) and the persisted
-    // turns still exist and will surface next time the owner opens a
-    // real conversation with Caye. Mark it as not-sent (not null) so
-    // Caye Direct shows an explicit warning instead of looking identical
-    // to a demo/log-only row.
-    //
-    // Deliberately NOT a founder alert (removed 2026-08-06). A closed 24h
-    // window is the owner's normal resting state, not a fault — Karenda
-    // messages Caye a few times a week, so this branch fired on nearly
-    // every scan and paged the founder 3x/day about a condition he can't
-    // act on. Real failures still alert: if the notify ping below can't be
-    // dispatched or Meta reports it undelivered, the outbound worker and
-    // the status webhooks call alertFounderOfDeliveryFailure themselves
-    // ('opportunity_scan' is in OPERATOR_LOGGABLE_KINDS).
-    const notSentReason = `Not sent — ${row.operator_whatsapp_number}'s 24h WhatsApp window is closed`
-    const insertedClosed = await persistAgentTurns(supabase, row.workspace_id, agentResult.newTurns, operator, undefined, notSentReason)
-    await linkInsertedMessagesToThreads(supabase, insertedClosed.map((r) => r.id), agentResult.linkedThreadIds)
-    // Queue a short template-based "something's waiting" ping through the
-    // normal outbound pipeline — inherits retries/template fallback/delivery
-    // correlation for free. Never carries the real analysis (Meta blocks
-    // free-form text outside the window regardless of pipeline); that stays
-    // in the persistAgentTurns row above, marked not_sent.
-    //
-    // Keyed by local day, not by hour: enqueueOutbound's unique-key
-    // constraint then collapses all three of the day's scan hours into one
-    // ping. The ping is contentless ("come look") — sending it again four
-    // hours later tells the owner nothing new and just trains her to
-    // ignore it, which is exactly what happened on 2026-08-06 when two
-    // pings in one day both pointed at a stale re-flagged escalation.
-    await enqueueOutbound({
+  // Does the operator need to know or do something NEW — not "did the scan
+  // produce text." Keyed on the finding's own normalized content (cheap
+  // text normalization, not semantic classification) so a re-run that
+  // rediscovers the exact same thing collapses onto the same attention
+  // item instead of minting a fresh one every scan. This is what stops an
+  // already-pinged escalation from getting re-narrated as a "workspace scan
+  // finding" a few hours later on a different code path (2026-08-13).
+  const normalizedFinding = replyText.toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 400)
+  const subjectId = createHash('sha256').update(normalizedFinding).digest('hex').slice(0, 32)
+
+  const decision = await decideOperatorNotification({
+    workspaceId: row.workspace_id,
+    subjectType: 'scan_finding',
+    subjectId,
+    title: replyText.slice(0, 80),
+    // Genuinely urgent/actionable findings already have their own stronger
+    // path (escalations, holds) — what reaches here as a *scan's own*
+    // finding is informational by construction, so it gets the FYI tier:
+    // said once, no auto-reminder, and subject to the low-priority cooldown
+    // so it doesn't stack with whatever else just pinged this operator.
+    priority: 'awareness',
+    fingerprintParts: [normalizedFinding],
+    blockedOnOperator: false,
+    resolvableAutonomously: false,
+  })
+
+  if (
+    decision.outcome === 'SUPPRESS_NO_CHANGE' ||
+    decision.outcome === 'SUPPRESS_RECENTLY_NOTIFIED' ||
+    decision.outcome === 'RESOLVED_NO_NOTIFICATION'
+  ) {
+    const inserted = await persistAgentTurns(
+      supabase,
+      row.workspace_id,
+      agentResult.newTurns,
+      operator,
+      undefined,
+      `Not sent — ${decision.outcome === 'RESOLVED_NO_NOTIFICATION' ? 'already resolved' : 'operator already told, nothing new'}`
+    )
+    await linkInsertedMessagesToThreads(supabase, inserted.map((r) => r.id), agentResult.linkedThreadIds)
+    return { status: 'ok', detail: `suppressed: ${decision.outcome}` }
+  }
+
+  // Enqueued, not sent synchronously — dispatch() picks free-form vs
+  // template per-recipient at actual send time (more accurate than this
+  // cron tick's snapshot), and either way now carries the real finding, not
+  // a "come look at Caye Direct" placeholder (freeFormBodyForKind /
+  // templateForKind in the outbound worker). attentionSubjectType/Id let
+  // the worker's post-send stamp find this exact attention row.
+  const queued = await enqueueOutbound({
+    workspaceId: row.workspace_id,
+    kind: 'opportunity_scan',
+    payload: {
+      freeFormBody: replyText,
+      attentionSubjectType: 'scan_finding',
+      attentionSubjectId: subjectId,
+    },
+    idempotencyKey: `opportunity-scan-${row.workspace_id}-${subjectId}`,
+  })
+
+  // Notification in flight the instant it's queued, not once it's actually
+  // sent — see the matching comment in lib/whatsapp/triggers.ts.
+  if (queued) {
+    await markAttentionPending({
       workspaceId: row.workspace_id,
-      kind: 'opportunity_scan',
-      payload: {},
-      idempotencyKey: `opportunity-scan-notify-${row.workspace_id}-${localDayKey(now, cfg.timezone)}`,
+      subjectType: 'scan_finding',
+      subjectId,
+      queueId: queued.id,
     })
-    return { status: 'skipped_window_closed' }
   }
 
-  const sendResult = await sendFreeFormWhatsApp(
-    row.operator_whatsapp_number,
-    replyText,
-    `opportunity-scan-${row.workspace_id}-${now.getTime()}`
+  const inserted = await persistAgentTurns(
+    supabase,
+    row.workspace_id,
+    agentResult.newTurns,
+    operator,
+    undefined,
+    queued ? 'Queued for delivery' : 'Not sent — already queued'
   )
-  if (sendResult.status === 'failed') {
-    console.error(`[opportunity-scan] send failed for ${row.workspace_id}:`, sendResult.error)
-  }
+  await linkInsertedMessagesToThreads(supabase, inserted.map((r) => r.id), agentResult.linkedThreadIds)
 
-  const insertedSent = await persistAgentTurns(supabase, row.workspace_id, agentResult.newTurns, operator, sendResult)
-  await linkInsertedMessagesToThreads(supabase, insertedSent.map((r) => r.id), agentResult.linkedThreadIds)
-
-  return sendResult.status === 'failed'
-    ? { status: 'send_failed', detail: sendResult.error }
-    : { status: 'sent' }
+  return { status: 'queued' }
 }
 
 // The token is load-bearing, not decoration — it's the only thing the cron
@@ -407,23 +436,6 @@ function localHour(date: Date, tz: string): number {
     return h === 24 ? 0 : h
   } catch {
     return date.getUTCHours()
-  }
-}
-
-/** Local YYYY-MM-DD — dedupes the window-closed notify ping to one per
- *  day. Local rather than UTC so the three scan hours always land in the
- *  same bucket regardless of the workspace's offset (18:00 in a UTC+6
- *  timezone is already the next UTC day). */
-function localDayKey(date: Date, tz: string): string {
-  try {
-    return new Intl.DateTimeFormat('en-CA', {
-      timeZone: tz,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    }).format(date)
-  } catch {
-    return date.toISOString().slice(0, 10)
   }
 }
 
