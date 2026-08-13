@@ -30,13 +30,30 @@ export const ROSE = '#fb7185'
 export const EMERALD = '#34d399'
 export const GRADIENT = `linear-gradient(90deg, ${OCEAN}, ${AQUA}, ${GOLD})`
 
-/** A thin pane floating in the environment — popovers, the composer, the
- *  attention surface. Not an opaque card; the page shows through it. */
+/** A thin pane floating in the environment — the composer, section
+ *  backgrounds. Not an opaque card; the page shows through it. Only for
+ *  surfaces that sit over calm/empty background — see popoverSurface for
+ *  anything that needs to sit ON TOP of real content (text, other UI) and
+ *  stay legible regardless of what's behind it. */
 export function glass(alpha = 0.04): CSSProperties {
   return {
     background: `rgba(255,255,255,${alpha})`,
     backdropFilter: 'blur(18px) saturate(150%)',
     WebkitBackdropFilter: 'blur(18px) saturate(150%)',
+  }
+}
+
+/** Popovers, dropdowns, menus — floating surfaces that overlay arbitrary
+ *  page content (including large bold text) and MUST stay legible no
+ *  matter what's behind them. A thin blur wash isn't enough contrast once
+ *  what's behind it is a 34px headline, not the plain page background —
+ *  this is a dark, nearly-opaque base with just enough blur/saturation
+ *  left to still read as glass at the edges, not a flat card. */
+export function popoverSurface(): CSSProperties {
+  return {
+    background: 'rgba(20,20,24,0.97)',
+    backdropFilter: 'blur(20px) saturate(160%)',
+    WebkitBackdropFilter: 'blur(20px) saturate(160%)',
   }
 }
 

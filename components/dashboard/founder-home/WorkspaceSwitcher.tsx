@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { CayeMark } from '@/components/brand/CayeMark'
 import { Pill } from '@/components/dashboard/founder-home/console-ui'
-import { glass, AQUA, TEXT, TEXT_QUIET } from './surface'
+import { popoverSurface, AQUA, TEXT, TEXT_QUIET } from './surface'
 import type { WorkspaceMembership } from '@/lib/workspace-context'
 import type { CustomerStatus } from '@/types/database'
 
@@ -91,10 +91,14 @@ export default function WorkspaceSwitcher({
         <div
           role="listbox"
           style={{
-            position: 'absolute', top: 'calc(100% + 10px)', left: 0, zIndex: 50,
+            position: 'absolute', top: 'calc(100% + 10px)', left: 0, zIndex: 100,
             width: 280, borderRadius: 16, padding: 6,
-            ...glass(0.055),
-            boxShadow: '0 1px 0 rgba(255,255,255,0.07) inset, 0 20px 48px -8px rgba(0,0,0,0.55)',
+            ...popoverSurface(),
+            // Tight blur radius on purpose: this popover sits close to the
+            // icon rail (~84px from the viewport edge), and a wide soft
+            // shadow (the old 48px/-8 spread) bled visibly into the rail
+            // as a stray gray patch. This stays close to the panel itself.
+            boxShadow: '0 1px 0 rgba(255,255,255,0.08) inset, 0 10px 24px -6px rgba(0,0,0,0.55)',
             animation: 'caye-popover-in 0.16s ease-out',
           }}
         >
