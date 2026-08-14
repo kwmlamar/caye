@@ -31,12 +31,16 @@ export async function GET(request: NextRequest) {
   if (!conversation || ownerId !== workspaceId || !conversation.human_agent_enabled || conversation.human_agent_reason !== 'quote_without_database_price') return NextResponse.json({ eligible: false })
   const { data: inbound } = await supabase.from('unified_messages').select('id, sent_at').eq('conversation_id', conversationId).eq('sender_type', 'customer').eq('is_internal', false).order('sent_at', { ascending: false }).limit(1).maybeSingle()
   if (!inbound) return NextResponse.json({ eligible: false })
-  const [{ count: receipts }, { count: laterCustomers }, { count: humanReplies }] = await Promise.all([
-    supabase.from('sales_stale_hold_recoveries').select('*', { count: 'exact', head: true }).eq('original_message_id', inbound.id),
+  const [{ data: latestRecovery }, { count: laterCustomers }, { count: humanReplies }] = await Promise.all([
+    supabase.from('sales_stale_hold_recoveries').select('status, outbound_message_id, delivery_attempted_at').eq('original_message_id', inbound.id).order('recovery_attempt', { ascending: false }).limit(1).maybeSingle(),
     supabase.from('unified_messages').select('*', { count: 'exact', head: true }).eq('conversation_id', conversationId).eq('sender_type', 'customer').gt('sent_at', inbound.sent_at).eq('is_internal', false),
     supabase.from('unified_messages').select('*', { count: 'exact', head: true }).eq('conversation_id', conversationId).eq('sender_type', 'business').gte('sent_at', inbound.sent_at).eq('is_internal', false).or('sender_attribution.eq.human_via_external,sender_attribution.eq.human_via_caye,metadata->>sent_by.eq.human,metadata->>source.eq.zoho_sent'),
   ])
-  return NextResponse.json({ eligible: !receipts && !laterCustomers && !humanReplies, originalMessageId: !receipts && !laterCustomers && !humanReplies ? inbound.id : null })
+  const safelySupersedable = latestRecovery?.status === 'blocked'
+    && latestRecovery.outbound_message_id === null
+    && latestRecovery.delivery_attempted_at === null
+  const eligible = (!latestRecovery || safelySupersedable) && !laterCustomers && !humanReplies
+  return NextResponse.json({ eligible, originalMessageId: eligible ? inbound.id : null })
 }
 
 /**

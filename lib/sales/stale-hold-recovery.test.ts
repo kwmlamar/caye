@@ -119,4 +119,18 @@ describe('stale Sales hold recovery migration contract', () => {
       new URL('./inbound.ts', import.meta.url), 'utf8'))
     expect(source).toContain('eventKey: `inbound:${eventRoot}:${event}`')
   })
+
+  it('permits only a blocked pre-delivery receipt to be superseded', async () => {
+    const sql = await import('node:fs/promises').then(fs => fs.readFile(
+      new URL('../../supabase/migrations/20260814210044_sales_stale_hold_recovery_blocked_supersession.sql', import.meta.url), 'utf8'))
+    expect(sql).toContain('unique (original_message_id, recovery_attempt)')
+    expect(sql).toContain("v_existing.status <> 'blocked'")
+    expect(sql).toContain('v_existing.outbound_message_id is not null')
+    expect(sql).toContain('v_existing.delivery_attempted_at is not null')
+    expect(sql).toContain("'already_' || v_existing.status")
+    expect(sql).not.toContain("v_existing.status = 'delivery_attempting'")
+    expect(sql).not.toContain("v_existing.status = 'delivery_unknown'")
+    expect(sql).not.toContain("v_existing.status = 'sent'")
+    expect(sql).not.toContain("v_existing.status = 'sent_hold_preserved'")
+  })
 })
