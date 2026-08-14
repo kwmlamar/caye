@@ -168,6 +168,8 @@ export default function CommandConversations({ workspaceId, selectedConversation
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
   const [drafting, setDrafting] = useState(false)
+  const [recovery, setRecovery] = useState<{ originalMessageId: string } | null>(null)
+  const [recoveryState, setRecoveryState] = useState<'idle' | 'running' | 'sent' | 'blocked' | 'delivery_unknown' | 'error'>('idle')
   const threadContainerRef = useRef<HTMLDivElement | null>(null)
   const replyTextareaRef = useRef<HTMLTextAreaElement | null>(null)
   const [listWidthPct, setListWidthPct] = useState(readStoredListWidth)
@@ -245,6 +247,34 @@ export default function CommandConversations({ workspaceId, selectedConversation
   useRevalidateOnFocus(refreshThread)
 
   const activeSummary = list.find((c) => c.id === activeId)
+
+  useEffect(() => {
+    let cancelled = false
+    setRecovery(null); setRecoveryState('idle')
+    if (!activeId) return
+    ;(async () => {
+      const { session } = await getSession()
+      if (!session) return
+      const params = new URLSearchParams({ workspaceId, conversationId: activeId })
+      const res = await fetch(`/api/sales/recover-stale-hold?${params}`, { headers: { Authorization: `Bearer ${session.access_token}` } })
+      const json = await res.json() as { eligible?: boolean; originalMessageId?: string }
+      if (!cancelled && res.ok && json.eligible && json.originalMessageId) setRecovery({ originalMessageId: json.originalMessageId })
+    })()
+    return () => { cancelled = true }
+  }, [activeId, workspaceId])
+
+  async function handleRecovery() {
+    if (!activeId || !recovery || recoveryState === 'running') return
+    setRecoveryState('running')
+    const { session } = await getSession()
+    if (!session) { setRecoveryState('error'); return }
+    try {
+      const res = await fetch('/api/sales/recover-stale-hold', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` }, body: JSON.stringify({ conversationId: activeId, originalMessageId: recovery.originalMessageId }) })
+      const json = await res.json() as { status?: 'sent' | 'blocked' | 'delivery_unknown' }
+      setRecoveryState(json.status === 'sent' || json.status === 'blocked' || json.status === 'delivery_unknown' ? json.status : 'error')
+      if (json.status === 'sent') { loadThread(true); fetchConversationById(workspaceId, activeId).then(c => c && upsert(c)); onSent?.() }
+    } catch { setRecoveryState('error') }
+  }
 
   function handleSelectConversation(id: string) {
     setActiveId(id)
@@ -577,6 +607,16 @@ export default function CommandConversations({ workspaceId, selectedConversation
                 <span style={{ fontSize: 11, fontWeight: 600, color: '#FFE4AF', flexShrink: 0 }}>Needs you</span>
               ) : (
                 <span style={{ fontSize: 11, color: TEXT_QUIET, flexShrink: 0 }}>Caye handling</span>
+              )}
+              {recovery && recoveryState === 'idle' && (
+                <button onClick={handleRecovery} style={{ border: '1px solid rgba(78,190,206,0.5)', borderRadius: 999, background: 'rgba(78,190,206,0.12)', color: '#b9f4fb', padding: '6px 10px', fontSize: 11, fontWeight: 700, cursor: 'pointer', flexShrink: 0 }}>
+                  Let Caye retry this reply
+                </button>
+              )}
+              {recoveryState !== 'idle' && (
+                <span style={{ fontSize: 11, color: recoveryState === 'sent' ? AQUA : recoveryState === 'delivery_unknown' ? '#FFE4AF' : '#fb7185', flexShrink: 0 }}>
+                  {recoveryState === 'running' ? 'Caye is replying…' : recoveryState === 'sent' ? 'Caye replied' : recoveryState === 'delivery_unknown' ? 'Delivery needs review' : recoveryState === 'blocked' ? 'Recovery blocked' : 'Recovery failed'}
+                </span>
               )}
             </div>
 

@@ -6,23 +6,52 @@ import { sendZohoReply } from '@/lib/email-ai'
 import { ensureTagline } from '@/lib/voice-profile'
 import type { VoiceProfile } from '@/lib/voice-profile'
 import { deliverStaleSalesHoldRecovery } from '@/lib/sales/stale-hold-recovery'
+import { isFounderUserId } from '@/lib/founder'
+
+async function authenticate(request: NextRequest) {
+  const auth = request.headers.get('authorization') ?? ''
+  const token = auth.startsWith('Bearer ') ? auth.slice(7) : null
+  if (!token) return null
+  const supabase = createServiceClient()
+  const { data: { user }, error } = await supabase.auth.getUser(token)
+  return error || !user ? null : { supabase, user }
+}
+
+/** Founder-only read model for the one explicit recovery affordance. The
+ * mutation RPC repeats these checks under locks; this only controls visibility. */
+export async function GET(request: NextRequest) {
+  const auth = await authenticate(request)
+  const conversationId = request.nextUrl.searchParams.get('conversationId')
+  const workspaceId = request.nextUrl.searchParams.get('workspaceId')
+  if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!conversationId || !workspaceId || !isFounderUserId(auth.user.id)) return NextResponse.json({ eligible: false }, { status: 403 })
+  const { supabase } = auth
+  const { data: conversation } = await supabase.from('unified_conversations').select('id, connected_account_id, human_agent_enabled, human_agent_reason, connected_accounts!inner(user_id)').eq('id', conversationId).maybeSingle()
+  const ownerId = (conversation as unknown as { connected_accounts?: { user_id?: string } })?.connected_accounts?.user_id
+  if (!conversation || ownerId !== workspaceId || !conversation.human_agent_enabled || conversation.human_agent_reason !== 'quote_without_database_price') return NextResponse.json({ eligible: false })
+  const { data: inbound } = await supabase.from('unified_messages').select('id, sent_at').eq('conversation_id', conversationId).eq('sender_type', 'customer').eq('is_internal', false).order('sent_at', { ascending: false }).limit(1).maybeSingle()
+  if (!inbound) return NextResponse.json({ eligible: false })
+  const [{ count: receipts }, { count: laterCustomers }, { count: humanReplies }] = await Promise.all([
+    supabase.from('sales_stale_hold_recoveries').select('*', { count: 'exact', head: true }).eq('original_message_id', inbound.id),
+    supabase.from('unified_messages').select('*', { count: 'exact', head: true }).eq('conversation_id', conversationId).eq('sender_type', 'customer').gt('sent_at', inbound.sent_at).eq('is_internal', false),
+    supabase.from('unified_messages').select('*', { count: 'exact', head: true }).eq('conversation_id', conversationId).eq('sender_type', 'business').gte('sent_at', inbound.sent_at).eq('is_internal', false).or('sender_attribution.eq.human_via_external,sender_attribution.eq.human_via_caye,metadata->>sent_by.eq.human,metadata->>source.eq.zoho_sent'),
+  ])
+  return NextResponse.json({ eligible: !receipts && !laterCustomers && !humanReplies, originalMessageId: !receipts && !laterCustomers && !humanReplies ? inbound.id : null })
+}
 
 /**
  * Explicit recovery only. It deliberately cannot be called by inbound
  * webhooks/pollers and does not touch inbound provider claims.
  */
 export async function POST(request: NextRequest) {
-  const auth = request.headers.get('authorization') ?? ''
-  const token = auth.startsWith('Bearer ') ? auth.slice(7) : null
-  if (!token) return NextResponse.json({ error: 'Missing auth token' }, { status: 401 })
-  const supabase = createServiceClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser(token)
-  if (authError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const authenticated = await authenticate(request)
+  if (!authenticated) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const { supabase, user } = authenticated
 
-  let body: { conversationId?: string; originalMessageId?: string; operatorId?: number }
+  let body: { conversationId?: string; originalMessageId?: string }
   try { body = await request.json() } catch { return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 }) }
-  if (!body.conversationId || !body.originalMessageId || !Number.isInteger(body.operatorId)) {
-    return NextResponse.json({ error: 'conversationId, originalMessageId, and operatorId are required' }, { status: 400 })
+  if (!body.conversationId || !body.originalMessageId) {
+    return NextResponse.json({ error: 'conversationId and originalMessageId are required' }, { status: 400 })
   }
 
   const { data: conversation } = await supabase.from('unified_conversations').select(`
@@ -35,14 +64,17 @@ export async function POST(request: NextRequest) {
   // This is an explicit owner operation, not a general workspace-member
   // capability. The SQL receipt also requires the named allowlist operator
   // to be an owner/founder in this same workspace.
-  if (workspaceId !== user.id) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  const founder = isFounderUserId(user.id)
+  if (workspaceId !== user.id && !founder) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   if (conversation.channel_type !== 'email') {
     return NextResponse.json({ error: 'Stale Sales hold recovery currently supports email only' }, { status: 400 })
   }
 
+  const { data: operator } = await supabase.from('operator_allowlist').select('id').eq('workspace_id', workspaceId).eq('role', founder ? 'founder' : 'owner').order('id').limit(1).maybeSingle()
+  if (!operator) return NextResponse.json({ error: 'No authorized recovery operator for this workspace' }, { status: 403 })
   const { data: claim, error: claimError } = await supabase.rpc('sales_claim_stale_hold_recovery', {
     p_workspace_id: workspaceId, p_conversation_id: body.conversationId,
-    p_original_message_id: body.originalMessageId, p_operator_allowlist_id: body.operatorId,
+    p_original_message_id: body.originalMessageId, p_operator_allowlist_id: operator.id,
   }).maybeSingle()
   if (claimError || !claim) return NextResponse.json({ error: claimError?.message ?? 'Recovery cannot be claimed' }, { status: 409 })
   const claimed = claim as { recovery_id: string; status: string }
