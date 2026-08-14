@@ -45,6 +45,7 @@ import { hasSalesCapability } from './sales/capability'
 import { handleSalesInbound } from './sales/inbound'
 import { buildSalesResponseSystem, salesTools } from './sales/response'
 import type { SalesLeadContext } from './sales/context'
+import { requiresAutonomousSalesReply, type SalesReplyClassification } from './sales/reply-intent'
 import { holdKindOf, isQueueHold } from './hold-kinds'
 import {
   fetchBusinessFacts,
@@ -1976,6 +1977,7 @@ async function generateCayeAutoReplyCore(
   // Claude. This is intentionally after workspace detection but before any
   // generic front-desk classification or model work.
   let salesContext: SalesLeadContext | null = null
+  let salesReplyIntent: SalesReplyClassification | undefined
   if (isSalesWorkspace) {
     const handling = await handleSalesInbound({
       workspaceId: inbound.workspaceId, workspaceEmail: workspaceRow?.contact_email,
@@ -1984,6 +1986,7 @@ async function generateCayeAutoReplyCore(
       receivedAt: inbound.receivedAt,
     })
     salesContext = handling.context
+    salesReplyIntent = handling.disposition === 'eligible' ? handling.replyIntent : undefined
     if (handling.disposition === 'ignore') return { action: 'ignore', reason: handling.reason, content: '' }
     if (handling.disposition === 'hold') return { action: 'hold', reason: handling.reason, note: handling.reason, urgency: 'routine' }
     if (handling.disposition === 'escalate') {
@@ -2293,7 +2296,7 @@ async function generateCayeAutoReplyCore(
   // makes a system feel like a mail merge rather than someone who has been
   // talking to you.
   const { stable: systemStable, dynamic: systemDynamic } = isSalesWorkspace
-    ? buildSalesResponseSystem(systemPrompt, effectiveVoiceProfile, todayISO, salesContext)
+    ? buildSalesResponseSystem(systemPrompt, effectiveVoiceProfile, todayISO, salesContext, salesReplyIntent)
     : buildSystem(
         systemPrompt,
         effectiveVoiceProfile,
@@ -2357,7 +2360,9 @@ async function generateCayeAutoReplyCore(
         { type: 'text', text: systemStable, cache_control: { type: 'ephemeral', ttl: '1h' } },
         { type: 'text', text: systemDynamicWithAvailability },
       ],
-      tools: isSalesWorkspace ? SALES_TOOLS : TOOLS,
+      tools: isSalesWorkspace
+        ? salesTools(TOOLS, !!salesReplyIntent && requiresAutonomousSalesReply(salesReplyIntent.intent))
+        : TOOLS,
       tool_choice: { type: 'any' },
       messages,
     }, { source: 'lib/caye-reply.ts:generateCayeAutoReply', workspaceId: inbound.workspaceId })
@@ -2415,7 +2420,10 @@ async function generateCayeAutoReplyCore(
         // only ever make this MORE cautious — see decideDisposition.
         const evidenceVerdict = decideDisposition({
           evidence,
-          modelConfidence: input.confidence ?? null,
+          // Sales product questions are grounded by SALES_FACTS, not booking
+          // evidence. A model's self-rating must not turn an ordinary sales
+          // reply into reply_review/Needs You.
+          modelConfidence: isSalesWorkspace ? 'high' : input.confidence ?? null,
           highStakesClaim: input.high_stakes_claim,
           // Does every figure in the draft appear in what we actually
           // retrieved? An invented price is the failure this catches, and a

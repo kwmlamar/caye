@@ -1,5 +1,6 @@
 import { findEscalationTriggers, customerFacingHandoff } from './escalation-triggers'
 import { isBounceNotification, isOutOfOffice } from '@/lib/sender-classifier'
+import { classifySalesReplyIntent } from './reply-intent'
 
 export type SalesInboundKind = 'human_reply' | 'automated_ooo' | 'opt_out' | 'bounce_or_delivery_failure' | 'unknown'
 
@@ -29,6 +30,16 @@ export function decideSalesInboundPolicy(
   if (isBounceNotification(subject)) return { kind: 'bounce_or_delivery_failure' }
   if (isOutOfOffice(subject, body)) return { kind: 'automated_ooo' }
   if (OPT_OUT_RE.test(text)) return { kind: 'opt_out' }
+  const intent = classifySalesReplyIntent(body)
+  if (intent.nextAction === 'ESCALATE') return {
+    kind: 'deterministic_escalation',
+    message: intent.intent === 'human_requested'
+      ? 'Of course — I’ll get Lamar involved.'
+      : intent.intent === 'pricing_exception'
+        ? 'I can share the standard price, but Lamar handles exceptions. I’ll get him involved.'
+      : 'I can’t make that commitment, but I’ll get Lamar to follow up.',
+    reason: intent.intent,
+  }
   const [trigger] = findEscalationTriggers(text)
   if (trigger) return {
     kind: 'deterministic_escalation', message: customerFacingHandoff(trigger.category),

@@ -38,6 +38,8 @@ export interface SalesFacts {
   /** The one CTA. */
   demoUrl: string
   siteUrl: string
+  /** Product positioning is reviewed product knowledge, not customer proof. */
+  approvedPositioning: readonly string[]
 }
 
 /**
@@ -63,6 +65,12 @@ export const SALES_FACTS: SalesFacts = {
   ],
   demoUrl: 'https://www.meetcaye.com',
   siteUrl: 'https://www.meetcaye.com',
+  approvedPositioning: [
+    'Caye helps owner-operated businesses keep customer conversations moving across approved channels.',
+    'She can answer routine customer questions, follow up, surface exceptions, and support booking/operations where the workspace has the required setup.',
+    'She finds a bounded piece of useful work and performs it only when the required authority, commercial prerequisites, and access are in place.',
+    'She escalates instead of inventing facts, making commitments, or acting outside approved authority.',
+  ],
 }
 
 /** Rendered into every sales generation prompt, so instruction and
@@ -77,6 +85,7 @@ export function renderFactsBlock(f: SalesFacts = SALES_FACTS): string {
     `- Customers you may name: ${customers}. Never imply more customers than this.`,
     `- Channels that genuinely work today: ${f.supportedChannels.join(', ')}.`,
     `- Does NOT exist yet, say so plainly if asked: ${f.notBuilt.join('; ')}.`,
+    `- Approved product positioning: ${f.approvedPositioning.join(' ')}`,
     '- If asked something not covered here, say you will check and get back to them. Never fill the gap yourself.',
   ].join('\n')
 }

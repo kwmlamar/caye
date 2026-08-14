@@ -19,5 +19,7 @@ describe('Sales inbound policy', () => {
 
   it('escalates deterministic commercial exceptions before general handling', () => {
     expect(decideSalesInboundPolicy('Re:', 'Can we negotiate the price?').kind).toBe('deterministic_escalation')
+    expect(decideSalesInboundPolicy('Re:', 'Can I speak with Lamar?').kind).toBe('deterministic_escalation')
+    expect(decideSalesInboundPolicy('Re:', 'Can you guarantee 20 bookings?').kind).toBe('deterministic_escalation')
   })
 })

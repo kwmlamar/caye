@@ -4,9 +4,10 @@ import { decideSalesInboundPolicy, type SalesInboundPolicy } from './inbound-pol
 import { recordSalesLifecycleEvent, type SalesLifecycleEvent } from './lifecycle'
 import { buildSalesLeadContext, type SalesLeadContext } from './context'
 import { bridgeSalesInboundToWork } from './opportunity-bridge'
+import { classifySalesReplyIntent, type SalesReplyClassification } from './reply-intent'
 
 export type SalesInboundHandling =
-  | { disposition: 'eligible'; context: SalesLeadContext | null }
+  | { disposition: 'eligible'; context: SalesLeadContext | null; replyIntent: SalesReplyClassification }
   | { disposition: 'ignore'; reason: string; context: SalesLeadContext | null }
   | { disposition: 'hold'; reason: string; context: SalesLeadContext | null }
   | { disposition: 'escalate'; message: string; reason: string; context: SalesLeadContext | null }
@@ -88,5 +89,5 @@ export async function handleSalesInbound(input: {
       console.error('[sales/inbound] lead context failed:', err)
     }
   }
-  return { disposition: 'eligible', context }
+  return { disposition: 'eligible', context, replyIntent: classifySalesReplyIntent(input.body) }
 }
