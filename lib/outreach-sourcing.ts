@@ -13,6 +13,7 @@
  * search hit all week (see decisions-log 2026-07-29).
  */
 import 'server-only'
+import { isValidOutreachEmail } from './outreach-email'
 
 export interface PlaceResult {
   place_id: string
@@ -70,7 +71,7 @@ const EMAIL_BLOCKLIST_PATTERNS = [
 
 function isLikelyRealEmail(email: string): boolean {
   const lower = email.toLowerCase()
-  return !EMAIL_BLOCKLIST_PATTERNS.some((re) => re.test(lower))
+  return isValidOutreachEmail(email) && !EMAIL_BLOCKLIST_PATTERNS.some((re) => re.test(lower))
 }
 
 async function textSearch(query: string, location: string, apiKey: string): Promise<PlaceResult[]> {

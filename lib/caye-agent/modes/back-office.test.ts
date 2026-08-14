@@ -130,3 +130,15 @@ describe('buildBackOfficeSystemPrompt — business knowledge retrieval', () => {
     expect(prompt).toMatch(/before (you )?tell.*(can or can't do|what.*will or won't do)/i)
   })
 })
+
+describe('buildBackOfficeSystemPrompt — outreach operations', () => {
+  it('requires the authoritative status tool instead of speculation', () => {
+    const prompt = buildBackOfficeSystemPrompt({
+      profile: BIMINI,
+      caller: { role: 'founder', name: 'Lamar' },
+    })
+    expect(prompt).toContain('get_outreach_operational_status')
+    expect(prompt).toContain('ALWAYS call it before answering why outreach')
+    expect(prompt).toContain('never offer guessed possibilities')
+  })
+})

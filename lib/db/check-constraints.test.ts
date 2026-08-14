@@ -68,7 +68,7 @@ describe('parsing CHECK constraints out of the migrations', () => {
   it('handles both the IN (...) and = ANY (ARRAY[...]) forms', () => {
     // `check (status in (...))`
     expect(allowedValues(constraints, 'caye_pending_operations', 'status')).toEqual(
-      new Set(['pending', 'synced', 'failed', 'dead_letter', 'cancelled'])
+      new Set(['pending', 'processing', 'synced', 'failed', 'dead_letter', 'cancelled'])
     )
     // `check (status = any (array[...::text]))` — casts stripped
     expect(allowedValues(constraints, 'customers', 'status')).toEqual(

@@ -9,6 +9,8 @@ import {
 import { syncBookingToCalendar } from './calendar-sync'
 import { classifyError } from './caye-agent/tools/result'
 import { alertFounderOfDeliveryFailure } from './whatsapp/founder-alert'
+import { runOutreachSourcingJob } from './outreach-sourcing-job'
+import { recordCronRun } from './cron-run-log'
 
 /**
  * Drains caye_pending_operations — the durable outbox for external effects
@@ -66,6 +68,11 @@ type Outcome = 'synced' | 'retrying' | 'dead_letter'
 async function processOperation(row: PendingOperationRow): Promise<Outcome> {
   try {
     switch (row.operation) {
+      case 'outreach_sourcing': {
+        await recordCronRun('outreach-sourcing-scan', async () => runOutreachSourcingJob(row.workspace_id))
+        await markSynced(row)
+        return 'synced'
+      }
       case 'zoho_calendar_upsert':
       case 'zoho_calendar_delete': {
         const bookingId = typeof row.payload.booking_id === 'string' ? row.payload.booking_id : null
@@ -81,7 +88,7 @@ async function processOperation(row: PendingOperationRow): Promise<Outcome> {
           .eq('id', bookingId)
           .maybeSingle()
         if (!booking) {
-          await markSynced(row.id)
+          await markSynced(row)
           return 'synced'
         }
 
@@ -92,7 +99,7 @@ async function processOperation(row: PendingOperationRow): Promise<Outcome> {
         // own transient path, but that insert is a no-op here (same
         // idempotency key, unique index), so this row stays authoritative.
         if (result.synced) {
-          await markSynced(row.id)
+          await markSynced(row)
           return 'synced'
         }
         if (result.deferred) return await fail(row, result.reason, true)

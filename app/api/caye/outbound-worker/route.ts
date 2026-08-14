@@ -17,7 +17,7 @@
  * Secured by CRON_SECRET via x-cron-secret header.
  */
 
-import { NextRequest, NextResponse } from 'next/server'
+import { after, NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase-server'
 import {
   sendFreeFormWhatsApp,
@@ -168,7 +168,7 @@ export async function GET(request: NextRequest) {
   // job: a queue whose only drain is a cron someone has to remember to
   // register externally is a queue that silently stops — which is exactly
   // what happened to this very endpoint for ~25h on 2026-07-25. Never throws.
-  await drainPendingOperationsSafely()
+  after(drainPendingOperationsSafely())
 
   try {
     const summary = await recordCronRun('outbound-worker', async () => {

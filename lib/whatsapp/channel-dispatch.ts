@@ -121,7 +121,7 @@ export async function dispatchOperatorReply(
   const now = new Date().toISOString()
   const messageId = `op-wa-${Date.now()}`
 
-  await supabase.from('unified_messages').insert({
+  const { error: messageInsertError } = await supabase.from('unified_messages').insert({
     conversation_id: conversationId,
     channel_message_id: messageId,
     sender_type: 'business',
@@ -143,8 +143,11 @@ export async function dispatchOperatorReply(
       ...(zohoMessageId ? { zoho_message_id: zohoMessageId } : {}),
     },
   })
+  if (messageInsertError) {
+    throw new Error(`message sent but outbound message was not recorded: ${messageInsertError.message}`)
+  }
 
-  await supabase
+  const { error: conversationUpdateError } = await supabase
     .from('unified_conversations')
     .update({
       last_message_at: now,
@@ -160,6 +163,9 @@ export async function dispatchOperatorReply(
       human_agent_reason: null,
     })
     .eq('id', conversationId)
+  if (conversationUpdateError) {
+    throw new Error(`message sent but conversation state was not recorded: ${conversationUpdateError.message}`)
+  }
 
   // Also close out any open escalation row — otherwise it stays pending
   // forever and the "Needs review" stat card keeps counting a thread the
@@ -173,11 +179,14 @@ export async function dispatchOperatorReply(
   // goes quiet. .is('first_touch_sent_at', null) guards against a later
   // reply on the same thread re-stamping the timestamp.
   if (meta.source === 'outreach_leads' && meta.lead_id) {
-    await supabase
+    const { error: leadUpdateError } = await supabase
       .from('outreach_leads')
       .update({ status: 'sent', first_touch_sent_at: now })
       .eq('id', meta.lead_id as string)
       .is('first_touch_sent_at', null)
+    if (leadUpdateError) {
+      throw new Error(`message sent but outreach lead dispatch was not recorded: ${leadUpdateError.message}`)
+    }
   }
 
   return { success: true, channelType: conv.channel_type, messageId }

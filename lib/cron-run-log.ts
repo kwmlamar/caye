@@ -29,34 +29,60 @@ export async function recordCronRun<T extends Record<string, unknown>>(
 
   try {
     const result = await fn()
+    const finishedAt = new Date()
+    const durationMs = finishedAt.getTime() - startedAt.getTime()
     await supabase
       .from('caye_cron_runs')
       .upsert(
         {
           cron_name: cronName,
-          last_finished_at: new Date().toISOString(),
+          last_finished_at: finishedAt.toISOString(),
           last_status: 'ok',
           last_summary: result,
           last_error: null,
-          last_duration_ms: Date.now() - startedAt.getTime(),
+          last_duration_ms: durationMs,
         },
         { onConflict: 'cron_name' }
       )
+    await appendCronHistory({
+      cron_name: cronName, started_at: startedAt.toISOString(), finished_at: finishedAt.toISOString(),
+      status: 'ok', summary: result, error: null, duration_ms: durationMs,
+    })
     return result
   } catch (err) {
+    const finishedAt = new Date()
+    const durationMs = finishedAt.getTime() - startedAt.getTime()
     await supabase
       .from('caye_cron_runs')
       .upsert(
         {
           cron_name: cronName,
-          last_finished_at: new Date().toISOString(),
+          last_finished_at: finishedAt.toISOString(),
           last_status: 'error',
           last_error: err instanceof Error ? err.message : String(err),
-          last_duration_ms: Date.now() - startedAt.getTime(),
+          last_duration_ms: durationMs,
         },
         { onConflict: 'cron_name' }
       )
+    await appendCronHistory({
+      cron_name: cronName, started_at: startedAt.toISOString(), finished_at: finishedAt.toISOString(),
+      status: 'error', summary: null, error: err instanceof Error ? err.message : String(err), duration_ms: durationMs,
+    })
     throw err
+  }
+}
+
+async function appendCronHistory(row: Record<string, unknown>): Promise<void> {
+  try {
+    const supabase = createServiceClient()
+    const builder = supabase.from('caye_cron_run_history') as unknown as { insert?: (value: Record<string, unknown>) => Promise<{ error?: { message?: string } | null }> }
+    if (!builder.insert) return // pre-migration test doubles and rolling deploys
+    const { error } = await builder.insert(row)
+    if (error) console.error('[cron-run-log] history insert failed:', error.message)
+  } catch (err) {
+    // Latest-state recording and the job itself remain authoritative during
+    // a rolling deploy; history backfill must never turn a successful cron red.
+    console.error('[cron-run-log] history insert threw:', err)
   }
 }
 

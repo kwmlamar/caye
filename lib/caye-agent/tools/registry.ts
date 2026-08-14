@@ -19,6 +19,7 @@ import { listStandingRules } from './read/list-standing-rules'
 import { getServices } from './read/get-services'
 import { getTeamMembers } from './read/get-team-members'
 import { getChannelStatus } from './read/get-channel-status'
+import { getOutreachStatus } from './read/get-outreach-operational-status'
 import { getConnectLink } from './write-low/get-connect-link'
 import { recordChannelIntake } from './write-low/record-channel-intake'
 import { markHandled } from './write-low/mark-handled'
@@ -105,6 +106,7 @@ export const TOOL_REGISTRY: AnyTool[] = [
   getServices as AnyTool,
   getTeamMembers as AnyTool,
   getChannelStatus as AnyTool,
+  getOutreachStatus as AnyTool,
   // Low-risk write
   getConnectLink as AnyTool,
   recordChannelIntake as AnyTool,

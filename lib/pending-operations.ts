@@ -16,7 +16,7 @@ import { createServiceClient } from './supabase-server'
  * counts (for calendar sync it does — the booking is already committed).
  */
 
-export type OperationKind = 'zoho_calendar_upsert' | 'zoho_calendar_delete'
+export type OperationKind = 'zoho_calendar_upsert' | 'zoho_calendar_delete' | 'outreach_sourcing'
 
 export interface EnqueueArgs {
   workspaceId: string
@@ -29,6 +29,7 @@ export interface EnqueueArgs {
   idempotencyKey: string
   requestId?: string | null
   lastError?: string | null
+  delayMs?: number
 }
 
 export interface EnqueueResult {
@@ -56,7 +57,7 @@ export async function enqueueOperation(args: EnqueueArgs): Promise<EnqueueResult
       idempotency_key: args.idempotencyKey,
       request_id: args.requestId ?? null,
       last_error: args.lastError ?? null,
-      next_attempt_at: new Date(Date.now() + backoffDelayMs(0)).toISOString(),
+      next_attempt_at: new Date(Date.now() + (args.delayMs ?? backoffDelayMs(0))).toISOString(),
     })
 
     if (error) {
@@ -83,11 +84,14 @@ export interface PendingOperationRow {
   max_attempts: number
   idempotency_key: string
   request_id: string | null
+  claim_token: string
 }
 
 /** Rows that are due now, oldest first. */
 export async function claimDueOperations(limit = 25): Promise<PendingOperationRow[]> {
   const supabase = createServiceClient()
+  await supabase.from('caye_pending_operations').update({ status: 'pending', claim_token: null, claimed_at: null })
+    .eq('status', 'processing').lt('claimed_at', new Date(Date.now() - 10 * 60 * 1000).toISOString())
   const { data, error } = await supabase
     .from('caye_pending_operations')
     .select('id, workspace_id, operation, payload, attempts, max_attempts, idempotency_key, request_id')
@@ -100,16 +104,25 @@ export async function claimDueOperations(limit = 25): Promise<PendingOperationRo
     console.error('[pending-operations] claim failed:', error.message)
     return []
   }
-  return (data ?? []) as PendingOperationRow[]
+  const claimed: PendingOperationRow[] = []
+  for (const candidate of data ?? []) {
+    const claimToken = crypto.randomUUID()
+    const { data: row } = await supabase.from('caye_pending_operations')
+      .update({ status: 'processing', claim_token: claimToken, claimed_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+      .eq('id', candidate.id).eq('status', 'pending')
+      .select('id, workspace_id, operation, payload, attempts, max_attempts, idempotency_key, request_id').maybeSingle()
+    if (row) claimed.push({ ...(row as Omit<PendingOperationRow, 'claim_token'>), claim_token: claimToken })
+  }
+  return claimed
 }
 
-export async function markSynced(id: string): Promise<void> {
+export async function markSynced(row: Pick<PendingOperationRow, 'id' | 'claim_token'>): Promise<void> {
   const supabase = createServiceClient()
   const now = new Date().toISOString()
   await supabase
     .from('caye_pending_operations')
-    .update({ status: 'synced', synced_at: now, updated_at: now, last_error: null })
-    .eq('id', id)
+    .update({ status: 'synced', synced_at: now, updated_at: now, last_error: null, claim_token: null, claimed_at: null })
+    .eq('id', row.id).eq('status', 'processing').eq('claim_token', row.claim_token)
 }
 
 /**
@@ -141,8 +154,10 @@ export async function markAttemptFailed(
         ? now
         : new Date(Date.now() + backoffDelayMs(attempts)).toISOString(),
       updated_at: now,
+      claim_token: null,
+      claimed_at: null,
     })
-    .eq('id', row.id)
+    .eq('id', row.id).eq('claim_token', row.claim_token)
 
   return exhausted ? 'dead_letter' : 'retrying'
 }

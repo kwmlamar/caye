@@ -26,6 +26,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+import { randomUUID } from 'crypto'
 import { createServiceClient } from '@/lib/supabase-server'
 import { recordCronRun } from '@/lib/cron-run-log'
 import { dispatchOperatorReply } from '@/lib/whatsapp/channel-dispatch'
@@ -40,6 +41,8 @@ import { decideNextAction, type LeadState, type SalesAction } from '@/lib/sales/
 import { decideAuthority, founderNoteFor, type SalesActionKind } from '@/lib/sales/authority'
 import { recordSignal } from '@/lib/sales/signals'
 import type { SalesStage } from '@/lib/sales/funnel'
+import { selectOutreachBatch } from '@/lib/outreach-batch'
+import { isValidOutreachEmail } from '@/lib/outreach-email'
 
 /** Leads examined per tick. Bounds runtime; the next tick picks up the rest. */
 const LEAD_BATCH_SIZE = 40
@@ -66,7 +69,7 @@ export async function GET(request: NextRequest) {
 /** Index signature satisfies recordCronRun's Record<string, unknown> bound,
  *  which persists this straight into caye_cron_runs.last_summary. */
 export interface ScanSummary {
-  [key: string]: number | string[]
+  [key: string]: unknown
   workspaces_scanned: number
   leads_examined: number
   first_touch_sent: number
@@ -76,7 +79,10 @@ export interface ScanSummary {
   disqualified: number
   marked_cold: number
   no_action: number
+  leads_considered: number
   errors: string[]
+  rejection_reasons: Record<string, number>
+  primary_zero_send_reason: string | null
 }
 
 export async function runOutreachAutosendScan(): Promise<ScanSummary> {
@@ -93,7 +99,10 @@ export async function runOutreachAutosendScan(): Promise<ScanSummary> {
       disqualified: 0,
       marked_cold: 0,
       no_action: 0,
+      leads_considered: 0,
       errors: [],
+      rejection_reasons: {},
+      primary_zero_send_reason: null,
     }
 
     const { data: workspaces } = await supabase
@@ -111,6 +120,9 @@ export async function runOutreachAutosendScan(): Promise<ScanSummary> {
         console.error(`[outreach-autosend-scan] workspace ${workspace.id}:`, err)
       }
     }
+    if (summary.first_touch_sent + summary.followups_sent === 0) {
+      summary.primary_zero_send_reason = primaryZeroSendReason(summary)
+    }
     return summary
   })
 }
@@ -127,6 +139,15 @@ interface LeadRow {
   last_touch_sent_at: string | null
   opted_out_at: string | null
   disqualified_reason: string | null
+  created_at: string
+}
+
+interface ConversationRow {
+  id: string
+  customer_id: string
+  metadata: unknown
+  last_sender_type: string | null
+  human_agent_enabled: boolean | null
 }
 
 async function processWorkspace(
@@ -165,14 +186,51 @@ async function processWorkspace(
   const { data: leads } = await supabase
     .from('outreach_leads')
     .select(
-      'id, lead_email, business_name, contact_name, demo_token, stage, first_touch_sent_at, touches_sent, last_touch_sent_at, opted_out_at, disqualified_reason'
+      'id, lead_email, business_name, contact_name, demo_token, stage, first_touch_sent_at, touches_sent, last_touch_sent_at, opted_out_at, disqualified_reason, created_at'
     )
     .eq('workspace_id', workspaceId)
     .not('stage', 'in', '("won","lost","disqualified")')
+    .is('outreach_claim_token', null)
     .order('created_at', { ascending: true })
-    .limit(LEAD_BATCH_SIZE)
 
-  for (const lead of (leads ?? []) as LeadRow[]) {
+  const leadRows = (leads ?? []) as LeadRow[]
+  const { data: conversations } = leadRows.length
+    ? await supabase.from('unified_conversations')
+      .select('id, customer_id, metadata, last_sender_type, human_agent_enabled')
+      .eq('connected_account_id', account.id).eq('channel_type', 'email')
+      .in('customer_id', leadRows.map((lead) => lead.lead_email))
+    : { data: [] }
+  const conversationsByEmail = new Map((conversations ?? []).map((row) => [String(row.customer_id).toLowerCase(), row]))
+  const actionable = leadRows.filter((lead) => {
+    summary.leads_considered++
+    if (!isValidOutreachEmail(lead.lead_email)) {
+      countReason(summary, 'invalid_email')
+      return false
+    }
+    const conversation = conversationsByEmail.get(lead.lead_email.toLowerCase())
+    const meta = (conversation?.metadata ?? {}) as Record<string, unknown>
+    if (conversation?.human_agent_enabled === true && typeof meta.proposed_reply === 'string' && conversation.last_sender_type !== 'customer') {
+      countReason(summary, 'parked_draft')
+      return false
+    }
+    const action = decideNextAction({
+      stage: lead.stage, firstTouchSentAt: lead.first_touch_sent_at, touchesSent: lead.touches_sent,
+      lastTouchSentAt: lead.last_touch_sent_at, optedOutAt: lead.opted_out_at,
+      hasUnansweredReply: conversation?.last_sender_type === 'customer', disqualifyingSignal: lead.disqualified_reason,
+    }, now)
+    if (action.kind === 'do_nothing') {
+      countReason(summary, action.reason)
+      return false
+    }
+    return true
+  })
+
+  for (const lead of selectOutreachBatch(actionable, LEAD_BATCH_SIZE)) {
+    const claimToken = randomUUID()
+    const { data: claimed } = await supabase.from('outreach_leads')
+      .update({ outreach_claim_token: claimToken, outreach_claimed_at: now.toISOString() })
+      .eq('id', lead.id).is('outreach_claim_token', null).select('id').maybeSingle()
+    if (!claimed) continue
     summary.leads_examined++
     try {
       const consumed = await processLead({
@@ -184,11 +242,15 @@ async function processWorkspace(
         remaining,
         now,
         summary,
+        prefetchedConversation: conversationsByEmail.get(lead.lead_email.toLowerCase()),
       })
       remaining -= consumed
+      await supabase.from('outreach_leads').update({ outreach_claim_token: null, outreach_claimed_at: null })
+        .eq('id', lead.id).eq('outreach_claim_token', claimToken)
     } catch (err) {
       console.error(`[outreach-autosend-scan] lead ${lead.lead_email}:`, err)
       summary.errors.push(`lead ${lead.lead_email}: ${err instanceof Error ? err.message : String(err)}`)
+      countReason(summary, 'ambiguous_failure_claim_retained')
     }
   }
 }
@@ -203,6 +265,7 @@ async function processLead(args: {
   remaining: number
   now: Date
   summary: ScanSummary
+  prefetchedConversation?: ConversationRow
 }): Promise<number> {
   const { lead, workspaceId, accountId, workspaceVoice, outreachPaused, remaining, now, summary } = args
   const supabase = createServiceClient()
@@ -211,13 +274,7 @@ async function processLead(args: {
   // Reply state is computed from the inbox rather than trusted from a
   // column, per the original outreach_leads design note: one join, not a
   // second source of truth that can drift from what actually happened.
-  const { data: conversation } = await supabase
-    .from('unified_conversations')
-    .select('id, metadata, last_sender_type, human_agent_enabled')
-    .eq('connected_account_id', accountId)
-    .eq('channel_type', 'email')
-    .eq('customer_id', lead.lead_email)
-    .maybeSingle()
+  const conversation = args.prefetchedConversation
 
   const hasUnansweredReply = conversation?.last_sender_type === 'customer'
 
@@ -231,6 +288,7 @@ async function processLead(args: {
     conversation?.human_agent_enabled === true && typeof meta.proposed_reply === 'string'
   if (hasParkedDraft && !hasUnansweredReply) {
     summary.no_action++
+    countReason(summary, 'parked_draft')
     return 0
   }
 
@@ -248,6 +306,7 @@ async function processLead(args: {
   const action = decideNextAction(state, now)
   if (action.kind === 'do_nothing') {
     summary.no_action++
+    countReason(summary, action.reason)
     return 0
   }
 
@@ -285,7 +344,10 @@ async function processLead(args: {
     return 0
   }
 
-  if (!lead.demo_token) return 0
+  if (!lead.demo_token) {
+    countReason(summary, 'missing_demo_token')
+    return 0
+  }
 
   // ── DRAFT ──────────────────────────────────────────────────────────────
   const leadName = lead.contact_name || lead.lead_email
@@ -298,6 +360,7 @@ async function processLead(args: {
       workspaceVoice, leadName, businessName, demoToken: lead.demo_token,
     })
     if (!drafted.ok) {
+      countReason(summary, `draft_failed:${drafted.reason}`)
       console.warn(`[outreach-autosend-scan] first-touch draft failed (${drafted.reason}) for ${lead.lead_email}`)
       return 0
     }
@@ -310,6 +373,7 @@ async function processLead(args: {
       touchNumber: (action as Extract<SalesAction, { kind: 'send_followup' }>).touchNumber,
     })
     if (!drafted.ok) {
+      countReason(summary, `draft_failed:${drafted.reason}`)
       console.warn(`[outreach-autosend-scan] follow-up draft failed (${drafted.reason}) for ${lead.lead_email}`)
       return 0
     }
@@ -375,6 +439,7 @@ async function processLead(args: {
       urgency: 'routine',
     }).catch((err) => console.error('[outreach-autosend-scan] hold ping failed:', err))
     summary.held_for_review++
+    countReason(summary, verdict.reasons[0] ?? 'held_unknown')
     return 0
   }
 
@@ -387,16 +452,21 @@ async function processLead(args: {
   // which still reads it, but it counts attempts and must never be used to
   // decide what to send next.
   const nowISO = now.toISOString()
-  await supabase
+  const { error: leadUpdateError } = await supabase
     .from('outreach_leads')
     .update({
       stage: 'contacted',
+      ...(action.kind === 'send_first_touch' ? { first_touch_sent_at: nowISO } : {}),
       touches_sent: lead.touches_sent + 1,
       last_touch_sent_at: nowISO,
       last_nudge_at: nowISO,
       ...(action.kind === 'send_first_touch' ? {} : { nudge_count: lead.touches_sent }),
     })
     .eq('id', lead.id)
+
+  if (leadUpdateError) {
+    throw new Error(`email sent but outreach lead state was not recorded: ${leadUpdateError.message}`)
+  }
 
   await recordSignal({
     workspaceId, leadId: lead.id, kind: 'outcome',
@@ -406,6 +476,17 @@ async function processLead(args: {
   if (action.kind === 'send_first_touch') summary.first_touch_sent++
   else summary.followups_sent++
   return 1
+}
+
+function countReason(summary: ScanSummary, reason: string): void {
+  summary.rejection_reasons[reason] = (summary.rejection_reasons[reason] ?? 0) + 1
+}
+
+function primaryZeroSendReason(summary: ScanSummary): string {
+  if (summary.errors.length) return 'scan_errors'
+  if (summary.leads_examined === 0) return 'no_active_leads'
+  if (summary.held_for_review > 0) return 'all_sendable_work_held'
+  return Object.entries(summary.rejection_reasons).sort((a, b) => b[1] - a[1])[0]?.[0] ?? 'telemetry_incomplete'
 }
 
 async function createLeadConversation(args: {

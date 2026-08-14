@@ -1,0 +1,99 @@
+import 'server-only'
+import { createServiceClient } from './supabase-server'
+import { OUTREACH_DAILY_SEND_CAP } from './outreach-send-limits'
+import { isValidOutreachEmail } from './outreach-email'
+
+export interface OutreachOperationalStatus {
+  workspaceId: string
+  timezone: string
+  enabled: boolean
+  paused: boolean
+  schedule: { sourcing: string; autosend: string; nextRunAt: string | null }
+  lastScan: { ranAt: string | null; succeeded: boolean | null; summary: Record<string, unknown> | null; error: string | null }
+  lastSourcing: { ranAt: string | null; succeeded: boolean | null; summary: Record<string, unknown> | null; error: string | null }
+  sendsToday: { sent: number; dailyLimit: number; remaining: number }
+  queue: { pendingDrafts: number; stalled: number; sourcingJobs: number }
+  sourcing: { availableCandidates: number; cooldownCandidates: number; lastFound: number | null; lastQualified: number | null; lastRejected: number | null; lastDuplicates: number | null }
+  provider: { connected: boolean; healthy: boolean; kind: string | null; lastError: string | null }
+  blockers: string[]
+  reasonNoOutreach: string | null
+  telemetryComplete: boolean
+}
+
+export function explainNoOutreach(s: Omit<OutreachOperationalStatus, 'reasonNoOutreach'>): string | null {
+  if (s.sendsToday.sent > 0) return null
+  if (s.paused) return 'Outreach is intentionally paused.'
+  if (!s.provider.connected) return 'No active outbound email account is connected.'
+  if (!s.provider.healthy) return `The outbound email provider is unhealthy${s.provider.lastError ? `: ${s.provider.lastError}` : '.'}`
+  if (s.lastScan.succeeded === false) return `The outreach scan failed${s.lastScan.error ? `: ${s.lastScan.error}` : '.'}`
+  if (s.sendsToday.remaining === 0) return 'The workspace daily outreach limit has been reached.'
+  if (s.queue.stalled > 0) return `${s.queue.stalled} outreach item(s) are stalled in the queue.`
+  const recorded = s.lastScan.summary?.primary_zero_send_reason
+  if (typeof recorded === 'string' && recorded !== 'telemetry_incomplete') return `The last scan sent nothing because ${recorded.replaceAll('_', ' ')}.`
+  if (s.sourcing.availableCandidates === 0) return 'There are no currently sendable sourced leads.'
+  if (!s.telemetryComplete) return 'The available telemetry does not establish a single cause.'
+  return `${s.sourcing.availableCandidates} sendable lead(s) exist but the last scan did not process them.`
+}
+
+/** One authoritative, workspace-scoped read model for outreach operations. */
+export async function getOutreachOperationalStatus(workspaceId: string): Promise<OutreachOperationalStatus> {
+  const db = createServiceClient()
+  const [customer, config, account, scan, sourcingRun, sourced, cooldown, stalled, sourcingJobs, history] = await Promise.all([
+    db.from('customers').select('workspace_kind,autosend_enabled,timezone').eq('id', workspaceId).maybeSingle(),
+    db.from('workspace_ai_config').select('outreach_autosend_paused').eq('workspace_id', workspaceId).maybeSingle(),
+    db.from('connected_accounts').select('id,channel_type,is_active,token_expires_at,refresh_token,updated_at').eq('user_id', workspaceId).eq('channel_type', 'email').eq('is_active', true).maybeSingle(),
+    db.from('caye_cron_runs').select('last_started_at,last_status,last_summary,last_error').eq('cron_name', 'outreach-autosend-scan').maybeSingle(),
+    db.from('caye_cron_runs').select('last_started_at,last_status,last_summary,last_error').eq('cron_name', 'outreach-sourcing-scan').maybeSingle(),
+    db.from('outreach_leads').select('lead_email').eq('workspace_id', workspaceId).eq('stage', 'sourced').is('first_touch_sent_at', null).is('opted_out_at', null),
+    db.from('outreach_leads').select('id', { count: 'exact', head: true }).eq('workspace_id', workspaceId).not('stage', 'in', '("sourced","won","lost","disqualified")'),
+    db.from('outreach_leads').select('id', { count: 'exact', head: true }).eq('workspace_id', workspaceId).not('outreach_claim_token', 'is', null),
+    db.from('caye_pending_operations').select('id', { count: 'exact', head: true }).eq('workspace_id', workspaceId).eq('operation', 'outreach_sourcing').in('status', ['pending', 'processing']),
+    db.from('caye_cron_run_history').select('id', { count: 'exact', head: true }).in('cron_name', ['outreach-autosend-scan', 'outreach-sourcing-scan']),
+  ])
+  const drafts = account.data?.id
+    ? await db.from('unified_conversations').select('id,updated_at,metadata').eq('connected_account_id', account.data.id).eq('human_agent_enabled', true)
+    : { data: [] as Array<{ id: string; updated_at: string; metadata: unknown }> }
+  const timezone = customer.data?.timezone || 'UTC'
+  const start = startOfBusinessDay(new Date(), timezone)
+  const [first, follow] = await Promise.all([
+    db.from('outreach_leads').select('id', { count: 'exact', head: true }).eq('workspace_id', workspaceId).gte('first_touch_sent_at', start),
+    db.from('outreach_leads').select('id', { count: 'exact', head: true }).eq('workspace_id', workspaceId).gte('last_nudge_at', start),
+  ])
+  const sent = (first.count ?? 0) + (follow.count ?? 0)
+  const pending = (drafts.data ?? []).filter((r) => ['outreach_first_touch', 'outreach_followup'].includes(String((r.metadata as Record<string, unknown>)?.hold_kind))).length
+  const sourcingSummary = (sourcingRun.data?.last_summary as Record<string, unknown> | null) ?? null
+  const lastFound = numeric(sourcingSummary?.found)
+  const lastQualified = numeric(sourcingSummary?.with_email)
+  const lastInserted = numeric(sourcingSummary?.inserted)
+  const availableCandidates = (sourced.data ?? []).filter((row) => isValidOutreachEmail(row.lead_email)).length
+  const tokenUsable = Boolean(account.data && (account.data.refresh_token || (account.data.token_expires_at && Date.parse(account.data.token_expires_at) > Date.now())))
+  const base: Omit<OutreachOperationalStatus, 'reasonNoOutreach'> = {
+    workspaceId, timezone,
+    enabled: customer.data?.workspace_kind === 'internal_sales' && customer.data?.autosend_enabled === true,
+    paused: config.data?.outreach_autosend_paused ?? true,
+    schedule: { sourcing: 'daily at 09:00 UTC', autosend: 'hourly at :00 UTC', nextRunAt: nextHourlyRun() },
+    lastScan: { ranAt: scan.data?.last_started_at ?? null, succeeded: scan.data ? scan.data.last_status === 'ok' : null, summary: (scan.data?.last_summary as Record<string, unknown>) ?? null, error: scan.data?.last_error ?? null },
+    lastSourcing: { ranAt: sourcingRun.data?.last_started_at ?? null, succeeded: sourcingRun.data ? sourcingRun.data.last_status === 'ok' : null, summary: sourcingSummary, error: sourcingRun.data?.last_error ?? null },
+    sendsToday: { sent, dailyLimit: OUTREACH_DAILY_SEND_CAP, remaining: Math.max(0, OUTREACH_DAILY_SEND_CAP - sent) },
+    queue: { pendingDrafts: pending, stalled: stalled.count ?? 0, sourcingJobs: sourcingJobs.count ?? 0 },
+    sourcing: { availableCandidates, cooldownCandidates: cooldown.count ?? 0, lastFound, lastQualified, lastRejected: numeric(sourcingSummary?.rejected_no_email) ?? (lastFound !== null && lastQualified !== null ? lastFound - lastQualified : null), lastDuplicates: numeric(sourcingSummary?.duplicates) ?? (lastQualified !== null && lastInserted !== null ? lastQualified - lastInserted : null) },
+    provider: { connected: Boolean(account.data), healthy: tokenUsable, kind: account.data?.channel_type ?? null, lastError: account.data && !tokenUsable ? 'No usable access or refresh token' : null },
+    blockers: [],
+    telemetryComplete: Boolean(scan.data && sourcingRun.data && history.count !== null),
+  }
+  const reasonNoOutreach = explainNoOutreach(base)
+  return { ...base, blockers: reasonNoOutreach ? [reasonNoOutreach] : [], reasonNoOutreach }
+}
+
+function numeric(value: unknown): number | null { return typeof value === 'number' ? value : null }
+
+function nextHourlyRun(): string { const d = new Date(); d.setUTCMinutes(0, 0, 0); d.setUTCHours(d.getUTCHours() + 1); return d.toISOString() }
+
+export function startOfBusinessDay(now: Date, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(now)
+  const get = (type: string) => Number(parts.find((p) => p.type === type)?.value)
+  const noonUtc = new Date(Date.UTC(get('year'), get('month') - 1, get('day'), 12))
+  const localHourAtNoon = Number(new Intl.DateTimeFormat('en-US', { timeZone, hour: '2-digit', hour12: false }).format(noonUtc))
+  const offsetHours = localHourAtNoon - 12
+  return new Date(Date.UTC(get('year'), get('month') - 1, get('day'), -offsetHours)).toISOString()
+}
