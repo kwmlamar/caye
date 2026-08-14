@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import { CAYE_STANDARD_MONTHLY_PRICE_USD } from '@/lib/sales/facts'
 
 export const metadata = {
   title: 'Terms · Caye',
@@ -20,7 +21,7 @@ export default function TermsPage() {
             Terms of Service
           </h1>
           <p className="text-[12.5px] font-mono uppercase tracking-wider text-near-black/45">
-            Last updated: 2026-07-01
+            Last updated: 2026-08-14
           </p>
         </div>
 
@@ -57,7 +58,7 @@ export default function TermsPage() {
           </h2>
           <ul className="text-near-black/75 leading-relaxed list-disc pl-5 space-y-2">
             <li>
-              <strong className="text-near-black">Plan:</strong> $79 USD per
+              <strong className="text-near-black">Plan:</strong> ${CAYE_STANDARD_MONTHLY_PRICE_USD} USD per
               month, billed monthly via Stripe. Your billing cycle anchors to
               the day of your first successful charge.
             </li>

@@ -1,28 +1,35 @@
 import { describe, it, expect } from 'vitest'
 import { findClaimIssues } from './claims'
+import { CAYE_STANDARD_MONTHLY_PRICE_USD, SALES_FACTS } from './facts'
 
 function kinds(text: string) {
   return findClaimIssues(text).map((i) => i.kind)
 }
 
 describe('findClaimIssues', () => {
+  it('uses the one published standard-price authority', () => {
+    expect(CAYE_STANDARD_MONTHLY_PRICE_USD).toBe(99)
+    expect(SALES_FACTS.monthlyPriceUsd).toBe(CAYE_STANDARD_MONTHLY_PRICE_USD)
+  })
+
   it('passes a clean, truthful draft', () => {
     const good =
       "Hey Marcus, running Blue Water Charters means messages come in while you're on the boat. " +
       "I'm Lamar, founder of TropiTech, a Bahamian tech company. I built Caye. She lives in WhatsApp, " +
-      "making sure every customer gets a reply before they give up. She's $79/month. Want to see it? " +
+      "making sure every customer gets a reply before they give up. She's $99/month. Want to see it? " +
       'https://www.meetcaye.com/api/r/abc123 Lamar'
     expect(findClaimIssues(good)).toEqual([])
   })
 
   it('rejects an invented price', () => {
     expect(kinds('It is $49/month for the first year.')).toContain('unverified_price')
-    expect(kinds('Normally $199, but for you $99.')).toContain('unverified_price')
+    expect(kinds('Normally $199, but for you $79.')).toContain('unverified_price')
   })
 
   it('accepts the real price in any reasonable format', () => {
-    expect(kinds('It is $79 a month.')).not.toContain('unverified_price')
-    expect(kinds('$79.00 flat.')).not.toContain('unverified_price')
+    expect(kinds('It is $99 a month.')).not.toContain('unverified_price')
+    expect(kinds('$99.00 flat.')).not.toContain('unverified_price')
+    expect(kinds('It is $79 a month.')).toContain('unverified_price')
   })
 
   it('rejects customers we cannot name', () => {

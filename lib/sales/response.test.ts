@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { buildSalesResponseSystem, salesTools } from './response'
 import { classifySalesReplyIntent } from './reply-intent'
 import type { SalesLeadContext } from './context'
+import { CAYE_STANDARD_MONTHLY_PRICE_USD } from './facts'
 
 const context: SalesLeadContext = {
   id: 'lead-1',
@@ -46,5 +47,7 @@ describe('Sales response boundary', () => {
     expect(system.stable).toContain('REQUIRED NEXT ACTION: ANSWER_AND_PROPOSE_WORK')
     expect(system.stable).toContain('helps owner-operated businesses keep customer conversations moving')
     expect(system.stable).toContain('Do not use hold_for_human or escalate_to_team for an ordinary value')
+    expect(system.stable).toContain('Do not introduce price unless the prospect asked about price')
+    expect(system.stable).toContain(`Price: $${CAYE_STANDARD_MONTHLY_PRICE_USD}/month flat`)
   })
 })

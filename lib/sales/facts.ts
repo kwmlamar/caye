@@ -5,8 +5,7 @@
  *
  * WHY (2026-08-12)
  * Price, proof point and capabilities previously existed only as prose
- * inside a system prompt ("Price is $79/mo flat... Bimini Island Tours and
- * Karenda are the standing proof point"). Prose in a prompt is a
+ * inside a system prompt. Prose in a prompt is a
  * suggestion: it cannot be checked after generation, and the 2026-08-01
  * incident (7 of 31 drafts shipped phrases the same prompt explicitly
  * banned) is the standing evidence that this model ignores its own
@@ -43,14 +42,23 @@ export interface SalesFacts {
 }
 
 /**
- * Current truth, 2026-08-12. Sources: STATE.md (1 paying customer, Bimini
- * at $79/mo from 2026-07-01), the WhatsApp personal-number blocker
+ * The sole machine-readable authority for Caye's published standard price.
+ *
+ * This is product pricing, not a customer's subscription or a business's
+ * transactional/service price. The latter remain independently sourced and
+ * evidence-gated.
+ */
+export const CAYE_STANDARD_MONTHLY_PRICE_USD = 99
+
+/**
+ * Current truth, 2026-08-14. Sources: the approved public standard price,
+ * the WhatsApp personal-number blocker
  * (decisions-log 2026-08-06 — guest-facing WhatsApp cannot be connected for
  * an owner whose business line is their personal phone), and the fact that
  * no integration surface beyond email/WhatsApp/Instagram/Messenger exists.
  */
 export const SALES_FACTS: SalesFacts = {
-  monthlyPriceUsd: 79,
+  monthlyPriceUsd: CAYE_STANDARD_MONTHLY_PRICE_USD,
   nameableCustomers: ['Bimini Island Tours'],
   nameablePeople: ['Karenda'],
   supportedChannels: ['WhatsApp', 'email', 'Instagram', 'Messenger'],

@@ -73,8 +73,7 @@ function normalise(s: string): string {
 export function findClaimIssues(text: string, facts: SalesFacts = SALES_FACTS): ClaimIssue[] {
   const issues: ClaimIssue[] = []
 
-  // Price: any figure that is not the real one. Checked as a number so
-  // "$79.00", "$79" and "$ 79" all pass and "$99" does not.
+  // Price: any figure that is not the current published standard price.
   for (const m of text.matchAll(MONEY_RE)) {
     const dollars = Number(m[1].replace(/,/g, ''))
     if (!Number.isFinite(dollars)) continue
@@ -137,7 +136,7 @@ function escapeRe(s: string): string {
 /** Operator-readable rejection text, mirroring describeDraftIssues. */
 export function describeClaimIssues(issues: ClaimIssue[]): string {
   const label: Record<ClaimIssueKind, string> = {
-    unverified_price: 'a price that is not $79',
+    unverified_price: `a price that is not $${SALES_FACTS.monthlyPriceUsd}`,
     unnameable_customer: 'a customer we cannot name',
     unsupported_integration: 'an integration that does not exist',
     nonexistent_capability: 'a capability that is not built',

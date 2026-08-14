@@ -44,6 +44,7 @@ import { formatCustomerFactsBlock, type CustomerFacts } from './customer-facts'
 import { hasSalesCapability } from './sales/capability'
 import { handleSalesInbound } from './sales/inbound'
 import { buildSalesResponseSystem, salesTools } from './sales/response'
+import { findClaimIssues } from './sales/claims'
 import type { SalesLeadContext } from './sales/context'
 import { requiresAutonomousSalesReply, type SalesReplyClassification } from './sales/reply-intent'
 import { holdKindOf, isQueueHold } from './hold-kinds'
@@ -2432,14 +2433,16 @@ async function generateCayeAutoReplyCore(
           // reply into reply_review/Needs You.
           modelConfidence: isSalesWorkspace ? 'high' : input.confidence ?? null,
           highStakesClaim: input.high_stakes_claim,
-          // Does every figure in the draft appear in what we actually
-          // retrieved? An invented price is the failure this catches, and a
-          // self-rating of 'high' cannot talk past it because the check never
-          // asks the model anything.
-          quotesPrice: !amountsAttestedBy(
-            extractDollarAmounts(input.content),
-            retrievedCorpus.join('\n')
-          ),
+          // Caye product pricing is authorised by SALES_FACTS, while a
+          // customer's service/transactional price must still come from this
+          // turn's retrieved business evidence. These are intentionally
+          // separate authorities.
+          quotesPrice: isSalesWorkspace
+            ? findClaimIssues(input.content).some((issue) => issue.kind === 'unverified_price')
+            : !amountsAttestedBy(
+                extractDollarAmounts(input.content),
+                retrievedCorpus.join('\n')
+              ),
           claimsAvailability: assertsAvailability(input.content),
           requestsOwnerFollowup: !!input.flag_for_owner_followup,
         })
