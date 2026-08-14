@@ -9,7 +9,7 @@ import type { TodayStats } from '@/lib/useTodayStats'
 import { CayePresence, type CayePresenceState } from '@/components/caye-presence/CayePresence'
 import AttentionCard from './AttentionCard'
 import BusinessPulse from './BusinessPulse'
-import { AQUA, TEXT, TEXT_MUTED, TEXT_QUIET, GRADIENT, EMERALD } from '../surface'
+import { TEXT, TEXT_MUTED, TEXT_QUIET, GRADIENT, EMERALD } from '../surface'
 
 const LABEL_COLOR = TEXT_QUIET
 
@@ -175,12 +175,6 @@ export default function FounderBriefing({
     }}>
       <div className="caye-hero-text" style={{ display: 'flex', flexDirection: 'column', gap: 20, minWidth: 0, paddingTop: 8 }}>
         <div>
-          <div style={{
-            fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-mono)',
-            letterSpacing: '0.1em', textTransform: 'uppercase', color: AQUA, marginBottom: 12,
-          }}>
-            {timeGreeting()}
-          </div>
           <h1 style={{
             fontSize: 34, fontWeight: 600, fontFamily: 'var(--font-display)',
             margin: 0, lineHeight: 1.15, letterSpacing: '-0.015em', color: TEXT,

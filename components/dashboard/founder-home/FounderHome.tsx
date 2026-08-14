@@ -243,6 +243,10 @@ export default function FounderHome() {
           }
           .caye-hero-text {
             width: min(44%, 520px);
+            /* The briefing is the human half of the composition, not a
+               page title pinned to the top edge. This optically centers it
+               against Caye while leaving the metrics/status baseline intact. */
+            padding-top: clamp(52px, 7vh, 92px) !important;
           }
           .caye-hero-orb {
             position: absolute;
