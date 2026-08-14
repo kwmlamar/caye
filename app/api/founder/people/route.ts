@@ -37,6 +37,7 @@ import {
   type CustomerInput, type PersonFacts,
 } from '@/lib/people'
 import { recentSignalsFor } from '@/lib/sales/signals'
+import { hasSalesCapability } from '@/lib/sales/capability'
 
 type ServiceClient = ReturnType<typeof createServiceClient>
 
@@ -428,7 +429,7 @@ export async function GET(req: NextRequest) {
   if (!membership) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   const { data: ws } = await supabase.from('customers').select('workspace_kind').eq('id', workspaceId).maybeSingle()
-  const isSales = ws?.workspace_kind === 'internal_sales'
+  const isSales = hasSalesCapability(ws)
 
   const personId = req.nextUrl.searchParams.get('id')
   if (personId) {

@@ -40,10 +40,10 @@ import {
 } from './customer-history'
 import { classifyInbound, toneHintFor, type InboundCategory } from './inbound-classifier'
 import { formatCustomerFactsBlock, type CustomerFacts } from './customer-facts'
-import { renderFactsBlock } from './sales/facts'
-import { recentSignalsFor, renderSignalsBlock } from './sales/signals'
-import { decideSalesInboundPolicy } from './sales/inbound-policy'
-import { recordSalesLifecycleEvent } from './sales/lifecycle'
+import { hasSalesCapability } from './sales/capability'
+import { handleSalesInbound } from './sales/inbound'
+import { buildSalesResponseSystem, salesTools } from './sales/response'
+import type { SalesLeadContext } from './sales/context'
 import { holdKindOf, isQueueHold } from './hold-kinds'
 import {
   fetchBusinessFacts,
@@ -668,9 +668,7 @@ const TOOLS: Anthropic.Tool[] = [
 // her own inbox by construction. She answers now; lib/sales/authority.ts
 // decides when that is not appropriate, and applyAutosendGate remains the
 // code-level backstop underneath.
-const SALES_TOOLS: Anthropic.Tool[] = TOOLS.filter(
-  t => t.name === 'send_reply' || t.name === 'hold_for_human' || t.name === 'escalate_to_team'
-)
+const SALES_TOOLS: Anthropic.Tool[] = salesTools(TOOLS)
 
 function formatServicesList(services: ServiceRow[]): string {
   if (!services.length) {
@@ -1073,117 +1071,6 @@ function buildSystem(
   dynamic += '\n\nYou MUST end every turn by calling either send_reply or hold_for_human.'
 
   return { stable, dynamic }
-}
-
-/**
- * System prompt for workspace_kind='internal_sales' — TropiTech's own
- * cold-outreach reply inbox. Deliberately NOT buildSystem: there's no
- * business/services/booking/cancellation-policy concept here.
- *
- * Rewritten 2026-08-12 (decisions-log). The previous version told Caye that
- * every draft was read by Lamar before going out, and that pricing was
- * always his call. Both were false by then, and were being fed to a model
- * that was in fact answering prospects directly. Authority
- * now lives in lib/sales/authority.ts and product truth in
- * lib/sales/facts.ts, both enforced in code; this prompt carries context and
- * voice, and states the same rules those modules enforce so the model is not
- * working against them.
- */
-function buildSalesSystem(
-  systemPrompt: string,
-  voiceProfile: VoiceProfile | undefined,
-  todayISO: string,
-  leadMemory?: string
-): { stable: string; dynamic: string } {
-  let stable = systemPrompt
-
-  stable +=
-    '\n\nWHAT THIS INBOX IS:\n' +
-    '- hello@getcaye.com, the replies to your own cold outreach pitching Caye ' +
-    'to owner-operated small businesses. These are your prospects and this is ' +
-    'your desk.\n' +
-    '- You answer them yourself. You are not drafting suggestions for someone ' +
-    'else to send.\n' +
-    '- There is no calendar, services catalog, pricing tier table or booking ' +
-    'to look up here — this is a sales inbox, not a customer-facing business ' +
-    'inbox. Do not reference or imply any of that machinery.\n' +
-    '- Messages go out signed as Lamar, first name only. You may talk about ' +
-    'Caye and TropiTech by name as the product being pitched. What you may not ' +
-    'do is sign as Caye or write as though you are a person. If someone asks ' +
-    'you outright whether they are talking to an AI, answer honestly.'
-
-  stable += '\n\n' + renderFactsBlock()
-
-  if (voiceProfile) {
-    stable +=
-      '\n\nVOICE PROFILE — write in this person\'s actual style:\n' +
-      `- Formality: ${voiceProfile.formality_level}\n` +
-      `- Style: ${voiceProfile.writing_style}\n` +
-      `- Common phrases to use naturally: ${(voiceProfile.common_phrases ?? []).join(', ')}\n` +
-      `- Tone notes: ${voiceProfile.tone_notes}`
-  }
-
-  stable +=
-    '\n\nHOW TO HANDLE A REPLY:\n' +
-    'Read what they actually want, then answer it. Interested means give them ' +
-    'the one next step with no feature dump. A question means answer it ' +
-    'directly and briefly from the verified facts, then a light next step. ' +
-    'Not interested means be gracious and short, no pushback and no ' +
-    're-pitching, and leave them alone afterwards.\n' +
-    'Answering well is the job. Do not park an easy question in a queue for ' +
-    'Lamar just because it involves the product.\n\n' +
-    'WHEN TO STOP AND HAND IT TO LAMAR:\n' +
-    'Use escalate_to_team, and do not answer, when the reply involves ' +
-    'negotiating price or terms, anything contractual or legal, a partnership ' +
-    'or investment approach, press or media, refunds or billing disputes, ' +
-    'security or data-privacy questions you cannot answer from verified facts, ' +
-    'a prospect much larger than a single owner-operated business, or someone ' +
-    'genuinely angry. These are his call, not yours. Quoting the standard ' +
-    'published price is not negotiation and does not need him.\n' +
-    'Use hold_for_human when you have written something but are not confident ' +
-    'it is right. Being unsure is a legitimate reason to stop; guessing is not.'
-
-  if (leadMemory) stable += `\n\n${leadMemory}`
-
-  const dynamic =
-    `\n\nToday's date: ${todayISO}\n\n` +
-    'Write only the reply body — no markdown, no signature block unless the ' +
-    'voice profile specifies one. Never claim to be a human. End your turn by ' +
-    'calling send_reply to answer them, escalate_to_team to hand it to Lamar, ' +
-    'or hold_for_human if you drafted something you are not sure enough to send.'
-
-  return { stable, dynamic }
-}
-
-/**
- * Per-lead memory block for the sales reply prompt. Best-effort: if the
- * lead row or its signals cannot be read, Caye replies without the history
- * rather than not replying at all.
- */
-async function buildSalesLeadMemory(
-  workspaceId: string,
-  senderEmail: string | null | undefined
-): Promise<string | undefined> {
-  const email = senderEmail?.trim().toLowerCase()
-  if (!email) return undefined
-  try {
-    const supabase = createServiceClient()
-    const { data: lead } = await supabase
-      .from('outreach_leads')
-      .select('id, stage, business_name')
-      .eq('workspace_id', workspaceId)
-      .eq('lead_email', email)
-      .maybeSingle()
-    if (!lead) return undefined
-
-    const signals = await recentSignalsFor(lead.id)
-    const header = `Where this prospect stands: ${lead.stage}${lead.business_name ? ` (${lead.business_name})` : ''}.`
-    const block = renderSignalsBlock(signals)
-    return block ? `${header}\n${block}` : header
-  } catch (err) {
-    console.error('[caye-reply] sales lead memory failed:', err)
-    return undefined
-  }
 }
 
 interface AvailabilityRow {
@@ -2052,8 +1939,8 @@ async function generateCayeAutoReplyCore(
     .maybeSingle()
   // internal_sales (issue #66) = TropiTech's own cold-outreach reply inbox.
   // No booking/services/forced-escalation machinery applies — see
-  // buildSalesSystem and SALES_TOOLS.
-  const isSalesWorkspace = workspaceRow?.workspace_kind === 'internal_sales'
+  // buildSalesResponseSystem and SALES_TOOLS.
+  const isSalesWorkspace = hasSalesCapability(workspaceRow)
   if (workspaceRow) {
     if (workspaceRow.booking_url || workspaceRow.website_url) {
       businessLinks = {
@@ -2077,51 +1964,20 @@ async function generateCayeAutoReplyCore(
   // inbox still stores every message; only an eligible human reply reaches
   // Claude. This is intentionally after workspace detection but before any
   // generic front-desk classification or model work.
+  let salesContext: SalesLeadContext | null = null
   if (isSalesWorkspace) {
-    const policy = decideSalesInboundPolicy(inbound.subject, inbound.body, {
-      senderEmail: inbound.senderEmail,
-      workspaceEmail: workspaceRow?.contact_email,
-      // Provider-generated rows used for Caye's own outbound/admin traffic
-      // must never become acquisition evidence if an ingest path replays one.
-      synthetic: /^caye_|^manual_|^op-wa-/.test(inbound.currentChannelMessageId ?? ''),
+    const handling = await handleSalesInbound({
+      workspaceId: inbound.workspaceId, workspaceEmail: workspaceRow?.contact_email,
+      senderEmail: inbound.senderEmail, subject: inbound.subject, body: inbound.body,
+      conversationId: inbound.conversationId, currentChannelMessageId: inbound.currentChannelMessageId,
     })
-    const { data: salesLead } = await supabase.from('outreach_leads')
-      .select('id').eq('workspace_id', inbound.workspaceId).eq('lead_email', inbound.senderEmail).maybeSingle()
-    // Bounces are normally sent by mailer-daemon rather than by the lead, so
-    // use the already-linked outreach thread only for that classifier. We do
-    // not guess a lead from arbitrary bounce text or a sender address.
-    const { data: conversationRow } = await supabase.from('unified_conversations')
-      .select('metadata').eq('id', inbound.conversationId).maybeSingle()
-    const conversationLeadId = (conversationRow?.metadata as Record<string, unknown> | null)?.lead_id
-    const leadId = (salesLead as { id: string } | null)?.id ??
-      (policy.kind === 'bounce_or_delivery_failure' && typeof conversationLeadId === 'string' ? conversationLeadId : null)
-    if (leadId) {
-      const event = policy.kind === 'human_reply' ? 'human_reply_received'
-        : policy.kind === 'automated_ooo' ? 'automated_reply_received'
-        : policy.kind === 'opt_out' ? 'opted_out'
-        : policy.kind === 'bounce_or_delivery_failure' ? 'bounce_or_delivery_failure'
-        : policy.kind === 'unknown' ? 'inbound_unknown'
-        : null
-      if (event) await recordSalesLifecycleEvent({
-        workspaceId: inbound.workspaceId, leadId, event,
-        eventKey: `inbound:${inbound.currentChannelMessageId ?? `${inbound.conversationId}:${policy.kind}`}:${event}`,
-      })
-    }
-    if (policy.kind === 'internal' || policy.kind === 'automated_ooo' || policy.kind === 'opt_out' || policy.kind === 'bounce_or_delivery_failure') {
-      return { action: 'ignore', reason: policy.kind, content: '' }
-    }
-    if (policy.kind === 'unknown') {
-      return { action: 'hold', reason: policy.reason, note: policy.reason, urgency: 'routine' }
-    }
-    if (policy.kind === 'deterministic_escalation') {
-      if (leadId) await recordSalesLifecycleEvent({
-        workspaceId: inbound.workspaceId, leadId, event: 'escalated',
-        eventKey: `inbound:${inbound.currentChannelMessageId ?? `${inbound.conversationId}:escalation`}:escalated`,
-        reason: policy.reason,
-      })
+    salesContext = handling.context
+    if (handling.disposition === 'ignore') return { action: 'ignore', reason: handling.reason, content: '' }
+    if (handling.disposition === 'hold') return { action: 'hold', reason: handling.reason, note: handling.reason, urgency: 'routine' }
+    if (handling.disposition === 'escalate') {
       return {
-        action: 'escalate', content: policy.message, category: 'sensitive', routeTo: 'founder',
-        internalContext: policy.reason, pingSummary: policy.reason,
+        action: 'escalate', content: handling.message, category: 'sensitive', routeTo: 'founder',
+        internalContext: handling.reason, pingSummary: handling.reason,
       }
     }
   }
@@ -2424,12 +2280,8 @@ async function generateCayeAutoReplyCore(
   // reply restarts the relationship from nothing, which is precisely what
   // makes a system feel like a mail merge rather than someone who has been
   // talking to you.
-  const leadMemory = isSalesWorkspace
-    ? await buildSalesLeadMemory(inbound.workspaceId, inbound.senderEmail)
-    : undefined
-
   const { stable: systemStable, dynamic: systemDynamic } = isSalesWorkspace
-    ? buildSalesSystem(systemPrompt, effectiveVoiceProfile, todayISO, leadMemory)
+    ? buildSalesResponseSystem(systemPrompt, effectiveVoiceProfile, todayISO, salesContext)
     : buildSystem(
         systemPrompt,
         effectiveVoiceProfile,

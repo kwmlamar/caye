@@ -37,7 +37,8 @@ import { findOutreachDraftIssues, describeDraftIssues } from '@/lib/outreach-dra
 import { findClaimIssues, describeClaimIssues } from '@/lib/sales/claims'
 import { buildComplianceFooter } from '@/lib/outreach-compliance'
 import { countSentToday, OUTREACH_DAILY_SEND_CAP } from '@/lib/outreach-send-limits'
-import { decideNextAction, type LeadState, type SalesAction } from '@/lib/sales/next-action'
+import { type SalesAction } from '@/lib/sales/next-action'
+import { decideSalesOutreachWorkflow } from '@/lib/sales/outreach-workflow'
 import { decideAuthority, founderNoteFor, type SalesActionKind } from '@/lib/sales/authority'
 import { recordSalesLifecycleEvent } from '@/lib/sales/lifecycle'
 import type { SalesStage } from '@/lib/sales/funnel'
@@ -217,13 +218,11 @@ async function processWorkspace(
       countReason(summary, 'parked_draft')
       return false
     }
-    const action = decideNextAction({
+    const action = decideSalesOutreachWorkflow({
       stage: lead.stage, firstTouchSentAt: lead.first_touch_sent_at, touchesSent: lead.touches_sent,
       lastTouchSentAt: lead.last_touch_sent_at, optedOutAt: lead.opted_out_at,
-      hasUnansweredReply: lead.last_inbound_kind === 'human_reply' && conversation?.last_sender_type === 'customer',
-      hasUnclassifiedInbound: !lead.last_inbound_kind && conversation?.last_sender_type === 'customer',
-      lastInboundKind: lead.last_inbound_kind, outreachDeferredAt: lead.outreach_deferred_at,
-      disqualifyingSignal: lead.disqualified_reason,
+      inboundKind: lead.last_inbound_kind, outreachDeferredAt: lead.outreach_deferred_at,
+      disqualifyingSignal: lead.disqualified_reason, conversationLastSenderType: conversation?.last_sender_type,
     }, now)
     if (action.kind === 'do_nothing') {
       countReason(summary, action.reason)
@@ -284,7 +283,6 @@ async function processLead(args: {
   const conversation = args.prefetchedConversation
 
   const hasUnansweredReply = lead.last_inbound_kind === 'human_reply' && conversation?.last_sender_type === 'customer'
-  const hasUnclassifiedInbound = !lead.last_inbound_kind && conversation?.last_sender_type === 'customer'
 
   // A draft already parked on this thread means someone (the hand-fed
   // create_outreach_leads path, or an earlier held run) has an unsent
@@ -300,21 +298,17 @@ async function processLead(args: {
     return 0
   }
 
-  const state: LeadState = {
+  const action = decideSalesOutreachWorkflow({
     stage: lead.stage,
     firstTouchSentAt: lead.first_touch_sent_at,
     touchesSent: lead.touches_sent,
     lastTouchSentAt: lead.last_touch_sent_at,
     optedOutAt: lead.opted_out_at,
-    hasUnansweredReply,
-    hasUnclassifiedInbound,
-    lastInboundKind: lead.last_inbound_kind,
+    inboundKind: lead.last_inbound_kind,
     outreachDeferredAt: lead.outreach_deferred_at,
     disqualifyingSignal: lead.disqualified_reason,
-  }
-
-  // ── DECIDE ─────────────────────────────────────────────────────────────
-  const action = decideNextAction(state, now)
+    conversationLastSenderType: conversation?.last_sender_type,
+  }, now)
   if (action.kind === 'do_nothing') {
     summary.no_action++
     countReason(summary, action.reason)

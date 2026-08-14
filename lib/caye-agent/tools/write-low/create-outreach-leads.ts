@@ -1,5 +1,6 @@
 import 'server-only'
 import { createServiceClient } from '@/lib/supabase-server'
+import { hasSalesCapability } from '@/lib/sales/capability'
 import type { Tool } from '../types'
 
 interface OutreachLeadInput {
@@ -163,7 +164,7 @@ export const createOutreachLeads: Tool<CreateOutreachLeadsInput> = {
       .select('workspace_kind')
       .eq('id', ctx.workspaceId)
       .maybeSingle()
-    if (workspace?.workspace_kind !== 'internal_sales') {
+    if (!hasSalesCapability(workspace)) {
       return {
         ok: false,
         error: 'This tool only works on the cold-outreach (internal_sales) workspace.',

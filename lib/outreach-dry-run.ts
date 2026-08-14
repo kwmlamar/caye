@@ -1,6 +1,7 @@
 import 'server-only'
 import { createServiceClient } from './supabase-server'
-import { decideNextAction, type SalesAction } from './sales/next-action'
+import type { SalesAction } from './sales/next-action'
+import { decideSalesOutreachWorkflow } from './sales/outreach-workflow'
 import { selectOutreachBatch } from './outreach-batch'
 import type { SalesStage } from './sales/funnel'
 import { isValidOutreachEmail } from './outreach-email'
@@ -36,7 +37,7 @@ export async function dryRunOutreachSelection(workspaceId: string, now = new Dat
     if (conversation?.human_agent_enabled === true && typeof metadata.proposed_reply === 'string' && conversation.last_sender_type !== 'customer') {
       excluded.parked_draft = (excluded.parked_draft ?? 0) + 1; return []
     }
-    const action = decideNextAction({ stage: row.stage, firstTouchSentAt: row.first_touch_sent_at, touchesSent: row.touches_sent, lastTouchSentAt: row.last_touch_sent_at, optedOutAt: row.opted_out_at, hasUnansweredReply: row.last_inbound_kind === 'human_reply' && conversation?.last_sender_type === 'customer', hasUnclassifiedInbound: !row.last_inbound_kind && conversation?.last_sender_type === 'customer', lastInboundKind: row.last_inbound_kind, outreachDeferredAt: row.outreach_deferred_at, disqualifyingSignal: row.disqualified_reason }, now)
+    const action = decideSalesOutreachWorkflow({ stage: row.stage, firstTouchSentAt: row.first_touch_sent_at, touchesSent: row.touches_sent, lastTouchSentAt: row.last_touch_sent_at, optedOutAt: row.opted_out_at, inboundKind: row.last_inbound_kind, outreachDeferredAt: row.outreach_deferred_at, disqualifyingSignal: row.disqualified_reason, conversationLastSenderType: conversation?.last_sender_type }, now)
     if (action.kind === 'do_nothing') { excluded[action.reason] = (excluded[action.reason] ?? 0) + 1; return [] }
     return [{ ...row, action }]
   })

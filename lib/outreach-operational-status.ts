@@ -2,6 +2,7 @@ import 'server-only'
 import { createServiceClient } from './supabase-server'
 import { OUTREACH_DAILY_SEND_CAP } from './outreach-send-limits'
 import { isValidOutreachEmail } from './outreach-email'
+import { hasSalesCapability } from './sales/capability'
 
 export interface OutreachOperationalStatus {
   workspaceId: string
@@ -69,7 +70,7 @@ export async function getOutreachOperationalStatus(workspaceId: string): Promise
   const tokenUsable = Boolean(account.data && (account.data.refresh_token || (account.data.token_expires_at && Date.parse(account.data.token_expires_at) > Date.now())))
   const base: Omit<OutreachOperationalStatus, 'reasonNoOutreach'> = {
     workspaceId, timezone,
-    enabled: customer.data?.workspace_kind === 'internal_sales' && customer.data?.autosend_enabled === true,
+    enabled: hasSalesCapability(customer.data) && customer.data?.autosend_enabled === true,
     paused: config.data?.outreach_autosend_paused ?? true,
     schedule: { sourcing: 'daily at 09:00 UTC', autosend: 'hourly at :00 UTC', nextRunAt: nextHourlyRun() },
     lastScan: { ranAt: scan.data?.last_started_at ?? null, succeeded: scan.data ? scan.data.last_status === 'ok' : null, summary: (scan.data?.last_summary as Record<string, unknown>) ?? null, error: scan.data?.last_error ?? null },

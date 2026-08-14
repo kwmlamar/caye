@@ -27,6 +27,7 @@ import { composeMorningBriefing } from '@/lib/caye-agent/briefing'
 import { resolveOperatorByPhone } from '@/lib/operator-identity'
 import { getAttentionHoldCount, getAttentionHolds } from '@/lib/hold-kinds'
 import { topObjections } from '@/lib/sales/signals'
+import { hasSalesCapability } from '@/lib/sales/capability'
 import {
   AGING_LIST_MAX_ITEMS,
   ESCALATION_FOLLOWUP_HOURS,
@@ -100,7 +101,7 @@ export async function runMorningDigest() {
     ])
 
     const bookings = bookingsCount ?? 0
-    const isOutreachWorkspace = customer?.workspace_kind === 'internal_sales'
+    const isOutreachWorkspace = hasSalesCapability(customer)
     // internal_sales never has bookings and often has zero held items on a
     // day everything sent cleanly — the one day the digest most needs to
     // fire. Compute outreach activity before the skip check so a fully

@@ -28,6 +28,7 @@ import { detectOwnerCorrection } from '@/lib/owner-correction'
 import { sendZohoReply } from '@/lib/email-ai'
 import { isNoReplySender, isCalendarInvite, isPaymentReceipt, isOutOfOffice, isBounceNotification } from '@/lib/sender-classifier'
 import { recordBounceAndMaybeTrip } from '@/lib/outreach-kill-switch'
+import { hasSalesCapability } from '@/lib/sales/capability'
 import {
   isWeb3FormsNotification,
   parseWeb3FormsFields,
@@ -682,7 +683,7 @@ async function processMessage(
       .select('workspace_kind')
       .eq('id', workspaceId)
       .maybeSingle()
-    if (ws?.workspace_kind === 'internal_sales') {
+    if (hasSalesCapability(ws)) {
       await recordBounceAndMaybeTrip(workspaceId).catch(err =>
         console.error('[email/poll] recordBounceAndMaybeTrip failed:', err)
       )

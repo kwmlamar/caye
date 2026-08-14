@@ -35,6 +35,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+import { hasSalesCapability } from '@/lib/sales/capability'
 import { createServiceClient } from '@/lib/supabase-server'
 import { generateCayeAutoReply } from '@/lib/caye-reply'
 import { generateOutreachFollowupDraft } from '@/lib/outreach-nudge'
@@ -148,7 +149,7 @@ export async function POST(request: NextRequest) {
   // Nothing new since our last message — draft a follow-up instead of a
   // reply, but only where that's an established, tested need.
   if (latestMessage.sender_type !== 'customer') {
-    if (customer?.workspace_kind !== 'internal_sales') {
+    if (!hasSalesCapability(customer)) {
       return NextResponse.json(
         { error: `No new message from ${customerName} since the last reply — nothing to draft yet.` },
         { status: 422 }
