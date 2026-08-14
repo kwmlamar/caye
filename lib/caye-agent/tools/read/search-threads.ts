@@ -14,6 +14,7 @@ interface ConvRow {
   human_agent_enabled: boolean
   last_message_preview: string | null
   last_message_at: string | null
+  contact_id: string | null
 }
 
 export const searchThreads: Tool<SearchThreadsInput> = {
@@ -46,14 +47,26 @@ export const searchThreads: Tool<SearchThreadsInput> = {
     const accountIds = (accounts ?? []).map((a: { id: string }) => a.id)
     if (accountIds.length === 0) return { ok: true, data: { matches: [], count: 0 } }
 
+    // Name identity may live on contacts even when the conversation's legacy
+    // customer_name is only an email address (Laney Broussard). Resolve both
+    // stores, then merge, instead of requiring the operator to know the email.
+    const { data: namedContacts } = await supabase
+      .from('contacts')
+      .select('id')
+      .eq('customer_id', ctx.workspaceId)
+      .or(`name.ilike.%${q}%,email.ilike.%${q}%`)
+      .limit(20)
+    const contactIds = (namedContacts ?? []).map((contact) => contact.id)
+    const contactClause = contactIds.length > 0 ? `,contact_id.in.(${contactIds.join(',')})` : ''
+
     const { data, error } = await supabase
       .from('unified_conversations')
       .select(
-        'id, customer_name, customer_id, channel_type, human_agent_enabled, last_message_preview, last_message_at'
+        'id, customer_name, customer_id, channel_type, human_agent_enabled, last_message_preview, last_message_at, contact_id'
       )
       .in('connected_account_id', accountIds)
       .eq('is_archived', false)
-      .or(`customer_name.ilike.%${q}%,last_message_preview.ilike.%${q}%,customer_id.ilike.%${q}%`)
+      .or(`customer_name.ilike.%${q}%,last_message_preview.ilike.%${q}%,customer_id.ilike.%${q}%${contactClause}`)
       .order('last_message_at', { ascending: false, nullsFirst: false })
       .limit(8)
 

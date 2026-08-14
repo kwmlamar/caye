@@ -79,9 +79,10 @@ export async function GET(request: NextRequest) {
   const { data, error } = await supabase
     .from('caye_pending_actions')
     .select(
-      'id, workspace_id, operator_id, tool_name, args, summary, created_at, expires_at, executed_at, cancelled_at, dropped_reported_at'
+      'id, workspace_id, operator_id, tool_name, args, summary, created_at, expires_at, executed_at, cancelled_at, owner_handled_at, dropped_reported_at'
     )
     .gte('expires_at', windowStart.toISOString())
+    .is('owner_handled_at', null)
     .order('created_at', { ascending: true })
 
   if (error) {

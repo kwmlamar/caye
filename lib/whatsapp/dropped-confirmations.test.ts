@@ -107,6 +107,10 @@ describe('the 2026-08-11 afternoon', () => {
 })
 
 describe('selectDroppedConfirmations', () => {
+  it('ignores a task completed externally by the owner', () => {
+    const handled = { ...row({ id: 'handled', staged: '10:00', conversation: 'c-handled' }), owner_handled_at: '2026-08-11T14:16:00Z', cancelled_at: null }
+    expect(selectDroppedConfirmations({ rows: [handled], now: at('12:00') })).toEqual([])
+  })
   it('ignores executed and cancelled rows', () => {
     const rows = [
       row({ id: 'a', staged: '10:00', conversation: 'c-a', executed: '2026-08-11T14:05:00Z' }),

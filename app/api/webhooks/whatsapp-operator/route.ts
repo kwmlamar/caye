@@ -28,6 +28,12 @@ import {
   type SingleOperatorIntent,
 } from '@/lib/whatsapp/intent'
 import { resolveTurnOwner } from '@/lib/whatsapp/turn-ownership'
+import {
+  resolveActiveOwnerTask,
+  markOwnerTaskHandled,
+  ownerHandledAcknowledgement,
+  isOwnerCompletionStatement,
+} from '@/lib/whatsapp/active-owner-task'
 import { withSlowTurnHeartbeat } from '@/lib/whatsapp/slow-turn-heartbeat'
 import { corroborateItemRef } from '@/lib/whatsapp/item-ref-guard'
 import { getPendingHeldItems } from '@/lib/whatsapp/pending'
@@ -930,6 +936,57 @@ async function handleOneInbound(
     operatorId,
     lastOutboundClaudeFormat: lastRow?.claude_format ?? null,
   })
+
+  // Completion statements resolve against the task Caye just named before
+  // the workspace-wide held queue gets a chance to contaminate the turn.
+  // This includes expired authorizations: expiry removes permission to send,
+  // not the durable identity of what the operator and Caye were discussing.
+  if (intent.kind === 'handled' || isOwnerCompletionStatement(body)) {
+    const activeTask = await resolveActiveOwnerTask({
+      supabase,
+      workspaceId,
+      operatorId,
+      explicitRef: intent.kind === 'handled' ? intent.item_ref : undefined,
+      previousCayeMessage: lastOutboundBody,
+    })
+    if (activeTask.status === 'matched') {
+      const completed = await markOwnerTaskHandled({
+        supabase,
+        task: activeTask.task,
+        operatorId,
+        note: 'operator reported completing this outside Caye',
+      })
+      const ackBody = completed.ok
+        ? ownerHandledAcknowledgement(activeTask.task)
+        : `I found the task, but couldn't mark it handled: ${completed.error}`
+      const ackSendResult = await sendFreeFormWhatsApp(replyTo, ackBody, `owner-handled-${message.id}`)
+      await supabase.from('caye_operator_messages').insert({
+        workspace_id: workspaceId,
+        direction: 'outbound',
+        ...deliveryFieldsFromResult(ackSendResult),
+        body: ackBody,
+        intent: null,
+        claude_format: { role: 'assistant', content: ackBody },
+        operator_allowlist_id: operator.id,
+        operator_name: operator.name,
+        operator_role: operator.role,
+      })
+      return
+    }
+    // Multiple real matches remain ambiguous. Do not fall through to the
+    // unrelated held queue; name only the conversational task candidates.
+    if (activeTask.status === 'ambiguous') {
+      const choices = activeTask.tasks.map((task, i) => `${i + 1}. ${task.customerName || task.customerId || task.summary}`).join(' / ')
+      const ackBody = `Which one did you handle? ${choices}`
+      const ackSendResult = await sendFreeFormWhatsApp(replyTo, ackBody, `owner-handled-choice-${message.id}`)
+      await supabase.from('caye_operator_messages').insert({
+        workspace_id: workspaceId, direction: 'outbound', ...deliveryFieldsFromResult(ackSendResult),
+        body: ackBody, intent: null, claude_format: { role: 'assistant', content: ackBody },
+        operator_allowlist_id: operator.id, operator_name: operator.name, operator_role: operator.role,
+      })
+      return
+    }
+  }
 
   if (LEGACY_DISPATCH_KINDS.has(intent.kind) && ownership.owner === 'legacy') {
     const result = await dispatchOperatorIntent({ workspaceId }, intent, pending)

@@ -52,6 +52,7 @@ export interface PendingActionRow {
   expires_at: string
   executed_at: string | null
   cancelled_at: string | null
+  owner_handled_at?: string | null
   dropped_reported_at: string | null
 }
 
@@ -121,7 +122,7 @@ export function selectDroppedConfirmations(args: {
   const dropped: DroppedConfirmation[] = []
 
   for (const row of rows) {
-    if (row.executed_at || row.cancelled_at || row.dropped_reported_at) continue
+    if (row.executed_at || row.cancelled_at || row.owner_handled_at || row.dropped_reported_at) continue
 
     const expiresAt = Date.parse(row.expires_at)
     const stagedAt = Date.parse(row.created_at)

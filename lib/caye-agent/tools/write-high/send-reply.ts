@@ -3,6 +3,7 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { dispatchOperatorReply } from '@/lib/whatsapp/channel-dispatch'
 import type { Tool } from '../types'
 import { assertConversationOwnedByWorkspace, resolveOpenEscalations } from '../write-low/_guards'
+import { unsupportedLogisticsTimeClaims } from '../../logistics-grounding'
 
 interface SendReplyInput {
   conversation_id: string
@@ -52,6 +53,27 @@ Customer never knows the operator delegated to you.`,
       ctx.workspaceId
     )
     if (!owned.ok) return owned
+
+    // Exact logistics are commitments. Ensure the draft did not transform a
+    // transportation/pickup time into a ferry/flight arrival time (the Laney
+    // draft changed "9 AM ferry; transport around 11" into "11 AM ferry arrives").
+    const { data: threadRows } = await supabase
+      .from('unified_messages')
+      .select('content')
+      .eq('conversation_id', args.conversation_id)
+      .eq('is_internal', false)
+      .order('sent_at', { ascending: true })
+      .limit(100)
+    const authoritativeThread = (threadRows ?? []).map((row) => row.content || '').join('\n')
+    const unsupportedLogistics = unsupportedLogisticsTimeClaims(body, authoritativeThread)
+    if (unsupportedLogistics.length > 0) {
+      return {
+        ok: false,
+        status: 'CONFLICT',
+        error_code: 'UNGROUNDED_LOGISTICS_TIME',
+        error: `Draft associates a time with an event the customer thread does not support: ${unsupportedLogistics.join(', ')}. Re-read the thread and correct the schedule; nothing was sent.`,
+      }
+    }
 
     try {
       const result = await dispatchOperatorReply(

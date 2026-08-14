@@ -104,4 +104,5 @@ export const REPO_MIGRATIONS: readonly string[] = [
   '20260813f_owner_attention_notification_gate',
   '20260813g_cron_run_history',
   '20260813h_outreach_durable_jobs_and_claims',
+  '20260814_owner_handled_pending_actions',
 ]
