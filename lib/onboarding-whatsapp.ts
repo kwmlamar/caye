@@ -9,6 +9,7 @@ import {
   saveBusinessProfile,
   type DiscoveryTurn,
 } from '@/lib/onboarding'
+import { parseOnboardingNameAndEmail } from '@/lib/onboarding-operator-name'
 
 type SupabaseClient = ReturnType<typeof createServiceClient>
 
@@ -238,24 +239,6 @@ export async function notifyFounderOfNewSignup(
   }
 }
 
-// Best-effort split of a free-text "name + email" WhatsApp reply. Not
-// bulletproof NLP — just pulls out anything email-shaped and treats the
-// remainder as the name, which covers the overwhelming majority of how
-// people actually answer this on a phone (e.g. "Dave Rolle, dave@x.com").
-const EMAIL_RE = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/
-
-function parseNameAndEmail(answer: string): { fullName: string | null; email: string | null } {
-  const match = answer.match(EMAIL_RE)
-  const email = match ? match[0] : null
-  const withoutEmail = email ? answer.replace(email, ' ') : answer
-  const fullName = withoutEmail
-    .replace(/\b(my name is|i'?m|this is|name|email)\b[:\s]*/gi, ' ')
-    .replace(/[,:;]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-  return { fullName: fullName || null, email }
-}
-
 const GREETING =
   "Hey! I'm Caye — your AI receptionist. I'll ask a few quick questions about your business — I'll keep it as short as I can. 🌴"
 
@@ -276,7 +259,8 @@ export async function handleDiscoveryAnswer(
   supabase: SupabaseClient,
   workspaceId: string,
   answerText: string,
-  normalizedPhone: string
+  normalizedPhone: string,
+  operatorAllowlistId: number
 ): Promise<{ replyText: string; completed: boolean; businessName?: string }> {
   const { data: config } = await supabase
     .from('workspace_ai_config')
@@ -299,14 +283,24 @@ export async function handleDiscoveryAnswer(
     await supabase.from('customers').update({ business_name: answerText }).eq('id', workspaceId)
   } else if (turns.length === 1) {
     // Reply to the fixed second question (name + email) — always asked
-    // right after business name, deterministically. See parseNameAndEmail.
+    // right after business name, deterministically.
     const lastQuestion = config?.onboarding_wa_last_question ?? SECOND_DISCOVERY_QUESTION
     newTurns = [...turns, { question: lastQuestion, answer: answerText }]
-    const { fullName, email } = parseNameAndEmail(answerText)
-    await supabase
-      .from('customers')
-      .update({ full_name: fullName, contact_email: email })
-      .eq('id', workspaceId)
+    const { fullName, email } = parseOnboardingNameAndEmail(answerText)
+    await Promise.all([
+      supabase
+        .from('customers')
+        .update({ full_name: fullName, contact_email: email })
+        .eq('id', workspaceId),
+      // The Live view resolves its human label from this row, not from the
+      // customer record. The fixed onboarding answer is the authoritative
+      // owner name, so it must update both records in the same turn.
+      supabase
+        .from('operator_allowlist')
+        .update({ name: fullName })
+        .eq('id', operatorAllowlistId)
+        .eq('workspace_id', workspaceId),
+    ])
     justCapturedContactInfo = true
   } else {
     const lastQuestion = config?.onboarding_wa_last_question ?? FIRST_DISCOVERY_QUESTION

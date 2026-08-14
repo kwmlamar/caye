@@ -57,6 +57,7 @@ import {
   handleDiscoveryAnswer,
   normalizeE164,
 } from '@/lib/onboarding-whatsapp'
+import { shouldSyncOnboardingOperatorName } from '@/lib/onboarding-operator-name'
 import { FIRST_DISCOVERY_QUESTION } from '@/lib/onboarding'
 import { mediaPlaceholder } from '@/lib/operator-text-guard'
 import { fetchBusinessFacts, formatBusinessFactsBlock } from '@/lib/business-facts'
@@ -176,6 +177,7 @@ interface WaValue {
   metadata?: { phone_number_id?: string }
   messages?: WaInboundMessage[]
   statuses?: WaStatusUpdate[]
+  contacts?: Array<{ wa_id?: string; profile?: { name?: string } }>
 }
 
 async function processInbound(payload: Record<string, unknown>): Promise<void> {
@@ -209,7 +211,8 @@ async function processInbound(payload: Record<string, unknown>): Promise<void> {
   if (!value.messages?.length) return
 
   for (const message of value.messages) {
-    await handleOneInbound(supabase, message)
+    const contact = value.contacts?.find((candidate) => normalizeE164(candidate.wa_id ?? '') === normalizeE164(message.from))
+    await handleOneInbound(supabase, message, contact?.profile?.name)
   }
 }
 
@@ -348,7 +351,8 @@ async function handleDeliveryStatus(
 
 async function handleOneInbound(
   supabase: ReturnType<typeof createServiceClient>,
-  message: WaInboundMessage
+  message: WaInboundMessage,
+  whatsappProfileName?: string
 ): Promise<void> {
   const fromRaw = message.from
   const normalized = normalizeE164(fromRaw)
@@ -452,6 +456,31 @@ async function handleOneInbound(
           `[whatsapp-operator] founder ${fromRaw} has active_workspace=${activeRow.value} but no verified founder row there; falling back to most-recent`
         )
       }
+    }
+  }
+
+  // Meta includes the sender's WhatsApp profile name alongside inbound
+  // messages. A completed onboarding answer is stronger evidence, though:
+  // it supplies the person's actual name and repairs the old business-name
+  // / "Operator" placeholders used before that answer was copied into the
+  // allowlist. An explicitly set personal name still wins.
+  const profileName = whatsappProfileName?.trim()
+  const { data: customer } = await supabase
+    .from('customers')
+    .select('full_name, business_name')
+    .eq('id', allow.workspace_id)
+    .maybeSingle()
+  const savedOwnerName = customer?.full_name?.trim() || null
+  const preferredName = savedOwnerName || profileName || null
+  if (shouldSyncOnboardingOperatorName(allow.name, preferredName, customer?.business_name)) {
+    const { error } = await supabase
+      .from('operator_allowlist')
+      .update({ name: preferredName })
+      .eq('id', allow.id)
+    if (error) {
+      console.error(`[whatsapp-operator] profile-name save failed for operator=${allow.id}:`, error)
+    } else {
+      allow = { ...allow, name: preferredName }
     }
   }
 
@@ -683,7 +712,13 @@ async function handleOneInbound(
       operator_role: operator.role,
     })
 
-    const { replyText, completed, businessName } = await handleDiscoveryAnswer(supabase, workspaceId, answerText, normalized)
+    const { replyText, completed, businessName } = await handleDiscoveryAnswer(
+      supabase,
+      workspaceId,
+      answerText,
+      normalized,
+      operatorId
+    )
     const sendResult = await sendFreeFormWhatsApp(replyTo, replyText, `discovery-${message.id}`)
     if (sendResult.status === 'failed') {
       console.error(`[whatsapp-operator] discovery send failed for ${workspaceId}:`, sendResult.error)

@@ -8,6 +8,7 @@ import { createServiceClient } from './supabase-server'
 import { detectIdentityLeak } from './caye-identity-guard'
 import { detectUnverifiedPaymentFigure } from './policy-figure-guard'
 import { sanitizeDashes } from './sanitize-dashes'
+import { FRONT_DESK_RESPONSE_STYLE } from './front-desk-response-style'
 import { formatHistoryBlock } from './conversation-history'
 import { checkBookingAutonomy, AUTONOMY_WINDOW_HOURS } from './booking-policy'
 import { syncBookingToCalendar } from './calendar-sync'
@@ -771,6 +772,11 @@ function buildSystem(
     'them reads as generic and American.\n' +
     '- Mirroring a customer\'s own emoji back (at most one, matching their energy) is the one exception, ' +
     'per the CUSTOMER STYLE guidance below — that is about matching them, not your own default state.'
+
+  // This is deliberately shared with the isolated demo prompt. The demo
+  // should preview the same concise, progressive guest experience without
+  // importing this production tool loop or any of its real side effects.
+  stable += `\n\n${FRONT_DESK_RESPONSE_STYLE}`
 
   if (voiceProfile) {
     stable +=
