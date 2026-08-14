@@ -6,6 +6,7 @@ import { sendZohoReply, sendZohoEmail } from '@/lib/email-ai'
 import type { VoiceProfile } from '@/lib/voice-profile'
 import { ensureTagline } from '@/lib/voice-profile'
 import { resolveOpenEscalations } from '@/lib/caye-agent/tools/write-low/resolve-open-escalations'
+import { recordSalesLifecycleEvent } from '@/lib/sales/lifecycle'
 
 /**
  * Send `text` to the guest on the conversation's native channel and persist
@@ -172,21 +173,18 @@ export async function dispatchOperatorReply(
   // operator already replied to.
   await resolveOpenEscalations(supabase, conversationId)
 
-  // First-touch cold-outreach send (create_outreach_leads / send_outreach_batch)
-  // — flips the lead from 'draft' to 'sent' and stamps first_touch_sent_at
-  // (mirrors app/api/messages/send/route.ts), which is what makes
-  // outreach-nudge-scan's cron correctly find this lead 2 days later if it
-  // goes quiet. .is('first_touch_sent_at', null) guards against a later
-  // reply on the same thread re-stamping the timestamp.
-  if (meta.source === 'outreach_leads' && meta.lead_id) {
-    const { error: leadUpdateError } = await supabase
-      .from('outreach_leads')
-      .update({ status: 'sent', first_touch_sent_at: now })
-      .eq('id', meta.lead_id as string)
-      .is('first_touch_sent_at', null)
-    if (leadUpdateError) {
-      throw new Error(`message sent but outreach lead dispatch was not recorded: ${leadUpdateError.message}`)
-    }
+  // One lifecycle seam for both dashboard/manual and cron sends. Only held
+  // outreach drafts are lifecycle touches; ordinary replies on an outreach
+  // thread are not cold-cadence sends.
+  if (meta.source === 'outreach_leads' && typeof meta.lead_id === 'string' &&
+      (meta.hold_kind === 'outreach_first_touch' || meta.hold_kind === 'outreach_followup')) {
+    await recordSalesLifecycleEvent({
+      workspaceId: account.user_id,
+      leadId: meta.lead_id,
+      event: meta.hold_kind === 'outreach_first_touch' ? 'first_touch_sent' : 'followup_sent',
+      eventKey: `outbound:${messageId}`,
+      at: now,
+    })
   }
 
   return { success: true, channelType: conv.channel_type, messageId }

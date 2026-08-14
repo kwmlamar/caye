@@ -98,11 +98,11 @@ export const REPO_MIGRATIONS: readonly string[] = [
   '20260812d_sales_funnel_and_memory',
   '20260813_caye_direct_threads',
   '20260813b_track_contacts_email_workspace_unique',
-  '20260813c_workspace_payment_integrations',
   '20260813d_add_payment_setup_needed_outbound_kind',
   '20260813e_fix_contacts_email_workspace_unique_partial_bug',
   '20260813f_owner_attention_notification_gate',
   '20260813g_cron_run_history',
   '20260813h_outreach_durable_jobs_and_claims',
   '20260814_owner_handled_pending_actions',
+  '20260814b_sales_lifecycle_state',
 ]

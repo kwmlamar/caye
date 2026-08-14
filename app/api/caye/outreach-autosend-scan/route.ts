@@ -39,10 +39,11 @@ import { buildComplianceFooter } from '@/lib/outreach-compliance'
 import { countSentToday, OUTREACH_DAILY_SEND_CAP } from '@/lib/outreach-send-limits'
 import { decideNextAction, type LeadState, type SalesAction } from '@/lib/sales/next-action'
 import { decideAuthority, founderNoteFor, type SalesActionKind } from '@/lib/sales/authority'
-import { recordSignal } from '@/lib/sales/signals'
+import { recordSalesLifecycleEvent } from '@/lib/sales/lifecycle'
 import type { SalesStage } from '@/lib/sales/funnel'
 import { selectOutreachBatch } from '@/lib/outreach-batch'
 import { isValidOutreachEmail } from '@/lib/outreach-email'
+import { isProductionSalesWorkspace } from '@/lib/sales/workspace-eligibility'
 
 /** Leads examined per tick. Bounds runtime; the next tick picks up the rest. */
 const LEAD_BATCH_SIZE = 40
@@ -107,10 +108,11 @@ export async function runOutreachAutosendScan(): Promise<ScanSummary> {
 
     const { data: workspaces } = await supabase
       .from('customers')
-      .select('id')
+      .select('id, workspace_kind, plan')
       .eq('workspace_kind', 'internal_sales')
 
-    for (const workspace of workspaces ?? []) {
+  for (const workspace of workspaces ?? []) {
+      if (!isProductionSalesWorkspace(workspace)) continue
       summary.workspaces_scanned++
       try {
         await processWorkspace(workspace.id, now, summary)
@@ -138,6 +140,8 @@ interface LeadRow {
   touches_sent: number
   last_touch_sent_at: string | null
   opted_out_at: string | null
+  last_inbound_kind: 'human_reply' | 'automated_ooo' | 'opt_out' | 'bounce_or_delivery_failure' | 'unknown' | null
+  outreach_deferred_at: string | null
   disqualified_reason: string | null
   created_at: string
 }
@@ -186,7 +190,7 @@ async function processWorkspace(
   const { data: leads } = await supabase
     .from('outreach_leads')
     .select(
-      'id, lead_email, business_name, contact_name, demo_token, stage, first_touch_sent_at, touches_sent, last_touch_sent_at, opted_out_at, disqualified_reason, created_at'
+      'id, lead_email, business_name, contact_name, demo_token, stage, first_touch_sent_at, touches_sent, last_touch_sent_at, opted_out_at, last_inbound_kind, outreach_deferred_at, disqualified_reason, created_at'
     )
     .eq('workspace_id', workspaceId)
     .not('stage', 'in', '("won","lost","disqualified")')
@@ -216,7 +220,10 @@ async function processWorkspace(
     const action = decideNextAction({
       stage: lead.stage, firstTouchSentAt: lead.first_touch_sent_at, touchesSent: lead.touches_sent,
       lastTouchSentAt: lead.last_touch_sent_at, optedOutAt: lead.opted_out_at,
-      hasUnansweredReply: conversation?.last_sender_type === 'customer', disqualifyingSignal: lead.disqualified_reason,
+      hasUnansweredReply: lead.last_inbound_kind === 'human_reply' && conversation?.last_sender_type === 'customer',
+      hasUnclassifiedInbound: !lead.last_inbound_kind && conversation?.last_sender_type === 'customer',
+      lastInboundKind: lead.last_inbound_kind, outreachDeferredAt: lead.outreach_deferred_at,
+      disqualifyingSignal: lead.disqualified_reason,
     }, now)
     if (action.kind === 'do_nothing') {
       countReason(summary, action.reason)
@@ -276,7 +283,8 @@ async function processLead(args: {
   // second source of truth that can drift from what actually happened.
   const conversation = args.prefetchedConversation
 
-  const hasUnansweredReply = conversation?.last_sender_type === 'customer'
+  const hasUnansweredReply = lead.last_inbound_kind === 'human_reply' && conversation?.last_sender_type === 'customer'
+  const hasUnclassifiedInbound = !lead.last_inbound_kind && conversation?.last_sender_type === 'customer'
 
   // A draft already parked on this thread means someone (the hand-fed
   // create_outreach_leads path, or an earlier held run) has an unsent
@@ -299,6 +307,9 @@ async function processLead(args: {
     lastTouchSentAt: lead.last_touch_sent_at,
     optedOutAt: lead.opted_out_at,
     hasUnansweredReply,
+    hasUnclassifiedInbound,
+    lastInboundKind: lead.last_inbound_kind,
+    outreachDeferredAt: lead.outreach_deferred_at,
     disqualifyingSignal: lead.disqualified_reason,
   }
 
@@ -312,21 +323,12 @@ async function processLead(args: {
 
   // Bookkeeping actions need no draft and no send budget.
   if (action.kind === 'mark_disqualified') {
-    await supabase
-      .from('outreach_leads')
-      .update({ stage: 'disqualified', disqualified_reason: action.reason })
-      .eq('id', lead.id)
-    await recordSignal({
-      workspaceId, leadId: lead.id, kind: 'disqualifier', label: action.reason,
-    })
+    await recordSalesLifecycleEvent({ workspaceId, leadId: lead.id, event: 'disqualified', eventKey: `disqualified:${lead.id}`, reason: action.reason })
     summary.disqualified++
     return 0
   }
   if (action.kind === 'mark_cold') {
-    await supabase.from('outreach_leads').update({ stage: 'lost', status: 'cold' }).eq('id', lead.id)
-    await recordSignal({
-      workspaceId, leadId: lead.id, kind: 'outcome', label: 'cadence_exhausted_no_reply',
-    })
+    await recordSalesLifecycleEvent({ workspaceId, leadId: lead.id, event: 'marked_cold', eventKey: `cold:${lead.id}` })
     summary.marked_cold++
     return 0
   }
@@ -336,10 +338,7 @@ async function processLead(args: {
   // reply path picks this up on its own; the scan only notes that the lead
   // has moved and stays out of the way.
   if (action.kind === 'reply_to_prospect') {
-    if (lead.stage === 'contacted' || lead.stage === 'sourced') {
-      await supabase.from('outreach_leads').update({ stage: 'engaged', status: 'replied' }).eq('id', lead.id)
-      await recordSignal({ workspaceId, leadId: lead.id, kind: 'outcome', label: 'reply_received' })
-    }
+    // Inbound ingestion has already recorded the normalized human-reply event.
     summary.no_action++
     return 0
   }
@@ -428,10 +427,7 @@ async function processLead(args: {
       .from('unified_conversations')
       .update({ human_agent_enabled: true, human_agent_reason: note, metadata })
       .eq('id', conversationId)
-    await recordSignal({
-      workspaceId, leadId: lead.id, kind: 'outcome',
-      label: `held_${verdict.reasons[0] ?? 'unknown'}`, detail: guardFailure,
-    })
+    await recordSalesLifecycleEvent({ workspaceId, leadId: lead.id, event: 'escalated', eventKey: `held:${conversationId}:${holdKind}`, reason: guardFailure ?? verdict.reasons[0] ?? null })
     await enqueueHoldPing({
       workspaceId, conversationId, contactName: businessName,
       reason: 'outreach_draft_held', proposedReply: body,
@@ -446,33 +442,8 @@ async function processLead(args: {
   await supabase.from('unified_conversations').update({ metadata }).eq('id', conversationId)
   await dispatchOperatorReply(conversationId, body + buildComplianceFooter(lead.demo_token), 'caye-dashboard')
 
-  // ── RECORD ─────────────────────────────────────────────────────────────
-  // touches_sent/last_touch_sent_at move only on an ACTUAL send. The older
-  // nudge_count/last_nudge_at pair is kept in step for the daily-cap query,
-  // which still reads it, but it counts attempts and must never be used to
-  // decide what to send next.
-  const nowISO = now.toISOString()
-  const { error: leadUpdateError } = await supabase
-    .from('outreach_leads')
-    .update({
-      stage: 'contacted',
-      ...(action.kind === 'send_first_touch' ? { first_touch_sent_at: nowISO } : {}),
-      touches_sent: lead.touches_sent + 1,
-      last_touch_sent_at: nowISO,
-      last_nudge_at: nowISO,
-      ...(action.kind === 'send_first_touch' ? {} : { nudge_count: lead.touches_sent }),
-    })
-    .eq('id', lead.id)
-
-  if (leadUpdateError) {
-    throw new Error(`email sent but outreach lead state was not recorded: ${leadUpdateError.message}`)
-  }
-
-  await recordSignal({
-    workspaceId, leadId: lead.id, kind: 'outcome',
-    label: action.kind === 'send_first_touch' ? 'first_touch_sent' : `followup_${action.touchNumber}_sent`,
-  })
-
+  // dispatchOperatorReply records the successful persisted outbound message
+  // through the lifecycle seam, including manual and automatic sends.
   if (action.kind === 'send_first_touch') summary.first_touch_sent++
   else summary.followups_sent++
   return 1

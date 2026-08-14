@@ -7,7 +7,7 @@ import {
 const NOW = new Date('2026-08-13T12:00:00Z')
 
 function prospect(overrides: Partial<ProspectInput> = {}): ProspectInput {
-  return {
+  const input: ProspectInput = {
     stage: 'contacted',
     status: 'sent',
     opted_out_at: null,
@@ -23,6 +23,12 @@ function prospect(overrides: Partial<ProspectInput> = {}): ProspectInput {
     needsYou: false,
     ...overrides,
   }
+  // Legacy fixture shorthand: a test saying "has replied" is asserting a
+  // confirmed human reply, not merely a customer-shaped inbound row.
+  if (overrides.has_replied && overrides.last_inbound_kind === undefined) {
+    input.last_inbound_kind = 'human_reply'
+  }
+  return input
 }
 
 // Real production stage vocabulary: sourced/contacted/engaged/qualified/
@@ -60,6 +66,21 @@ describe('deriveProspect', () => {
     const alreadyAnswered = deriveProspect(prospect({ has_replied: true, has_unanswered_reply: false, needsYou: false }), NOW)
     expect(alreadyAnswered.state).toBe('engaged')
     expect(alreadyAnswered.nextAction).toBe('Caye handling')
+  })
+
+  it('does not display an OOO/customer-shaped inbound as prospect engagement', () => {
+    const d = deriveProspect(prospect({
+      has_replied: true,
+      has_unanswered_reply: true,
+      last_inbound_kind: 'automated_ooo',
+    }), NOW)
+    expect(d.state).toBe('contacted')
+    expect(d.nextAction).toBe('No further action')
+  })
+
+  it('does not report a bare legacy qualified label as qualification evidence', () => {
+    expect(deriveProspect(prospect({ stage: 'qualified', qualified_at: null }), NOW).state).toBe('contacted')
+    expect(deriveProspect(prospect({ stage: 'qualified', qualified_at: NOW.toISOString() }), NOW).state).toBe('qualified')
   })
 
   it('Needs You overrides the next action regardless of reply state', () => {
@@ -131,7 +152,7 @@ describe('deriveProspect', () => {
     // stage='qualified' with no other independent evidence — trusted,
     // since ICP qualification is a conversational judgment call this
     // module has no way to re-run.
-    expect(deriveProspect(prospect({ stage: 'qualified' }), NOW).state).toBe('qualified')
+    expect(deriveProspect(prospect({ stage: 'qualified', qualified_at: NOW.toISOString() }), NOW).state).toBe('qualified')
     expect(deriveProspect(prospect({ stage: 'activated' }), NOW).state).toBe('activated')
     expect(deriveProspect(prospect({ stage: 'won' }), NOW).state).toBe('won')
   })

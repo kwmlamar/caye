@@ -42,6 +42,12 @@ export interface LeadState {
   optedOutAt: string | null
   /** Unanswered inbound from the prospect waiting for a response. */
   hasUnansweredReply: boolean
+  /** A pre-Phase-0 customer-shaped inbox row with no normalized classifier result. */
+  hasUnclassifiedInbound?: boolean
+  /** Normalized inbound fact, not an inference from unified_messages sender_type. */
+  lastInboundKind?: 'human_reply' | 'automated_ooo' | 'opt_out' | 'bounce_or_delivery_failure' | 'unknown' | null
+  /** An automated response defers cold cadence until an explicit later policy resumes it. */
+  outreachDeferredAt?: string | null
   /** ICP check failed — e.g. no stable catalog, or US-mainland. */
   disqualifyingSignal: string | null
 }
@@ -91,6 +97,14 @@ export function decideNextAction(lead: LeadState, now: Date): SalesAction {
 
   if (isTerminal(lead.stage)) {
     return { kind: 'do_nothing', reason: `terminal_stage:${lead.stage}` }
+  }
+
+  if (lead.lastInboundKind === 'automated_ooo' || lead.lastInboundKind === 'unknown' || lead.outreachDeferredAt) {
+    return { kind: 'do_nothing', reason: 'outreach_deferred_inbound_requires_review' }
+  }
+
+  if (lead.hasUnclassifiedInbound) {
+    return { kind: 'do_nothing', reason: 'legacy_inbound_requires_review' }
   }
 
   // A real person is waiting on us. This outranks the calendar.

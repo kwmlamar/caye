@@ -56,6 +56,19 @@ describe('decideNextAction', () => {
     expect(decideNextAction(out, NOW).kind).toBe('do_nothing')
   })
 
+  it('does not follow up after an automated or unclassified inbound message', () => {
+    expect(decideNextAction(lead({ lastInboundKind: 'automated_ooo', outreachDeferredAt: NOW.toISOString() }), NOW)).toEqual({
+      kind: 'do_nothing', reason: 'outreach_deferred_inbound_requires_review',
+    })
+    expect(decideNextAction(lead({ lastInboundKind: 'unknown', outreachDeferredAt: NOW.toISOString() }), NOW).kind).toBe('do_nothing')
+  })
+
+  it('holds ambiguous legacy inbox state rather than guessing it was safe to follow up', () => {
+    expect(decideNextAction(lead({ hasUnclassifiedInbound: true }), NOW)).toEqual({
+      kind: 'do_nothing', reason: 'legacy_inbound_requires_review',
+    })
+  })
+
   it('disqualifies on an ICP signal before doing anything else', () => {
     const bad = lead({ disqualifyingSignal: 'us_mainland' })
     expect(decideNextAction(bad, NOW)).toEqual({ kind: 'mark_disqualified', reason: 'us_mainland' })

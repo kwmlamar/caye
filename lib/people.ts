@@ -89,10 +89,14 @@ export interface ProspectInput {
    *  — see this file's doc comment for why that still applies even now
    *  that the column has a live writer. */
   stage: string
+  /** Explicit qualification timestamp; stage text alone is not evidence. */
+  qualified_at?: string | null
   /** The older status field — used only as a display-text fallback (e.g.
    *  distinguishing "sent" from "draft" for the artefact-state line). */
   status: string
   opted_out_at: string | null
+  /** Only an explicitly classified human inbound is reply evidence. */
+  last_inbound_kind?: 'human_reply' | 'automated_ooo' | 'opt_out' | 'bounce_or_delivery_failure' | 'unknown' | null
   disqualified_reason: string | null
   first_touch_sent_at: string | null
   /** Touches actually DELIVERED (outreach_leads.touches_sent), including
@@ -110,6 +114,7 @@ export interface ProspectInput {
    *  last_sender_type === 'customer') — decideNextAction's
    *  hasUnansweredReply, which outranks the send cadence. */
   has_unanswered_reply: boolean
+  has_unclassified_inbound?: boolean
   /** Drafted outreach parked for the founder's batch review (a QUEUE hold,
    *  see hold-kinds-shared.ts) — distinct from needsYou, which is reserved
    *  for a genuine individual decision. Affects nextAction text only. */
@@ -168,8 +173,8 @@ function evidenceFrom(input: ProspectInput, cadenceExhausted: boolean): StageEvi
     isPaying: stage === 'won',
     demoCompleted: stage === 'activated',
     demoOpened: !!input.tried_at,
-    qualified: stage === 'qualified' || stage === 'demo_started' || stage === 'activated' || stage === 'won',
-    hasReplied: input.has_replied,
+    qualified: (stage === 'qualified' && !!input.qualified_at) || stage === 'demo_started' || stage === 'activated' || stage === 'won',
+    hasReplied: input.last_inbound_kind === 'human_reply',
     contacted: !!input.first_touch_sent_at,
     cadenceExhausted,
   }
@@ -199,7 +204,9 @@ export function deriveProspect(input: ProspectInput, now: Date): Derived {
     touchesSent: input.touches_sent,
     lastTouchSentAt: input.last_touch_sent_at,
     optedOutAt: input.opted_out_at,
-    hasUnansweredReply: input.has_unanswered_reply,
+    hasUnansweredReply: input.last_inbound_kind === 'human_reply' && input.has_unanswered_reply,
+    hasUnclassifiedInbound: input.has_unclassified_inbound,
+    lastInboundKind: input.last_inbound_kind,
     disqualifyingSignal: null, // detecting a NEW disqualifier is a conversational judgment call this route doesn't re-run; disqualified_reason (already recorded) feeds `disqualified` evidence instead.
   })
 
@@ -308,7 +315,7 @@ export function describeProspectUnderstanding(name: string, input: ProspectInput
     sentences.push(`${name} was sourced by Caye's outreach program and hasn't been contacted yet.`)
   }
   if (input.touches_sent > 1) sentences.push(`She's sent ${input.touches_sent} outreach messages so far.`)
-  if (input.has_replied) {
+  if (input.last_inbound_kind === 'human_reply') {
     sentences.push('They\'ve replied — Caye is handling the conversation from here.')
   } else if (input.tried_at) {
     sentences.push(`They tried the self-serve Caye demo ${fmtDaysAgo(daysAgo(input.tried_at, now))}, but haven't replied on email.`)

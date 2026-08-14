@@ -79,10 +79,12 @@ interface LeadRow {
   business_name: string | null
   contact_name: string | null
   stage: string
+  qualified_at: string | null
   first_touch_sent_at: string | null
   touches_sent: number
   last_touch_sent_at: string | null
   opted_out_at: string | null
+  last_inbound_kind: 'human_reply' | 'automated_ooo' | 'opt_out' | 'bounce_or_delivery_failure' | 'unknown' | null
   disqualified_reason: string | null
   status: string
   tried_at: string | null
@@ -91,8 +93,7 @@ interface LeadRow {
 
 async function fetchOutreachContext(supabase: ServiceClient, accountIds: string[], emails: string[]) {
   const convByEmail = new Map<string, ConvLite>()
-  const repliedConvIds = new Set<string>()
-  if (accountIds.length === 0 || emails.length === 0) return { convByEmail, repliedConvIds }
+  if (accountIds.length === 0 || emails.length === 0) return { convByEmail }
 
   const { data: convs } = await supabase
     .from('unified_conversations')
@@ -108,41 +109,34 @@ async function fetchOutreachContext(supabase: ServiceClient, accountIds: string[
     if (!convByEmail.has(c.customer_id)) convByEmail.set(c.customer_id, c)
   }
 
-  const convIds = Array.from(convByEmail.values()).map((c) => c.id)
-  if (convIds.length > 0) {
-    const { data: replies } = await supabase
-      .from('unified_messages')
-      .select('conversation_id')
-      .in('conversation_id', convIds)
-      .eq('sender_type', 'customer')
-    for (const r of (replies ?? []) as { conversation_id: string }[]) repliedConvIds.add(r.conversation_id)
-  }
-
-  return { convByEmail, repliedConvIds }
+  return { convByEmail }
 }
 
-function prospectInputFor(lead: LeadRow, conv: ConvLite | undefined, hasReplied: boolean): ProspectInput {
+function prospectInputFor(lead: LeadRow, conv: ConvLite | undefined): ProspectInput {
   const { needsYou } = needsYouFor(conv)
   return {
     stage: lead.stage,
+    qualified_at: lead.qualified_at,
     status: lead.status,
     opted_out_at: lead.opted_out_at,
+    last_inbound_kind: lead.last_inbound_kind,
     disqualified_reason: lead.disqualified_reason,
     first_touch_sent_at: lead.first_touch_sent_at,
     touches_sent: lead.touches_sent,
     last_touch_sent_at: lead.last_touch_sent_at,
     tried_at: lead.tried_at,
     created_at: lead.created_at,
-    has_replied: hasReplied,
-    has_unanswered_reply: conv?.last_sender_type === 'customer',
+    has_replied: lead.last_inbound_kind === 'human_reply',
+    has_unanswered_reply: lead.last_inbound_kind === 'human_reply' && conv?.last_sender_type === 'customer',
+    has_unclassified_inbound: !lead.last_inbound_kind && conv?.last_sender_type === 'customer',
     awaiting_review: awaitingReviewFor(conv),
     needsYou,
   }
 }
 
-function prospectSummary(lead: LeadRow, conv: ConvLite | undefined, hasReplied: boolean, now: Date): PersonSummary {
+function prospectSummary(lead: LeadRow, conv: ConvLite | undefined, now: Date): PersonSummary {
   const { needsYou, reason } = needsYouFor(conv)
-  const input = prospectInputFor(lead, conv, hasReplied)
+  const input = prospectInputFor(lead, conv)
   const d = deriveProspect(input, now)
   return {
     id: lead.id,
@@ -167,7 +161,7 @@ async function loadProspectList(supabase: ServiceClient, workspaceId: string): P
   const [{ data: leads }, accountIds] = await Promise.all([
     supabase
       .from('outreach_leads')
-      .select('id, lead_email, business_name, contact_name, stage, first_touch_sent_at, touches_sent, last_touch_sent_at, opted_out_at, disqualified_reason, status, tried_at, created_at')
+      .select('id, lead_email, business_name, contact_name, stage, qualified_at, first_touch_sent_at, touches_sent, last_touch_sent_at, opted_out_at, last_inbound_kind, disqualified_reason, status, tried_at, created_at')
       .eq('workspace_id', workspaceId)
       .order('created_at', { ascending: false })
       .limit(LIST_CAP),
@@ -175,33 +169,31 @@ async function loadProspectList(supabase: ServiceClient, workspaceId: string): P
   ])
 
   const rows = (leads ?? []) as LeadRow[]
-  const { convByEmail, repliedConvIds } = await fetchOutreachContext(supabase, accountIds, rows.map((l) => l.lead_email))
+  const { convByEmail } = await fetchOutreachContext(supabase, accountIds, rows.map((l) => l.lead_email))
   const now = new Date()
 
   return rows.map((lead) => {
     const conv = convByEmail.get(lead.lead_email)
-    const hasReplied = !!conv && repliedConvIds.has(conv.id)
-    return prospectSummary(lead, conv, hasReplied, now)
+    return prospectSummary(lead, conv, now)
   })
 }
 
 async function loadProspectDetail(supabase: ServiceClient, workspaceId: string, id: string): Promise<PersonDetail | null> {
   const { data: lead } = await supabase
     .from('outreach_leads')
-    .select('id, lead_email, business_name, contact_name, stage, first_touch_sent_at, touches_sent, last_touch_sent_at, opted_out_at, disqualified_reason, status, tried_at, created_at')
+    .select('id, lead_email, business_name, contact_name, stage, qualified_at, first_touch_sent_at, touches_sent, last_touch_sent_at, opted_out_at, last_inbound_kind, disqualified_reason, status, tried_at, created_at')
     .eq('workspace_id', workspaceId)
     .eq('id', id)
     .maybeSingle()
   if (!lead) return null
 
   const accountIds = await connectedAccountIds(supabase, workspaceId)
-  const { convByEmail, repliedConvIds } = await fetchOutreachContext(supabase, accountIds, [lead.lead_email])
+  const { convByEmail } = await fetchOutreachContext(supabase, accountIds, [lead.lead_email])
   const conv = convByEmail.get(lead.lead_email)
-  const hasReplied = !!conv && repliedConvIds.has(conv.id)
   const now = new Date()
 
-  const input = prospectInputFor(lead, conv, hasReplied)
-  const summary = prospectSummary(lead, conv, hasReplied, now)
+  const input = prospectInputFor(lead, conv)
+  const summary = prospectSummary(lead, conv, now)
   const name = summary.name
   const signals = await recentSignalsFor(lead.id)
 

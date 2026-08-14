@@ -42,7 +42,8 @@ import { classifyInbound, toneHintFor, type InboundCategory } from './inbound-cl
 import { formatCustomerFactsBlock, type CustomerFacts } from './customer-facts'
 import { renderFactsBlock } from './sales/facts'
 import { recentSignalsFor, renderSignalsBlock } from './sales/signals'
-import { findEscalationTriggers, customerFacingHandoff } from './sales/escalation-triggers'
+import { decideSalesInboundPolicy } from './sales/inbound-policy'
+import { recordSalesLifecycleEvent } from './sales/lifecycle'
 import { holdKindOf, isQueueHold } from './hold-kinds'
 import {
   fetchBusinessFacts,
@@ -88,6 +89,9 @@ export type EscalationCategory = 'gap' | 'policy' | 'knowledge' | 'sensitive'
 export type EscalationRouteTo = 'owner' | 'founder' | 'both'
 
 export type CayeAutoReply =
+  // Sales email routes consume `ignore` before dispatch. Its optional
+  // fields keep existing non-sales channel narrowing source-compatible.
+  | { action: 'ignore'; reason: string; content: ''; bookingId?: undefined; needsOwnerFollowup?: undefined; ownerNote?: undefined; proposedReply?: undefined; note?: undefined; customerAcknowledgement?: undefined; urgency?: undefined }
   | {
       action: 'escalate'
       /** Customer-facing reply Caye sends immediately. Vague by default ("Let
@@ -2069,6 +2073,59 @@ async function generateCayeAutoReplyCore(
       (workspaceRow.voice_register_overrides as Record<string, string> | null) ?? null
   }
 
+  // Sales has a deterministic inbound policy before the model. The shared
+  // inbox still stores every message; only an eligible human reply reaches
+  // Claude. This is intentionally after workspace detection but before any
+  // generic front-desk classification or model work.
+  if (isSalesWorkspace) {
+    const policy = decideSalesInboundPolicy(inbound.subject, inbound.body, {
+      senderEmail: inbound.senderEmail,
+      workspaceEmail: workspaceRow?.contact_email,
+      // Provider-generated rows used for Caye's own outbound/admin traffic
+      // must never become acquisition evidence if an ingest path replays one.
+      synthetic: /^caye_|^manual_|^op-wa-/.test(inbound.currentChannelMessageId ?? ''),
+    })
+    const { data: salesLead } = await supabase.from('outreach_leads')
+      .select('id').eq('workspace_id', inbound.workspaceId).eq('lead_email', inbound.senderEmail).maybeSingle()
+    // Bounces are normally sent by mailer-daemon rather than by the lead, so
+    // use the already-linked outreach thread only for that classifier. We do
+    // not guess a lead from arbitrary bounce text or a sender address.
+    const { data: conversationRow } = await supabase.from('unified_conversations')
+      .select('metadata').eq('id', inbound.conversationId).maybeSingle()
+    const conversationLeadId = (conversationRow?.metadata as Record<string, unknown> | null)?.lead_id
+    const leadId = (salesLead as { id: string } | null)?.id ??
+      (policy.kind === 'bounce_or_delivery_failure' && typeof conversationLeadId === 'string' ? conversationLeadId : null)
+    if (leadId) {
+      const event = policy.kind === 'human_reply' ? 'human_reply_received'
+        : policy.kind === 'automated_ooo' ? 'automated_reply_received'
+        : policy.kind === 'opt_out' ? 'opted_out'
+        : policy.kind === 'bounce_or_delivery_failure' ? 'bounce_or_delivery_failure'
+        : policy.kind === 'unknown' ? 'inbound_unknown'
+        : null
+      if (event) await recordSalesLifecycleEvent({
+        workspaceId: inbound.workspaceId, leadId, event,
+        eventKey: `inbound:${inbound.currentChannelMessageId ?? `${inbound.conversationId}:${policy.kind}`}:${event}`,
+      })
+    }
+    if (policy.kind === 'internal' || policy.kind === 'automated_ooo' || policy.kind === 'opt_out' || policy.kind === 'bounce_or_delivery_failure') {
+      return { action: 'ignore', reason: policy.kind, content: '' }
+    }
+    if (policy.kind === 'unknown') {
+      return { action: 'hold', reason: policy.reason, note: policy.reason, urgency: 'routine' }
+    }
+    if (policy.kind === 'deterministic_escalation') {
+      if (leadId) await recordSalesLifecycleEvent({
+        workspaceId: inbound.workspaceId, leadId, event: 'escalated',
+        eventKey: `inbound:${inbound.currentChannelMessageId ?? `${inbound.conversationId}:escalation`}:escalated`,
+        reason: policy.reason,
+      })
+      return {
+        action: 'escalate', content: policy.message, category: 'sensitive', routeTo: 'founder',
+        internalContext: policy.reason, pingSummary: policy.reason,
+      }
+    }
+  }
+
   // If this conversation is linked to a contact, look up their style profile
   // + operational facts so Caye can mirror their energy AND avoid re-asking
   // for things already on file. Fetch is non-fatal.
@@ -2174,27 +2231,6 @@ async function generateCayeAutoReplyCore(
     // controlled-template escalation. Cheaper, faster, and removes any
     // chance Caye drafts something commercial she shouldn't.
     let forced: ForcedEscalation | null = detectForcedEscalation(inbound.body, inboundCategory)
-
-    // Sales-specific escalation categories, evaluated after the platform
-    // triggers above so a complaint keeps its empathy template. These cover
-    // what a PROSPECT raises that the tour-operator-shaped triggers do not:
-    // price negotiation, legal/contract, press, security questions, and
-    // accounts too big for a $79 flat plan to be the obvious answer.
-    // Deliberately pre-LLM and literal — an escalation the model can be
-    // talked out of is not an escalation.
-    if (!forced && isSalesWorkspace) {
-      const [salesTrigger] = findEscalationTriggers(inbound.body)
-      if (salesTrigger) {
-        forced = {
-          trigger: 'b2b_partnership',
-          category: 'sensitive',
-          routeTo: 'founder',
-          customerFacingMessage: customerFacingHandoff(salesTrigger.category),
-          internalContext: `${salesTrigger.why} (matched "${salesTrigger.phrase}")`,
-          pingSummary: `${salesTrigger.category.replace(/_/g, ' ')}: ${inbound.body.slice(0, 60)}`,
-        }
-      }
-    }
 
     // Owner-taught constraints (caye_standing_rules), evaluated AFTER the
     // hardcoded triggers so platform safety always outranks a workspace rule

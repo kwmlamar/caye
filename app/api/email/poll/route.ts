@@ -1442,6 +1442,11 @@ async function processMessage(
     return 'error'
   }
 
+  if (decision.action === 'ignore') {
+    console.log(`[email/poll] Sales inbound ignored by deterministic policy: ${decision.reason}`)
+    return 'skipped'
+  }
+
   decision = await applyEscalation(decision, {
     workspaceId,
     conversationId: conversation.id,

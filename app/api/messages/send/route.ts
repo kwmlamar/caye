@@ -17,6 +17,7 @@ import { sendZohoReply, sendZohoEmail } from '@/lib/email-ai'
 import { resolveOpenEscalations } from '@/lib/caye-agent/tools/write-low/resolve-open-escalations'
 import { maybeRefreshOwnerVoiceProfile } from '@/lib/owner-voice-learning'
 import { maybeSuggestBusinessFacts } from '@/lib/business-fact-suggestions'
+import { recordSalesLifecycleEvent } from '@/lib/sales/lifecycle'
 import { classifyOutboundAuthorship } from '@/lib/message-authorship'
 
 export async function POST(request: NextRequest) {
@@ -220,19 +221,17 @@ export async function POST(request: NextRequest) {
   // keeps counting a thread the owner already handled.
   await resolveOpenEscalations(supabase, conversation_id)
 
-  // First-touch cold-outreach send (create_outreach_leads tool) — flips
-  // the lead from 'draft' to 'sent' and stamps first_touch_sent_at, which
-  // is what makes outreach-nudge-scan's cron correctly find this lead 2
-  // days later if it goes quiet. .is('first_touch_sent_at', null) guards
-  // against a later reply on the same thread re-stamping the timestamp.
-  // convMeta is declared above the dispatch — authorship has to be judged
-  // against the pre-send snapshot, and this block wants the same one.
-  if (convMeta.source === 'outreach_leads' && convMeta.lead_id) {
-    await supabase
-      .from('outreach_leads')
-      .update({ status: 'sent', first_touch_sent_at: now })
-      .eq('id', convMeta.lead_id as string)
-      .is('first_touch_sent_at', null)
+  // Manual sales sends share the exact lifecycle semantics of autonomous
+  // sends. A provider failure returned above, so this only follows success.
+  if (convMeta.source === 'outreach_leads' && typeof convMeta.lead_id === 'string' &&
+      (convMeta.hold_kind === 'outreach_first_touch' || convMeta.hold_kind === 'outreach_followup')) {
+    await recordSalesLifecycleEvent({
+      workspaceId: account.user_id,
+      leadId: convMeta.lead_id,
+      event: convMeta.hold_kind === 'outreach_first_touch' ? 'first_touch_sent' : 'followup_sent',
+      eventKey: `manual:${message.id}`,
+      at: now,
+    })
   }
 
   // Fire-and-forget owner voice learning. Re-extracts the voice profile

@@ -18,6 +18,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase-server'
+import { recordSalesLifecycleEvent } from '@/lib/sales/lifecycle'
 
 function appUrl(): string {
   return process.env.NEXT_PUBLIC_APP_URL ?? 'https://meetcaye.com'
@@ -32,15 +33,17 @@ export async function GET(
 
   const { data: lead } = await supabase
     .from('outreach_leads')
-    .select('id, tried_at')
+    .select('id, workspace_id, tried_at')
     .eq('demo_token', token)
     .maybeSingle()
 
   if (lead && !lead.tried_at) {
-    await supabase
-      .from('outreach_leads')
-      .update({ tried_at: new Date().toISOString(), status: 'tried' })
-      .eq('id', lead.id)
+    await recordSalesLifecycleEvent({
+      workspaceId: lead.workspace_id,
+      leadId: lead.id,
+      event: 'demo_link_clicked',
+      eventKey: `demo-click:${lead.id}`,
+    })
   }
 
   const cayeNumber = process.env.NEXT_PUBLIC_CAYE_WHATSAPP_NUMBER

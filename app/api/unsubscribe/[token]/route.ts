@@ -13,6 +13,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase-server'
+import { recordSalesLifecycleEvent } from '@/lib/sales/lifecycle'
 
 export async function GET(
   _req: NextRequest,
@@ -23,15 +24,17 @@ export async function GET(
 
   const { data: lead } = await supabase
     .from('outreach_leads')
-    .select('id, opted_out_at')
+    .select('id, workspace_id, opted_out_at')
     .eq('demo_token', token)
     .maybeSingle()
 
   if (lead && !lead.opted_out_at) {
-    await supabase
-      .from('outreach_leads')
-      .update({ opted_out_at: new Date().toISOString() })
-      .eq('id', lead.id)
+    await recordSalesLifecycleEvent({
+      workspaceId: lead.workspace_id,
+      leadId: lead.id,
+      event: 'opted_out',
+      eventKey: `unsubscribe:${lead.id}`,
+    })
   }
 
   return new NextResponse(

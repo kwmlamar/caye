@@ -14,6 +14,7 @@ import { after, NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase-server'
 import { enqueueOperation } from '@/lib/pending-operations'
 import { drainPendingOperationsSafely } from '@/lib/pending-operations-worker'
+import { isProductionSalesWorkspace } from '@/lib/sales/workspace-eligibility'
 
 export async function GET(request: NextRequest) {
   const secret = process.env.CRON_SECRET
@@ -29,11 +30,11 @@ export async function GET(request: NextRequest) {
     const supabase = createServiceClient()
     const { data: workspace, error: wsErr } = await supabase
       .from('customers')
-      .select('id')
+      .select('id, workspace_kind, plan')
       .eq('workspace_kind', 'internal_sales')
       .maybeSingle()
     if (wsErr) throw new Error(wsErr.message)
-    if (!workspace) return NextResponse.json({ status: 'skip', detail: 'no internal_sales workspace found' })
+    if (!workspace || !isProductionSalesWorkspace(workspace)) return NextResponse.json({ status: 'skip', detail: 'no production internal_sales workspace found' })
     const businessDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'UTC' }).format(new Date())
     const queued = await enqueueOperation({ workspaceId: workspace.id, operation: 'outreach_sourcing', payload: { business_date: businessDate }, idempotencyKey: `outreach-sourcing:${workspace.id}:${businessDate}`, delayMs: 0 })
     if (!queued.queued) return NextResponse.json({ error: queued.reason ?? 'could not enqueue sourcing' }, { status: 500 })

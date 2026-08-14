@@ -407,6 +407,11 @@ async function processGmailMessage(
     return 'error'
   }
 
+  if (decision.action === 'ignore') {
+    console.log(`[gmail-poll] Sales inbound ignored by deterministic policy: ${decision.reason}`)
+    return 'skipped'
+  }
+
   decision = await applyEscalation(decision, {
     workspaceId,
     conversationId,

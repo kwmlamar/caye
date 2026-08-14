@@ -431,6 +431,11 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
     return
   }
 
+  if (decision.action === 'ignore') {
+    console.log(`[zoho-email webhook] Sales inbound ignored by deterministic policy: ${decision.reason}`)
+    return
+  }
+
   decision = await applyEscalation(decision, {
     workspaceId,
     conversationId: conversation.id,

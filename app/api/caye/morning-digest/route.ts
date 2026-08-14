@@ -202,15 +202,7 @@ async function buildOutreachDigestStats(workspaceId: string, now: Date): Promise
   const supabase = createServiceClient()
   const cutoff = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString()
 
-  const { data: account } = await supabase
-    .from('connected_accounts')
-    .select('id')
-    .eq('user_id', workspaceId)
-    .eq('channel_type', 'email')
-    .eq('is_active', true)
-    .maybeSingle()
-
-  const [sourced, firstTouchSent, followupsSent, tried, replies, stages, objections] = await Promise.all([
+  const [sourced, firstTouchSent, followupsSent, tried, replySignals, stages, objections] = await Promise.all([
     supabase.from('outreach_leads').select('id', { count: 'exact', head: true })
       .eq('workspace_id', workspaceId).eq('stage', 'sourced').gte('created_at', cutoff),
     supabase.from('outreach_leads').select('id', { count: 'exact', head: true })
@@ -221,19 +213,22 @@ async function buildOutreachDigestStats(workspaceId: string, now: Date): Promise
       .eq('workspace_id', workspaceId).gt('touches_sent', 1).gte('last_touch_sent_at', cutoff),
     supabase.from('outreach_leads').select('id', { count: 'exact', head: true })
       .eq('workspace_id', workspaceId).gte('tried_at', cutoff),
-    account
-      ? supabase.from('unified_conversations').select('id', { count: 'exact', head: true })
-          .eq('connected_account_id', account.id)
-          .eq('last_sender_type', 'customer')
-          .gte('last_message_at', cutoff)
-      : Promise.resolve({ count: 0 }),
-    supabase.from('outreach_leads').select('stage').eq('workspace_id', workspaceId),
+    // Receipt-backed lifecycle signals distinguish genuine prospect replies
+    // from OOO and other automated inbound mail. Count unique leads, not
+    // messages, for the digest's relationship metric.
+    supabase.from('sales_lead_signals').select('lead_id')
+      .eq('workspace_id', workspaceId).eq('kind', 'outcome').eq('label', 'human_reply_received')
+      .gte('created_at', cutoff),
+    supabase.from('outreach_leads').select('stage, qualified_at').eq('workspace_id', workspaceId),
     topObjections(workspaceId, cutoff),
   ])
 
   const pipeline: Record<string, number> = {}
-  for (const row of (stages.data ?? []) as { stage: string }[]) {
-    pipeline[row.stage] = (pipeline[row.stage] ?? 0) + 1
+  for (const row of (stages.data ?? []) as { stage: string; qualified_at: string | null }[]) {
+    // A bare legacy `qualified` label is not proof; preserve uncertainty as
+    // engaged in the founder digest until an explicit qualification timestamp exists.
+    const stage = row.stage === 'qualified' && !row.qualified_at ? 'engaged' : row.stage
+    pipeline[stage] = (pipeline[stage] ?? 0) + 1
   }
 
   return {
@@ -241,7 +236,7 @@ async function buildOutreachDigestStats(workspaceId: string, now: Date): Promise
     firstTouchSent: firstTouchSent.count ?? 0,
     followupsSent: followupsSent.count ?? 0,
     tried: tried.count ?? 0,
-    replies: replies.count ?? 0,
+    replies: new Set((replySignals.data ?? []).map((row) => String((row as { lead_id: string }).lead_id))).size,
     pipeline,
     objections,
   }

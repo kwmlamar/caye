@@ -7,7 +7,7 @@ const { afterSpy, enqueue, drain } = vi.hoisted(() => ({
 vi.mock('next/server', async (original) => ({ ...(await original<typeof import('next/server')>()), after: afterSpy }))
 vi.mock('@/lib/pending-operations', () => ({ enqueueOperation: enqueue }))
 vi.mock('@/lib/pending-operations-worker', () => ({ drainPendingOperationsSafely: drain }))
-vi.mock('@/lib/supabase-server', () => ({ createServiceClient: () => ({ from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { id: 'ws-live' }, error: null }) }) }) }) }) }))
+vi.mock('@/lib/supabase-server', () => ({ createServiceClient: () => ({ from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { id: 'ws-live', workspace_kind: 'internal_sales', plan: 'pro' }, error: null }) }) }) }) }) }))
 
 import { GET } from './route'
 
