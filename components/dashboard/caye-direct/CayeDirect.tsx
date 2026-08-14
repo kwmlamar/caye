@@ -6,6 +6,7 @@ import { CayeMark } from '@/components/brand/CayeMark'
 import { CayeLoadingPulse } from '@/components/dashboard/founder-home/CayeLoadingPulse'
 import { AQUA } from '@/components/dashboard/surface'
 import CayeDirectThread from './CayeDirectThread'
+import { liveOperatorDisplayNames } from '@/lib/operator-display-name'
 
 interface ThreadListItem {
   id: string
@@ -255,6 +256,7 @@ export default function CayeDirect({ workspaceId, workspaceName, open, onClose, 
 
   const selected = threads?.find((thread) => thread.id === selectedId) ?? null
   const selectedOperator = operators?.find((operator) => operator.id === selectedOperatorId) ?? null
+  const liveOperatorLabels = liveOperatorDisplayNames(operators ?? [])
   const groups = BUCKET_ORDER.map((label) => ({ label, items: (threads ?? []).filter((thread) => bucketLabel(thread.last_activity_at) === label) })).filter((group) => group.items.length > 0)
 
   return (
@@ -338,7 +340,7 @@ export default function CayeDirect({ workspaceId, workspaceName, open, onClose, 
             <div className="caye-overlay-history-scroll">
               {operators === null ? <div className="caye-overlay-empty-list"><CayeLoadingPulse size={13} /></div> : operators.length === 0 ? <div className="caye-overlay-empty-list">No live conversations are available.</div> : operators.map((operator) => (
                 <button key={operator.id} type="button" className={`caye-overlay-live-row ${operator.id === selectedOperatorId ? 'is-active' : ''}`} onClick={() => { setSelectedOperatorId(operator.id); setMobileHistoryOpen(false) }}>
-                  <span className="caye-overlay-live-name">{operator.name || 'Operator'}</span>
+                  <span className="caye-overlay-live-name">{liveOperatorLabels.get(operator.id) || 'Operator'}</span>
                   <span className="caye-overlay-live-meta">WhatsApp · Read only</span>
                 </button>
               ))}
@@ -364,7 +366,7 @@ export default function CayeDirect({ workspaceId, workspaceName, open, onClose, 
               {selected ? <CayeDirectThread key={selected.id} mode="thread" workspaceId={workspaceId} threadId={selected.id} threadTitle={selected.title} compactHeader autoFocusComposer={open && mode === 'chat'} composerVisible={mode === 'chat'} scrollToLatest={open && mode === 'chat'} onThreadMeta={(meta) => updateThreadMeta(selected.id, meta)} onArchive={() => archiveThread(selected.id)} initialMessage={pendingInitialThreadId === selected.id ? pendingMessage : null} onInitialMessageSent={() => { setPendingInitialThreadId(null); setPendingMessage(null); onInitialMessageSent?.() }} /> : <div className="caye-overlay-empty">{threads === null ? <CayeLoadingPulse size={18} /> : <div className="caye-overlay-empty-inner"><CayeMark size={34} /><h2>How can I help?</h2><p>Ask about the business, a decision, or anything Caye is working on.</p><form className="caye-overlay-empty-form" onSubmit={(event) => { event.preventDefault(); startFromEmptyState() }}><input ref={emptyInputRef} value={emptyDraft} onChange={(event) => setEmptyDraft(event.target.value)} placeholder="Ask Caye anything…" aria-label="Ask Caye anything" /><button className="caye-overlay-empty-send" type="submit" disabled={!emptyDraft.trim() || creating} aria-label="Send"><svg aria-hidden width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"><path d="M12 19V5M5 12l7-7 7 7" /></svg></button></form></div>}</div>}
             </div>
             <div className={`caye-overlay-pane ${mode !== 'live' ? 'is-hidden' : ''}`} aria-hidden={mode !== 'live'}>
-              {selectedOperator ? <CayeDirectThread key={selectedOperator.id} mode="operator" workspaceId={workspaceId} operatorId={selectedOperator.id} operatorLabel={selectedOperator.name || 'Operator'} scrollToLatest={open && mode === 'live'} /> : <div className="caye-overlay-empty">{operators === null ? <CayeLoadingPulse size={18} /> : <div className="caye-overlay-empty-inner"><CayeMark size={34} /><h2>Live conversations</h2><p>Select a person to view their read-only WhatsApp conversation with Caye.</p></div>}</div>}
+              {selectedOperator ? <CayeDirectThread key={selectedOperator.id} mode="operator" workspaceId={workspaceId} operatorId={selectedOperator.id} operatorLabel={liveOperatorLabels.get(selectedOperator.id) || 'Operator'} scrollToLatest={open && mode === 'live'} /> : <div className="caye-overlay-empty">{operators === null ? <CayeLoadingPulse size={18} /> : <div className="caye-overlay-empty-inner"><CayeMark size={34} /><h2>Live conversations</h2><p>Select a person to view their read-only WhatsApp conversation with Caye.</p></div>}</div>}
             </div>
           </div>
         </div>
