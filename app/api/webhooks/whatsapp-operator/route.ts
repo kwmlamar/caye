@@ -59,6 +59,7 @@ import {
 } from '@/lib/onboarding-whatsapp'
 import { FIRST_DISCOVERY_QUESTION } from '@/lib/onboarding'
 import { mediaPlaceholder } from '@/lib/operator-text-guard'
+import { fetchBusinessFacts, formatBusinessFactsBlock } from '@/lib/business-facts'
 import {
   getActiveDemoSession,
   startDemoSession,
@@ -747,11 +748,16 @@ async function handleOneInbound(
           .select('business_name')
           .eq('id', workspaceId)
           .maybeSingle()
+        // Keep the roleplay grounded in the same owner-taught facts as a
+        // real guest reply. This is read-only context: demo mode still
+        // never imports the live front-desk tool loop.
+        const demoBusinessFacts = await fetchBusinessFacts(workspaceId)
         const cayeReply = await generateDemoReply(
           cfg.system_prompt ?? '',
           demoCustomer?.business_name || 'your business',
           history,
-          demoText
+          demoText,
+          formatBusinessFactsBlock(demoBusinessFacts)
         )
         await advanceDemoSession(supabase, activeDemo, demoText, cayeReply)
         const sendResult = await sendFreeFormWhatsApp(

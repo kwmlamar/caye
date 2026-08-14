@@ -4,6 +4,7 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { loggedMessagesCreate } from '@/lib/llm-telemetry'
 import { sendFreeFormWhatsApp, sendTemplateWhatsApp, deliveryFieldsFromResult } from '@/lib/whatsapp/outbound'
 import { findDemoReplyLeak, demoRetryInstruction } from '@/lib/caye-demo-guard'
+import { withDemoBusinessFacts } from '@/lib/caye-demo-context'
 
 /**
  * Operator-initiated demo-roleplay mode (2026-07-22). Lets an
@@ -167,8 +168,8 @@ export async function advanceDemoSession(
     .eq('id', session.id)
 }
 
-function demoSystemPrompt(realSystemPrompt: string, businessName: string): string {
-  return `${realSystemPrompt}
+function demoSystemPrompt(realSystemPrompt: string, businessName: string, businessFactsBlock: string): string {
+  return `${withDemoBusinessFacts(realSystemPrompt, businessFactsBlock)}
 
 ---
 DEMO MODE — this section overrides nothing above except as noted here.
@@ -198,7 +199,8 @@ export async function generateDemoReply(
   systemPrompt: string,
   businessName: string,
   history: DemoTurn[],
-  guestMessage: string
+  guestMessage: string,
+  businessFactsBlock = ''
 ): Promise<string> {
   try {
     const client = new Anthropic()
@@ -209,7 +211,7 @@ export async function generateDemoReply(
       })),
       { role: 'user', content: guestMessage },
     ]
-    const baseSystem = demoSystemPrompt(systemPrompt, businessName)
+    const baseSystem = demoSystemPrompt(systemPrompt, businessName, businessFactsBlock)
 
     const complete = async (system: string): Promise<string> => {
       const response = await loggedMessagesCreate(
