@@ -7,6 +7,7 @@ import { CayeMark } from '@/components/brand/CayeMark'
 import { CayePresence } from '@/components/caye-presence/CayePresence'
 import { FormattedReplyText } from '@/components/ui/FormattedReplyText'
 import { Pill } from '@/components/dashboard/founder-home/console-ui'
+import { CayeComposerSurface } from '@/components/dashboard/founder-home/AskCayeComposer'
 import { emitStale, ALL_TOPICS } from '@/lib/founder-freshness'
 
 const NEAR_BOTTOM_PX = 96
@@ -255,6 +256,15 @@ interface ThreadModeProps {
   onArchive?: () => void
   initialMessage?: string | null
   onInitialMessageSent?: () => void
+  /** Lets the global overlay hand keyboard focus to its one canonical
+   * composer as soon as it is summoned. */
+  autoFocusComposer?: boolean
+  /** The overlay owns the brand/close header, so this leaves only the
+   * thread title and archive affordance in a quiet, compact row. */
+  compactHeader?: boolean
+  /** Chat remains mounted while Live is open so its draft and scroll position
+   * survive a mode switch. The actual composer is omitted while hidden. */
+  composerVisible?: boolean
 }
 
 interface OperatorModeProps {
@@ -262,6 +272,12 @@ interface OperatorModeProps {
   workspaceId: string
   operatorId: number
   operatorLabel: string
+  /** In the main operator view, returns to the remembered Direct thread and
+   * places this read-only transcript alongside it. Navigation only; no
+   * operator message or Direct thread is created by this action. */
+  onOpenSideBySide?: () => void
+  /** Present only when this instance is the secondary, pinned transcript. */
+  onCloseSideBySide?: () => void
 }
 
 type Props = ThreadModeProps | OperatorModeProps
@@ -294,6 +310,7 @@ export default function CayeDirectThread(props: Props) {
   const [showJump, setShowJump] = useState(false)
   const [hoveredKey, setHoveredKey] = useState<string | null>(null)
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
+  const [composerFocused, setComposerFocused] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const atBottomRef = useRef(true)
@@ -399,6 +416,11 @@ export default function CayeDirectThread(props: Props) {
     el.style.height = 'auto'
     el.style.height = `${Math.min(el.scrollHeight, TEXTAREA_MAX_H)}px`
   }, [input])
+
+  useEffect(() => {
+    if (mode !== 'thread' || !props.autoFocusComposer) return
+    textareaRef.current?.focus()
+  }, [mode, mode === 'thread' ? props.autoFocusComposer : false])
 
   function handleScroll() {
     const el = scrollRef.current
@@ -525,7 +547,7 @@ export default function CayeDirectThread(props: Props) {
   })
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', flex: 1, minWidth: 0, color: '#f4f4f5' }}>
+    <div className="caye-direct-thread" style={{ display: 'flex', flexDirection: 'column', height: '100%', flex: 1, minWidth: 0, color: '#f4f4f5' }}>
       <style>{`
         @keyframes caye-typing-dot {
           0%, 60%, 100% { opacity: 0.3; transform: translateY(0) scale(0.85); }
@@ -541,6 +563,18 @@ export default function CayeDirectThread(props: Props) {
         }
         .caye-direct-scroll::-webkit-scrollbar { width: 6px; }
         .caye-direct-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 3px; }
+        .caye-direct-message-column { width:min(100%, 840px); min-height:100%; margin:0 auto; display:flex; flex-direction:column; gap:3px; }
+        .caye-direct-thread-header { min-height:58px; padding:11px clamp(18px, 4vw, 48px); display:flex; align-items:center; gap:10px; background:rgba(10,10,12,.5); box-shadow:inset 0 -1px rgba(255,255,255,.04); }
+        .caye-direct-thread-header.is-compact { min-height:43px; padding-top:4px; padding-bottom:5px; background:transparent; box-shadow:none; }
+        .caye-direct-thread-heading { min-width:0; display:flex; flex-direction:column; gap:2px; }
+        .caye-direct-thread-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:600 14px var(--font-display); color:#f4f4f5; }
+        .caye-direct-thread-kicker { color:#777780; font:10px var(--font-mono); letter-spacing:.025em; }
+        .caye-direct-thread-action { margin-left:auto; display:flex; align-items:center; gap:6px; padding:6px 8px; border:0; border-radius:7px; background:transparent; color:#87878f; cursor:pointer; font:10.5px var(--font-mono); white-space:nowrap; transition:background .14s ease,color .14s ease; }
+        .caye-direct-thread-action:hover { background:rgba(255,255,255,.07); color:#f4f4f5; }
+        .caye-direct-sender { margin:0 0 4px 26px; color:#8e8e96; font:10px var(--font-mono); letter-spacing:.025em; }
+        .caye-direct-sender.is-you { margin:0 0 4px 0; text-align:right; }
+        .caye-direct-composer-shell { width:min(100%, 840px); margin:0 auto; }
+        .caye-direct-read-only-note { width:min(100%, 840px); margin:0 auto; color:#73737b; font-size:11.5px; text-align:center; line-height:1.45; }
         .caye-direct-scroll ::selection { background: rgba(78, 190, 206, 0.35); color: inherit; }
         .caye-direct-scroll ::-moz-selection { background: rgba(78, 190, 206, 0.35); color: inherit; }
         .caye-direct-textarea::placeholder { color: rgba(244,244,245,0.32); }
@@ -548,25 +582,26 @@ export default function CayeDirectThread(props: Props) {
           background: linear-gradient(155deg, rgba(7,102,163,0.20), rgba(7,102,163,0.09));
           box-shadow: 0 1px 0 rgba(255,255,255,0.05) inset, 0 6px 16px -8px rgba(7,102,163,0.5);
         }
+        @media (max-width:600px) { .caye-direct-thread-header { padding-left:58px; } .caye-direct-thread-action { display:none; } }
       `}</style>
 
-      <div style={{ padding: '14px 40px 14px 16px', display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(255,255,255,0.035)', ...GLASS }}>
-        <span style={{ fontSize: 12.5, fontWeight: 600 }}>{headerLabel}</span>
-        {mode === 'operator' && <span style={{ fontSize: 11, color: '#52525b' }}>↔ Caye</span>}
-        {readOnly && (
-          <div style={{ marginLeft: 'auto' }}><Pill color="#71717a" label="Read only" dot={false} /></div>
+      <div className={`caye-direct-thread-header ${mode === 'thread' && props.compactHeader ? 'is-compact' : ''}`} style={{ ...GLASS }}>
+        <div className="caye-direct-thread-heading">
+          <div className="caye-direct-thread-title">{headerLabel}</div>
+          <div className="caye-direct-thread-kicker">{mode === 'operator' ? 'WhatsApp · Read only' : 'Caye Direct'}</div>
+        </div>
+        {readOnly && <div style={{ marginLeft: 'auto' }}><Pill color="#71717a" label="Read only" dot={false} /></div>}
+        {mode === 'operator' && props.onOpenSideBySide && (
+          <button type="button" className="caye-direct-thread-action" onClick={props.onOpenSideBySide} title="Open beside your current Direct conversation">
+            <svg aria-hidden width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M12 4v16" /></svg>
+            Side-by-side
+          </button>
+        )}
+        {mode === 'operator' && props.onCloseSideBySide && (
+          <button type="button" className="caye-direct-thread-action" onClick={props.onCloseSideBySide} title="Close side-by-side view">Close</button>
         )}
         {mode === 'thread' && (
-          <button
-            onClick={handleArchive}
-            title="Archive — sending a new message here brings it back"
-            style={{
-              marginLeft: 'auto', border: 'none', cursor: 'pointer', background: 'transparent',
-              color: '#52525b', fontSize: 10.5, fontFamily: 'var(--font-mono)', padding: '4px 6px', borderRadius: 6,
-            }}
-          >
-            Archive
-          </button>
+          <button onClick={handleArchive} title="Archive — sending a new message here brings it back" className="caye-direct-thread-action">Archive</button>
         )}
       </div>
 
@@ -575,19 +610,21 @@ export default function CayeDirectThread(props: Props) {
           ref={scrollRef}
           onScroll={handleScroll}
           className="caye-direct-scroll"
-          style={{ height: '100%', overflowY: 'auto', padding: 14, display: 'flex', flexDirection: 'column', gap: 3 }}
+          style={{ height: '100%', overflowY: 'auto', padding: '18px clamp(18px, 4vw, 48px) 24px' }}
         >
-          {loading ? (
-            <MessageSkeleton />
-          ) : messages.length === 0 ? (
-            <EmptyState label={headerLabel} readOnly={readOnly} />
-          ) : (
-            items.map((item) => {
+          <div className="caye-direct-message-column">
+            {loading ? (
+              <MessageSkeleton />
+            ) : messages.length === 0 ? (
+              <EmptyState label={headerLabel} readOnly={readOnly} />
+            ) : (
+              items.map((item) => {
               if (item.kind === 'divider') return <DateDivider key={item.key} label={item.label} />
               const { message: m, pos } = item
               const isCaye = m.direction === 'outbound'
               const showAvatar = isCaye && (pos === 'single' || pos === 'last')
               const showMeta = pos === 'single' || pos === 'last'
+              const showSender = pos === 'first' || pos === 'single'
               // "Max · via WhatsApp" — only in thread mode, only for a
               // non-founder operator's message that arrived over WhatsApp
               // and got linked into this thread (relate_to_direct_thread).
@@ -599,6 +636,7 @@ export default function CayeDirectThread(props: Props) {
               const showOrigin = mode === 'thread' && !isCaye && m.origin === 'whatsapp' && m.operator_role !== 'founder' && (pos === 'first' || pos === 'single')
               return (
                 <div key={item.key} style={{ display: 'flex', flexDirection: 'column', alignSelf: isCaye ? 'flex-start' : 'flex-end', maxWidth: '82%' }}>
+                  {showSender && <div className={`caye-direct-sender ${isCaye ? '' : 'is-you'}`}>{isCaye ? 'Caye' : mode === 'operator' ? headerLabel : 'You'}</div>}
                   {showOrigin && (
                     <div style={{
                       fontSize: 9.5, fontFamily: 'var(--font-mono)', color: '#71717a',
@@ -657,9 +695,10 @@ export default function CayeDirectThread(props: Props) {
                   </div>
                 </div>
               )
-            })
-          )}
-          {sending && <div style={{ marginTop: 11 }}><TypingIndicator /></div>}
+              })
+            )}
+            {sending && <div style={{ marginTop: 11 }}><TypingIndicator /></div>}
+          </div>
         </div>
 
         {showJump && (
@@ -683,17 +722,14 @@ export default function CayeDirectThread(props: Props) {
       </div>
 
       {readOnly ? (
-        <div style={{ padding: '12px 16px', fontSize: 11.5, color: '#52525b', textAlign: 'center', background: 'rgba(255,255,255,0.035)', ...GLASS }}>
-          {headerLabel} texts Caye directly from their own WhatsApp — you can watch here, not send as them.
+        <div style={{ padding: '11px 18px 13px', background: 'transparent' }}>
+          <div className="caye-direct-read-only-note">{headerLabel} texts Caye directly on WhatsApp. You&apos;re viewing their conversation, not sending as either person.</div>
         </div>
-      ) : (
-        <div style={{ padding: 14, background: 'rgba(255,255,255,0.035)', position: 'relative', ...GLASS }}>
-          <form onSubmit={(e) => { e.preventDefault(); send(input) }}>
-            <div style={{
-              display: 'flex', alignItems: 'flex-end', gap: 8,
-              borderRadius: 20,
-              background: 'rgba(255,255,255,0.04)', padding: '8px 8px 8px 14px',
-            }}>
+      ) : props.composerVisible !== false ? (
+        <div style={{ padding: '12px clamp(18px, 4vw, 48px) 16px', background: 'transparent', position: 'relative' }}>
+          <form className="caye-direct-composer-shell" onSubmit={(e) => { e.preventDefault(); send(input) }}>
+            <CayeComposerSurface active={composerFocused} maxWidth="100%" style={{ alignItems: 'flex-end' }}>
+              <span style={{ display: 'flex', alignSelf: 'center', flexShrink: 0 }}><CayeMark size={20} /></span>
               <textarea
                 ref={textareaRef}
                 value={input}
@@ -703,6 +739,8 @@ export default function CayeDirectThread(props: Props) {
                 }}
                 placeholder="Ask Caye anything…"
                 disabled={sending}
+                onFocus={() => setComposerFocused(true)}
+                onBlur={() => setComposerFocused(false)}
                 rows={1}
                 className="caye-direct-textarea"
                 style={{
@@ -717,11 +755,12 @@ export default function CayeDirectThread(props: Props) {
                 type="submit"
                 disabled={sending || !input.trim()}
                 style={{
-                  flexShrink: 0, width: 32, height: 32, borderRadius: '50%', border: 'none',
+                  flexShrink: 0, width: 30, height: 30, borderRadius: '50%', border: 'none',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                   cursor: sending || !input.trim() ? 'default' : 'pointer',
-                  background: sending || !input.trim() ? 'rgba(255,255,255,0.08)' : '#4EBECE',
-                  transition: 'background 0.15s ease',
+                  background: sending || !input.trim() ? 'rgba(255,255,255,0.06)' : 'linear-gradient(90deg, #4EBECE, #FFE4AF)',
+                  opacity: sending || !input.trim() ? (composerFocused ? 0.7 : 0.45) : 1,
+                  transition: 'background 0.15s ease, opacity 0.15s ease',
                 }}
               >
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
@@ -730,10 +769,10 @@ export default function CayeDirectThread(props: Props) {
                   <line x1="12" y1="19" x2="12" y2="5" /><polyline points="5 12 12 5 19 12" />
                 </svg>
               </button>
-            </div>
+            </CayeComposerSurface>
           </form>
         </div>
-      )}
+      ) : null}
     </div>
   )
 }

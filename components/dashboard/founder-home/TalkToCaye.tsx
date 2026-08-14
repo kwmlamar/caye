@@ -20,9 +20,13 @@ import AskCayeComposer from './AskCayeComposer'
  * No mic/voice affordance — WhatsApp voice calling is "idea, not started"
  * (voice-calling-roadmap.md), so nothing here pretends otherwise.
  */
-export default function TalkToCaye({ onSend, onOpenHistory, busy }: {
+export default function TalkToCaye({ onSend, onOpenHistory, onOpen, onOpenLive, busy }: {
   onSend: (text: string) => void
   onOpenHistory?: () => void
+  /** Opening on focus hands typing straight to the overlay composer, so the
+   * page-level bar never becomes a competing second composer. */
+  onOpen?: () => void
+  onOpenLive?: () => void
   busy?: boolean
 }) {
   return (
@@ -31,7 +35,7 @@ export default function TalkToCaye({ onSend, onOpenHistory, busy }: {
     // margin around this centered pill never blocks a click on whatever's
     // visible through it; this root is where clicks start working again.
     <div style={{ flexShrink: 0, display: 'flex', justifyContent: 'center', padding: '4px 0 2px', background: 'transparent', pointerEvents: 'auto' }}>
-      <AskCayeComposer onSend={onSend} onOpenHistory={onOpenHistory} busy={busy} />
+      <AskCayeComposer onSend={onSend} onOpenHistory={onOpenHistory} onOpen={onOpen} onOpenLive={onOpenLive} busy={busy} />
     </div>
   )
 }

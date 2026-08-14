@@ -1,21 +1,50 @@
 'use client'
 
-import { useState, useRef, useEffect, type KeyboardEvent } from 'react'
+import { useState, useRef, useEffect, type KeyboardEvent, type ReactNode, type CSSProperties } from 'react'
 import { CayeMark } from '@/components/brand/CayeMark'
 import { AQUA, TEXT, TEXT_QUIET } from '../surface'
 
 /**
  * The actual "Caye icon | input | send" pill — shared by TalkToCaye (the
- * always-expanded bar on Home/Work/People/Memory/Settings) and
- * CayeLauncher's expanded state (Inbox, where the full bar would compete
- * with the customer reply composer). One implementation, two contexts,
- * so the visual language stays identical regardless of which is showing.
+ * always-expanded bar on Home/Work/People/Memory/Settings. Inbox uses the
+ * smaller CayeLauncher because its customer reply composer takes priority;
+ * both controls summon the same global Caye Direct overlay.
  */
+/** The shared visual surface for every founder-facing Caye composer. Keeping
+ * this here prevents the modal composer from slowly becoming a lookalike. */
+export function CayeComposerSurface({ children, active, maxWidth = 600, style }: {
+  children: ReactNode
+  active?: boolean
+  maxWidth?: number | string
+  style?: CSSProperties
+}) {
+  return (
+    <div
+      style={{
+        display: 'flex', alignItems: 'center', gap: 10, width: '100%', maxWidth,
+        background: `rgba(255,255,255,${active ? 0.055 : 0.032})`,
+        backdropFilter: 'blur(22px) saturate(150%)', WebkitBackdropFilter: 'blur(22px) saturate(150%)',
+        borderRadius: 999, padding: '10px 10px 10px 16px',
+        boxShadow: active
+          ? `0 1px 0 rgba(255,255,255,0.06) inset, 0 0 0 1px rgba(78,190,206,0.3), 0 0 28px rgba(78,190,206,0.18), 0 14px 32px rgba(0,0,0,0.35)`
+          : `0 1px 0 rgba(255,255,255,0.04) inset, 0 10px 26px rgba(0,0,0,0.3)`,
+        transition: 'background 0.2s ease, box-shadow 0.25s ease', ...style,
+      }}
+    >
+      {children}
+    </div>
+  )
+}
+
 export default function AskCayeComposer({
-  onSend, onOpenHistory, busy, autoFocus, maxWidth = 600,
+  onSend, onOpenHistory, onOpen, onOpenLive, busy, autoFocus, maxWidth = 600,
 }: {
   onSend: (text: string) => void
   onOpenHistory?: () => void
+  /** Used by the global bar: focus summons Caye before the first keystroke
+   * so typing continues in the one canonical overlay composer. */
+  onOpen?: () => void
+  onOpenLive?: () => void
   busy?: boolean
   autoFocus?: boolean
   maxWidth?: number
@@ -48,18 +77,11 @@ export default function AskCayeComposer({
     <div
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
-      style={{
-        display: 'flex', alignItems: 'center', gap: 10, width: '100%', maxWidth,
-        background: `rgba(255,255,255,${focused ? 0.055 : hover ? 0.045 : 0.032})`,
-        backdropFilter: 'blur(22px) saturate(150%)',
-        WebkitBackdropFilter: 'blur(22px) saturate(150%)',
-        borderRadius: 999, padding: '10px 10px 10px 16px',
-        boxShadow: focused
-          ? `0 1px 0 rgba(255,255,255,0.06) inset, 0 0 0 1px rgba(78,190,206,0.3), 0 0 28px rgba(78,190,206,0.18), 0 14px 32px rgba(0,0,0,0.35)`
-          : `0 1px 0 rgba(255,255,255,0.04) inset, 0 10px 26px rgba(0,0,0,0.3)`,
-        transition: 'background 0.2s ease, box-shadow 0.25s ease',
+      onMouseDown={(event) => {
+        if (onOpen && event.target === event.currentTarget) onOpen()
       }}
     >
+      <CayeComposerSurface active={focused || hover} maxWidth={maxWidth}>
       {onOpenHistory ? (
         <button
           onClick={onOpenHistory}
@@ -77,7 +99,7 @@ export default function AskCayeComposer({
         value={value}
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={handleKeyDown}
-        onFocus={() => setFocused(true)}
+        onFocus={() => { setFocused(true); onOpen?.() }}
         onBlur={() => setFocused(false)}
         placeholder="Ask Caye anything…"
         aria-label="Ask Caye anything"
@@ -87,6 +109,17 @@ export default function AskCayeComposer({
           fontSize: 13.5, color: TEXT, fontFamily: 'var(--font-sans)',
         }}
       />
+      {onOpenLive && (
+        <button
+          type="button"
+          onClick={onOpenLive}
+          title="Open Live conversations"
+          aria-label="Open Live conversations"
+          style={{ flexShrink: 0, width: 30, height: 30, border: 'none', borderRadius: '50%', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', color: TEXT_QUIET }}
+        >
+          <svg aria-hidden width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v4M12 17v4M4.2 4.2l2.8 2.8M17 17l2.8 2.8M3 12h4M17 12h4M4.2 19.8 7 17M17 7l2.8-2.8" /><circle cx="12" cy="12" r="3.5" /></svg>
+        </button>
+      )}
       <button
         onClick={submit}
         disabled={!value.trim() || busy}
@@ -107,6 +140,7 @@ export default function AskCayeComposer({
           </svg>
         )}
       </button>
+      </CayeComposerSurface>
     </div>
   )
 }

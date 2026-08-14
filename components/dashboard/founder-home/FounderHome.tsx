@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useTransition, type ReactNode, type CSSProperties } from 'react'
+import { useState, useEffect, useRef, useTransition, type ReactNode, type CSSProperties } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useCommandOverview } from '@/lib/useCommandOverview'
@@ -28,55 +28,6 @@ import { ENV_BG, AQUA, GRADIENT, glass, paneShadowSoft, focusResetCss } from '..
 // continuous environment. Hard 1px outlines are the exception now, not
 // the default — see surface.ts for the shared hierarchy this draws from.
 const GLASS: CSSProperties = glass(0.045)
-
-// The one remaining fullscreen takeover — Caye Direct's full history,
-// opened from the Talk to Caye composer. Calendar/Conversations/Settings
-// used to have their own in-place expand-to-fullscreen (see git history on
-// this branch before the IA rework) — that machinery is gone now that
-// those are dedicated pages (Work/Inbox/Settings) with their own room to
-// breathe, not compact panels fighting for space on Home.
-const FULLSCREEN_PANEL_STYLE: CSSProperties = {
-  position: 'fixed', inset: 0, zIndex: 200,
-  display: 'flex', flexDirection: 'column',
-  background: ENV_BG,
-}
-
-function FullscreenPanelHeader({ title, workspaceName, onCollapse }: { title: string; workspaceName: string; onCollapse: () => void }) {
-  const [hover, setHover] = useState(false)
-  return (
-    <div style={{
-      flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-      padding: '13px 20px', boxShadow: 'inset 0 -1px 0 rgba(255,255,255,0.04)',
-      background: 'rgba(17,17,19,0.55)', ...GLASS,
-    }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 9, minWidth: 0 }}>
-        <span style={{ fontSize: 15, fontWeight: 600, fontFamily: 'var(--font-display)', whiteSpace: 'nowrap' }}>{title}</span>
-        <span style={{ fontSize: 12, color: '#71717a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-          {workspaceName}
-        </span>
-      </div>
-      <button
-        onClick={onCollapse}
-        onMouseEnter={() => setHover(true)}
-        onMouseLeave={() => setHover(false)}
-        title="Collapse (Esc)"
-        style={{
-          flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6,
-          border: 'none', cursor: 'pointer', borderRadius: 8,
-          padding: '6px 10px 6px 8px', fontSize: 11.5, fontWeight: 600,
-          background: hover ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.08)',
-          color: '#a1a1aa', transition: 'background 0.15s ease',
-        }}
-      >
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <polyline points="4 14 10 14 10 20" /><polyline points="20 10 14 10 14 4" />
-          <line x1="14" y1="10" x2="21" y2="3" /><line x1="3" y1="21" x2="10" y2="14" />
-        </svg>
-        Collapse
-      </button>
-    </div>
-  )
-}
 
 // ── Icon rail — five real destinations, no stubs. Configuration
 // (channels, voice, cost, health, tools, admin) lives under Settings,
@@ -155,19 +106,43 @@ export default function FounderHome() {
     ? 'working'
     : 'idle'
 
-  const [expanded, setExpanded] = useState<'cayeDirect' | null>(null)
+  const [cayeOpen, setCayeOpen] = useState(false)
   const [talkToCayeDraft, setTalkToCayeDraft] = useState<string | null>(null)
+  const [cayeMode, setCayeMode] = useState<'chat' | 'live'>('chat')
+  const cayeHistoryEntry = useRef(false)
+
+  function openCaye(draft?: string, mode: 'chat' | 'live' = 'chat') {
+    if (!cayeOpen) {
+      window.history.pushState({ ...(window.history.state ?? {}), cayeOverlay: true }, '')
+      cayeHistoryEntry.current = true
+      setCayeOpen(true)
+    }
+    setCayeMode(mode)
+    if (draft) setTalkToCayeDraft(draft)
+  }
+
+  function closeCaye() {
+    if (cayeHistoryEntry.current) {
+      cayeHistoryEntry.current = false
+      window.history.back()
+      return
+    }
+    setCayeOpen(false)
+  }
+
   function handleTalkToCaye(text: string) {
-    setExpanded('cayeDirect')
-    setTalkToCayeDraft(text)
+    openCaye(text)
   }
 
   useEffect(() => {
-    if (!expanded) return
-    const onKeyDown = (e: KeyboardEvent) => { if (e.key === 'Escape') setExpanded(null) }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [expanded])
+    if (!cayeOpen) return
+    const onPopState = () => {
+      cayeHistoryEntry.current = false
+      setCayeOpen(false)
+    }
+    window.addEventListener('popstate', onPopState)
+    return () => window.removeEventListener('popstate', onPopState)
+  }, [cayeOpen])
 
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null)
   function goToConversation(conversationId: string | null) {
@@ -410,20 +385,17 @@ export default function FounderHome() {
           )}
         </div>
 
-        {expanded === 'cayeDirect' && (
-          <div style={FULLSCREEN_PANEL_STYLE}>
-            <FullscreenPanelHeader title="Caye Direct" workspaceName={workspace.business_name ?? 'New signup'} onCollapse={() => setExpanded(null)} />
-            <div style={{ flex: 1, minHeight: 0 }}>
-              <CayeDirect
-                workspaceId={workspaceId}
-                initialMessage={talkToCayeDraft}
-                onInitialMessageSent={() => setTalkToCayeDraft(null)}
-              />
-            </div>
-          </div>
-        )}
+        <CayeDirect
+          workspaceId={workspaceId}
+          workspaceName={workspace.business_name ?? 'New signup'}
+          open={cayeOpen}
+          onClose={closeCaye}
+          initialMode={cayeMode}
+          initialMessage={talkToCayeDraft}
+          onInitialMessageSent={() => setTalkToCayeDraft(null)}
+        />
 
-        {!expanded && (
+        {!cayeOpen && (
           railView === 'inbox' ? (
             // On Inbox, replying to the customer is the primary action —
             // a second full-width "Ask Caye anything" bar at the same
@@ -434,7 +406,7 @@ export default function FounderHome() {
             // own doc comment for why beside-it was rejected (the list/
             // thread split is user-resizable, so a fixed side offset
             // risked drifting into the reply composer at some ratios).
-            <CayeLauncher onSend={handleTalkToCaye} onOpenHistory={() => setExpanded('cayeDirect')} />
+            <CayeLauncher onSend={handleTalkToCaye} onOpenHistory={() => openCaye()} />
           ) : (
             // Root-caused (2026-08-14): making this wrapper's background
             // transparent was NOT enough, because transparency was never
@@ -457,7 +429,7 @@ export default function FounderHome() {
               position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 15,
               padding: '0 20px 14px', background: 'transparent', pointerEvents: 'none',
             }}>
-              <TalkToCaye onSend={handleTalkToCaye} onOpenHistory={() => setExpanded('cayeDirect')} />
+              <TalkToCaye onSend={handleTalkToCaye} onOpenHistory={() => openCaye()} onOpen={() => openCaye()} onOpenLive={() => openCaye(undefined, 'live')} />
             </div>
           )
         )}
