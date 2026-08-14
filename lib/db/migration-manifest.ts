@@ -109,6 +109,7 @@ export const REPO_MIGRATIONS: readonly string[] = [
   '20260814190000_add_reply_review_outbound_kind',
   '20260814210000_sales_stale_hold_recovery',
   '20260814210044_sales_stale_hold_recovery_blocked_supersession',
+  '20260814210817_sales_stale_hold_recovery_outbound_sending_status',
   '20260814_owner_handled_pending_actions',
   '20260814b_sales_lifecycle_state',
 ]

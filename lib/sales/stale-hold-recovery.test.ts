@@ -133,4 +133,12 @@ describe('stale Sales hold recovery migration contract', () => {
     expect(sql).not.toContain("v_existing.status = 'sent'")
     expect(sql).not.toContain("v_existing.status = 'sent_hold_preserved'")
   })
+
+  it('uses the production delivery enum pre-send value for recovery outbounds', async () => {
+    const sql = await import('node:fs/promises').then(fs => fs.readFile(
+      new URL('../../supabase/migrations/20260814210817_sales_stale_hold_recovery_outbound_sending_status.sql', import.meta.url), 'utf8'))
+    expect(sql).toContain("'business', 'caye_autopilot', p_body, 'text', p_sent_at, 'sending'")
+    expect(sql).toContain("and status = 'sending' for update")
+    expect(sql).not.toContain("'pending'")
+  })
 })
