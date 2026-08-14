@@ -1,7 +1,7 @@
 import 'server-only'
 import { createServiceClient } from '@/lib/supabase-server'
 import { clearStaleOutreachAutofill } from '@/lib/outreach-autofill'
-import { enqueueEscalationPings } from './triggers'
+import { enqueueEscalationPings, enqueueReplyReviewPing } from './triggers'
 import { extractTargetDate } from './urgency'
 import { getDayAvailability } from '@/lib/calendar-availability'
 import { buildOperatorBrief } from '@/lib/operator-brief'
@@ -388,6 +388,22 @@ export async function applyEscalation(
         null
       )
     : displayContactName(meta.contactName)
+
+  // A sent-but-uncertain answer is a review notification, not an escalation.
+  // Never create a caye_escalations row here: that starts the "needs your
+  // call" brief and reminder cadence, both of which falsely imply the
+  // customer is waiting for the operator.
+  if (decision.reviewOnly) {
+    if (meta.conversationId) {
+      await enqueueReplyReviewPing({
+        workspaceId: meta.workspaceId,
+        conversationId: meta.conversationId,
+        contactName,
+        note: decision.internalContext,
+      })
+    }
+    return { action: 'reply', content: decision.content }
+  }
 
   await recordEscalation({
     workspaceId: meta.workspaceId,

@@ -192,6 +192,10 @@ export type OutboundKind =
   // means it lands in Caye Direct instead. In practice the operator was
   // mid-conversation minutes earlier, so the window is open.
   | 'dropped_confirmation'
+  // A customer reply was sent, but Caye wants the operator to review it.
+  // This is distinct from an escalation: nobody is blocked and it must not
+  // enter the held queue or the escalation follow-up cadence.
+  | 'reply_review'
   // Caye's one-time proactive ping to the operator when a customer hits a
   // payment request and Charge Anywhere isn't connected yet — see
   // supabase/migrations/20260813d_add_payment_setup_needed_outbound_kind.sql

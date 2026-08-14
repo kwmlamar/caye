@@ -130,6 +130,8 @@ export type CayeAutoReply =
        * within 2 minutes, and the thread still sat held 3 more days.
        */
       holdConversation?: boolean
+      /** A reply was sent and only needs a lightweight owner review. */
+      reviewOnly?: boolean
     }
   | {
       action: 'reply'
@@ -2497,6 +2499,7 @@ async function generateCayeAutoReplyCore(
             category: 'knowledge',
             routeTo: 'owner',
             holdConversation: false,
+            reviewOnly: true,
             // Composed by ownerNoteFor, written for the owner reading it on
             // her phone. This previously shipped as "Caye self-rated
             // confidence=medium on her reply. She sent it (per the Layer 2

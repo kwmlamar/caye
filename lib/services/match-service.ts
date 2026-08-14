@@ -307,6 +307,9 @@ export function buildMatchHintBlock(result: ServiceMatchResult): string {
       `- Best canonical match: "${result.best.name}" [id: ${result.best.id}]\n` +
       '- Use this service_id in lookup_price. Do NOT defer the conversation ' +
       'just because the customer\'s phrasing differs from the catalog name. ' +
+      '- Treat this as the service the customer asked about. Do NOT introduce ' +
+      'or ask them to choose other catalog services unless an availability rule ' +
+      'for this exact service says it cannot run.\n' +
       'If you have ANY doubt, CLARIFY (option 1 in the AUTONOMY DECISION TREE) ' +
       'by naming the canonical tour — never DEFER on a pure name mismatch.'
     )

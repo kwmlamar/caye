@@ -154,7 +154,7 @@ describe('enqueueOutbound kind matches caye_outbound_queue_kind_check', () => {
     'urgent_hold', 'booking_created', 'auth_failure', 'morning_digest',
     'welcome', 'otp', 'ack', 'escalation', 'escalation_followup',
     'opportunity_scan', 'business_insights', 'operator_reminder',
-    'dropped_confirmation', 'payment_setup_needed',
+    'dropped_confirmation', 'reply_review', 'payment_setup_needed',
   ])
 
   it('only calls enqueueOutbound with a kind the database accepts', () => {

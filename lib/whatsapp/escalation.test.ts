@@ -15,7 +15,10 @@ vi.mock('server-only', () => ({}))
 // unified_conversations.human_agent_enabled update — so everything else is
 // stubbed to a fixed, uninteresting value.
 vi.mock('@/lib/outreach-autofill', () => ({ clearStaleOutreachAutofill: vi.fn() }))
-vi.mock('./triggers', () => ({ enqueueEscalationPings: vi.fn(() => Promise.resolve()) }))
+vi.mock('./triggers', () => ({
+  enqueueEscalationPings: vi.fn(() => Promise.resolve()),
+  enqueueReplyReviewPing: vi.fn(() => Promise.resolve()),
+}))
 vi.mock('./urgency', () => ({ extractTargetDate: () => null }))
 vi.mock('@/lib/calendar-availability', () => ({ getDayAvailability: vi.fn() }))
 vi.mock('@/lib/operator-brief', () => ({
@@ -146,6 +149,40 @@ describe('recordEscalation holdConversation', () => {
     expect(insertCalls.find((c) => c.table === 'caye_escalations')).toBeDefined()
     expect(insertCalls.find((c) => c.table === 'unified_messages')).toBeDefined()
     expect(enqueueEscalationPings).toHaveBeenCalled()
+    vi.resetModules()
+  })
+})
+
+describe('applyEscalation — sent reply review', () => {
+  it('notifies for review without creating an escalation', async () => {
+    const { client, insertCalls } = makeFakeSupabase()
+    vi.doMock('@/lib/supabase-server', () => ({ createServiceClient: () => client }))
+    const { applyEscalation } = await import('./escalation')
+    const { enqueueReplyReviewPing } = await import('./triggers')
+
+    const result = await applyEscalation(
+      {
+        action: 'escalate',
+        content: 'I have replied about the Golf Cart Guided Tour.',
+        category: 'knowledge',
+        routeTo: 'owner',
+        internalContext: 'I answered her, but I was not fully sure of what I said.',
+        holdConversation: false,
+        reviewOnly: true,
+      },
+      {
+        workspaceId: 'ws-1',
+        conversationId: 'conv-4',
+        contactName: 'Rayna Morgan',
+        body: 'Tour: Golf Cart Guided Tour',
+      }
+    )
+
+    expect(result).toEqual({ action: 'reply', content: 'I have replied about the Golf Cart Guided Tour.' })
+    expect(enqueueReplyReviewPing).toHaveBeenCalledWith(
+      expect.objectContaining({ workspaceId: 'ws-1', conversationId: 'conv-4', contactName: 'Rayna Morgan' })
+    )
+    expect(insertCalls.find((c) => c.table === 'caye_escalations')).toBeUndefined()
     vi.resetModules()
   })
 })

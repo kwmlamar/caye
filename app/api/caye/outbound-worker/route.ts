@@ -64,6 +64,7 @@ export const OPERATOR_LOGGABLE_KINDS = new Set([
   // approved template for reminders and inventing one would need Meta review.
   'operator_reminder',
   'dropped_confirmation',
+  'reply_review',
 ])
 
 const CONCURRENCY = 10
@@ -592,6 +593,8 @@ function fallbackPingLogBody(kind: string, payload: Record<string, unknown>): st
       return `Noticed something during my rounds worth a look — I'll bring it up next time we talk.`
     case 'business_insights':
       return `This week's business insights are ready — ask me and I'll walk you through them.`
+    case 'reply_review':
+      return `I sent ${str('contactName', 'a guest')} a reply and would like you to review it when you have a moment.`
     default:
       // NEVER echo the kind. An unmapped kind reaching an operator-facing
       // surface is a bug in this file, and the old `[${kind}]` turned that
@@ -970,6 +973,13 @@ async function templateForKind(
         placeholders: ['Caye', insight ? truncateForTemplate(insight) : "has this week's business insights ready"],
       }
     }
+    case 'reply_review': {
+      const body = str('body')
+      return {
+        name: 'caye_urgent_hold',
+        placeholders: ['Caye', body ? truncateForTemplate(body) : 'sent a reply worth reviewing'],
+      }
+    }
     default:
       return null
   }
@@ -985,6 +995,9 @@ function freeFormBodyForKind(kind: string, payload: Record<string, unknown>): st
   // (formatDroppedConfirmation), for the same reason as operator_reminder:
   // the recipient's local time is baked into the sentence.
   if (kind === 'dropped_confirmation') {
+    return typeof payload.body === 'string' && payload.body.trim() ? (payload.body as string) : null
+  }
+  if (kind === 'reply_review') {
     return typeof payload.body === 'string' && payload.body.trim() ? (payload.body as string) : null
   }
   if (kind === 'ack') {

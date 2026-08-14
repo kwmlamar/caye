@@ -29,6 +29,39 @@ export interface HoldPingInput {
 }
 
 /**
+ * A reply was already sent but merits a quick operator review. This creates
+ * neither an escalation nor an attention item: the customer is not waiting
+ * on a human, so a "needs your call" brief and reminder cadence are wrong.
+ */
+export async function enqueueReplyReviewPing(input: {
+  workspaceId: string
+  conversationId: string
+  contactName: string
+  note: string
+}): Promise<void> {
+  const enabled = await operatorPingsEnabled(input.workspaceId)
+  if (!enabled) return
+
+  const recipients = await resolveEscalationRecipients(input.workspaceId, 'owner')
+  const body = `${input.note.trim()}\n\n${input.contactName}'s reply has already gone out.`
+  for (const recipient of recipients) {
+    await enqueueOutbound({
+      workspaceId: input.workspaceId,
+      kind: 'reply_review',
+      conversationId: input.conversationId,
+      payload: {
+        to_phone: recipient.phone,
+        recipient_role: recipient.role,
+        body,
+        contactName: input.contactName,
+      },
+      scheduledFor: new Date(),
+      idempotencyKey: `reply-review-${input.conversationId}-${recipient.role}`,
+    })
+  }
+}
+
+/**
  * Decide whether to enqueue + at what time. No-op when the workspace flag is
  * off or the operator number isn't verified — both checked up-front to avoid
  * landing dead rows in the queue.

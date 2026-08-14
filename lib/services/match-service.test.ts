@@ -149,6 +149,7 @@ describe('buildMatchHintBlock', () => {
     expect(block).toContain('svc-heritage')
     expect(block).toContain('Historical Tour')
     expect(block).toContain('lookup_price')
+    expect(block).toContain('Do NOT introduce')
   })
 
   it('produces an AMBIGUOUS block listing candidates when not high', () => {
