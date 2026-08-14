@@ -1365,6 +1365,9 @@ export interface CayeAutoReplyInput {
    * don't echo it back as prior context.
    */
   currentChannelMessageId?: string | null
+  /** Provider-observed inbound time. Sales relationship evidence must retain
+   * this source time rather than a webhook retry's wall-clock time. */
+  receivedAt?: string | null
 }
 
 // ── find_bookings + cancel_booking ──────────────────────────────────────────
@@ -1976,6 +1979,7 @@ async function generateCayeAutoReplyCore(
       workspaceId: inbound.workspaceId, workspaceEmail: workspaceRow?.contact_email,
       senderEmail: inbound.senderEmail, subject: inbound.subject, body: inbound.body,
       conversationId: inbound.conversationId, currentChannelMessageId: inbound.currentChannelMessageId,
+      receivedAt: inbound.receivedAt,
     })
     salesContext = handling.context
     if (handling.disposition === 'ignore') return { action: 'ignore', reason: handling.reason, content: '' }

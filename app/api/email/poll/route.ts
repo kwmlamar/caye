@@ -1435,6 +1435,8 @@ async function processMessage(
         workspaceId,
         conversationId: conversation.id,
         senderEmail: effectiveEmail,
+        currentChannelMessageId: messageId,
+        receivedAt: receivedTime,
       },
       voiceProfile
     )

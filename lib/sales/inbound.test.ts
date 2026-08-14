@@ -2,9 +2,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const state = vi.hoisted(() => ({
   lead: { id: 'lead-1' } as { id: string } | null,
-  conversation: { metadata: {}, last_sender_type: 'customer' } as { metadata: Record<string, unknown>; last_sender_type: string } | null,
+  conversation: { metadata: {}, last_sender_type: 'customer', contact_id: 'contact-1' } as { metadata: Record<string, unknown>; last_sender_type: string; contact_id: string | null } | null,
   lifecycle: vi.fn(),
   context: vi.fn(),
+  bridge: vi.fn(),
 }))
 
 vi.mock('@/lib/supabase-server', () => ({
@@ -21,18 +22,20 @@ vi.mock('@/lib/supabase-server', () => ({
 }))
 vi.mock('./lifecycle', () => ({ recordSalesLifecycleEvent: state.lifecycle }))
 vi.mock('./context', () => ({ buildSalesLeadContext: state.context }))
+vi.mock('./opportunity-bridge', () => ({ bridgeSalesInboundToWork: state.bridge }))
 vi.mock('server-only', () => ({}))
 
 import { handleSalesInbound } from './inbound'
 
-const inbound = { workspaceId: 'workspace-1', senderEmail: 'prospect@example.test', conversationId: 'conversation-1', currentChannelMessageId: 'message-1' }
+const inbound = { workspaceId: 'workspace-1', senderEmail: 'prospect@example.test', conversationId: 'conversation-1', currentChannelMessageId: 'message-1', receivedAt: '2026-08-14T00:00:00Z' }
 
 describe('Sales inbound boundary', () => {
   beforeEach(() => {
     state.lead = { id: 'lead-1' }
-    state.conversation = { metadata: {}, last_sender_type: 'customer' }
+    state.conversation = { metadata: {}, last_sender_type: 'customer', contact_id: 'contact-1' }
     state.lifecycle.mockReset()
     state.context.mockReset().mockResolvedValue({ id: 'lead-1' })
+    state.bridge.mockReset().mockResolvedValue({ relationshipId: 'relationship-1', opportunityId: null })
   })
 
   it.each([
@@ -48,6 +51,10 @@ describe('Sales inbound boundary', () => {
       leadId: 'lead-1', event, eventKey: `inbound:message-1:${event}`,
     }))
     expect(state.context).toHaveBeenCalledTimes(disposition === 'eligible' ? 1 : 0)
+    expect(state.bridge).toHaveBeenCalledTimes(disposition === 'eligible' ? 1 : 0)
+    if (disposition === 'eligible') {
+      expect(state.bridge).toHaveBeenCalledWith(expect.objectContaining({ observedAt: inbound.receivedAt }))
+    }
   })
 
   it('keeps internal and synthetic traffic out of lifecycle evidence and response context', async () => {
@@ -57,6 +64,7 @@ describe('Sales inbound boundary', () => {
     expect(synthetic.disposition).toBe('ignore')
     expect(state.lifecycle).not.toHaveBeenCalled()
     expect(state.context).not.toHaveBeenCalled()
+    expect(state.bridge).not.toHaveBeenCalled()
   })
 
   it('records deterministic escalation once and never enters response context', async () => {
@@ -67,5 +75,6 @@ describe('Sales inbound boundary', () => {
       event: 'escalated', eventKey: 'inbound:conversation-1:escalation:escalated',
     }))
     expect(state.context).not.toHaveBeenCalled()
+    expect(state.bridge).not.toHaveBeenCalled()
   })
 })

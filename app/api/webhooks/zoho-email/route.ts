@@ -423,6 +423,7 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
         conversationId: conversation.id,
         senderEmail: effectiveEmail,
         currentChannelMessageId: messageId,
+        receivedAt: sentAt,
       },
       voiceProfile
     )

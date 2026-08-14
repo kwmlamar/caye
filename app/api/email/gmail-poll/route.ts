@@ -399,6 +399,7 @@ async function processGmailMessage(
         conversationId,
         senderEmail: fromEmail,
         currentChannelMessageId: messageId,
+        receivedAt: receivedTime,
       },
       voiceProfile
     )

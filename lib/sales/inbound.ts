@@ -3,6 +3,7 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { decideSalesInboundPolicy, type SalesInboundPolicy } from './inbound-policy'
 import { recordSalesLifecycleEvent, type SalesLifecycleEvent } from './lifecycle'
 import { buildSalesLeadContext, type SalesLeadContext } from './context'
+import { bridgeSalesInboundToWork } from './opportunity-bridge'
 
 export type SalesInboundHandling =
   | { disposition: 'eligible'; context: SalesLeadContext | null }
@@ -28,6 +29,7 @@ export async function handleSalesInbound(input: {
   body?: string | null
   conversationId?: string | null
   currentChannelMessageId?: string | null
+  receivedAt?: string | null
 }): Promise<SalesInboundHandling> {
   const policy = decideSalesInboundPolicy(input.subject, input.body, {
     senderEmail: input.senderEmail, workspaceEmail: input.workspaceEmail,
@@ -37,7 +39,7 @@ export async function handleSalesInbound(input: {
   const { data: leadByEmail } = await supabase.from('outreach_leads')
     .select('id').eq('workspace_id', input.workspaceId).eq('lead_email', input.senderEmail ?? '').maybeSingle()
   const { data: conversation } = input.conversationId
-    ? await supabase.from('unified_conversations').select('metadata, last_sender_type').eq('id', input.conversationId).maybeSingle()
+    ? await supabase.from('unified_conversations').select('metadata, last_sender_type, contact_id').eq('id', input.conversationId).maybeSingle()
     : { data: null }
   const linkedLeadId = (conversation?.metadata as Record<string, unknown> | null)?.lead_id
   const leadId = (leadByEmail as { id: string } | null)?.id ??
@@ -60,6 +62,23 @@ export async function handleSalesInbound(input: {
     return { disposition: 'escalate', message: policy.message, reason: policy.reason, context: null }
   }
   let context: SalesLeadContext | null = null
+  const contactId = typeof conversation?.contact_id === 'string' ? conversation.contact_id : null
+  if (leadId && contactId) {
+    try {
+      // This deliberately runs after lifecycle normalization. It is
+      // idempotent in the database, so a provider replay can finish a prior
+      // bridge attempt without duplicating the relationship or evidence.
+      await bridgeSalesInboundToWork({
+        workspaceId: input.workspaceId, contactId, leadId,
+        conversationId: input.conversationId, providerMessageId: input.currentChannelMessageId,
+        body: input.body, observedAt: input.receivedAt ?? undefined,
+      })
+    } catch (err) {
+      // Opportunity coordination must not prevent a valid prospect reply;
+      // the stable inbound source id makes a provider replay safe to retry.
+      console.error('[sales/inbound] relationship bridge failed:', err)
+    }
+  }
   if (leadId) {
     try {
       context = await buildSalesLeadContext({ workspaceId: input.workspaceId, leadId, conversationLastSenderType: conversation?.last_sender_type })
