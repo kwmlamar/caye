@@ -25,7 +25,7 @@ export async function generateMetaReply(
 
   fullSystem +=
     '\n\nWrite only the reply body. Plain conversational prose — no markdown, no bullet points, no headers. ' +
-    'Keep it brief and conversational. Sign off naturally.'
+    'Keep it brief and conversational. No emoji by default; at most one only when directly matching the customer\'s own style. Sign off naturally.'
 
   const response = await loggedMessagesCreate(client, {
     model: 'claude-sonnet-4-6',

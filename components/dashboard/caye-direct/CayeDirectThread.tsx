@@ -24,7 +24,7 @@ interface OperatorMessage {
   wa_delivery_status?: DeliveryStatus
   wa_delivery_error?: string | null
   /** Present only on thread-mode responses — see app/api/founder/caye-direct/threads/[id]/route.ts. */
-  origin?: 'whatsapp' | 'dashboard'
+  origin?: 'whatsapp' | 'dashboard' | 'demo'
   operator_name?: string | null
   operator_role?: string | null
 }
@@ -164,6 +164,18 @@ function DateDivider({ label }: { label: string }) {
   )
 }
 
+function DemoDivider() {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '15px 0 4px' }}>
+      <div style={{ flex: 1, height: 1, background: 'rgba(78,190,206,0.18)' }} />
+      <span style={{ fontSize: 9, fontFamily: 'var(--font-mono)', fontWeight: 700, letterSpacing: '0.1em', color: '#72cfd9', textTransform: 'uppercase', flexShrink: 0 }}>
+        Demo preview
+      </span>
+      <div style={{ flex: 1, height: 1, background: 'rgba(78,190,206,0.18)' }} />
+    </div>
+  )
+}
+
 function TypingIndicator() {
   return (
     <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, alignSelf: 'flex-start', animation: 'caye-msg-in 0.25s ease-out' }}>
@@ -265,6 +277,9 @@ interface ThreadModeProps {
   /** Chat remains mounted while Live is open so its draft and scroll position
    * survive a mode switch. The actual composer is omitted while hidden. */
   composerVisible?: boolean
+  /** True only while this transcript is visible in an open overlay. It makes
+   * the initial jump happen after a hidden pane receives real dimensions. */
+  scrollToLatest?: boolean
 }
 
 interface OperatorModeProps {
@@ -278,6 +293,7 @@ interface OperatorModeProps {
   onOpenSideBySide?: () => void
   /** Present only when this instance is the secondary, pinned transcript. */
   onCloseSideBySide?: () => void
+  scrollToLatest?: boolean
 }
 
 type Props = ThreadModeProps | OperatorModeProps
@@ -354,7 +370,17 @@ export default function CayeDirectThread(props: Props) {
     if (mode === 'thread' && json.thread) {
       props.onThreadMeta?.({ title: json.thread.title ?? null })
     }
-    return (json.messages as OperatorMessage[]) ?? null
+    const transcript = (json.messages as OperatorMessage[]) ?? []
+    if (mode !== 'operator') return transcript
+    const demo = ((json.demoMessages as Array<{ role: 'guest' | 'caye'; body: string; created_at: string }> | undefined) ?? [])
+      .map((message, index): OperatorMessage => ({
+        id: `demo-${index}-${message.created_at}`,
+        direction: message.role === 'caye' ? 'outbound' : 'inbound',
+        body: message.body,
+        created_at: message.created_at,
+        origin: 'demo',
+      }))
+    return [...transcript, ...demo]
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, workspaceId, mode === 'thread' ? props.threadId : props.operatorId])
 
@@ -390,13 +416,20 @@ export default function CayeDirectThread(props: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runKey, fetchMessages])
 
-  // Jump to the bottom instantly once history has finished loading —
-  // no scroll animation on first paint.
+  // Jump to the bottom once history is both loaded and visible. Live and
+  // Chat stay mounted behind one another so their state survives switching;
+  // a hidden pane has no useful viewport height, so scrolling on `loading`
+  // alone can incorrectly leave it at the top when it becomes active.
   useEffect(() => {
-    if (loading) return
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
-    atBottomRef.current = true
-  }, [loading])
+    if (loading || props.scrollToLatest === false) return
+    const frame = requestAnimationFrame(() => {
+      const scroll = scrollRef.current
+      if (!scroll) return
+      scroll.scrollTo({ top: scroll.scrollHeight })
+      atBottomRef.current = true
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [loading, props.scrollToLatest])
 
   // New messages auto-scroll only if the founder was already at the
   // bottom (mirrors the "don't yank the reader around" convention of
@@ -528,6 +561,7 @@ export default function CayeDirectThread(props: Props) {
   // same side draw as one visually joined stack (tail only on the last).
   const items: Array<
     | { kind: 'divider'; key: string; label: string }
+    | { kind: 'demo-divider'; key: string }
     | { kind: 'message'; key: string; message: OperatorMessage; pos: GroupPos }
   > = []
   messages.forEach((m, i) => {
@@ -535,6 +569,7 @@ export default function CayeDirectThread(props: Props) {
     const next = messages[i + 1]
     const newDay = !prev || new Date(prev.created_at).toDateString() !== new Date(m.created_at).toDateString()
     if (newDay) items.push({ kind: 'divider', key: `d-${m.id}`, label: dayLabel(m.created_at) })
+    if (m.origin === 'demo' && prev?.origin !== 'demo') items.push({ kind: 'demo-divider', key: `demo-${m.id}` })
 
     const groupedWithPrev = !newDay && !!prev && prev.direction === m.direction
     const groupedWithNext = !!next && next.direction === m.direction &&
@@ -620,6 +655,7 @@ export default function CayeDirectThread(props: Props) {
             ) : (
               items.map((item) => {
               if (item.kind === 'divider') return <DateDivider key={item.key} label={item.label} />
+              if (item.kind === 'demo-divider') return <DemoDivider key={item.key} />
               const { message: m, pos } = item
               const isCaye = m.direction === 'outbound'
               const showAvatar = isCaye && (pos === 'single' || pos === 'last')
@@ -636,7 +672,7 @@ export default function CayeDirectThread(props: Props) {
               const showOrigin = mode === 'thread' && !isCaye && m.origin === 'whatsapp' && m.operator_role !== 'founder' && (pos === 'first' || pos === 'single')
               return (
                 <div key={item.key} style={{ display: 'flex', flexDirection: 'column', alignSelf: isCaye ? 'flex-start' : 'flex-end', maxWidth: '82%' }}>
-                  {showSender && <div className={`caye-direct-sender ${isCaye ? '' : 'is-you'}`}>{isCaye ? 'Caye' : mode === 'operator' ? headerLabel : 'You'}</div>}
+                  {showSender && <div className={`caye-direct-sender ${isCaye ? '' : 'is-you'}`}>{isCaye ? 'Caye' : m.origin === 'demo' ? 'Demo guest' : mode === 'operator' ? headerLabel : 'You'}</div>}
                   {showOrigin && (
                     <div style={{
                       fontSize: 9.5, fontFamily: 'var(--font-mono)', color: '#71717a',

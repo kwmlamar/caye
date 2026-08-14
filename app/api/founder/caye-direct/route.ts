@@ -33,6 +33,11 @@ import { persistAgentTurns, isInternalTurnBody, visibleBody, dedupeConsecutive }
 import { resolveFounderOperator } from '@/lib/operator-identity'
 import { linkInsertedMessagesToThreads } from '@/lib/caye-direct-threads'
 
+// Live is an observability surface, so forty turns made active WhatsApp
+// conversations look artificially short. This remains bounded to keep one
+// dashboard pane responsive while giving a founder enough genuine context.
+const OPERATOR_TRANSCRIPT_LIMIT = 250
+
 export async function GET(req: NextRequest) {
   const workspaceId = req.nextUrl.searchParams.get('workspaceId')
   if (!workspaceId) return NextResponse.json({ error: 'workspaceId is required' }, { status: 400 })
@@ -66,7 +71,7 @@ export async function GET(req: NextRequest) {
 
   const { data, error } = await query
     .order('created_at', { ascending: false })
-    .limit(40)
+    .limit(OPERATOR_TRANSCRIPT_LIMIT)
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
@@ -81,7 +86,33 @@ export async function GET(req: NextRequest) {
       .map((m) => ({ ...m, body: visibleBody(m.body) }))
   )
 
-  return NextResponse.json({ operatorId, messages: visible.reverse() })
+  // Demo roleplay is intentionally stored outside the real back-office
+  // transcript so it never becomes Caye's operating memory. Return the most
+  // recent session separately for the founder's read-only Live lens; the UI
+  // labels it as a demo rather than blending it into genuine operator turns.
+  let demoMessages: Array<{ role: 'guest' | 'caye'; body: string; created_at: string }> = []
+  if (operatorId != null) {
+    const { data: demoSession } = await supabase
+      .from('demo_sessions')
+      .select('id')
+      .eq('workspace_id', workspaceId)
+      .eq('operator_allowlist_id', operatorId)
+      .order('last_activity_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    if (demoSession) {
+      const { data } = await supabase
+        .from('demo_session_messages')
+        .select('role, body, created_at')
+        .eq('session_id', demoSession.id)
+        .order('created_at', { ascending: true })
+        .limit(OPERATOR_TRANSCRIPT_LIMIT)
+      demoMessages = (data ?? []) as typeof demoMessages
+    }
+  }
+
+  return NextResponse.json({ operatorId, messages: visible.reverse(), demoMessages })
 }
 
 export async function POST(req: NextRequest) {

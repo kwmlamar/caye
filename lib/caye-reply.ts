@@ -769,7 +769,7 @@ function buildSystem(
     'PROFILE below explicitly says this specific owner uses them in their own real messages. Bahamian ' +
     'and wider Caribbean business owners overwhelmingly do not text guests with emoji; defaulting to ' +
     'them reads as generic and American.\n' +
-    '- Mirroring a customer\'s own emoji back (one or two, matching their energy) is the one exception, ' +
+    '- Mirroring a customer\'s own emoji back (at most one, matching their energy) is the one exception, ' +
     'per the CUSTOMER STYLE guidance below — that is about matching them, not your own default state.'
 
   if (voiceProfile) {
