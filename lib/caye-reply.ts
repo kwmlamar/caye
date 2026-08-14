@@ -1371,6 +1371,13 @@ export interface CayeAutoReplyInput {
   /** Provider-observed inbound time. Sales relationship evidence must retain
    * this source time rather than a webhook retry's wall-clock time. */
   receivedAt?: string | null
+  /**
+   * Present only for the explicit Sales stale-hold recovery route. The
+   * database verifies this receipt is still claimed for this exact stored
+   * inbound before it may bypass the final human-hold autosend gate.
+   */
+  staleHoldRecoveryId?: string | null
+  staleHoldRecoveryOriginalMessageId?: string | null
 }
 
 // ── find_bookings + cancel_booking ──────────────────────────────────────────
@@ -2812,7 +2819,7 @@ export async function generateCayeAutoReply(
   const decision = await generateCayeAutoReplyCore(systemPrompt, inbound, voiceProfile)
 
   const supabase = createServiceClient()
-  const [{ data: workspaceRow }, { data: aiConfigRow }, { data: conversationRow }] = await Promise.all([
+  const [{ data: workspaceRow }, { data: aiConfigRow }, { data: conversationRow }, recoveryAuthorization] = await Promise.all([
     supabase
       .from('customers')
       .select('autosend_enabled')
@@ -2833,6 +2840,14 @@ export async function generateCayeAutoReply(
           .eq('id', inbound.conversationId)
           .maybeSingle()
       : Promise.resolve({ data: null }),
+    inbound.staleHoldRecoveryId && inbound.conversationId && inbound.staleHoldRecoveryOriginalMessageId
+      ? supabase.rpc('sales_stale_hold_recovery_can_generate', {
+          p_recovery_id: inbound.staleHoldRecoveryId,
+          p_workspace_id: inbound.workspaceId,
+          p_conversation_id: inbound.conversationId,
+          p_original_message_id: inbound.staleHoldRecoveryOriginalMessageId,
+        })
+      : Promise.resolve({ data: false }),
   ])
 
   // Caye-wide mute gate (mute_caye / Deployment card "Pause"). Column name is
@@ -2858,8 +2873,9 @@ export async function generateCayeAutoReply(
   // block Caye from answering that same prospect when they write in, which
   // is the worst possible moment to go quiet.
   const heldKind = holdKindOf(conversationRow?.metadata)
+  const isRecoveryAuthorized = recoveryAuthorization.data === true
   const isHumanHeld =
-    conversationRow?.human_agent_enabled === true && !isQueueHold(heldKind)
+    conversationRow?.human_agent_enabled === true && !isQueueHold(heldKind) && !isRecoveryAuthorized
 
   const autosendEnabled = (workspaceRow?.autosend_enabled ?? true) && !isMuted && !isHumanHeld
   const holdReason = isHumanHeld

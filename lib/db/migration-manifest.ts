@@ -107,6 +107,7 @@ export const REPO_MIGRATIONS: readonly string[] = [
   '20260814163945_caye_authorizations_and_jobs',
   '20260814180000_caye_commercial_engagements_and_relationship_resources',
   '20260814190000_add_reply_review_outbound_kind',
+  '20260814210000_sales_stale_hold_recovery',
   '20260814_owner_handled_pending_actions',
   '20260814b_sales_lifecycle_state',
 ]
