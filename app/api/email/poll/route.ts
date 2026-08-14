@@ -35,6 +35,7 @@ import {
   type Web3FormsParsed,
 } from '@/lib/email/web3forms'
 import { resolveOrCreateContact } from '@/lib/contacts/resolve-contact'
+import { ownerAlreadyAnsweredInbound, ownerReplyAddressesHold } from '@/lib/owner-reply-guard'
 
 const ZOHO_TOKEN_URL = 'https://accounts.zoho.com/oauth/v2/token'
 
@@ -445,7 +446,7 @@ async function processSentMessage(
   // Only import into threads that are already open in Caye
   const { data: conversation } = await supabase
     .from('unified_conversations')
-    .select('id, last_business_sender_kind')
+    .select('id, last_business_sender_kind, human_agent_enabled, human_agent_reason')
     .eq('connected_account_id', String(account.id))
     .eq('channel_conversation_id', threadId)
     .maybeSingle()
@@ -572,6 +573,24 @@ async function processSentMessage(
     return 'error'
   }
 
+  // A direct reply resolves only the hold it actually addresses. A courtesy
+  // reply must not silently clear a pricing/policy decision Caye still needs.
+  const { data: latestHoldNote } = await supabase
+    .from('unified_messages')
+    .select('content, metadata')
+    .eq('conversation_id', conversation.id)
+    .eq('is_internal', true)
+    .order('sent_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  const noteMetadata = (latestHoldNote?.metadata ?? {}) as Record<string, unknown>
+  const proposedReply = typeof noteMetadata.proposed_reply === 'string' ? noteMetadata.proposed_reply : null
+  const addressedOpenHold = !conversation.human_agent_enabled || ownerReplyAddressesHold(body, [
+    conversation.human_agent_reason,
+    latestHoldNote?.content,
+    proposedReply,
+  ])
+
   // Update conversation:
   // - Refresh preview/sender so the inbox renders correctly
   // - Clear the human_agent_enabled hold flag: the owner has now responded,
@@ -584,15 +603,17 @@ async function processSentMessage(
       last_business_sender_kind: 'human',
       last_message_at: sentTime,
       last_message_preview: body.slice(0, 100),
-      human_agent_enabled: false,
-      human_agent_reason: null,
+      human_agent_enabled: addressedOpenHold ? false : true,
+      human_agent_reason: addressedOpenHold
+        ? null
+        : `Owner replied, but ${conversation.human_agent_reason ?? 'the outstanding decision'} still needs your decision`,
     })
     .eq('id', conversation.id)
 
-  // Also close out any open escalation row — otherwise it stays pending
-  // forever and the "Needs review" stat card keeps counting a thread the
-  // owner already replied to via email.
-  await resolveOpenEscalations(supabase, conversation.id)
+  if (addressedOpenHold) {
+    // Also close out the linked escalation — the owner addressed this hold.
+    await resolveOpenEscalations(supabase, conversation.id)
+  }
 
   // Fire-and-forget owner voice learning. Identical to the in-app send path
   // — re-extracts the voice profile every REFRESH_EVERY trusted-channel
@@ -1359,17 +1380,10 @@ async function processMessage(
     return 'skipped'
   }
 
-  // Active-operator guard: if the owner has manually replied on this thread
-  // recently (typed directly in Zoho, not through Caye UI), they're actively
-  // engaged. Caye holds instead of autopiloting to avoid sending a competing
-  // or contradictory reply on top of their work. The owner can resume Caye's
-  // autopilot by clearing the held state in the UI, OR after a quiet period
-  // (no human activity in HUMAN_ACTIVE_WINDOW_MS), Caye re-engages on her own.
-  //
-  // Surfaced 2026-05-30 from the data review: 95 human_via_external sends
-  // vs 16 caye_autopilot — without this gate, Caye and Karenda race on
-  // every conversation Karenda touches in Zoho.
-  const HUMAN_ACTIVE_WINDOW_MS = 60 * 60 * 1000 // 60 minutes
+  // Race guard: do not send over an owner reply that already answered this
+  // inbound turn. A later customer message is a new turn, though, and must be
+  // evaluated normally — an ordinary direct reply is not a permanent takeover
+  // or a Needs You state.
   const { data: lastBizMsg } = await supabase
     .from('unified_messages')
     .select('sent_at, metadata, sender_attribution')
@@ -1380,29 +1394,13 @@ async function processMessage(
     .limit(1)
     .maybeSingle()
 
-  if (lastBizMsg) {
-    const lastMeta = (lastBizMsg.metadata ?? {}) as Record<string, unknown>
-    const isHumanLast =
-      lastBizMsg.sender_attribution === 'human_via_external' ||
-      lastBizMsg.sender_attribution === 'human_via_caye' ||
-      lastMeta.sent_by === 'human' ||
-      lastMeta.source === 'zoho_sent'
-    const ageMs = Date.now() - new Date(lastBizMsg.sent_at).getTime()
-    if (isHumanLast && ageMs < HUMAN_ACTIVE_WINDOW_MS) {
-      const ageMin = Math.round(ageMs / 60000)
-      await supabase
-        .from('unified_conversations')
-        .update({
-          human_agent_enabled: true,
-          human_agent_reason: `Owner replied directly ${ageMin}m ago — Caye paused on this thread`,
-        })
-        .eq('id', conversation.id)
-      console.log(
-        `[email/poll] Skipping autopilot — owner active on this thread ` +
-        `(last human reply ${ageMin}m ago, within ${HUMAN_ACTIVE_WINDOW_MS / 60000}m window)`
-      )
-      return 'skipped'
-    }
+  if (ownerAlreadyAnsweredInbound(lastBizMsg && {
+    sentAt: lastBizMsg.sent_at,
+    senderAttribution: lastBizMsg.sender_attribution,
+    metadata: lastBizMsg.metadata,
+  }, receivedTime)) {
+    console.log(`[email/poll] Skipping autopilot — owner already answered inbound on ${conversation.id}`)
+    return 'skipped'
   }
 
   // Never auto-reply to vendor/system/role addresses (noreply@, mailer-daemon@,
