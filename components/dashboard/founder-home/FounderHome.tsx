@@ -11,7 +11,6 @@ import type { FounderRailId } from '@/lib/types'
 import CayeDirect from '@/components/dashboard/caye-direct/CayeDirect'
 import WorkspaceSwitcher from './WorkspaceSwitcher'
 import FounderBriefing, { type CayeActivityState } from './FounderBriefing'
-import BusinessPulse from './BusinessPulse'
 import LiveActivity from './LiveActivity'
 import CayeLog from './CayeLog'
 import InboxPage from './InboxPage'
@@ -225,20 +224,21 @@ export default function FounderHome() {
           .caye-hero-orb { order: -1; }
           .caye-hero-text { align-items: center; text-align: center; }
           .caye-hero-text p { max-width: none !important; }
+          .caye-hero-pulse { position:static !important; margin-top:20px; justify-content:center; }
           .caye-stack-grid { grid-template-columns: 1fr !important; }
         }
         /* The particle canvas is intentionally much larger than the
            briefing copy. On wide screens it is a visual layer, not the
            ruler for the document flow: allowing it to size the grid row
            pushed the business pulse and activity panels below the fold.
-           Keep enough hero height for the briefing/attention card, then
-           let Caye occupy the right side independently so the lower
-           operational layer remains visible at a glance. */
+           Keep enough hero height for the briefing/attention card and the
+           orb's status line, then let Caye occupy the right side independently
+           so it cannot overlap the lower operational layer. */
         @media (min-width: 1101px) {
           .caye-hero {
             position: relative;
             display: block !important;
-            min-height: 500px;
+            min-height: 600px;
             padding-top: 8px !important;
           }
           .caye-hero-text {
@@ -249,6 +249,11 @@ export default function FounderHome() {
             top: 8px;
             right: 2%;
             width: 54%;
+          }
+          .caye-hero-pulse {
+            position:absolute;
+            left:4px;
+            bottom:18px;
           }
         }
         @media (max-width: 780px) {
@@ -371,11 +376,10 @@ export default function FounderHome() {
                 workspaceId={workspaceId}
                 workspaceName={workspace.business_name ?? 'New signup'}
                 state={cayeState}
+                weekLabel={weekOffset === 0 ? 'Bookings this week' : 'Bookings shown'}
                 onReviewAttention={goToConversation}
                 onDeploymentToggled={refetch}
               />
-
-              <BusinessPulse data={data} today={today} weekLabel={weekOffset === 0 ? 'Bookings this week' : 'Bookings shown'} />
 
               <div className="caye-stack-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 36 }}>
                 <LiveActivity workspaceId={workspaceId} />

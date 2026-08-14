@@ -8,22 +8,22 @@ import type { CommandOverview } from '@/lib/useCommandOverview'
 import type { TodayStats } from '@/lib/useTodayStats'
 import { CayePresence, type CayePresenceState } from '@/components/caye-presence/CayePresence'
 import AttentionCard from './AttentionCard'
+import BusinessPulse from './BusinessPulse'
 import { AQUA, TEXT, TEXT_MUTED, TEXT_QUIET, GRADIENT, EMERALD } from '../surface'
 
 const LABEL_COLOR = TEXT_QUIET
 
 // Caye as a primary visual anchor of the hero, not a small status
 // indicator — sized so the *visible* sphere (not just its Canvas box)
-// reaches ~650px on wide desktop. That visible size is a function of both
+// stays near 500px across desktop widths. That visible size is a function of both
 // this box (CayePresence `size`) and how much of the box the sphere fills
 // (ParticleSphere.tsx's BASE_RADIUS/camera framing, tuned separately to
-// ~73% fill) — see the right-column grid share below, which had to grow
-// too, since an 880px box no longer fits half of a 50/50 split. Reuses
+// ~73% fill). A larger wide-screen tier made the decorative canvas spill
+// into the operational cards below it, so desktop deliberately uses one
+// stable size rather than scaling with the viewport. Reuses
 // FounderHome.tsx's existing 1100/780 breakpoints (the 1100 split is also
-// where the hero stacks to one column) rather than inventing new ones;
-// 1600 is the one new threshold, purely for this size tier.
-const HERO_ORB_SIZE_WIDE = 820 // >=1600px — visible sphere ≈ 600px
-const HERO_ORB_SIZE_DESKTOP = 690 // 1100–1599px — visible ≈ 500px
+// where the hero stacks to one column) rather than adding a wide-only tier.
+const HERO_ORB_SIZE_DESKTOP = 690 // >=1100px — visible ≈ 500px
 const HERO_ORB_SIZE_TABLET = 460 // 780–1099px (stacked layout) — visible ≈ 335px
 const HERO_ORB_SIZE_MOBILE = 230 // <780px — kept small and layout-safe
 // CayePresence's Canvas box doesn't fill edge-to-edge — ParticleSphere.tsx
@@ -126,7 +126,7 @@ function DeploymentLink({ workspaceId, active, onToggled }: { workspaceId: strin
 }
 
 export default function FounderBriefing({
-  data, today, workspaceId, workspaceName, state, onReviewAttention, onDeploymentToggled,
+  data, today, workspaceId, workspaceName, state, weekLabel, onReviewAttention, onDeploymentToggled,
 }: {
   data: CommandOverview | null
   today: TodayStats | null
@@ -135,17 +135,15 @@ export default function FounderBriefing({
   state: CayeActivityState
   onReviewAttention: (conversationId: string | null) => void
   onDeploymentToggled: () => void
+  weekLabel: string
 }) {
   const { firstName } = useFounderIdentity()
-  const isWide = useMediaQuery('(min-width: 1600px)')
   const isTablet = useMediaQuery('(max-width: 1099px)')
   const isMobile = useMediaQuery('(max-width: 779px)')
   const orbSize = isMobile
     ? HERO_ORB_SIZE_MOBILE
     : isTablet
     ? HERO_ORB_SIZE_TABLET
-    : isWide
-    ? HERO_ORB_SIZE_WIDE
     : HERO_ORB_SIZE_DESKTOP
   const canvasInnerPadding = Math.round(orbSize * CANVAS_INNER_PADDING_RATIO)
 
@@ -226,6 +224,7 @@ export default function FounderBriefing({
           </div>
         </div>
       </div>
+      <BusinessPulse className="caye-hero-pulse" data={data} today={today} weekLabel={weekLabel} />
     </div>
   )
 }

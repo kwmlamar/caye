@@ -24,15 +24,16 @@ function Metric({ label, value }: { label: string; value: string }) {
   )
 }
 
-export default function BusinessPulse({ data, today, weekLabel }: {
+export default function BusinessPulse({ data, today, weekLabel, className }: {
   data: CommandOverview | null
   today: TodayStats | null
   weekLabel: string
+  className?: string
 }) {
   if (!data) return null
 
   return (
-    <div style={{ display: 'flex', flexWrap: 'wrap', columnGap: 52, rowGap: 20, padding: '0 2px' }}>
+    <div className={className} style={{ display: 'flex', flexWrap: 'wrap', columnGap: 52, rowGap: 20, padding: '0 2px' }}>
       <Metric label={weekLabel} value={String(data.bookings.length)} />
       {today && today.customersAnswered > 0 && (
         <Metric label="Customers answered today" value={String(today.customersAnswered)} />
