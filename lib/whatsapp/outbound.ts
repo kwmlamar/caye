@@ -210,6 +210,17 @@ export type OutboundKind =
   // enqueue call site is built — an unreachable case is untestable dead
   // code before then.
   | 'payment_setup_needed'
+  // Caye messaging another authorized operator on her own initiative
+  // (send_operator_message, 2026-08-16). Unlike every kind above, this is
+  // NOT enqueued through enqueueOutbound/dispatched by the cron worker —
+  // the tool inserts and resolves the row itself, synchronously, in the
+  // same call (see the tool's own doc comment for why: a queued-but-
+  // undispatched row is not a completed send, and the tool must only
+  // report success once Meta has actually accepted the message). The row
+  // exists purely to reuse caye_outbound_queue's idempotency_key UNIQUE
+  // constraint as a claim-before-send lock. Still needs to be a valid kind
+  // for the CHECK constraint the insert runs against.
+  | 'operator_message'
 
 export interface EnqueueOutboundInput {
   workspaceId: string

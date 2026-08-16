@@ -163,6 +163,7 @@ export async function GET(request: NextRequest) {
   await checkStaleCronsAndAlert()
   await checkStaleDeliveryAndAlert()
   await checkDeliveryHealthAndAlert()
+  await checkOrphanedOperatorMessagesAndAlert()
 
   // Drain the external-effects outbox on the same tick (2026-08-11). Same
   // reasoning as checkStaleCronsAndAlert living here rather than in its own
@@ -262,6 +263,78 @@ async function checkStaleDeliveryAndAlert(): Promise<void> {
     }
   } catch (err) {
     console.error('[outbound-worker] stale-delivery check failed:', err)
+  }
+}
+
+// send_operator_message (lib/caye-agent/tools/write-low/send-operator-
+// message.ts) claims a caye_outbound_queue row and resolves it (sent/
+// failed/deleted) synchronously, inline, within the same request — normal
+// completion is milliseconds. It also pushes scheduled_for an hour out
+// purely so THIS cron's normal `scheduled_for <= now` poll can never race
+// that synchronous dispatch. A row still status='pending' this long after
+// being CREATED (not scheduled_for — created_at) can only mean the process
+// that claimed it died before resolving it; no legitimate call takes
+// anywhere close to this long.
+const OPERATOR_MESSAGE_ORPHAN_GRACE_MINUTES = 5
+
+/**
+ * Sweep for send_operator_message rows orphaned by a mid-flight crash.
+ *
+ * WHY THIS NEVER RE-DISPATCHES (2026-08-16 hardening)
+ * The crash could have happened either BEFORE or AFTER Meta actually
+ * accepted the message — there is no way to tell from this row alone, and
+ * Meta does not expose an idempotent-send API keyed on our
+ * idempotency_key/biz_opaque_callback_data (that field is opaque tracking
+ * data echoed back in webhooks, not a dedup key Meta enforces — see
+ * alertFounderOfDeliveryFailure's doc comment). Re-dispatching an orphan
+ * therefore risks a REAL duplicate WhatsApp to a real operator exactly
+ * where confirm-pending-action.ts's own stated bias already applies: "a
+ * missed retry is recoverable by hand; a duplicate send is not." So this
+ * always dead-letters and alerts a human instead of guessing — same
+ * failure-closed choice, same reasoning, different call site.
+ *
+ * Deliberately does NOT add 'operator_message' to freeFormBodyForKind /
+ * templateForKind / OPERATOR_LOGGABLE_KINDS — this kind is never meant to
+ * reach dispatch() at all; the main poll loop above only ever sees one of
+ * these rows if scheduled_for's full hour has *also* elapsed, and by then
+ * this sweep (running every tick, 5 min grace) has already dead-lettered
+ * it, so dispatch() never gets the chance.
+ */
+export async function checkOrphanedOperatorMessagesAndAlert(): Promise<void> {
+  try {
+    const supabase = createServiceClient()
+    const staleCutoff = new Date(Date.now() - OPERATOR_MESSAGE_ORPHAN_GRACE_MINUTES * 60 * 1000).toISOString()
+    const { data: rows } = await supabase
+      .from('caye_outbound_queue')
+      .select('id, workspace_id, payload')
+      .eq('kind', 'operator_message')
+      .eq('status', 'pending')
+      .lt('created_at', staleCutoff)
+      .limit(20)
+
+    for (const row of rows ?? []) {
+      const payload = row.payload as { operator_name?: string; to_phone?: string } | null
+      const who = payload?.operator_name ?? payload?.to_phone ?? 'an operator'
+      const detail = `orphaned send_operator_message to ${who} — process crashed mid-dispatch, delivery outcome unknown, not retried to avoid a possible duplicate send`
+
+      const { error: markErr } = await supabase
+        .from('caye_outbound_queue')
+        .update({ status: 'dead_letter', last_error: detail })
+        .eq('id', row.id)
+      if (markErr) {
+        console.error(`[outbound-worker] failed to dead-letter orphaned operator_message ${row.id}:`, markErr)
+        continue // don't alert for a row we couldn't actually retire — avoids re-alerting forever
+      }
+
+      await alertFounderOfDeliveryFailure({
+        workspaceId: row.workspace_id,
+        kind: 'operator_message',
+        detail,
+        stage: 'dispatch',
+      })
+    }
+  } catch (err) {
+    console.error('[outbound-worker] orphaned-operator-message check failed:', err)
   }
 }
 

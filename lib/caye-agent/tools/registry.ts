@@ -24,6 +24,7 @@ import { getConnectLink } from './write-low/get-connect-link'
 import { recordChannelIntake } from './write-low/record-channel-intake'
 import { markHandled } from './write-low/mark-handled'
 import { scheduleReminder } from './write-low/schedule-reminder'
+import { sendOperatorMessage } from './write-low/send-operator-message'
 import { draftInInbox } from './write-low/draft-in-inbox'
 import { addServiceAvailabilityRule } from './write-low/add-service-availability-rule'
 import { addBusinessFact } from './write-low/add-business-fact'
@@ -73,14 +74,18 @@ import { createCustomerBooking } from './write-high/create-customer-booking'
  * Read tools (11): #38 + #40 — autonomous execution (adds
  * get_channel_status, 2026-08-06 — connect-walkthrough state, derived
  * from connected_accounts rather than stored)
- * Low-risk write tools (21): #37 — autonomous execution (adds
+ * Low-risk write tools (22): #37 — autonomous execution (adds
  * remove_business_fact, 2026-07-30 — mirrors add_business_fact so
  * temporary notes like a vacation closure can be retired once stale;
  * update_team_member_name, 2026-07-27 — self-service display name so
  * greetings don't fall back to full_name/legal name; get_connect_link,
  * 2026-08-06 — mints signed channel connect links and hard-refuses
  * WhatsApp when the owner's number is their personal phone, since that
- * migration is destructive and can't be left to prompt text)
+ * migration is destructive and can't be left to prompt text;
+ * send_operator_message, 2026-08-16 — the action-grounding incident's
+ * missing capability: a real, synchronous WhatsApp send to another
+ * authorized operator, low-risk on the same reasoning as
+ * schedule_reminder — it can only ever reach an operator, never a guest)
  * High-risk write tools (10): #42/#43 — gated through confirmation flow
  * (adds remove_pricing_tier, 2026-07-26; send_outreach_batch, 2026-08-01 —
  * step 3 of the 2026-07-21 staged-autonomy roadmap, batch-approved
@@ -117,6 +122,7 @@ export const TOOL_REGISTRY: AnyTool[] = [
   recordChannelIntake as AnyTool,
   markHandled as AnyTool,
   scheduleReminder as AnyTool,
+  sendOperatorMessage as AnyTool,
   draftInInbox as AnyTool,
   addServiceAvailabilityRule as AnyTool,
   addBusinessFact as AnyTool,

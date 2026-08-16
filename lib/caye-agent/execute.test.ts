@@ -586,3 +586,151 @@ describe('runToolLoop defense-in-depth on front-desk (Phase 3B — Part B advers
     expect(result.replyText).toBe('The ferry arrives at 11am.')
   })
 })
+
+describe('runToolLoop action-grounding on back-office (2026-08-16 Mrs. Max incident)', () => {
+  const sendTool = (execute: () => Promise<{ ok: boolean; data?: unknown; error?: string }>): Tool<never> =>
+    ({
+      name: 'send_reply',
+      description: 'test',
+      risk: 'high',
+      roles: ['owner', 'founder'],
+      modes: ['back-office'],
+      inputSchema: { type: 'object', properties: {} },
+      execute,
+    }) as unknown as Tool<never>
+
+  const reminderTool = (execute: () => Promise<{ ok: boolean; data?: unknown; error?: string }>): Tool<never> =>
+    ({
+      name: 'schedule_reminder',
+      description: 'test',
+      risk: 'low',
+      roles: ['owner', 'founder'],
+      modes: ['back-office'],
+      inputSchema: { type: 'object', properties: {} },
+      execute,
+    }) as unknown as Tool<never>
+
+  async function runBackOfficeTurns(
+    turns: Anthropic.Message[],
+    tools: Tool<never>[]
+  ) {
+    let call = 0
+    vi.doMock('@/lib/llm-telemetry', () => ({
+      loggedMessagesCreate: async () => turns[Math.min(call++, turns.length - 1)],
+    }))
+    vi.resetModules()
+    const { runToolLoop: freshRunToolLoop } = await import('./execute')
+    const ctx: ToolContext = { workspaceId: 'ws_test', callerRole: 'founder', requestId: 'req_grounding' }
+    const result = await freshRunToolLoop({
+      client: {} as Anthropic,
+      model: 'claude-sonnet-4-6',
+      maxTokens: 256,
+      systemPrompt: 'back office agent',
+      initialMessages: [{ role: 'user', content: 'message Mrs. Max about this' }],
+      ctx,
+      tools,
+    })
+    vi.doUnmock('@/lib/llm-telemetry')
+    return result
+  }
+
+  const textTurn = (text: string): Anthropic.Message =>
+    ({
+      id: 'msg', type: 'message', role: 'assistant', model: 'claude-sonnet-4-6',
+      usage: { input_tokens: 0, output_tokens: 0 }, stop_reason: 'end_turn', stop_sequence: null,
+      content: [{ type: 'text', text }],
+    }) as Anthropic.Message
+
+  const toolUseTurn = (name: string, input: Record<string, unknown> = {}): Anthropic.Message =>
+    ({
+      id: 'msg', type: 'message', role: 'assistant', model: 'claude-sonnet-4-6',
+      usage: { input_tokens: 0, output_tokens: 0 }, stop_reason: 'tool_use', stop_sequence: null,
+      content: [{ type: 'tool_use', id: 'toolu_1', name, input }],
+    }) as Anthropic.Message
+
+  // 1. Model wants to send but no tool executes — Caye cannot say "sent".
+  it('strips a "sent" claim backed by zero tool calls (the real incident: fabricated completion)', async () => {
+    const result = await runBackOfficeTurns(
+      [textTurn("Here's what I sent her on WhatsApp just now: hi Mrs. Max, quick question.")],
+      [sendTool(async () => ({ ok: true }))]
+    )
+    expect(result.replyText).not.toContain("Here's what I sent her on WhatsApp just now")
+    expect(result.replyText).toContain('I have not actually sent anything')
+    // Critical: the PERSISTED turn (what caye_operator_messages stores and
+    // what Caye Direct/Live renders on reload) must also carry the
+    // correction, not the raw hallucinated claim — see execute.ts's turn
+    // patch right after applyActionGrounding.
+    const lastAssistantTurn = result.newTurns[result.newTurns.length - 1]
+    expect(lastAssistantTurn.role).toBe('assistant')
+    const textBlock = (lastAssistantTurn.content as Array<{ type: string; text?: string }>).find(
+      (b) => b.type === 'text'
+    )
+    expect(textBlock?.text).not.toContain("Here's what I sent her on WhatsApp just now")
+    expect(textBlock?.text).toContain('I have not actually sent anything')
+  })
+
+  // 2. Send tool fails — Caye must not claim it went out anyway.
+  it('strips a "sent" claim when the send tool was actually called but failed', async () => {
+    const result = await runBackOfficeTurns(
+      [
+        toolUseTurn('send_reply', { conversation_id: 'c1', body: 'hi' }),
+        textTurn("Sent! I've messaged her the update."),
+      ],
+      [sendTool(async () => ({ ok: false, error: 'WhatsApp window closed' }))]
+    )
+    expect(result.replyText).not.toContain("I've messaged her")
+  })
+
+  // 3. Send tool succeeds — Caye may say "sent".
+  it('lets a "sent" claim through when the send tool actually succeeded', async () => {
+    const result = await runBackOfficeTurns(
+      [
+        toolUseTurn('send_reply', { conversation_id: 'c1', body: 'hi' }),
+        textTurn('I sent that reply to her just now.'),
+      ],
+      [sendTool(async () => ({ ok: true, data: { sent: true, message_id: 'wamid.abc' } }))]
+    )
+    expect(result.replyText).toBe('I sent that reply to her just now.')
+  })
+
+  // 4. Send requires approval — Caye must say awaiting approval, not sent.
+  it('strips a "sent" claim when the send only staged a pending confirmation', async () => {
+    const result = await runBackOfficeTurns(
+      [
+        toolUseTurn('send_reply', { conversation_id: 'c1', body: 'hi' }),
+        textTurn('I sent that reply to her.'),
+      ],
+      [
+        sendTool(async () => ({
+          ok: true,
+          data: { pending: true, executed: false, status: 'awaiting_operator_confirmation' },
+        })),
+      ]
+    )
+    expect(result.replyText).not.toContain('I sent that reply')
+  })
+
+  // 5. Scheduled job creation fails — Caye cannot say "I've set a reminder".
+  it('strips a "set a reminder" claim when schedule_reminder failed', async () => {
+    const result = await runBackOfficeTurns(
+      [
+        toolUseTurn('schedule_reminder', { date: '2026-08-16', time: '14:00', message: 'follow up' }),
+        textTurn("I've set a reminder for 2pm today."),
+      ],
+      [reminderTool(async () => ({ ok: false, error: 'notifications paused' }))]
+    )
+    expect(result.replyText).not.toContain("I've set a reminder")
+  })
+
+  // 6. Scheduled job creation succeeds — Caye may report the actual scheduled time.
+  it('lets a "set a reminder" claim through when schedule_reminder actually succeeded', async () => {
+    const result = await runBackOfficeTurns(
+      [
+        toolUseTurn('schedule_reminder', { date: '2026-08-16', time: '14:00', message: 'follow up' }),
+        textTurn("I've set a reminder for 2pm today."),
+      ],
+      [reminderTool(async () => ({ ok: true, data: { reminder_id: 'r1', fires_at_local: '2:00 PM' } }))]
+    )
+    expect(result.replyText).toBe("I've set a reminder for 2pm today.")
+  })
+})

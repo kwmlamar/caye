@@ -148,6 +148,11 @@ describe('enum literals written to the database', () => {
  * lib/whatsapp/outbound.ts for why), so its absence from any call-site scan
  * is expected; it's listed here purely so this set keeps matching the live
  * constraint per check-constraints.test.ts.
+ * 'operator_message' added 2026-08-16 (20260816c_add_operator_message_
+ * outbound_kind.sql) for send_operator_message — also no enqueueOutbound
+ * call site, by design: that tool inserts the row itself synchronously
+ * rather than going through enqueueOutbound (see the OutboundKind union's
+ * comment for why), so its absence from the call-site scan is expected too.
  */
 describe('enqueueOutbound kind matches caye_outbound_queue_kind_check', () => {
   const OUTBOUND_KIND_VALUES = new Set([
@@ -155,6 +160,7 @@ describe('enqueueOutbound kind matches caye_outbound_queue_kind_check', () => {
     'welcome', 'otp', 'ack', 'escalation', 'escalation_followup',
     'opportunity_scan', 'business_insights', 'operator_reminder',
     'dropped_confirmation', 'reply_review', 'payment_setup_needed',
+    'operator_message',
   ])
 
   it('only calls enqueueOutbound with a kind the database accepts', () => {

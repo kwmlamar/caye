@@ -13,6 +13,7 @@ import { unsupportedLogisticsTimeClaims } from './logistics-grounding'
 import { fetchAuthoritativeThread } from './fetch-authoritative-thread'
 import { fetchBusinessFacts } from '@/lib/business-facts'
 import { createServiceClient } from '@/lib/supabase-server'
+import { enforceActionGrounding, type ExecutedToolOutcome } from './action-claim-guard'
 
 // Safety: bound the tool loop so a misbehaving model can't call tools
 // forever. 5 iterations is generous — most operator asks resolve in 1-2.
@@ -112,6 +113,19 @@ export async function runToolLoop(args: ToolLoopArgs): Promise<ToolLoopResult> {
   }
   const messages: Anthropic.MessageParam[] = [...args.initialMessages]
   const newTurns: Anthropic.MessageParam[] = []
+  // Every tool outcome across the whole loop (not just the current round),
+  // so the action-grounding guard below can tell a real completed action
+  // from one the model only intended. See action-claim-guard.ts.
+  const executedTools: ExecutedToolOutcome[] = []
+  const applyActionGrounding = (text: string): string => {
+    const { text: grounded, violations } = enforceActionGrounding(text, executedTools)
+    if (violations.length > 0) {
+      console.error(
+        `[caye-agent/execute] stripped ungrounded completion claim(s) — workspace=${args.ctx.workspaceId} categories=${violations.map((v) => v.category).join(',')}`
+      )
+    }
+    return grounded
+  }
 
   // PHASE 3B — structural final-output safety for front-desk (2026-08-16).
   // `lib/caye-reply.ts`'s live production loop passes this SAME
@@ -163,11 +177,31 @@ export async function runToolLoop(args: ToolLoopArgs): Promise<ToolLoopResult> {
 
     if (toolUseBlocks.length === 0) {
       // Claude is done. Pull text out of the final turn.
-      const replyText = response.content
+      const rawReplyText = response.content
         .filter((b): b is Anthropic.TextBlock => b.type === 'text')
         .map((b) => b.text)
         .join('\n')
         .trim()
+
+      // Action-grounding backstop (2026-08-16) — see action-claim-guard.ts.
+      // Runs before every other check below so a stripped/corrected claim,
+      // not the model's raw prose, is what identity/payment/evidence
+      // guards and the final return see.
+      const replyText = applyActionGrounding(rawReplyText)
+
+      // The turn just pushed onto `newTurns`/`messages` above still holds
+      // the model's RAW content — persistAgentTurns writes that straight
+      // into caye_operator_messages.body/claude_format (and it's what the
+      // next turn's sliding-window history replays back to the model), so
+      // a correction that only changed the returned `replyText` would
+      // never reach the founder's actual Caye Direct transcript. Patch the
+      // turn itself so the persisted record and the returned text agree.
+      if (replyText !== rawReplyText) {
+        const lastTurn = newTurns[newTurns.length - 1]
+        if (lastTurn?.role === 'assistant') {
+          lastTurn.content = [{ type: 'text', text: replyText }]
+        }
+      }
 
       // PHASE 3B / final pre-canary closure — defense in depth.
       // `tool_choice: { type: 'any' }` above should make this branch
@@ -258,6 +292,7 @@ export async function runToolLoop(args: ToolLoopArgs): Promise<ToolLoopResult> {
     for (const block of toolUseBlocks) {
       const tool = toolRegistry.find((t) => t.name === block.name)
       if (!tool) {
+        executedTools.push({ name: block.name, ok: false })
         toolResults.push({
           type: 'tool_result',
           tool_use_id: block.id,
@@ -274,6 +309,7 @@ export async function runToolLoop(args: ToolLoopArgs): Promise<ToolLoopResult> {
       // structured error in the tool_result so the model can react in
       // its reply (apologize, escalate) rather than silently failing.
       if (!tool.roles.includes(args.ctx.callerRole)) {
+        executedTools.push({ name: block.name, ok: false })
         toolResults.push({
           type: 'tool_result',
           tool_use_id: block.id,
@@ -305,6 +341,20 @@ export async function runToolLoop(args: ToolLoopArgs): Promise<ToolLoopResult> {
         // framing this whole path exists to prevent.
         is_error: !result.ok,
       })
+      // Action-grounding bookkeeping (action-claim-guard.ts). A gateHighRisk
+      // stage is `ok: true` with `data.executed === false` — that must NOT
+      // ground a completion claim, only an "awaiting confirmation" one.
+      const resultData = result.data as Record<string, unknown> | undefined
+      const pendingOnly = result.ok && !!resultData && resultData.executed === false
+      executedTools.push({ name: block.name, ok: result.ok, pendingOnly })
+      // confirm_pending_action's result is tagged with which underlying
+      // tool it ran (confirm-pending-action.ts) — surface that as its own
+      // entry so a confirmed send_reply grounds a "sent" claim exactly like
+      // a direct send_reply call would.
+      const confirmedToolName = resultData?.confirmed_tool_name
+      if (typeof confirmedToolName === 'string') {
+        executedTools.push({ name: confirmedToolName, ok: result.ok, pendingOnly: false })
+      }
       if (tool.terminatesTurn && result.ok && terminalReplyText === null) {
         const data = result.data as { delivered_text?: unknown } | undefined
         terminalReplyText = typeof data?.delivered_text === 'string' ? data.delivered_text : ''

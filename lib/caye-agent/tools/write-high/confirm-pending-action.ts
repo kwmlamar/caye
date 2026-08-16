@@ -173,6 +173,17 @@ If the operator asked for changes instead of approving, call the original tool a
 
     await supabase.from('caye_pending_actions').update({ result }).eq('id', row.id)
 
-    return result
+    // Tag which underlying tool actually ran, additively, so the action-
+    // grounding guard in execute.ts (lib/caye-agent/action-claim-guard.ts)
+    // can tell a real send that arrived via confirmation apart from one
+    // that never happened — without this the tool_use block visible to
+    // that guard just says "confirm_pending_action", never which action it
+    // confirmed.
+    const data = result.data
+    const taggedData =
+      data && typeof data === 'object' && !Array.isArray(data)
+        ? { ...(data as Record<string, unknown>), confirmed_tool_name: row.tool_name }
+        : data
+    return { ...result, data: taggedData }
   },
 }
