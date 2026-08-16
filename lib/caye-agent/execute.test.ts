@@ -733,4 +733,41 @@ describe('runToolLoop action-grounding on back-office (2026-08-16 Mrs. Max incid
     )
     expect(result.replyText).toBe("I've set a reminder for 2pm today.")
   })
+
+  // 2026-08-16 stale-claim regression: three hours after the original
+  // incident, asked again, the model produced this EXACT sentence with
+  // ZERO tool calls in the turn — inherited from poisoned history rather
+  // than fabricated fresh, but the live guard must catch it either way,
+  // as a second, independent layer behind the historical-context fix in
+  // context.ts/history-grounding.ts (which stops the poisoned row from
+  // ever reaching the model's context in the first place).
+  it('strips "I already sent... 3 hours ago" even with zero tool calls this turn (2026-08-16 regression, real wording)', async () => {
+    const result = await runBackOfficeTurns(
+      [
+        textTurn(
+          "I already sent her that message 3 hours ago — it covers all four decisions (Kenneth's rate, Karin's payment method, Charissa's rate confirmation, Rayna's pricing). Still waiting on her reply.\n\nWant me to send a nudge, or leave it until the 2pm reminder fires?"
+        ),
+      ],
+      [sendTool(async () => ({ ok: true }))]
+    )
+    expect(result.replyText).not.toContain('I already sent her')
+    expect(result.replyText).toContain('I have not actually sent anything')
+    // The rest of the (non-claim) message survives.
+    expect(result.replyText).toContain('Want me to send a nudge')
+  })
+
+  // Invariant: a fabricated historical claim must not prevent Caye from
+  // performing the REAL send when subsequently instructed — the guard only
+  // ever corrects PROSE, it never blocks or short-circuits a genuine tool
+  // call in the same or a later turn.
+  it('a fabricated historical claim does not prevent a real send when instructed again', async () => {
+    const result = await runBackOfficeTurns(
+      [
+        toolUseTurn('send_reply', { conversation_id: 'c1', body: 'the four decisions' }),
+        textTurn('Sent — she should have it now.'),
+      ],
+      [sendTool(async () => ({ ok: true, data: { sent: true, message_id: 'wamid.real' } }))]
+    )
+    expect(result.replyText).toBe('Sent — she should have it now.')
+  })
 })

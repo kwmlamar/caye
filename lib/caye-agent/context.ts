@@ -5,6 +5,7 @@ import { compactHistory } from './history-compaction'
 import { getThread, getThreadEntities, describeEntity } from '@/lib/caye-direct-threads'
 import { annotateHistoryWithRelativeTime } from './situation'
 import { loadAgentTurnsForTriggers } from '@/lib/caye-frontdesk-agent-turns'
+import { revalidateHistory } from './history-grounding'
 
 // Same bound as the operator sliding window (SLIDING_WINDOW_MESSAGES) —
 // a Direct thread's own linked-message count is the natural cap here,
@@ -69,7 +70,17 @@ export async function loadOperatorContext(
   // markers can be applied below — see situation.ts for why this matters:
   // `created_at` was fetched here long before this change, but never made
   // it past this function into anything the model could read.
-  const rows = data.reverse()
+  //
+  // revalidateHistory (2026-08-16 stale-claim fix) runs BEFORE any of that —
+  // it re-checks every past assistant turn's completion claims against that
+  // SAME turn's own persisted tool_use/tool_result evidence, correcting any
+  // that don't hold up. Without this, a fabricated "I sent it" from a turn
+  // that predates action-claim-guard.ts (or slips through some future gap
+  // in it) gets replayed straight into a new turn's context and the model
+  // reasons from it as an accomplished fact — confirmed live: "I already
+  // sent her that message 3 hours ago" traced directly to an uncorrected
+  // turn still inside this same sliding window. See history-grounding.ts.
+  const rows = revalidateHistory(data.reverse())
   const window: Anthropic.MessageParam[] = []
   const timestamps: (string | null)[] = []
   for (const row of rows) {
@@ -147,9 +158,18 @@ export async function loadDirectThreadContext(
     if (error || !data) {
       console.warn('[caye-agent/context] thread history load failed:', error?.message)
     } else {
+      // revalidateHistory (2026-08-16 stale-claim fix) — see loadOperatorContext
+      // above for the full incident writeup. Confirmed live: THIS loader, not
+      // loadOperatorContext, served the actual "I already sent her that
+      // message 3 hours ago" regression — every row of that turn (and the
+      // original incident's turn) was linked into the same Caye Direct
+      // thread via threads/[id]/route.ts's unconditional per-row linking, so
+      // the tool_use/tool_result evidence needed to re-validate a historical
+      // claim is reliably present here, not just in the operator window.
+      const rows = revalidateHistory(data)
       const rawHistory: Anthropic.MessageParam[] = []
       const rawTimestamps: (string | null)[] = []
-      for (const row of data) {
+      for (const row of rows) {
         const stored = row.claude_format as Anthropic.MessageParam | null | undefined
         if (stored && stored.role && stored.content !== undefined) {
           rawHistory.push(stored)

@@ -29,6 +29,21 @@
  * Deliberately scoped to the categories with real incident evidence (send,
  * schedule). Extend RULES for a new completion-claim category; the
  * mechanism itself does not change.
+ *
+ * 2026-08-16 STALE-CLAIM FOLLOW-UP. This function only ever sees CURRENT-
+ * TURN evidence (the `executed` array is built live, per call, by
+ * execute.ts). It has no memory of its own — which means it is exactly as
+ * good at catching a claim that references a HISTORICAL action as it is at
+ * catching one about this turn, PROVIDED the caller supplies the right
+ * `executed` evidence for whichever turn produced the text being checked.
+ * lib/caye-agent/history-grounding.ts is that caller for stored history: it
+ * reconstructs `executed` from a past turn's own persisted tool_use/
+ * tool_result rows and re-runs this exact function against that past
+ * turn's own text, so a fabricated historical claim gets corrected using
+ * the SAME rules as a fresh one — no second, weaker heuristic for "old"
+ * claims. See that file for why replaying raw stored prose into a new
+ * turn's context (without this) let a model treat its own past hallucination
+ * as an accomplished fact.
  */
 
 export interface ExecutedToolOutcome {
@@ -63,8 +78,13 @@ const HEDGE_PATTERN =
 const RULES: readonly ClaimRule[] = [
   {
     category: 'send',
+    // The middle alternative deliberately allows adverbs ("already", "just",
+    // "earlier", "previously") between the subject and the verb — the
+    // 2026-08-16 stale-claim incident's exact sentence, "I already sent her
+    // that message 3 hours ago", slipped through the original tighter
+    // `i\s+sent\b` shape because "already" sat between them.
     claimPattern:
-      /\b(?:here'?s|this is)\s+what\s+i(?:'ve| have)?\s+(?:just\s+)?sent\b|\bi(?:'ve| have)\s+(?:just\s+)?(?:sent|messaged|texted|emailed)\b|\bi\s+(?:sent|messaged|texted|emailed)\s+(?:her|him|them|it|that)\b/i,
+      /\b(?:here'?s|this is)\s+what\s+i(?:'ve| have)?\s+(?:just\s+)?sent\b|\bi(?:'m| am|'ve| have)?\s+(?:already\s+|just\s+|earlier\s+|previously\s+)*(?:sent|messaged|texted|emailed)\b/i,
     groundedBy: [
       'send_reply',
       'send_payment_confirmation',
@@ -79,7 +99,7 @@ const RULES: readonly ClaimRule[] = [
   {
     category: 'schedule',
     claimPattern:
-      /\bi(?:'ve| have)\s+(?:just\s+)?(?:set|created|scheduled)\s+(?:up\s+)?(?:a\s+)?(?:reminder|follow[- ]?up)\b/i,
+      /\bi(?:'ve| have)?\s+(?:already\s+|just\s+|earlier\s+|previously\s+)*(?:set|created|scheduled)\s+(?:up\s+)?(?:a\s+)?(?:reminder|follow[- ]?up)\b/i,
     groundedBy: ['schedule_reminder'],
     correction: 'I was not able to actually schedule that reminder — nothing was saved.',
   },

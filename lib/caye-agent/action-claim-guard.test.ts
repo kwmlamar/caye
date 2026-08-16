@@ -51,6 +51,23 @@ describe('enforceActionGrounding — send claims', () => {
     expect(text).toBe(replyText)
   })
 
+  it('strips a stale-claim rephrasing with an adverb between subject and verb (2026-08-16 regression: "I already sent... 3 hours ago")', () => {
+    const replyText =
+      "I already sent her that message 3 hours ago — it covers all four decisions (Kenneth's rate, Karin's payment method, Charissa's rate confirmation, Rayna's pricing). Still waiting on her reply."
+    const { text, violations } = enforceActionGrounding(replyText, [])
+    expect(violations).toHaveLength(1)
+    expect(violations[0].category).toBe('send')
+    expect(text).not.toContain('I already sent her')
+    expect(text).toContain('I have not actually sent anything')
+    // The rest of the message (not itself a completion claim) survives.
+    expect(text).toContain('Still waiting on her reply')
+  })
+
+  it('also catches "earlier"/"previously" adverb variants', () => {
+    expect(enforceActionGrounding('I earlier sent that to her.', []).violations).toHaveLength(1)
+    expect(enforceActionGrounding("I've previously messaged him about this.", []).violations).toHaveLength(1)
+  })
+
   it('grounds a confirmed high-risk send routed through confirm_pending_action', () => {
     const replyText = 'Sent — she should have it now.'
     const executed: ExecutedToolOutcome[] = [
