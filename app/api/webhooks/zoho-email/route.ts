@@ -32,6 +32,8 @@ import { maybeRefreshContactProfile } from '@/lib/contact-profile'
 import { htmlToPlainText } from '@/lib/email-text'
 import { resolveOrCreateContact } from '@/lib/contacts/resolve-contact'
 import { ownerAlreadyAnsweredInbound } from '@/lib/owner-reply-guard'
+import { runConvergedFrontDeskTurn } from '@/lib/caye-agent/frontdesk-entry'
+import { convergedFrontDeskEnabled } from '@/lib/caye-agent/frontdesk-rollback'
 import {
   isNoReplySender,
   isCalendarInvite,
@@ -93,7 +95,12 @@ export async function POST(request: NextRequest) {
   return NextResponse.json({ status: 'ok' }, { status: 200 })
 }
 
-async function processInboundEmail(payload: Record<string, unknown>): Promise<void> {
+// Exported (2026-08-16, global Zoho cutover) so integration tests can
+// exercise the real orchestration seam directly — POST() only adds
+// signature verification and the after() background-processing wrapper
+// around this same function, neither of which changes the routing/
+// eligibility logic under test.
+export async function processInboundEmail(payload: Record<string, unknown>): Promise<void> {
   // Normalize across Zoho Flow and direct Zoho Mail webhook field name variants
   const messageId = String(
     payload.message_id || payload.messageId || payload.id || `zoho_${Date.now()}`
@@ -217,7 +224,11 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
       .maybeSingle(),
     supabase
       .from('customers')
-      .select('ai_voice_profile')
+      // workspace_kind + business_name added 2026-08-16 (global Zoho
+      // cutover) — same query, no extra round trip, needed to decide
+      // Sales-workspace eligibility and to name the business in the
+      // converged runtime's situation prompt.
+      .select('ai_voice_profile, workspace_kind, business_name')
       .eq('id', workspaceId)
       .maybeSingle(),
   ])
@@ -227,6 +238,12 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
   }
 
   const voiceProfile = (customer?.ai_voice_profile ?? undefined) as VoiceProfile | undefined
+  // Sales is a workspace-level capability (lib/sales/capability.ts),
+  // resolved here — BEFORE either runtime runs — so eligibility for the
+  // converged front-desk path is decided the same way generateCayeAutoReply
+  // already decides it internally (isSalesWorkspace), not a second
+  // classification. A Sales workspace always stays on the existing path.
+  const isSalesWorkspace = customer?.workspace_kind === 'internal_sales'
 
   // Resolve/create the canonical Person for this sender so per-customer
   // learning has somewhere to live. Automated/noreply senders (already
@@ -409,6 +426,43 @@ async function processInboundEmail(payload: Record<string, unknown>): Promise<vo
     return
   }
 
+  // ── Converged front-desk runtime (2026-08-16, global Zoho cutover) ──────
+  // Eligible = not Sales (Sales stays on generateCayeAutoReply's own
+  // internal Sales handling entirely) and the rollback flag is on. Every
+  // deterministic gate above this line (payment receipt, web3forms,
+  // archive-on-create, ai_enabled, owner-already-answered) already applies
+  // identically to both runtimes — this branch only replaces the FRONT-DESK
+  // REASONING step, nothing upstream of it.
+  if (!isSalesWorkspace && convergedFrontDeskEnabled()) {
+    const result = await runConvergedFrontDeskTurn({
+      workspaceId,
+      conversationId: conversation.id,
+      // The claimed row's own id — a real unified_messages.id, not Zoho's
+      // messageId — see claimInboundMessage's return type and
+      // ToolContext.triggeringMessageId's doc comment for why.
+      triggeringMessageId: claim.messageId,
+      businessName: customer?.business_name ?? null,
+      channel: 'email',
+      contactId: contactRow?.id ?? null,
+      contactName: effectiveName || effectiveEmail,
+      inboundBody: effectiveBody || subject,
+    })
+    console.log(
+      `[zoho-email webhook] converged front-desk turn: ${result.outcome} for workspace ${workspaceId}`,
+      {
+        runtime: 'converged_frontdesk',
+        conversationId: conversation.id,
+        triggeringMessageId: claim.messageId,
+        channel: 'email',
+        toolsUsed: result.toolsUsed,
+        usedOutputFallbackPath: result.usedOutputFallbackPath,
+        ...(result.errorMessage ? { errorMessage: result.errorMessage } : {}),
+      }
+    )
+    return
+  }
+
+  // ── Legacy front-desk runtime (Sales workspaces, or rollback flag off) ──
   // Generate Caye response
   let decision: Awaited<ReturnType<typeof generateCayeAutoReply>>
   try {

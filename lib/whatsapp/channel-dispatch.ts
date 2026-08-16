@@ -21,16 +21,61 @@ export interface DispatchResult {
   success: true
   channelType: string
   messageId?: string
+  /** True when this call found and returned an ALREADY-SENT result via
+   *  idempotencyKey rather than sending again. See idempotencyKey's doc
+   *  comment below. Undefined on every call that didn't pass one. */
+  deduped?: boolean
 }
 
-export type OperatorReplySender = 'caye-operator-wa' | 'caye-dashboard'
+/**
+ * 'caye-frontdesk-agent' (2026-08-16, Phase 3) — a customer reply the
+ * converged front-desk agent composed and sent AUTONOMOUSLY (evidence
+ * sufficient, no operator in the loop), distinct from the other two labels
+ * which both mean "an operator relayed/authorized this." Not currently
+ * produced by any production call path — see
+ * lib/caye-agent/tools/write-high/send-customer-reply.ts.
+ */
+export type OperatorReplySender = 'caye-operator-wa' | 'caye-dashboard' | 'caye-frontdesk-agent'
 
 export async function dispatchOperatorReply(
   conversationId: string,
   text: string,
-  senderLabel: OperatorReplySender = 'caye-operator-wa'
+  senderLabel: OperatorReplySender = 'caye-operator-wa',
+  /**
+   * 2026-08-16, final pre-canary closure. Optional caller-supplied key
+   * identifying "the reply to inbound message X" — the SAME identity the
+   * WhatsApp webhook already uses for its own inbound dedup
+   * (`channel_message_id`, app/api/webhooks/whatsapp/route.ts). When
+   * provided, a webhook-level retry of the entire inbound message (not a
+   * same-turn/same-request retry — those are already covered by
+   * `gateHighRisk`/`MAX_ATTEMPTS.high = 1`) collapses onto the ONE real
+   * send: if a `unified_messages` row already carries this key in its
+   * metadata for this conversation, that row's result is returned as-is
+   * and NO channel API call is made a second time. Every existing caller
+   * omits this and gets byte-identical behavior to before — this is
+   * additive, not a change to back-office's `send_reply`.
+   */
+  idempotencyKey?: string
 ): Promise<DispatchResult> {
   const supabase = createServiceClient()
+
+  if (idempotencyKey) {
+    const { data: existingSend } = await supabase
+      .from('unified_messages')
+      .select('channel_message_id, metadata')
+      .eq('conversation_id', conversationId)
+      .contains('metadata', { idempotency_key: idempotencyKey })
+      .maybeSingle()
+    if (existingSend) {
+      const meta = (existingSend.metadata ?? {}) as Record<string, unknown>
+      return {
+        success: true,
+        channelType: typeof meta.idempotency_channel === 'string' ? meta.idempotency_channel : 'unknown',
+        messageId: existingSend.channel_message_id ?? undefined,
+        deduped: true,
+      }
+    }
+  }
 
   const { data: conv, error } = await supabase
     .from('unified_conversations')
@@ -142,6 +187,9 @@ export async function dispatchOperatorReply(
       generated_by: 'caye',
       operator_approved: true,
       ...(zohoMessageId ? { zoho_message_id: zohoMessageId } : {}),
+      ...(idempotencyKey
+        ? { idempotency_key: idempotencyKey, idempotency_channel: conv.channel_type }
+        : {}),
     },
   })
   if (messageInsertError) {
@@ -187,5 +235,5 @@ export async function dispatchOperatorReply(
     })
   }
 
-  return { success: true, channelType: conv.channel_type, messageId }
+  return { success: true, channelType: conv.channel_type, messageId, deduped: idempotencyKey ? false : undefined }
 }

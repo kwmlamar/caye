@@ -29,6 +29,20 @@ export function stableArgsKey(args: unknown): string {
 }
 
 /**
+ * What underlying thing a staged action is ABOUT, for supersession
+ * matching (Part E). Deliberately narrow and conservative: only the two
+ * identifier shapes every high-risk tool's args actually use today.
+ * Returns null for a tool whose args carry neither — supersession is
+ * skipped rather than guessed for those (e.g. remove_service, which acts
+ * on the workspace as a whole, not one target you'd "refine").
+ */
+export function extractTargetKey(args: Record<string, unknown>): string | null {
+  if (typeof args.conversation_id === 'string') return `conversation:${args.conversation_id}`
+  if (typeof args.booking_id === 'string') return `booking:${args.booking_id}`
+  return null
+}
+
+/**
  * Short, operator-readable description of a staged action. Best-effort —
  * falls back to the raw tool name for anything not enumerated below.
  *
@@ -226,6 +240,43 @@ export function gateHighRisk<T>(tool: Tool<T>, ttlMinutes: number = PENDING_TTL_
       // returned payload without a second round trip (confirm_pending_action
       // takes it as its only argument).
       const pendingActionId = randomUUID()
+
+      // PHASE 3 (Part E) supersession: this args_key is fresh, but if it
+      // targets the SAME conversation/booking as an already-staged,
+      // not-yet-confirmed row for this same tool, that older row is a
+      // stale draft of the thing being staged now (a refinement changes
+      // args_key every time, by design — args must stay immutable once
+      // shown for confirmation). Retire it explicitly rather than leaving
+      // it to expire silently: its args/summary are untouched, only
+      // cancelled_at + superseded_by are written, so the original draft
+      // stays in the audit trail. See stableArgsKey/describePendingAction
+      // above for why args can't just be mutated in place instead.
+      const targetKey = extractTargetKey(args as Record<string, unknown>)
+      if (targetKey) {
+        let staleQuery = supabase
+          .from('caye_pending_actions')
+          .select('id, args')
+          .eq('workspace_id', ctx.workspaceId)
+          .eq('tool_name', tool.name)
+          .is('executed_at', null)
+          .is('cancelled_at', null)
+          .gt('expires_at', nowISO)
+        staleQuery =
+          ctx.operatorId != null
+            ? staleQuery.eq('operator_id', ctx.operatorId)
+            : staleQuery.is('operator_id', null)
+        const { data: candidates } = await staleQuery
+        const stale = (candidates ?? []).filter(
+          (row) => extractTargetKey(row.args as Record<string, unknown>) === targetKey
+        )
+        for (const row of stale) {
+          await supabase
+            .from('caye_pending_actions')
+            .update({ cancelled_at: nowISO, superseded_by: pendingActionId })
+            .eq('id', row.id as string)
+        }
+      }
+
       const { error } = await supabase.from('caye_pending_actions').insert({
         id: pendingActionId,
         workspace_id: ctx.workspaceId,

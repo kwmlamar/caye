@@ -41,7 +41,10 @@ export const getServices: Tool<Record<string, never>> = {
     "such — the operator might want to update one even if it's not proactively offered to guests.",
   risk: 'read',
   roles: ['owner', 'staff', 'founder'],
-  modes: ['back-office'],
+  // 'front-desk' added 2026-08-16 (Phase 2 of runtime convergence) — the
+  // canonical catalog+pricing read, reused rather than duplicated for the
+  // front-desk read-tool slice. Same query, same workspace scoping.
+  modes: ['back-office', 'front-desk'],
   inputSchema: {
     type: 'object',
     properties: {},

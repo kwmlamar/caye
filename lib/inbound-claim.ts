@@ -22,20 +22,30 @@ export async function claimInboundMessage(
     sentAt: string
     metadata?: Record<string, unknown>
   }
-): Promise<{ claimed: true } | { claimed: false; error?: string }> {
+): Promise<{ claimed: true; messageId: string } | { claimed: false; error?: string }> {
   const supabase = createServiceClient()
-  const { error } = await supabase.from('unified_messages').insert({
-    conversation_id: conversationId,
-    channel_message_id: channelMessageId,
-    sender_type: 'customer',
-    content: row.content,
-    message_type: 'text',
-    sent_at: row.sentAt,
-    status: 'delivered',
-    metadata: row.metadata ?? {},
-  })
+  const { data, error } = await supabase
+    .from('unified_messages')
+    .insert({
+      conversation_id: conversationId,
+      channel_message_id: channelMessageId,
+      sender_type: 'customer',
+      content: row.content,
+      message_type: 'text',
+      sent_at: row.sentAt,
+      status: 'delivered',
+      metadata: row.metadata ?? {},
+    })
+    .select('id')
+    .single()
 
-  if (!error) return { claimed: true }
+  // 2026-08-16, global Zoho cutover — the claimed row's OWN id (not the
+  // provider's channel_message_id) is what the converged runtime's
+  // agent-turn persistence needs: caye_frontdesk_agent_turns.
+  // triggering_message_id is a real FK to unified_messages(id). Additive:
+  // every existing caller destructures only `.claimed` and is unaffected.
+  if (!error && data) return { claimed: true, messageId: data.id as string }
+  if (!error) return { claimed: false, error: 'insert succeeded but no row returned' }
 
   // 23505 = unique_violation on (conversation_id, channel_message_id) —
   // another processor already claimed this exact message. Expected under a

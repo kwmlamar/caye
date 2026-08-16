@@ -1,10 +1,18 @@
 import 'server-only'
 import type Anthropic from '@anthropic-ai/sdk'
-import { TOOL_REGISTRY, findTool } from './tools/registry'
-import { asAnthropicTool, type ToolContext, type ToolMode } from './tools/types'
+import { TOOL_REGISTRY } from './tools/registry'
+import { asAnthropicTool, type Tool, type ToolContext, type ToolMode } from './tools/types'
 import { stripForModel } from './tools/result'
 import { runToolWithRecovery, guidanceFor } from './orchestrator'
 import { loggedMessagesCreate } from '@/lib/llm-telemetry'
+import { decideDisposition, type EvidenceSet } from './evidence'
+import { extractDollarAmounts, assertsAvailability } from './draft-claims'
+import { detectIdentityLeak } from '@/lib/caye-identity-guard'
+import { detectUnverifiedPaymentFigure, detectUnverifiedPaymentMethodClaim } from '@/lib/policy-figure-guard'
+import { unsupportedLogisticsTimeClaims } from './logistics-grounding'
+import { fetchAuthoritativeThread } from './fetch-authoritative-thread'
+import { fetchBusinessFacts } from '@/lib/business-facts'
+import { createServiceClient } from '@/lib/supabase-server'
 
 // Safety: bound the tool loop so a misbehaving model can't call tools
 // forever. 5 iterations is generous — most operator asks resolve in 1-2.
@@ -25,6 +33,21 @@ export interface ToolLoopArgs {
    * runner (separate work, #14).
    */
   mode?: ToolMode
+  /**
+   * PHASE 1 of runtime convergence (2026-08-16). Optional override of the
+   * tool set this loop runs against. Every live call site omits this and
+   * gets today's exact behavior — TOOL_REGISTRY filtered by `mode`, looked
+   * up by name from that same registry. It exists solely for the
+   * historical replay harness (`lib/caye-agent/replay/*`), which needs
+   * this loop's real mechanics (system/tool caching, the tool-use round
+   * trip, error shaping) to run against dry-run-wrapped tools
+   * (`lib/caye-agent/tools/dry-run.ts`) so a replayed turn can never reach
+   * a real side effect. When provided, THIS list — not TOOL_REGISTRY — is
+   * both what's shipped to the model and what a tool-name lookup resolves
+   * against below, so a wrapped tool's interception can't be silently
+   * bypassed by falling back to the real registry entry of the same name.
+   */
+  tools?: Tool<never>[]
 }
 
 export interface ToolLoopResult {
@@ -36,6 +59,19 @@ export interface ToolLoopResult {
    * sees them on the next inbound message.
    */
   newTurns: Anthropic.MessageParam[]
+  /**
+   * PHASE 3B. True only when a front-desk turn ended with zero tool_use
+   * blocks DESPITE `tool_choice: { type: 'any' }` being sent — i.e. the
+   * defense-in-depth branch ran, not the normal `send_customer_reply`
+   * path. Observed live during Phase 3B verification (not just a
+   * theoretical edge case): the Anthropic API does not treat `any` as
+   * fully airtight against every model response. Exists so a caller
+   * (replay harness today; a future real webhook) can log/alert on the
+   * rate this happens at, independent of whether the resulting text
+   * passed or was held. Undefined on every non-front-desk call and on
+   * every front-desk call that went through a tool normally.
+   */
+  usedOutputFallbackPath?: boolean
 }
 
 /**
@@ -62,7 +98,11 @@ export async function runToolLoop(args: ToolLoopArgs): Promise<ToolLoopResult> {
   // previously this path shipped zero caching (raw string system, no
   // tool cache_control), giving ~0% cache reads on the back-office surface.
   const mode: ToolMode = args.mode ?? 'back-office'
-  const tools = TOOL_REGISTRY.filter((t) => t.modes.includes(mode)).map(asAnthropicTool)
+  // The override registry (replay harness only — see ToolLoopArgs.tools) is
+  // used as-is, already scoped by whoever built it. The default path is
+  // byte-for-byte what ran before this field existed.
+  const toolRegistry: Tool<never>[] = args.tools ?? TOOL_REGISTRY.filter((t) => t.modes.includes(mode))
+  const tools = toolRegistry.map(asAnthropicTool)
   if (tools.length > 0) {
     const last = tools[tools.length - 1]
     tools[tools.length - 1] = {
@@ -72,6 +112,27 @@ export async function runToolLoop(args: ToolLoopArgs): Promise<ToolLoopResult> {
   }
   const messages: Anthropic.MessageParam[] = [...args.initialMessages]
   const newTurns: Anthropic.MessageParam[] = []
+
+  // PHASE 3B — structural final-output safety for front-desk (2026-08-16).
+  // `lib/caye-reply.ts`'s live production loop passes this SAME
+  // `tool_choice: { type: 'any' }` on every round (see its call to
+  // `client.messages.create` in `generateCayeAutoReply`) — it is not new
+  // policy, it's this loop catching up to a guarantee production already
+  // has. With no tool_choice set (the previous behavior here), the model
+  // can end a front-desk turn with a plain text-only response that never
+  // passes through `send_customer_reply`'s evidence/disposition gate —
+  // the exact gap Phase 3 found live in the Christina/accessibility replay
+  // (a fully-grounded, correct answer that happened to bypass the gate
+  // by construction, not by the model doing anything wrong). Forcing
+  // `any` here means every front-desk round MUST include a tool call, so
+  // the only way text ever reaches a customer is through
+  // `send_customer_reply`'s execute() — there is no second, ungated path.
+  // Deliberately mode-scoped: back-office's replyText goes to the
+  // OPERATOR, not a customer, and every customer-facing back-office
+  // action already routes through an explicit gated tool regardless of
+  // what free text the operator-facing turn ends on — forcing `any` there
+  // would only make Caye's operator-facing chat needlessly stilted.
+  const forceToolUse = mode === 'front-desk' && tools.length > 0
 
   for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
     const response = await loggedMessagesCreate(args.client, {
@@ -86,6 +147,7 @@ export async function runToolLoop(args: ToolLoopArgs): Promise<ToolLoopResult> {
       ],
       messages,
       tools,
+      ...(forceToolUse ? { tool_choice: { type: 'any' as const } } : {}),
     }, { source: 'lib/caye-agent/execute.ts:runToolLoop', workspaceId: args.ctx.workspaceId })
 
     const assistantTurn: Anthropic.MessageParam = {
@@ -106,13 +168,95 @@ export async function runToolLoop(args: ToolLoopArgs): Promise<ToolLoopResult> {
         .map((b) => b.text)
         .join('\n')
         .trim()
+
+      // PHASE 3B / final pre-canary closure — defense in depth.
+      // `tool_choice: { type: 'any' }` above should make this branch
+      // unreachable on front-desk turns; observed live during
+      // verification that it is NOT fully airtight, so this text has
+      // sometimes never passed through `send_customer_reply`'s guards at
+      // all. Runs the FULL SAME guard suite that tool applies — identity
+      // leak, payment figure, payment method, evidence/disposition
+      // (price+availability), and — when `ctx.conversationId` is known —
+      // logistics-time grounding too. Every check here is the exact same
+      // canonical function `send_customer_reply` calls; nothing here is a
+      // second approximation. A held result never becomes `replyText`;
+      // nothing here decides to send anything, it only decides whether
+      // unvalidated text is allowed to leave the loop.
+      if (forceToolUse) {
+        const fallbackHold = (reason: string): ToolLoopResult => {
+          console.error(
+            `[caye-agent/execute] front-desk turn ended without a tool call and failed the output-safety check (${reason}) — refusing to surface it. workspace=${args.ctx.workspaceId}`
+          )
+          return {
+            replyText: "Let me double check a detail before I get back to you on that — following up shortly.",
+            newTurns,
+            usedOutputFallbackPath: true,
+          }
+        }
+
+        const identityLeak = detectIdentityLeak(replyText)
+        if (identityLeak) return fallbackHold(`identity leak: ${identityLeak}`)
+
+        const supabase = createServiceClient()
+        const [businessFacts, businessSentThread] = await Promise.all([
+          fetchBusinessFacts(args.ctx.workspaceId),
+          // Same parity reasoning as send_customer_reply's own grounding
+          // (see fetchAuthoritativeThread's doc comment): only available
+          // when ctx.conversationId is set, same disclosed gap as the
+          // logistics check below when it's absent.
+          args.ctx.conversationId
+            ? fetchAuthoritativeThread(supabase, args.ctx.conversationId, 'business')
+            : Promise.resolve(''),
+        ])
+        const factsGrounding = [businessFacts.map((f) => f.fact).join('\n'), businessSentThread]
+          .filter(Boolean)
+          .join('\n')
+
+        const paymentFigure = detectUnverifiedPaymentFigure(replyText, factsGrounding)
+        if (paymentFigure) return fallbackHold(`payment figure: ${paymentFigure}`)
+
+        const paymentMethod = detectUnverifiedPaymentMethodClaim(replyText, factsGrounding)
+        if (paymentMethod) return fallbackHold(`payment method: ${paymentMethod}`)
+
+        // Logistics-time grounding needs the real thread, which needs a
+        // known conversation — only available when the caller (a real
+        // front-desk invocation) set ctx.conversationId. Skipped, not
+        // approximated, when absent; see ToolContext.conversationId's doc
+        // comment for why this is a data-availability gap, not a design one.
+        if (args.ctx.conversationId) {
+          const authoritativeThread = await fetchAuthoritativeThread(supabase, args.ctx.conversationId)
+          const unsupportedLogistics = unsupportedLogisticsTimeClaims(replyText, authoritativeThread)
+          if (unsupportedLogistics.length > 0) {
+            return fallbackHold(`ungrounded logistics time: ${unsupportedLogistics.join(', ')}`)
+          }
+        }
+
+        const evidence: EvidenceSet = new Set(args.ctx.evidenceCollected ?? [])
+        const quotesPrice = extractDollarAmounts(replyText).length > 0
+        const claimsAvailability = assertsAvailability(replyText)
+        const disposition = decideDisposition({ evidence, quotesPrice, claimsAvailability })
+        if (disposition.disposition === 'hold') {
+          return fallbackHold(`evidence: ${disposition.reasons.join(', ')}`)
+        }
+
+        console.warn(
+          `[caye-agent/execute] front-desk turn ended without a tool call despite tool_choice:'any' — passed every output-safety check, so it was allowed through, but this call never routed through send_customer_reply. workspace=${args.ctx.workspaceId}`
+        )
+        return { replyText, newTurns, usedOutputFallbackPath: true }
+      }
+
       return { replyText, newTurns }
     }
 
     // Execute each tool, append tool_result blocks as a single user turn.
+    // PHASE 3B: also track whether any call this round was a successful
+    // terminatesTurn tool — see Tool.terminatesTurn's doc comment for why
+    // this exists (forceToolUse would otherwise force a pointless extra
+    // tool call after a reply has already been delivered).
     const toolResults: Anthropic.ToolResultBlockParam[] = []
+    let terminalReplyText: string | null = null
     for (const block of toolUseBlocks) {
-      const tool = findTool(block.name)
+      const tool = toolRegistry.find((t) => t.name === block.name)
       if (!tool) {
         toolResults.push({
           type: 'tool_result',
@@ -161,6 +305,10 @@ export async function runToolLoop(args: ToolLoopArgs): Promise<ToolLoopResult> {
         // framing this whole path exists to prevent.
         is_error: !result.ok,
       })
+      if (tool.terminatesTurn && result.ok && terminalReplyText === null) {
+        const data = result.data as { delivered_text?: unknown } | undefined
+        terminalReplyText = typeof data?.delivered_text === 'string' ? data.delivered_text : ''
+      }
     }
 
     const toolResultTurn: Anthropic.MessageParam = {
@@ -169,6 +317,10 @@ export async function runToolLoop(args: ToolLoopArgs): Promise<ToolLoopResult> {
     }
     messages.push(toolResultTurn)
     newTurns.push(toolResultTurn)
+
+    if (terminalReplyText !== null) {
+      return { replyText: terminalReplyText, newTurns }
+    }
   }
 
   // Degrade instead of throwing — a thrown error here previously left the

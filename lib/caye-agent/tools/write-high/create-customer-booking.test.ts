@@ -1,0 +1,97 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import type { ToolContext } from '../types'
+
+vi.mock('server-only', () => ({}))
+
+vi.mock('../write-low/_guards', () => ({
+  assertConversationOwnedByWorkspace: vi.fn(async () => ({ ok: true })),
+}))
+
+interface FakeCreateBookingResult {
+  success: boolean
+  booking_id?: string
+  error?: string
+}
+const createBookingFromCayeMock = vi.fn(
+  async (
+    _workspaceId: string,
+    _conversationId: string | null,
+    _input: unknown,
+    _fallbackEmail: string | null
+  ): Promise<FakeCreateBookingResult> => ({ success: true, booking_id: 'b1' })
+)
+vi.mock('@/lib/caye-reply', () => ({
+  createBookingFromCaye: (workspaceId: string, conversationId: string | null, input: unknown, fallbackEmail: string | null) =>
+    createBookingFromCayeMock(workspaceId, conversationId, input, fallbackEmail),
+}))
+
+vi.mock('@/lib/supabase-server', () => ({
+  createServiceClient: () => ({}),
+}))
+
+import { createCustomerBooking } from './create-customer-booking'
+
+function ctx(overrides: Partial<ToolContext> = {}): ToolContext {
+  return {
+    workspaceId: 'ws1',
+    callerRole: 'owner',
+    requestId: 'req1',
+    evidenceCollected: [],
+    ...overrides,
+  }
+}
+
+const fullArgs = {
+  conversation_id: 'c1',
+  customer_name: 'Rayna Morgan',
+  customer_email: 'rayna@example.com',
+  service_id: 'svc1',
+  booking_date: '2026-09-01',
+  booking_time: '10:00',
+  number_of_people: 2,
+}
+
+const ALL_EVIDENCE = [
+  'customer_identified',
+  'service_identified',
+  'date_identified',
+  'party_size_identified',
+  'availability_verified',
+] as const
+
+describe('createCustomerBooking', () => {
+  beforeEach(() => {
+    createBookingFromCayeMock.mockClear()
+  })
+
+  it('refuses to create a booking when evidence is missing — canonical function is never called', async () => {
+    const result = await createCustomerBooking.execute(fullArgs, ctx({ evidenceCollected: ['service_identified'] }))
+    expect(result.ok).toBe(false)
+    expect(result.status).toBe('NEEDS_HUMAN')
+    expect(result.error_code).toBe('INSUFFICIENT_EVIDENCE')
+    expect(createBookingFromCayeMock).not.toHaveBeenCalled()
+  })
+
+  it('creates the booking as status=pending once every required fact is evidenced', async () => {
+    const result = await createCustomerBooking.execute(fullArgs, ctx({ evidenceCollected: [...ALL_EVIDENCE] }))
+    expect(result.ok).toBe(true)
+    expect(createBookingFromCayeMock).toHaveBeenCalledWith(
+      'ws1',
+      'c1',
+      expect.objectContaining({ status: 'pending', customer_name: 'Rayna Morgan' }),
+      'rayna@example.com'
+    )
+  })
+
+  it('surfaces a duplicate-booking rejection from the canonical function as a CONFLICT, not a crash', async () => {
+    createBookingFromCayeMock.mockResolvedValueOnce({ success: false, error: 'Already booked for this date.' })
+    const result = await createCustomerBooking.execute(fullArgs, ctx({ evidenceCollected: [...ALL_EVIDENCE] }))
+    expect(result.ok).toBe(false)
+    expect(result.status).toBe('CONFLICT')
+  })
+
+  it('is tagged high-risk and front-desk only', () => {
+    expect(createCustomerBooking.risk).toBe('high')
+    expect(createCustomerBooking.modes).toEqual(['front-desk'])
+  })
+})

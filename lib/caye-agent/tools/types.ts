@@ -1,6 +1,7 @@
 import 'server-only'
 import type Anthropic from '@anthropic-ai/sdk'
 import type { ToolResult } from './result'
+import type { EvidenceFact } from '../evidence'
 
 /**
  * Risk tier locked in grill-me Q2: read/low execute autonomously,
@@ -75,6 +76,43 @@ export interface ToolContext {
    */
   operatorId?: number | null
   /**
+   * The front-desk conversation this invocation is handling (2026-08-16,
+   * final pre-canary closure). A real front-desk webhook invocation is
+   * always scoped to exactly one customer conversation — this is that
+   * conversation's `unified_conversations.id`, known ambient context the
+   * SAME way `workspaceId` is, not something a tool needs to be told
+   * again via its own arguments. Set by the caller (a webhook route, or
+   * the replay/job harness) before runToolLoop runs.
+   *
+   * Currently read by runToolLoop's front-desk output-safety fallback
+   * (execute.ts) to fetch the real thread and run the SAME
+   * `unsupportedLogisticsTimeClaims` check `send_customer_reply` runs,
+   * closing the parity gap where a zero-tool-use anomaly had no
+   * conversation to ground a logistics claim against. `send_customer_reply`
+   * itself still takes `conversation_id` as an explicit tool argument
+   * (unchanged) — this field doesn't replace that, it exists for the one
+   * path (the fallback) that has no tool arguments to read at all.
+   * Undefined/null everywhere else (back-office/driver/admin-shell never
+   * set it; front-desk call sites that don't set it simply skip the
+   * fallback's logistics check rather than guessing).
+   */
+  conversationId?: string | null
+  /**
+   * The inbound `unified_messages` row (or provider `channel_message_id`)
+   * this front-desk turn is replying to (2026-08-16, final pre-canary
+   * closure). Threaded into `dispatchOperatorReply`'s optional
+   * idempotency key by `send_customer_reply` so a webhook-level retry of
+   * the SAME inbound message — a real, distinct failure mode from the
+   * same-turn/same-request retries `gateHighRisk`/`MAX_ATTEMPTS` already
+   * cover — collapses onto the one real send instead of sending twice.
+   * The WhatsApp webhook already treats a provider `channel_message_id`
+   * as the canonical identity of one inbound delivery for its OWN dedup
+   * check (`app/api/webhooks/whatsapp/route.ts`); this reuses that same
+   * identity for the reply side rather than inventing a new one.
+   * Undefined/null everywhere else.
+   */
+  triggeringMessageId?: string | null
+  /**
    * Unique id for this top-level cayeAgent()/runToolLoop invocation —
    * one per inbound WhatsApp message (or briefing/EOD cron run). Load-
    * bearing for the high-risk confirmation gate: a staged action can
@@ -127,6 +165,23 @@ export interface ToolContext {
    * relate_to_direct_thread simply isn't registered there.
    */
   directThreadLinks?: string[]
+  /**
+   * Accumulator for front-desk read tools (2026-08-16, Phase 3). Each
+   * front-desk read tool that establishes a fact deterministically (a
+   * real price from the pricing tables, real availability rules actually
+   * evaluated, a real customer/booking match) pushes the corresponding
+   * `EvidenceFact` here on success. `send_customer_reply`
+   * (write-high/send-customer-reply.ts) reads this back at the end of
+   * the same tool loop to decide, via the existing evidence/disposition
+   * policy (evidence.ts) that already governs `lib/caye-reply.ts`'s
+   * production sends, whether a drafted reply may go out autonomously or
+   * must be held for a human. Same accumulator shape as
+   * `directThreadLinks` above — a mutable array a specific set of tools
+   * write into and a specific later tool reads, not a general framework.
+   * Optional and undefined everywhere else (back-office/driver/admin-shell
+   * tools never read or write it).
+   */
+  evidenceCollected?: EvidenceFact[]
 }
 
 /**
@@ -161,6 +216,24 @@ export interface Tool<T = unknown> {
    */
   modes: ToolMode[]
   execute: (args: T, ctx: ToolContext) => Promise<ToolResult>
+  /**
+   * PHASE 3B (2026-08-16). When true AND this tool's execute() returns
+   * `ok: true`, runToolLoop ends the turn immediately after this round
+   * instead of looping back to the model for another round. Exists for
+   * front-desk's `send_customer_reply`: once a reply has actually been
+   * delivered to the customer, there is nothing left to decide — but
+   * front-desk also forces `tool_choice: 'any'` on every round (see
+   * runToolLoop), so without an explicit stopping signal the model would
+   * be forced to call ANOTHER tool immediately after a successful send,
+   * with nothing left to do, burning iterations until the loop's own
+   * degrade fallback kicks in. Mirrors caye-reply.ts's `terminal` return
+   * pattern (`if (terminal) return terminal` in generateCayeAutoReply) —
+   * that runtime already solved this by treating certain tool calls as
+   * ending the turn at the code level rather than the model's. Undefined
+   * (falsy) everywhere else — back-office has no such tool and doesn't
+   * force `tool_choice`, so this never applies there.
+   */
+  terminatesTurn?: boolean
 }
 
 /**

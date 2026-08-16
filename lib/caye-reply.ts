@@ -1091,7 +1091,7 @@ interface AvailabilityRow {
   service: { name: string; duration_minutes: number; is_shared: boolean; max_capacity: number }[] | null
 }
 
-interface AvailabilitySlot {
+export interface AvailabilitySlot {
   time: string
   service: string | null
   service_id: string | null
@@ -1103,7 +1103,7 @@ interface AvailabilitySlot {
   parties: Array<{ name?: string; guests: number }>
 }
 
-interface AvailabilityResult {
+export interface AvailabilityResult {
   date: string
   slots: AvailabilitySlot[]
   /** True when the business is closed that date (blackout). */
@@ -1114,7 +1114,14 @@ interface AvailabilityResult {
   owner_only?: boolean
 }
 
-async function checkAvailability(
+/**
+ * Exported (2026-08-16, Phase 2 of runtime convergence) so the front-desk
+ * read-tool adapters in lib/caye-agent/tools/read/front-desk/*.ts can reuse
+ * this canonical logic rather than duplicating it. No behavior change —
+ * this function is otherwise untouched, and lib/caye-reply.ts's own
+ * internal callers are unaffected by the export.
+ */
+export async function checkAvailability(
   workspaceId: string,
   date: string
 ): Promise<AvailabilityResult> {
@@ -1184,7 +1191,7 @@ async function checkAvailability(
   return { date, slots }
 }
 
-interface CreateBookingInput {
+export interface CreateBookingInput {
   customer_name: string
   customer_phone?: string
   customer_email?: string
@@ -1204,8 +1211,11 @@ interface CreateBookingInput {
  * Deterministic — never paraphrases prices. The Stallings 2026-05-29 case
  * (see Clients/bimini-island-tours.md) traced to a human mis-typing pricing
  * by tier confusion; this function eliminates that class of error for Caye.
+ *
+ * Exported (2026-08-16, Phase 2 of runtime convergence) — see checkAvailability's
+ * doc comment above for why.
  */
-async function lookupPriceForCaye(
+export async function lookupPriceForCaye(
   workspaceId: string,
   serviceId: string,
   groupSize: number,
@@ -1278,7 +1288,7 @@ async function lookupPriceForCaye(
   }
 }
 
-async function createBookingFromCaye(
+export async function createBookingFromCaye(
   workspaceId: string,
   conversationId: string | null,
   input: CreateBookingInput,
@@ -1383,7 +1393,7 @@ export interface CayeAutoReplyInput {
 
 // ── find_bookings + cancel_booking ──────────────────────────────────────────
 
-interface FoundBooking {
+export interface FoundBooking {
   booking_id: string
   customer_name: string
   service_name: string | null
@@ -1394,7 +1404,7 @@ interface FoundBooking {
   duration_minutes: number | null
 }
 
-interface FindBookingsResult {
+export interface FindBookingsResult {
   match_count: number
   bookings: FoundBooking[]
   /** Set when we fell back to name-match because email returned zero. Tells
@@ -1406,8 +1416,11 @@ interface FindBookingsResult {
  * Look up active (confirmed/pending), future-dated bookings for a customer.
  * Email-first; name fallback only when email returns zero. The fallback
  * marker (`matched_by: 'name'`) tells Caye to verify before acting.
+ *
+ * Exported (2026-08-16, Phase 2 of runtime convergence) — see
+ * checkAvailability's doc comment above for why.
  */
-async function findBookings(
+export async function findBookings(
   workspaceId: string,
   input: { customer_email?: string; customer_name?: string }
 ): Promise<FindBookingsResult> {

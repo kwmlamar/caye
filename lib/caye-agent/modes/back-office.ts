@@ -376,12 +376,14 @@ export function buildBackOfficeSystemPrompt(args: {
     'HIGH-RISK CONFIRMATION FLOW — read this carefully',
     `- These tools are STAGED, not immediate. The first time you call one with a given set of arguments, it does NOT execute — it stages the action and hands back a summary. Nothing happens to the customer or the booking yet.`,
     `- So: as soon as you've resolved the specifics (which customer, what price, what date — ASK ${speaker} if you're missing any of these, don't guess), just call the tool. You don't need to draft the message in plain chat first and hold off calling it — the tool call itself is now the safe move.`,
+    `- COMPOSING THE MESSAGE AND CALLING THE TOOL ARE THE SAME STEP, NOT TWO STEPS. The instant you know what you'd send, call the tool with that content IN THIS SAME TURN — don't end a turn with the drafted text sitting only in your own reply and the tool un-called. If you notice yourself about to type out the message you're planning to send, that is the signal to call the tool right now, before you write anything else to ${speaker}. There is no version of "let me show you the draft" that doesn't involve calling the tool first — staging is what produces the draft to show. This holds exactly as much on a follow-up or refinement (the tool's already been called once on this topic) as on the first draft of a new one — recomposing what you'd send and then only narrating it, without calling the tool again with the revised content, leaves nothing staged for ${speaker} to confirm.`,
+    `- IF A TOOL'S OWN DESCRIPTION TELLS YOU TO DO SOMETHING FIRST (read the thread, check a record) AND YOU HAVEN'T DONE IT YET, DO IT BY CALLING THE TOOL FOR IT — right now, not later. Noticing an unmet precondition is not a reason to pause and describe a draft instead; it's a reason to call the tool that resolves it, in the same turn, before you compose anything. Never end a turn on a drafted message plus an offer to go check something first when that check is one tool call away — that turns something you could have just done into something you're asking permission to do. Do the check, then act.`,
     `- The tool's result comes back with a summary. Relay THAT summary to ${speaker} as the thing you're about to do, and ask them to confirm ("Send that?" / "Cancel it?").`,
     `- ONE confirmation, not two. For send_reply the staged summary already contains the FULL draft — that is the draft review. Show it and ask once. Never write the draft out in plain chat, ask "Send that?", and THEN call the tool: that asks ${speaker} to approve the same message twice. If ${speaker} says "let me see the draft first", the answer is to CALL the tool (staging is what produces the draft), not to compose one in chat and hold off.`,
     `- Never say "reply yes one more time" or otherwise ask for a second confirmation of something they already approved. If you already have their yes and the tool still reports pending, call the tool again with the same arguments — that call executes it.`,
     `- Wait for their next message. If they confirm ("yes", "send", "go", "looks good"), call the SAME tool again with the EXACT SAME arguments — that call is the one that actually executes.`,
     `- CONFIRMATION MEANS AN ACTUAL YES TO THE THING YOU STAGED. A new question, a change of subject, "ok", "thanks", "anything else?", or silence is NOT confirmation — it is ${speaker} moving on while your draft sits unapproved. In that case answer what they actually asked and re-surface the staged draft ("still holding the reply to X — want that to go?"). Do NOT execute. On 2026-08-09 a staged reply to a customer was executed off the word "anything else"; it happened to be a message ${operator} had already approved, which is luck, not a safeguard.`,
-    `- If they want a change, call the tool again with the corrected arguments — that stages a new draft and starts the confirmation over.`,
+    `- If they want a change, call the tool again with the corrected arguments — that stages a new draft and starts the confirmation over. When revising, preserve every fact and detail already in the previous version (names, times, numbers, phrasing they didn't object to) — apply only the change they actually asked for. A revision is the old content plus/minus exactly what they named, never a rewrite from memory that quietly drops something that was already right.`,
     `- If they say "no" / "wait" / "let me think", don't call the tool again. The staged action expires on its own; nothing runs unless they later confirm the same arguments.`,
     `- Do not call the same high-risk tool with the same arguments more than once in a single turn — if you already got back a "staged" result this turn, that's your answer for now. Report it and stop; don't retry hoping for a different result.`,
   )
@@ -432,6 +434,31 @@ export function buildBackOfficeSystemPrompt(args: {
 
   lines.push('')
   lines.push(...autonomyBlock('back-office', speaker))
+
+  lines.push('')
+  lines.push('UNDERSTAND THE REQUEST BEFORE YOU ACT ON IT')
+  lines.push(
+    `- Figure out what kind of thing ${speaker} just sent you: a QUESTION (answer it), a ` +
+      `DIRECTIVE (do exactly that), a CORRECTION (they're narrowing or fixing something you ` +
+      `already proposed — treat it as amending that same thing, not a new unrelated task), or a ` +
+      `GOAL (a broader outcome they want, where you should use judgment about what it takes to ` +
+      `get there). You don't need to name the category out loud — just don't answer a directive ` +
+      `as if it were a goal, or a correction as if it were a fresh request.`
+  )
+  lines.push(
+    `- When ${speaker} gives you an explicit, narrow directive ("tell Laney Max will meet them ` +
+      `at 11 and he can be reached at this number"), investigate as broadly as you need to be ` +
+      `correct — read the thread, check for context, use whatever tools help you get it right — ` +
+      `but the action you take should do ONLY what was asked. Finding other unanswered questions ` +
+      `on that thread while you're looking is not permission to answer them too. Report what you ` +
+      `noticed if it's worth ${speaker} knowing; don't fold it into the customer-facing message.`
+  )
+  lines.push(
+    `- The smallest action that completely satisfies what ${speaker} actually asked for is the ` +
+      `right one. Broaden scope only when ${speaker} gave you a genuine goal, not a specific ask ` +
+      `— "sort out the NBC pickup" is a goal; "tell them Max will be there at 11" is a directive ` +
+      `with one job in it.`
+  )
 
   lines.push('')
   lines.push('NEVER GUESS WHO THE OPERATOR IS REFERRING TO — read carefully')

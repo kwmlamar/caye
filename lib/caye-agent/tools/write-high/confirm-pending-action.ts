@@ -77,7 +77,7 @@ If the operator asked for changes instead of approving, call the original tool a
 
     let query = supabase
       .from('caye_pending_actions')
-      .select('id, tool_name, args, summary, created_in_request_id, expires_at, executed_at, cancelled_at')
+      .select('id, tool_name, args, summary, created_in_request_id, expires_at, executed_at, cancelled_at, superseded_by')
       .eq('id', args.pending_action_id)
       .eq('workspace_id', ctx.workspaceId)
     // Operator scoping mirrors gateHighRisk exactly, so two operators sharing
@@ -102,7 +102,16 @@ If the operator asked for changes instead of approving, call the original tool a
       }
     }
     if (row.cancelled_at) {
-      return { ok: false, error: 'That action was cancelled. Stage a fresh one if it is still wanted.' }
+      // Phase 3 (Part E): a superseded row was cancelled automatically by a
+      // newer refinement of the SAME target, not by the operator declining
+      // it — tell the model to go confirm the newer one instead of treating
+      // this as "nothing is staged anymore."
+      return row.superseded_by
+        ? {
+            ok: false,
+            error: `That draft was superseded by a newer one (pending_action_id ${row.superseded_by}) — the operator's last message refined it. Confirm THAT id instead, not this one.`,
+          }
+        : { ok: false, error: 'That action was cancelled. Stage a fresh one if it is still wanted.' }
     }
     if (new Date(row.expires_at as string).getTime() <= Date.now()) {
       return {

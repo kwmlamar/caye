@@ -142,3 +142,76 @@ describe('buildBackOfficeSystemPrompt — outreach operations', () => {
     expect(prompt).toContain('never offer guessed possibilities')
   })
 })
+
+/**
+ * PHASE 1 of runtime convergence (2026-08-16) — regression cover for the
+ * NBC/Laney scope-expansion case from the architectural audit: an explicit,
+ * narrow owner directive ("tell them X") got expanded into a comprehensive
+ * reply covering unrelated unanswered thread items the owner never asked
+ * about. Before this addition, nothing in this prompt told Caye to prefer
+ * the smallest action for an explicit directive — the autonomy block
+ * actively biased the other way ("run what you can run"). This block adds
+ * the missing instruction without touching autonomy/escalation language.
+ */
+describe('buildBackOfficeSystemPrompt — scope containment', () => {
+  it('instructs Caye to distinguish question/directive/correction/goal', () => {
+    const prompt = buildBackOfficeSystemPrompt({
+      profile: BIMINI,
+      caller: { role: 'owner', name: 'Mrs. Max' },
+    })
+    expect(prompt).toContain('UNDERSTAND THE REQUEST BEFORE YOU ACT ON IT')
+    expect(prompt).toMatch(/QUESTION[\s\S]*DIRECTIVE[\s\S]*CORRECTION[\s\S]*GOAL/)
+  })
+
+  it('tells Caye to keep an explicit directive narrow even after broad investigation', () => {
+    const prompt = buildBackOfficeSystemPrompt({
+      profile: BIMINI,
+      caller: { role: 'owner', name: 'Mrs. Max' },
+    })
+    expect(prompt).toContain('is not permission to answer them too')
+    expect(prompt).toContain('smallest action that completely satisfies')
+  })
+})
+
+/**
+ * PHASE 2 of runtime convergence (2026-08-16) — regression cover for two
+ * reasoning failures Phase 1B found via live-model replay against real
+ * production history:
+ *
+ *  1. Caye would compose the correct draft, narrate it in chat, and ask
+ *     "Send that?" WITHOUT calling the gated tool — despite an existing
+ *     instruction against exactly this. If an operator then says "yes",
+ *     that reply only triggers the first (staging) call, requiring a
+ *     second "yes" to actually send — very plausibly the mechanism behind
+ *     historical "why do I have to confirm twice" complaints.
+ *  2. One refinement run dropped an existing fact (a phone number) while
+ *     incorporating an unrelated addition to an already-staged draft.
+ */
+describe('buildBackOfficeSystemPrompt — tool-calling discipline and refinement fidelity', () => {
+  it('tells Caye composing the message and calling the tool are the same step', () => {
+    const prompt = buildBackOfficeSystemPrompt({
+      profile: BIMINI,
+      caller: { role: 'owner', name: 'Mrs. Max' },
+    })
+    expect(prompt).toContain('COMPOSING THE MESSAGE AND CALLING THE TOOL ARE THE SAME STEP')
+    expect(prompt).toContain('holds exactly as much on a follow-up or refinement')
+  })
+
+  it('tells Caye to preserve existing facts when revising a staged draft', () => {
+    const prompt = buildBackOfficeSystemPrompt({
+      profile: BIMINI,
+      caller: { role: 'owner', name: 'Mrs. Max' },
+    })
+    expect(prompt).toContain('preserve every fact and detail already in the previous version')
+    expect(prompt).toContain('never a rewrite from memory that quietly drops something')
+  })
+
+  it('tells Caye to resolve an unmet tool precondition by calling the tool, not by asking permission (Phase 3)', () => {
+    const prompt = buildBackOfficeSystemPrompt({
+      profile: BIMINI,
+      caller: { role: 'owner', name: 'Mrs. Max' },
+    })
+    expect(prompt).toContain("IF A TOOL'S OWN DESCRIPTION TELLS YOU TO DO SOMETHING FIRST")
+    expect(prompt).toContain('turns something you could have just done into something you\'re asking permission to do')
+  })
+})

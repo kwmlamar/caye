@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { attestedFigures, detectUnverifiedPaymentFigure } from './policy-figure-guard'
+import { attestedFigures, detectUnverifiedPaymentFigure, detectUnverifiedPaymentMethodClaim } from './policy-figure-guard'
 
 // The cancellation policy Karenda actually dictated on 2026-08-07, as stored.
 const CANCELLATION_FACT =
@@ -87,6 +87,45 @@ describe('detectUnverifiedPaymentFigure', () => {
 
   it('treats empty grounding as attesting nothing', () => {
     expect(detectUnverifiedPaymentFigure('A 25% deposit is required.', '')).toMatch(/25%/)
+  })
+})
+
+describe('detectUnverifiedPaymentMethodClaim (2026-08-16, real Bimini cash-acceptance incident)', () => {
+  // ── The actual regression ──────────────────────────────────────────
+  it('blocks "cash is not accepted" when no business fact mentions cash', () => {
+    const draft = "Unfortunately, cash is not accepted — we only take payment via invoice."
+    expect(detectUnverifiedPaymentMethodClaim(draft, FACTS)).toMatch(/cash/)
+  })
+
+  it('blocks the positive framing too — "yes, we accept cash" is equally invented if ungrounded', () => {
+    const draft = 'Yes, we accept cash on the day of the tour.'
+    expect(detectUnverifiedPaymentMethodClaim(draft, FACTS)).toMatch(/cash/)
+  })
+
+  it('blocks an invented card-only policy', () => {
+    const draft = "We're card only, unfortunately — no cash accepted at pickup."
+    expect(detectUnverifiedPaymentMethodClaim(draft, FACTS)).toMatch(/cash|card/)
+  })
+
+  // ── Grounded claims must pass ──────────────────────────────────────
+  it('allows a payment-method claim when the business facts actually document it', () => {
+    const facts = `${FACTS}\nWe accept cash or card payment on the day of the tour.`
+    expect(detectUnverifiedPaymentMethodClaim('Cash is accepted on the day of your tour.', facts)).toBeNull()
+  })
+
+  // ── Must not false-positive on unrelated content ───────────────────
+  it('ignores a reply with no payment-method claim at all', () => {
+    const draft = 'Your spot is held for November 6. Payment details will follow by invoice.'
+    expect(detectUnverifiedPaymentMethodClaim(draft, FACTS)).toBeNull()
+  })
+
+  it('ignores the word "card" used in a non-payment sense', () => {
+    const draft = 'Bring a printed boarding card if you have one, though it is not required.'
+    expect(detectUnverifiedPaymentMethodClaim(draft, FACTS)).toBeNull()
+  })
+
+  it('treats empty grounding as attesting no payment method', () => {
+    expect(detectUnverifiedPaymentMethodClaim('We accept cash.', '')).toMatch(/cash/)
   })
 })
 

@@ -130,3 +130,55 @@ export function detectUnverifiedPaymentFigure(
 
   return null
 }
+
+/**
+ * WHY THIS EXISTS (2026-08-16, Phase "final pre-canary closure")
+ * Real Bimini incident: Caye told a customer cash was not accepted; Mrs.
+ * Max had to correct the customer herself afterward. The figure guard
+ * above only catches invented NUMBERS (a deposit rate, a fee amount) — a
+ * payment-METHOD assertion ("we don't take cash", "card only", "we accept
+ * Venmo") carries no number at all and passed straight through it. Same
+ * reasoning as the module header: the prompt already says not to invent
+ * policy, the prompt alone was not enough, so this is enforced in code.
+ *
+ * Payment methods recognised. Deliberately a fixed, small list rather than
+ * an open-ended NLP task — matches the figure guard's own tradeoff (stay
+ * narrow, stay false-positive-free) over trying to parse arbitrary policy
+ * prose.
+ */
+const PAYMENT_METHOD_PATTERN =
+  /\b(cash|credit\s*card|debit\s*card|\bcard\b|check|cheque|venmo|zelle|paypal|cash\s*app|apple\s*pay|google\s*pay|wire\s*transfer|cryptocurrency|crypto)\b/gi
+
+/** A sentence asserting whether a payment method is or isn't accepted/taken/allowed. */
+const PAYMENT_METHOD_ASSERTION_PATTERN =
+  /\b(accept|accepted|accepts|accepting|take|takes|taking|taken|allow|allowed|only|no\s+cash|cash\s*[- ]?only)\b/i
+
+/**
+ * Returns a short reason string when the draft asserts whether a specific
+ * payment method is accepted and that method is never mentioned anywhere
+ * in the grounding text (business facts) — meaning the assertion, whatever
+ * its polarity, was invented rather than read from anything. Symmetric
+ * with `attestedFigures`: a method absent from the grounding text entirely
+ * is ungrounded regardless of whether the draft says yes or no about it.
+ */
+export function detectUnverifiedPaymentMethodClaim(
+  content: string,
+  groundingText: string
+): string | null {
+  const groundedMethods = new Set(
+    Array.from(groundingText.matchAll(PAYMENT_METHOD_PATTERN)).map((m) => m[0].toLowerCase().replace(/\s+/g, ' '))
+  )
+
+  for (const sentence of sentences(content)) {
+    if (!PAYMENT_METHOD_ASSERTION_PATTERN.test(sentence)) continue
+    const methodsInSentence = Array.from(sentence.matchAll(PAYMENT_METHOD_PATTERN)).map((m) =>
+      m[0].toLowerCase().replace(/\s+/g, ' ')
+    )
+    const unverified = methodsInSentence.filter((m) => !groundedMethods.has(m))
+    if (unverified.length > 0) {
+      return `states a payment method policy (${Array.from(new Set(unverified)).join(', ')}) with no matching business fact`
+    }
+  }
+
+  return null
+}

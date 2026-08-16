@@ -3,6 +3,8 @@ import type Anthropic from '@anthropic-ai/sdk'
 import { createServiceClient } from '@/lib/supabase-server'
 import { compactHistory } from './history-compaction'
 import { getThread, getThreadEntities, describeEntity } from '@/lib/caye-direct-threads'
+import { annotateHistoryWithRelativeTime } from './situation'
+import { loadAgentTurnsForTriggers } from '@/lib/caye-frontdesk-agent-turns'
 
 // Same bound as the operator sliding window (SLIDING_WINDOW_MESSAGES) —
 // a Direct thread's own linked-message count is the natural cap here,
@@ -63,26 +65,35 @@ export async function loadOperatorContext(
   }
 
   // Walk newest→oldest from the DB, then reverse so Claude sees chronological.
-  const window = data
-    .reverse()
-    .map((row): Anthropic.MessageParam | null => {
-      const stored = row.claude_format as Anthropic.MessageParam | null | undefined
-      if (stored && stored.role && stored.content !== undefined) {
-        return stored
-      }
-      if (!row.body) return null
-      return {
-        role: row.direction === 'inbound' ? 'user' : 'assistant',
-        content: row.body,
-      }
+  // Timestamps travel alongside each turn (index-aligned) so relative-time
+  // markers can be applied below — see situation.ts for why this matters:
+  // `created_at` was fetched here long before this change, but never made
+  // it past this function into anything the model could read.
+  const rows = data.reverse()
+  const window: Anthropic.MessageParam[] = []
+  const timestamps: (string | null)[] = []
+  for (const row of rows) {
+    const stored = row.claude_format as Anthropic.MessageParam | null | undefined
+    if (stored && stored.role && stored.content !== undefined) {
+      window.push(stored)
+      timestamps.push((row.created_at as string | null) ?? null)
+      continue
+    }
+    if (!row.body) continue
+    window.push({
+      role: row.direction === 'inbound' ? 'user' : 'assistant',
+      content: row.body,
     })
-    .filter((m): m is Anthropic.MessageParam => m !== null)
+    timestamps.push((row.created_at as string | null) ?? null)
+  }
+
+  const annotated = annotateHistoryWithRelativeTime(window, timestamps)
 
   // Spent tool results are 59.2% of the replayed bytes and the largest single
   // line item in the bill (see history-compaction.ts). Shrink the ones past
   // the verbatim budget — blocks and tool_use_ids are preserved, only stale
   // payloads shrink.
-  return compactHistory(window)
+  return compactHistory(annotated)
 }
 
 export interface DirectThreadContext {
@@ -136,15 +147,20 @@ export async function loadDirectThreadContext(
     if (error || !data) {
       console.warn('[caye-agent/context] thread history load failed:', error?.message)
     } else {
-      history = data
-        .map((row): Anthropic.MessageParam | null => {
-          const stored = row.claude_format as Anthropic.MessageParam | null | undefined
-          if (stored && stored.role && stored.content !== undefined) return stored
-          if (!row.body) return null
-          return { role: row.direction === 'inbound' ? 'user' : 'assistant', content: row.body }
-        })
-        .filter((m): m is Anthropic.MessageParam => m !== null)
-      history = compactHistory(history)
+      const rawHistory: Anthropic.MessageParam[] = []
+      const rawTimestamps: (string | null)[] = []
+      for (const row of data) {
+        const stored = row.claude_format as Anthropic.MessageParam | null | undefined
+        if (stored && stored.role && stored.content !== undefined) {
+          rawHistory.push(stored)
+          rawTimestamps.push((row.created_at as string | null) ?? null)
+          continue
+        }
+        if (!row.body) continue
+        rawHistory.push({ role: row.direction === 'inbound' ? 'user' : 'assistant', content: row.body })
+        rawTimestamps.push((row.created_at as string | null) ?? null)
+      }
+      history = compactHistory(annotateHistoryWithRelativeTime(rawHistory, rawTimestamps))
     }
   }
 
@@ -170,4 +186,109 @@ export async function loadDirectThreadContext(
       : null
 
   return { history, promptBlock }
+}
+
+// Dual bound, same shape as the operator sliding window (SLIDING_WINDOW_*
+// above): whichever cap is smaller wins. A customer relationship can
+// legitimately run for weeks between a booking and a follow-up question, so
+// the day bound is generous rather than WhatsApp's 24h operator window —
+// but a single burst of back-and-forth shouldn't replay unboundedly either.
+const FRONT_DESK_WINDOW_MESSAGES = 40
+const FRONT_DESK_WINDOW_DAYS = 14
+
+/**
+ * Load a customer conversation as real, ordered, multi-turn history —
+ * PHASE 1 of runtime convergence (2026-08-16). Generalizes the same
+ * mechanism `loadOperatorContext` already uses (persisted rows → real
+ * `MessageParam[]`, relative-time annotation, `compactHistory` budgeting)
+ * to the front-desk data source (`unified_messages`) instead of the
+ * back-office one (`caye_operator_messages`).
+ *
+ * NOT wired into any production webhook in this phase. `lib/caye-reply.ts`
+ * continues to use its own `fetchConversationHistory` +
+ * `formatHistoryBlock` (single flattened string, no timestamps, hard
+ * 10-message cap) for live customer traffic — see the architectural audit
+ * for why that pattern is the thing this phase is building the replacement
+ * for, and the convergence plan for why production traffic isn't switched
+ * onto it yet. This function exists so the situation assembler and the
+ * replay harness can evaluate the richer alternative against real history
+ * without touching what customers currently receive.
+ *
+ * PHASE 3 (2026-08-16) addition: for each customer (inbound) row in the
+ * window, checks `caye_frontdesk_agent_turns` (see
+ * lib/caye-frontdesk-agent-turns.ts) for persisted turns keyed to that
+ * row's id. Where they exist, they SUPERSEDE both the flattened
+ * `{role:user}` reconstruction of that row and the flattened
+ * `{role:assistant}` reconstruction of the reply that followed it — the
+ * persisted sequence already contains a user turn for the same customer
+ * message plus any tool_use/tool_result turns plus the final assistant
+ * text turn, so replaying both would duplicate the exchange. Rows with no
+ * persisted turns (pre-Phase-3 history, or any invocation path not yet
+ * writing to the table) fall back to the plain-text reconstruction
+ * exactly as before — the same nullable-column fallback shape
+ * `loadOperatorContext` already uses for `claude_format`, adapted to a
+ * separate table instead of a column.
+ */
+export async function loadFrontDeskConversationContext(
+  conversationId: string,
+  excludeChannelMessageId: string | null = null
+): Promise<{ history: Anthropic.MessageParam[]; historyTimestamps: (string | null)[] }> {
+  const supabase = createServiceClient()
+  const cutoffISO = new Date(Date.now() - FRONT_DESK_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString()
+
+  const { data, error } = await supabase
+    .from('unified_messages')
+    .select('id, sender_type, content, sent_at, channel_message_id')
+    .eq('conversation_id', conversationId)
+    .eq('is_internal', false)
+    .gte('sent_at', cutoffISO)
+    .order('sent_at', { ascending: false })
+    .limit(FRONT_DESK_WINDOW_MESSAGES)
+
+  if (error || !data) {
+    console.warn('[caye-agent/context] front-desk history load failed:', error?.message)
+    return { history: [], historyTimestamps: [] }
+  }
+
+  const rows = data
+    .filter((r) => !excludeChannelMessageId || r.channel_message_id !== excludeChannelMessageId)
+    .reverse()
+
+  const customerMessageIds = rows
+    .filter((r) => r.sender_type === 'customer')
+    .map((r) => r.id as string)
+  const agentTurnsByTrigger = await loadAgentTurnsForTriggers(supabase, conversationId, customerMessageIds)
+
+  const history: Anthropic.MessageParam[] = []
+  const timestamps: (string | null)[] = []
+  let skipUntilNextCustomerRow = false
+  for (const row of rows) {
+    const isCustomer = row.sender_type === 'customer'
+    if (isCustomer) skipUntilNextCustomerRow = false
+
+    const persistedTurns = isCustomer ? agentTurnsByTrigger.get(row.id as string) : undefined
+    if (persistedTurns && persistedTurns.length > 0) {
+      for (const turn of persistedTurns) {
+        history.push(turn.claude_format)
+        timestamps.push(turn.created_at)
+      }
+      skipUntilNextCustomerRow = true
+      continue
+    }
+
+    if (skipUntilNextCustomerRow) continue
+
+    const content = (row.content as string | null) ?? ''
+    if (!content.trim()) continue
+    history.push({
+      role: isCustomer ? 'user' : 'assistant',
+      content,
+    })
+    timestamps.push((row.sent_at as string | null) ?? null)
+  }
+
+  return {
+    history: compactHistory(annotateHistoryWithRelativeTime(history, timestamps)),
+    historyTimestamps: timestamps,
+  }
 }

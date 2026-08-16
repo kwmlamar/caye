@@ -44,7 +44,10 @@ export const queryBusinessKnowledge: Tool<QueryBusinessKnowledgeInput> = {
   risk: 'read',
   // Open to staff too — knowledge lookup is harmless.
   roles: ['owner', 'staff', 'founder'],
-  modes: ['back-office'],
+  // 'front-desk' added 2026-08-16 (Phase 2 of runtime convergence) — the
+  // same business_facts read a customer-facing turn needs before answering
+  // "do you do X" / "what's included" — reused, not duplicated.
+  modes: ['back-office', 'front-desk'],
   inputSchema: {
     type: 'object',
     properties: {

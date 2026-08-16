@@ -18,6 +18,7 @@ type Row = Record<string, unknown>
 function makeFakeSupabase() {
   const rows: Row[] = []
   const client = {
+    __rows: rows,
     from(_table: string) {
       return {
         select(_cols: string) {
@@ -44,6 +45,13 @@ function makeFakeSupabase() {
             async maybeSingle() {
               const matches = rows.filter((r) => filters.every((f) => f(r)))
               return { data: matches[matches.length - 1] ?? null, error: null }
+            },
+            // Real supabase-js query builders are thenable: awaiting one
+            // WITHOUT narrowing via .maybeSingle()/.single() resolves to
+            // every matching row as an array — the shape gateHighRisk's
+            // supersession lookup relies on (Phase 3, Part E).
+            then(resolve: (v: { data: Row[]; error: null }) => void) {
+              resolve({ data: rows.filter((r) => filters.every((f) => f(r))), error: null })
             },
           }
           return builder
@@ -78,6 +86,11 @@ vi.mock('@/lib/supabase-server', () => ({
 
 interface FakeArgs {
   target: string
+}
+
+interface FakeSendArgs {
+  conversation_id: string
+  body: string
 }
 
 function makeRealTool(mutate: Tool<FakeArgs>['execute']): Tool<FakeArgs> {
@@ -206,5 +219,91 @@ describe('gateHighRisk (#64 — code-enforced confirmation gate)', () => {
 
     expect(mutate).not.toHaveBeenCalled()
     expect((otherOperator.data as { pending?: boolean }).pending).toBe(true)
+  })
+})
+
+describe('gateHighRisk supersession (Phase 3, Part E — refinement of a staged draft)', () => {
+  function makeSendTool(mutate: Tool<FakeSendArgs>['execute']): Tool<FakeSendArgs> {
+    return {
+      name: 'fake_send_reply',
+      description: 'test send tool',
+      risk: 'high',
+      roles: ['owner', 'founder'],
+      modes: ['back-office'],
+      inputSchema: {
+        type: 'object',
+        properties: { conversation_id: { type: 'string' }, body: { type: 'string' } },
+        required: ['conversation_id', 'body'],
+      },
+      execute: mutate,
+    }
+  }
+
+  it('cancels the older staged draft for the same conversation_id when a refinement stages a new one', async () => {
+    const mutate = vi.fn<Tool<FakeSendArgs>['execute']>(async () => ({ ok: true, data: { sent: true } }))
+    const gated = gateHighRisk(makeSendTool(mutate))
+    const wsId = 'ws-supersede-1'
+
+    const first = await gated.execute(
+      { conversation_id: 'conv-1', body: 'Tell them Max will greet them at 11.' },
+      ctx({ workspaceId: wsId, requestId: 'req-1' })
+    )
+    const firstId = (first.data as { pending_action_id: string }).pending_action_id
+
+    // Refinement: same request turn, different body — "add safe travels to it".
+    const second = await gated.execute(
+      { conversation_id: 'conv-1', body: 'Tell them Max will greet them at 11. Safe travels!' },
+      ctx({ workspaceId: wsId, requestId: 'req-1' })
+    )
+    const secondId = (second.data as { pending_action_id: string }).pending_action_id
+
+    expect(secondId).not.toBe(firstId)
+
+    // The OLD row is cancelled and explicitly linked to the row that
+    // superseded it — args/summary untouched, so the original draft is
+    // still readable in the audit trail.
+    const rows = (fakeSupabase as unknown as { __rows: Row[] }).__rows
+    const oldRow = rows.find((r) => r.id === firstId)
+    expect(oldRow?.cancelled_at).toBeTruthy()
+    expect(oldRow?.superseded_by).toBe(secondId)
+    expect(oldRow?.args).toEqual({ conversation_id: 'conv-1', body: 'Tell them Max will greet them at 11.' })
+
+    // Confirming the NEW (superseding) id from a fresh request executes it.
+    const confirmNew = await gated.execute(
+      { conversation_id: 'conv-1', body: 'Tell them Max will greet them at 11. Safe travels!' },
+      ctx({ workspaceId: wsId, requestId: 'req-2' })
+    )
+    expect(mutate).toHaveBeenCalledTimes(1)
+    expect(confirmNew).toEqual({ ok: true, data: { sent: true } })
+  })
+
+  it('does not supersede across different conversation_ids', async () => {
+    const mutate = vi.fn<Tool<FakeSendArgs>['execute']>(async () => ({ ok: true, data: { sent: true } }))
+    const gated = gateHighRisk(makeSendTool(mutate))
+    const wsId = 'ws-supersede-2'
+
+    await gated.execute(
+      { conversation_id: 'conv-A', body: 'Message to A' },
+      ctx({ workspaceId: wsId, requestId: 'req-1' })
+    )
+    await gated.execute(
+      { conversation_id: 'conv-B', body: 'Message to B' },
+      ctx({ workspaceId: wsId, requestId: 'req-1' })
+    )
+
+    // Both independently confirmable — B staging must not have cancelled A.
+    const confirmA = await gated.execute(
+      { conversation_id: 'conv-A', body: 'Message to A' },
+      ctx({ workspaceId: wsId, requestId: 'req-2' })
+    )
+    expect(mutate).toHaveBeenCalledTimes(1)
+    expect(confirmA).toEqual({ ok: true, data: { sent: true } })
+
+    const confirmB = await gated.execute(
+      { conversation_id: 'conv-B', body: 'Message to B' },
+      ctx({ workspaceId: wsId, requestId: 'req-3' })
+    )
+    expect(mutate).toHaveBeenCalledTimes(2)
+    expect(confirmB).toEqual({ ok: true, data: { sent: true } })
   })
 })
