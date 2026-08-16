@@ -611,6 +611,18 @@ export default function CayeDirectThread(props: Props) {
         .caye-direct-scroll ::selection { background: rgba(78, 190, 206, 0.35); color: inherit; }
         .caye-direct-scroll ::-moz-selection { background: rgba(78, 190, 206, 0.35); color: inherit; }
         .caye-direct-textarea::placeholder { color: rgba(244,244,245,0.32); }
+        .caye-direct-send {
+          flex-shrink: 0; width: 34px; height: 34px; border-radius: 50%;
+          display: flex; align-items: center; justify-content: center;
+          background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.10);
+          cursor: pointer;
+          transition: background 0.15s ease, border-color 0.15s ease, transform 0.08s ease;
+        }
+        .caye-direct-send:hover:not(:disabled) { background: rgba(255,255,255,0.09); border-color: rgba(255,255,255,0.18); }
+        .caye-direct-send:active:not(:disabled) { transform: scale(0.92); }
+        .caye-direct-send:disabled { cursor: default; opacity: 0.5; }
+        .caye-direct-send.is-ready { background: rgba(78,190,206,0.13); border-color: rgba(78,190,206,0.4); }
+        .caye-direct-send.is-ready:hover:not(:disabled) { background: rgba(78,190,206,0.2); border-color: rgba(78,190,206,0.55); }
         .caye-working-mark { position: relative; width: 18px; height: 18px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
         .caye-working-glow {
           position: absolute; inset: -6px; border-radius: 50%;
@@ -786,7 +798,20 @@ export default function CayeDirectThread(props: Props) {
       ) : props.composerVisible !== false ? (
         <div style={{ padding: '12px clamp(18px, 4vw, 48px) 16px', background: 'transparent', position: 'relative' }}>
           <form className="caye-direct-composer-shell" onSubmit={(e) => { e.preventDefault(); send(input) }}>
-            <CayeComposerSurface active={composerFocused} maxWidth="100%" style={{ alignItems: 'flex-end' }}>
+            <CayeComposerSurface
+              active={composerFocused}
+              maxWidth="100%"
+              style={{
+                alignItems: 'flex-end',
+                borderRadius: 20,
+                background: composerFocused ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.035)',
+                border: `1px solid ${composerFocused ? 'rgba(78,190,206,0.28)' : 'rgba(255,255,255,0.07)'}`,
+                boxShadow: composerFocused
+                  ? '0 1px 0 rgba(255,255,255,0.04) inset, 0 0 14px -4px rgba(78,190,206,0.18), 0 10px 24px -12px rgba(0,0,0,0.5)'
+                  : '0 1px 0 rgba(255,255,255,0.03) inset, 0 8px 18px -10px rgba(0,0,0,0.45)',
+                transition: 'background 0.18s ease, border-color 0.2s ease, box-shadow 0.22s ease',
+              }}
+            >
               <span style={{ display: 'flex', alignSelf: 'center', flexShrink: 0 }}><CayeMark size={20} /></span>
               <textarea
                 ref={textareaRef}
@@ -812,17 +837,12 @@ export default function CayeDirectThread(props: Props) {
               <button
                 type="submit"
                 disabled={sending || !input.trim()}
-                style={{
-                  flexShrink: 0, width: 30, height: 30, borderRadius: '50%', border: 'none',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  cursor: sending || !input.trim() ? 'default' : 'pointer',
-                  background: sending || !input.trim() ? 'rgba(255,255,255,0.06)' : 'linear-gradient(90deg, #4EBECE, #FFE4AF)',
-                  opacity: sending || !input.trim() ? (composerFocused ? 0.7 : 0.45) : 1,
-                  transition: 'background 0.15s ease, opacity 0.15s ease',
-                }}
+                title="Send"
+                aria-label="Send message"
+                className={`caye-direct-send${input.trim() && !sending ? ' is-ready' : ''}`}
               >
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
-                  stroke={!input.trim() ? 'rgba(245,245,244,0.35)' : '#0a0a0b'}
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                  stroke={input.trim() && !sending ? '#4EBECE' : 'rgba(244,244,245,0.45)'}
                   strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
                   <line x1="12" y1="19" x2="12" y2="5" /><polyline points="5 12 12 5 19 12" />
                 </svg>
