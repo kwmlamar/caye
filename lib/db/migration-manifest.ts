@@ -112,4 +112,6 @@ export const REPO_MIGRATIONS: readonly string[] = [
   '20260814210817_sales_stale_hold_recovery_outbound_sending_status',
   '20260814_owner_handled_pending_actions',
   '20260814b_sales_lifecycle_state',
+  '20260816_caye_frontdesk_agent_turns',
+  '20260816b_caye_pending_actions_supersession',
 ]
