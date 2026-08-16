@@ -176,28 +176,30 @@ function DemoDivider() {
   )
 }
 
-function TypingIndicator() {
+// Shaped like a real incoming Caye message (sender label, then avatar +
+// content at the same left edge and marginTop as a 'single'-position
+// reply — see the actual message row below) so swapping this out for
+// FormattedReplyText once the turn resolves doesn't shift anything.
+// The glow behind the mark and the warm/gold "thinking" tone both reuse
+// CayePresence's established language (STATE_PARAMS / CayePresenceFallback)
+// rather than inventing a new one for this single spot.
+function CayeWorkingIndicator() {
   return (
-    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, alignSelf: 'flex-start', animation: 'caye-msg-in 0.25s ease-out' }}>
-      <CayeMark size={20} />
+    <div style={{ display: 'flex', flexDirection: 'column', alignSelf: 'flex-start', maxWidth: '82%', animation: 'caye-msg-in 0.25s ease-out' }}>
+      <div className="caye-direct-sender">Caye</div>
       <div
-        className="caye-typing-bubble"
-        style={{
-          display: 'flex', alignItems: 'center', gap: 4,
-          borderRadius: '16px 16px 16px 4px', padding: '12px 14px',
-        }}
+        role="status"
+        aria-live="polite"
+        style={{ display: 'flex', alignItems: 'flex-end', gap: 8, marginTop: 11 }}
       >
-        {[0, 1, 2].map((i) => (
-          <span
-            key={i}
-            style={{
-              width: 5, height: 5, borderRadius: '50%',
-              background: 'linear-gradient(135deg, #9EE3E5, #4EBECE)',
-              animation: 'caye-typing-dot 1.2s ease-in-out infinite',
-              animationDelay: `${i * 0.16}s`,
-            }}
-          />
-        ))}
+        <span className="caye-working-mark">
+          <span aria-hidden className="caye-working-glow" />
+          <CayeMark size={18} />
+        </span>
+        <span className="caye-working-label">Thinking</span>
+        <span className="sr-only" style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap' }}>
+          Caye is thinking
+        </span>
       </div>
     </div>
   )
@@ -584,10 +586,6 @@ export default function CayeDirectThread(props: Props) {
   return (
     <div className="caye-direct-thread" style={{ display: 'flex', flexDirection: 'column', height: '100%', flex: 1, minWidth: 0, color: '#f4f4f5' }}>
       <style>{`
-        @keyframes caye-typing-dot {
-          0%, 60%, 100% { opacity: 0.3; transform: translateY(0) scale(0.85); }
-          30% { opacity: 1; transform: translateY(-3px) scale(1); }
-        }
         @keyframes caye-msg-in {
           from { opacity: 0; transform: translateY(6px); }
           to { opacity: 1; transform: translateY(0); }
@@ -613,9 +611,33 @@ export default function CayeDirectThread(props: Props) {
         .caye-direct-scroll ::selection { background: rgba(78, 190, 206, 0.35); color: inherit; }
         .caye-direct-scroll ::-moz-selection { background: rgba(78, 190, 206, 0.35); color: inherit; }
         .caye-direct-textarea::placeholder { color: rgba(244,244,245,0.32); }
-        .caye-typing-bubble {
-          background: linear-gradient(155deg, rgba(7,102,163,0.20), rgba(7,102,163,0.09));
-          box-shadow: 0 1px 0 rgba(255,255,255,0.05) inset, 0 6px 16px -8px rgba(7,102,163,0.5);
+        .caye-working-mark { position: relative; width: 18px; height: 18px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+        .caye-working-glow {
+          position: absolute; inset: -6px; border-radius: 50%;
+          background: radial-gradient(circle, rgba(255,228,175,0.55), rgba(255,228,175,0) 72%);
+          animation: caye-working-breathe 1.8s ease-in-out infinite;
+        }
+        .caye-working-label { font-size: 13px; line-height: 1; padding-bottom: 1px; color: #b8b8bf; }
+        @supports (background-clip: text) or (-webkit-background-clip: text) {
+          .caye-working-label {
+            background: linear-gradient(90deg, #6f6f78 0%, #f4f4f5 45%, #6f6f78 90%);
+            background-size: 200% 100%;
+            -webkit-background-clip: text; background-clip: text;
+            color: transparent; -webkit-text-fill-color: transparent;
+            animation: caye-working-sweep 2.1s ease-in-out infinite;
+          }
+        }
+        @keyframes caye-working-breathe {
+          0%, 100% { opacity: 0.35; transform: scale(0.82); }
+          50% { opacity: 0.85; transform: scale(1.05); }
+        }
+        @keyframes caye-working-sweep {
+          0%, 100% { background-position: 200% 0; }
+          50% { background-position: -200% 0; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .caye-working-glow { animation: none; opacity: 0.55; }
+          .caye-working-label { animation: none !important; background: none !important; color: #b8b8bf !important; -webkit-text-fill-color: unset !important; }
         }
         @media (max-width:600px) { .caye-direct-thread-header { padding-left:58px; } .caye-direct-thread-action { display:none; } }
       `}</style>
@@ -733,7 +755,7 @@ export default function CayeDirectThread(props: Props) {
               )
               })
             )}
-            {sending && <div style={{ marginTop: 11 }}><TypingIndicator /></div>}
+            {sending && <CayeWorkingIndicator />}
           </div>
         </div>
 
