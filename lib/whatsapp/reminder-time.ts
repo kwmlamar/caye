@@ -132,7 +132,7 @@ export function resolveReminderTime(args: {
  */
 export function formatReminderBody(message: string): string {
   const trimmed = message.replace(/\s+/g, ' ').trim()
-  return `⏰ Reminder you asked me to set: ${trimmed}`.slice(0, 900)
+  return `Reminder you asked me to set: ${trimmed}`.slice(0, 900)
 }
 
 /** Operator-facing confirmation, in their own local time. */

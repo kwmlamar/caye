@@ -3,7 +3,7 @@ import { describe, it, expect, vi } from 'vitest'
 vi.mock('server-only', () => ({}))
 
 import { buildBackOfficeSystemPrompt } from './modes/back-office'
-import { buildMorningBriefingPrompt } from './briefing'
+import { buildMorningBriefingPrompt, buildEodSummaryPrompt } from './briefing'
 import { TOOL_REGISTRY } from './tools/registry'
 import { renderAttentionContext } from '@/lib/owner-attention'
 import { detectInternalLeak } from '@/lib/operator-text-guard'
@@ -175,6 +175,57 @@ describe('back-office prompt — proactive scans cannot contradict past pings', 
   })
 })
 
+describe('back-office prompt — high-risk confirmation flow', () => {
+  // The audit that found this: send-reply.ts, confirm-pending-action.ts, and
+  // _booking-helpers.ts all tell the model to confirm a staged action by
+  // calling confirm_pending_action with the pending_action_id, and warn
+  // explicitly against re-calling the original tool ("stranded real sends"
+  // twice in production — Karenda 2026-08-01, Lamar 2026-08-08). The system
+  // prompt used to contradict every one of those tool descriptions by
+  // telling the model to "call the SAME tool again with the EXACT SAME
+  // arguments" — the exact fragile path the tool authors built
+  // confirm_pending_action to replace. This locks the fix in.
+
+  it('tells Caye to confirm via confirm_pending_action, not by re-calling the original tool', () => {
+    const p = prompt()
+    expect(p).toMatch(/CALL confirm_pending_action WITH THE pending_action_id/)
+    expect(p).toMatch(/NEVER the original tool again/)
+    expect(p).not.toMatch(/call the SAME tool again with the EXACT SAME arguments/)
+  })
+
+  it('explains why re-calling the original tool is unsafe', () => {
+    const p = prompt()
+    expect(p).toMatch(/byte-identical to what was staged/)
+    expect(p).toMatch(/stranded real sends/)
+  })
+
+  it('still sends a revision through the original tool, not confirm_pending_action', () => {
+    // A correction ("add safe travels to it") is a NEW draft, not an
+    // approval of the old one — that has to stage fresh, so it still goes
+    // through the original tool.
+    const p = prompt()
+    expect(p).toMatch(/call the original tool again with the corrected arguments/)
+  })
+
+  it('treats a factual confirmation as distinct from send authorization', () => {
+    // Requirement 6 (owner-communication policy): confirming a fact used in
+    // a draft ("yep $398 is correct") is not the same as approving the send.
+    // Caye should ack the fact in one line and wait for the actual send word
+    // — never re-paste the full draft, never call confirm_pending_action off
+    // a fact-only reply.
+    const p = prompt()
+    expect(p).toMatch(/A FACTUAL CONFIRMATION IS NOT A SEND AUTHORIZATION/)
+    expect(p).toMatch(/Ready to send\./)
+    expect(p).toMatch(/Wait for the actual send word/)
+  })
+
+  it('keeps the re-surfaced draft short on a non-confirmation reply', () => {
+    const p = prompt()
+    expect(p).toMatch(/re-surface the staged draft in ONE short clause/)
+    expect(p).toMatch(/never the full draft again/)
+  })
+})
+
 describe('morning briefing prompt — no manufactured questions', () => {
   const CLEAR = 'ATTENTION STATE: nothing is open. The owner is genuinely clear.'
 
@@ -239,6 +290,59 @@ describe('morning briefing prompt — no manufactured questions', () => {
 
   it('reports a genuinely clear state as clear', () => {
     expect(briefing()).toContain('nothing is open')
+  })
+})
+
+describe('EOD summary prompt — compressed recap, no fake all-clear', () => {
+  // buildEodSummaryPrompt used to be inlined in composeEodSummary (an async
+  // DB+LLM function), so none of its rules had test coverage even though
+  // buildMorningBriefingPrompt's identical-in-spirit rules did. Extracted as
+  // a pure function so these can be asserted directly.
+  const CLEAR = 'ATTENTION STATE: nothing is open. The owner is genuinely clear.'
+
+  const eod = (over: Partial<Parameters<typeof buildEodSummaryPrompt>[0]> = {}) =>
+    buildEodSummaryPrompt({
+      operator: 'Mrs. Max',
+      business: 'Bimini Island Tours',
+      attentionContext: CLEAR,
+      ...over,
+    })
+
+  it('caps the recap at 3 sentences and bans jargon/parentheticals', () => {
+    const p = eod()
+    expect(p).toMatch(/Hard cap: 3 sentences, no exceptions/)
+    expect(p).toMatch(/no jargon, no parentheticals/)
+  })
+
+  it('leads with the day\'s outcome, not a status dump', () => {
+    const p = eod()
+    expect(p).toMatch(/Sentence 1: the day's outcome in one line — wins first/)
+    expect(p).toMatch(/Don't dump raw numbers without context/)
+  })
+
+  it('does not duplicate the escalation-followup ping', () => {
+    // Rule 4/14: routine, already-pinged items don't get re-narrated by a
+    // second composer — that's the "wall of near-identical texts" failure.
+    const p = eod()
+    expect(p).toMatch(/already get their own daily "still waiting" ping from a separate system/)
+    expect(p).toMatch(/don't name them or re-propose an action here/)
+  })
+
+  it('carries the attention state and forbids a false all-clear', () => {
+    const p = eod({
+      attentionContext:
+        'ATTENTION STATE\nThe owner is NOT clear. Do not say "nothing needs your attention" or anything equivalent.',
+    })
+    expect(p).toContain('WHAT THE OWNER HAS ALREADY BEEN TOLD')
+    expect(p).toMatch(/If it says the owner is not clear, don't write anything that means "all caught up"/)
+  })
+
+  it('bans inventing numbers when nothing happened', () => {
+    expect(eod()).toMatch(/Don't invent — if nothing happened, say so honestly/)
+  })
+
+  it('is informational only — never asks for action', () => {
+    expect(eod()).toMatch(/Don't ask for action — this is informational/)
   })
 })
 

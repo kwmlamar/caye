@@ -93,6 +93,14 @@ describe('formatReminderBody', () => {
     expect(formatReminderBody('a\n\n  b')).toContain('a b')
     expect(formatReminderBody('x'.repeat(2000)).length).toBeLessThanOrEqual(900)
   })
+
+  it('carries no decorative emoji, matching the house style ban', () => {
+    // back-office.ts: "NO decorative emoji ever ... Status is a plain word."
+    // This template bypasses that prompt entirely (deterministic, not
+    // LLM-composed), so the ban has to be enforced here too.
+    // eslint-disable-next-line no-control-regex
+    expect(formatReminderBody('meeting at 8:30')).toMatch(/^[\x00-\x7F]*$/)
+  })
 })
 
 describe('describeReminderTime', () => {
