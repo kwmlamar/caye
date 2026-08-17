@@ -65,12 +65,15 @@ import { loggedMessagesCreate } from './llm-telemetry'
 import {
   decideDisposition,
   ownerNoteFor,
+  ownerReasonLabelFor,
+  partialAvailabilityNoteFor,
   type EvidenceFact,
 } from './caye-agent/evidence'
 import {
   extractDollarAmounts,
   amountsAttestedBy,
   assertsAvailability,
+  withoutAvailabilityClaims,
 } from './caye-agent/draft-claims'
 import { recordToolCall } from './caye-agent/orchestrator'
 import { deriveOutcome } from './caye-agent/front-desk-telemetry'
@@ -2472,24 +2475,74 @@ async function generateCayeAutoReplyCore(
               `Review the draft below and send manually if appropriate.\n\n---\n\n${input.content}`,
           }
         } else if (evidenceVerdict.disposition === 'hold') {
-          // Held on evidence, not on the model's opinion of itself. The note
-          // is composed by ownerNoteFor from the same verdict, so what Mrs.
-          // Max reads and what actually happened cannot drift — and it
-          // contains no internal vocabulary (item 12).
-          console.warn(
-            `[caye-reply] Evidence gate held reply: ${evidenceVerdict.reasons.join(', ')}` +
-              (evidenceVerdict.missing.length
-                ? ` (missing: ${evidenceVerdict.missing.join(', ')})`
-                : '')
-          )
-          terminal = {
-            action: 'hold',
-            reason: evidenceVerdict.reasons[0] ?? 'unverified_claim',
-            note: ownerNoteFor(evidenceVerdict, input.owner_note),
-            proposedReply: sanitizeDashes(input.content),
-            customerAcknowledgement:
-              "Thanks for the detail — let me confirm the specifics with our team so I can give you an accurate answer, and we'll follow up shortly.",
-            urgency: 'urgent',
+          // A hold here used to discard the ENTIRE drafted reply. When the
+          // ONLY unresolved thing is an unverified availability claim, the
+          // rest of what Caye drafted — a definition, other tour options, a
+          // price already looked up this turn — is real and answerable on
+          // its own; it should not wait on the owner just because one
+          // sentence in the same message also asserted something about a
+          // slot/capacity nobody verified (Pam Ott, 2026-08-17: "what's a
+          // shared tour / how many people / any other options" got held in
+          // full over one unverified sentence). Strip that sentence and
+          // ship the remainder, flagging only the specific gap. Falls back
+          // to a full hold when nothing substantive survives the strip (the
+          // whole reply WAS the claim) or when something else — a price, a
+          // high-stakes claim — is unresolved too.
+          const onlyAvailabilityUnverified =
+            evidenceVerdict.reasons.length === 1 &&
+            evidenceVerdict.reasons[0] === 'availability_claim_unverified'
+          const strippedContent = onlyAvailabilityUnverified
+            ? withoutAvailabilityClaims(input.content)
+            : ''
+
+          if (strippedContent.trim().length > 0) {
+            console.warn(
+              `[caye-reply] Evidence gate stripped an unverified availability claim and sent the rest ` +
+                `(missing: ${evidenceVerdict.missing.join(', ')})`
+            )
+            terminal = {
+              action: 'reply',
+              content: sanitizeDashes(strippedContent),
+              bookingId: createdBookingId,
+              needsOwnerFollowup: true,
+              ownerNote: partialAvailabilityNoteFor(input.owner_note),
+            }
+            if (inbound.conversationId) {
+              try {
+                await createServiceClient()
+                  .from('unified_conversations')
+                  .update({
+                    human_agent_enabled: true,
+                    human_agent_reason: ownerReasonLabelFor(evidenceVerdict),
+                    human_agent_marked_at: new Date().toISOString(),
+                  })
+                  .eq('id', inbound.conversationId)
+              } catch (err) {
+                console.error('[caye-reply] Failed to flag conversation for availability follow-up:', err)
+              }
+            }
+          } else {
+            // Held on evidence, not on the model's opinion of itself. The note
+            // is composed by ownerNoteFor from the same verdict, so what Mrs.
+            // Max reads and what actually happened cannot drift — and it
+            // contains no internal vocabulary (item 12). `reason` is a short
+            // human label (ownerReasonLabelFor), not the raw machine code —
+            // this is what lands in human_agent_reason and the inbox row.
+            console.warn(
+              `[caye-reply] Evidence gate held reply: ${evidenceVerdict.reasons.join(', ')}` +
+                (evidenceVerdict.missing.length
+                  ? ` (missing: ${evidenceVerdict.missing.join(', ')})`
+                  : '')
+            )
+            terminal = {
+              action: 'hold',
+              reason: ownerReasonLabelFor(evidenceVerdict),
+              note: ownerNoteFor(evidenceVerdict, input.owner_note),
+              proposedReply: sanitizeDashes(input.content),
+              customerAcknowledgement:
+                "Thanks for the detail — let me confirm the specifics with our team so I can give you an accurate answer, and we'll follow up shortly.",
+              urgency: 'urgent',
+            }
           }
         } else if (input.high_stakes_claim && input.confidence && input.confidence !== 'high') {
           // Safety/accessibility-adjacent claim + non-high confidence: unlike the

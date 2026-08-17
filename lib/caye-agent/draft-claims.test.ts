@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import { extractDollarAmounts, amountsAttestedBy, assertsAvailability } from './draft-claims'
+import {
+  extractDollarAmounts,
+  amountsAttestedBy,
+  assertsAvailability,
+  withoutAvailabilityClaims,
+} from './draft-claims'
 
 describe('extractDollarAmounts', () => {
   it('canonicalises so $199.00 and $199 are the same figure', () => {
@@ -65,6 +70,19 @@ describe('assertsAvailability', () => {
     expect(assertsAvailability('The tour runs about two hours.')).toBe(false)
   })
 
+  it('does NOT fire on stable business knowledge that mentions "shared"/tour options', () => {
+    // A definition or a catalog listing is not an availability claim just
+    // because the conversation concerns a tour (brief item 5).
+    expect(
+      assertsAvailability(
+        'A shared tour means other guests may also be on it, while a private tour is just your group.'
+      )
+    ).toBe(false)
+    expect(
+      assertsAvailability('We also offer the North Bimini Heritage Tour, a shared or private option.')
+    ).toBe(false)
+  })
+
   it('is sentence-scoped, so a hedge cannot excuse a separate commitment', () => {
     // The first clause is still a promise the customer will act on.
     expect(
@@ -74,5 +92,38 @@ describe('assertsAvailability', () => {
 
   it('accepts a hedge in the same sentence as neutralising', () => {
     expect(assertsAvailability('I think the 20th is available, but let me confirm.')).toBe(false)
+  })
+})
+
+describe('withoutAvailabilityClaims', () => {
+  it('keeps grounded content and drops only the unverified claim (Pam Ott shape)', () => {
+    const draft =
+      'A shared tour means other guests may join yours, while a private tour is just your ' +
+      'group. We also offer the North Bimini Heritage Tour. We have space for a few more on ' +
+      'that date.'
+    const result = withoutAvailabilityClaims(draft)
+    expect(result).toContain('A shared tour means other guests may join yours')
+    expect(result).toContain('North Bimini Heritage Tour')
+    expect(result).not.toContain('We have space for a few more')
+  })
+
+  it('leaves a draft with no availability claim untouched', () => {
+    const draft = 'A shared tour means other guests may join yours on the same trip.'
+    expect(withoutAvailabilityClaims(draft)).toBe(draft)
+  })
+
+  it('keeps a hedged sentence — it never asserted anything to strip', () => {
+    const draft = 'Let me check if the 20th is available and come back to you.'
+    expect(withoutAvailabilityClaims(draft)).toBe(draft)
+  })
+
+  it('returns empty when the entire draft was the unverified claim', () => {
+    expect(withoutAvailabilityClaims('Yes, we have space for 8 on the 20th.')).toBe('')
+  })
+
+  it('preserves order and drops multiple unverified sentences', () => {
+    const draft = 'That date works for us. Prices start at $110 per person. We can fit your group in.'
+    const result = withoutAvailabilityClaims(draft)
+    expect(result).toBe('Prices start at $110 per person.')
   })
 })

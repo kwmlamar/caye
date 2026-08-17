@@ -3,7 +3,10 @@ import {
   decideDisposition,
   evaluateAction,
   ownerNoteFor,
+  ownerReasonLabelFor,
+  partialAvailabilityNoteFor,
   type EvidenceFact,
+  type DispositionResult,
 } from './evidence'
 
 vi.mock('server-only', () => ({}))
@@ -70,6 +73,18 @@ describe('decideDisposition — evidence authorises, the model does not', () => 
       })
       expect(r.disposition).toBe('hold')
     }
+  })
+
+  it('lets an availability claim through once the schedule was actually checked', () => {
+    // check_availability ran this turn (evidence.add('availability_verified') +
+    // 'date_identified' in lib/caye-reply.ts) — the claim is now grounded,
+    // not just asserted.
+    const r = decideDisposition({
+      evidence: set('service_identified', 'date_identified', 'availability_verified'),
+      modelConfidence: 'high',
+      claimsAvailability: true,
+    })
+    expect(r.disposition).toBe('send')
   })
 
   it('lets a grounded quote through', () => {
@@ -177,5 +192,50 @@ describe('ownerNoteFor — no internal vocabulary reaches the owner', () => {
       'whether the ferry runs on Sundays'
     )
     expect(note).toContain('whether the ferry runs on Sundays')
+  })
+})
+
+describe('ownerReasonLabelFor — human_agent_reason must never be the raw code', () => {
+  // Pam Ott incident, 2026-08-17: `evidenceVerdict.reasons[0]` was written
+  // straight into human_agent_reason, so the inbox row literally read
+  // "availability_claim_unverified".
+  it('never returns a raw machine code', () => {
+    const cases: Array<DispositionResult> = [
+      { disposition: 'hold', reasons: ['availability_claim_unverified'], missing: ['availability_verified'] },
+      { disposition: 'hold', reasons: ['quote_without_database_price'], missing: ['price_from_database'] },
+      {
+        disposition: 'hold',
+        reasons: ['high_stakes_claim_without_verified_context'],
+        missing: [],
+      },
+    ]
+    for (const c of cases) {
+      const label = ownerReasonLabelFor(c)
+      expect(label).not.toBe(c.reasons[0])
+      expect(label).not.toContain('_')
+    }
+  })
+
+  it('labels an unverified availability claim in plain words', () => {
+    expect(
+      ownerReasonLabelFor({
+        disposition: 'hold',
+        reasons: ['availability_claim_unverified'],
+        missing: ['availability_verified'],
+      })
+    ).toMatch(/availability/i)
+  })
+})
+
+describe('partialAvailabilityNoteFor — no internal vocabulary, no false "I held it"', () => {
+  it('does not claim the reply was held when it actually shipped', () => {
+    const note = partialAvailabilityNoteFor()
+    expect(note.toLowerCase()).not.toContain('i held it')
+    expect(note).toMatch(/answered what i could/i)
+  })
+
+  it('carries the owner note through when there is one', () => {
+    const note = partialAvailabilityNoteFor('max group size for the shared tour')
+    expect(note).toContain('max group size for the shared tour')
   })
 })

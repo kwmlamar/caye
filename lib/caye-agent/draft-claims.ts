@@ -86,3 +86,24 @@ export function assertsAvailability(text: string): boolean {
   }
   return false
 }
+
+/**
+ * The same sentence-scoped logic as `assertsAvailability`, but returns the
+ * draft with the unverified sentence(s) removed instead of a boolean.
+ *
+ * Exists because the evidence gate (evidence.ts) used to hold the ENTIRE
+ * drafted reply the moment any one sentence tripped `assertsAvailability` —
+ * discarding a definition, other tour options, or an already-grounded price
+ * that happened to share a message with one unverified availability claim
+ * (the Pam Ott incident, 2026-08-17: "what's a shared tour, how many people,
+ * any other options" got held in full over one unverified sentence about
+ * group size). Everything else in the draft is real; only the claim itself
+ * needs to wait on the owner.
+ */
+export function withoutAvailabilityClaims(text: string): string {
+  const kept = sentences(text).filter((sentence) => {
+    if (HEDGE_PATTERN.test(sentence)) return true
+    return !AVAILABILITY_PATTERNS.some((p) => p.test(sentence))
+  })
+  return kept.join(' ').trim()
+}

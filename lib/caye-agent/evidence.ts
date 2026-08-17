@@ -201,6 +201,41 @@ function dedupe(facts: EvidenceFact[]): EvidenceFact[] {
 }
 
 /**
+ * Short owner-facing label for `human_agent_reason` / the conversation-row
+ * preview — NEVER the raw machine code in `result.reasons`.
+ *
+ * Before this, callers wrote `evidenceVerdict.reasons[0]` straight into
+ * `human_agent_reason`, so the inbox row for a held conversation literally
+ * read "availability_claim_unverified" (Pam Ott incident, 2026-08-17). The
+ * machine code stays available in `result.reasons` for logs/telemetry —
+ * this only governs what a human reads in the queue.
+ */
+export function ownerReasonLabelFor(result: DispositionResult): string {
+  if (result.reasons.includes('quote_without_database_price')) return 'Needs price confirmation'
+  if (result.reasons.includes('availability_claim_unverified')) return 'Needs availability confirmation'
+  if (result.reasons.includes('high_stakes_claim_without_verified_context')) {
+    return 'Needs your review — safety/policy claim'
+  }
+  return 'Needs your review'
+}
+
+/**
+ * Note for the owner when an availability claim was the ONLY unverified
+ * part of an otherwise-answerable draft, and the rest already shipped to
+ * the customer (stripped of that one claim) rather than being held with it.
+ * Distinct from `ownerNoteFor`'s hold branch, which is for when nothing
+ * shipped at all — this note should not say "I held it."
+ */
+export function partialAvailabilityNoteFor(ownerNote?: string | null): string {
+  const detail = ownerNote?.trim() ? `\n\nWhat I was unsure about: ${ownerNote.trim()}` : ''
+  return (
+    `I answered what I could, but couldn't confirm the availability/capacity part against ` +
+    `your schedule, so I left that part out rather than guess. Worth following up with her ` +
+    `on that specific point.` + detail
+  )
+}
+
+/**
  * Plain-English note for the owner. Built from the same verdict the gate
  * used, so what she reads and what actually happened cannot drift apart —
  * and containing no internal vocabulary, per item 12. No "evidence", no
