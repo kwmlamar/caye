@@ -14,6 +14,7 @@ import { fetchAuthoritativeThread } from './fetch-authoritative-thread'
 import { fetchBusinessFacts } from '@/lib/business-facts'
 import { createServiceClient } from '@/lib/supabase-server'
 import { enforceActionGrounding, type ExecutedToolOutcome } from './action-claim-guard'
+import { detectToolNameLeak } from '@/lib/operator-text-guard'
 
 // Safety: bound the tool loop so a misbehaving model can't call tools
 // forever. 5 iterations is generous — most operator asks resolve in 1-2.
@@ -126,6 +127,23 @@ export async function runToolLoop(args: ToolLoopArgs): Promise<ToolLoopResult> {
     }
     return grounded
   }
+  // Backstop for a model naming its own tools out loud (2026-08-17 Pam Ott
+  // incident — "should I stage it as a send_reply?"). The prompt already
+  // says never to do this; this is the code-level net under that, same
+  // shape as applyActionGrounding above. Checked against the tools this
+  // turn's registry actually contains, so it can never drift from what's
+  // really callable. On a hit, the whole reply is swapped for a clean
+  // generic line rather than trying to surgically edit around the leaked
+  // token — same reaction this codebase already uses for every other
+  // internal-leak catch (operator-brief.ts, outbound-worker/route.ts).
+  const applyToolNameLeakGuard = (text: string): string => {
+    const leaked = detectToolNameLeak(text, toolRegistry.map((t) => t.name))
+    if (!leaked) return text
+    console.error(
+      `[caye-agent/execute] reply named an internal tool ("${leaked}") — workspace=${args.ctx.workspaceId} — falling back`
+    )
+    return "Give me a second — let me get you a cleaner answer on that."
+  }
 
   // PHASE 3B — structural final-output safety for front-desk (2026-08-16).
   // `lib/caye-reply.ts`'s live production loop passes this SAME
@@ -186,8 +204,10 @@ export async function runToolLoop(args: ToolLoopArgs): Promise<ToolLoopResult> {
       // Action-grounding backstop (2026-08-16) — see action-claim-guard.ts.
       // Runs before every other check below so a stripped/corrected claim,
       // not the model's raw prose, is what identity/payment/evidence
-      // guards and the final return see.
-      const replyText = applyActionGrounding(rawReplyText)
+      // guards and the final return see. Tool-name-leak guard runs after —
+      // order doesn't matter between the two (disjoint failure shapes), but
+      // this keeps the freshest text going into the last check.
+      const replyText = applyToolNameLeakGuard(applyActionGrounding(rawReplyText))
 
       // The turn just pushed onto `newTurns`/`messages` above still holds
       // the model's RAW content — persistAgentTurns writes that straight

@@ -2,7 +2,13 @@ import { describe, it, expect, vi } from 'vitest'
 
 vi.mock('server-only', () => ({}))
 
-import { detectInternalLeak, founderBriefingLeak, stripToolMarkers, mediaPlaceholder } from './operator-text-guard'
+import {
+  detectInternalLeak,
+  founderBriefingLeak,
+  detectToolNameLeak,
+  stripToolMarkers,
+  mediaPlaceholder,
+} from './operator-text-guard'
 import { detectForcedEscalation } from './forced-escalation'
 import { QUIET_SENTINEL } from './quiet-scan'
 
@@ -164,6 +170,49 @@ describe('founderBriefingLeak', () => {
     expect(
       founderBriefingLeak("I answered her, but I wasn't fully sure of what I said. Worth a read in case it needs correcting.")
     ).toBeNull()
+  })
+})
+
+// The exact real sentence from the Pam Ott incident (2026-08-17): Caye,
+// deciding between staging a customer send and filing an external email
+// draft, asked Mrs. Max "should I stage it as a send_reply?" instead of
+// describing the outcome in plain language.
+const TOOL_NAMES = ['send_reply', 'draft_in_inbox', 'confirm_pending_action', 'mark_handled']
+
+describe('detectToolNameLeak', () => {
+  it('flags the real leaked sentence from the Pam Ott incident', () => {
+    expect(
+      detectToolNameLeak(
+        'Also — do you want this drafted into her Drafts folder, or should I stage it as a send_reply?',
+        TOOL_NAMES
+      )
+    ).toBe('send_reply')
+  })
+
+  it('flags any tool name from the supplied list, whole-word only', () => {
+    expect(detectToolNameLeak('I could draft_in_inbox this for you.', TOOL_NAMES)).toBe('draft_in_inbox')
+    expect(detectToolNameLeak('Call confirm_pending_action once you say go.', TOOL_NAMES)).toBe(
+      'confirm_pending_action'
+    )
+  })
+
+  it('does not flag a tool name as a substring of a longer word', () => {
+    expect(detectToolNameLeak('I already send_replyish this', ['send_reply'])).toBeNull()
+  })
+
+  it('passes ordinary operator prose that never names a tool', () => {
+    expect(
+      detectToolNameLeak('Want me to send it, or put it in your email drafts so you can attach something?', TOOL_NAMES)
+    ).toBeNull()
+    expect(detectToolNameLeak('', TOOL_NAMES)).toBeNull()
+  })
+
+  it('is scoped to exactly the tool names it is given, not a general snake_case scan', () => {
+    // Unlike founderBriefingLeak, an arbitrary snake_case word that ISN'T in
+    // the supplied vocabulary must not trip this — e.g. an operator-typed
+    // reference code, which is plausible in live chat and would be a false
+    // positive if this were a blanket snake_case scanner.
+    expect(detectToolNameLeak('Her code is BOOKING_REF_442.', TOOL_NAMES)).toBeNull()
   })
 })
 

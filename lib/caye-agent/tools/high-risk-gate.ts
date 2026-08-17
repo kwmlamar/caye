@@ -76,6 +76,19 @@ async function describePendingAction(
       const heading = recipient ? `Send to ${recipient}:` : 'Send:'
       return `${heading}\n\n${body}`
     }
+    case 'draft_in_inbox': {
+      // Not a send — spelled out here too, not just in the tool's own
+      // result, because this summary is what the operator sees BEFORE
+      // confirming (2026-08-17, Pam Ott incident: the prior low-risk path
+      // let this happen with no summary shown at all).
+      const body = typeof args.body === 'string' ? args.body : ''
+      const conversationId = typeof args.conversation_id === 'string' ? args.conversation_id : null
+      const recipient = conversationId ? await describeConversationRecipient(supabase, conversationId) : null
+      const heading = recipient
+        ? `Not sent — file this into your email drafts on ${recipient}'s thread, for you to open, attach anything, and send yourself:`
+        : 'Not sent — file this into your email drafts, for you to open, attach anything, and send yourself:'
+      return `${heading}\n\n${body}`
+    }
     case 'cancel_booking':
       return `Cancel booking ${args.booking_id}${args.reason ? ` (${args.reason})` : ''}`
     case 'reschedule_booking':

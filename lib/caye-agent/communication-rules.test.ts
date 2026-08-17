@@ -226,6 +226,83 @@ describe('back-office prompt — high-risk confirmation flow', () => {
   })
 })
 
+describe('back-office prompt — composing a draft vs. filing an external one (2026-08-17 Pam Ott incident)', () => {
+  // Mrs. Max asked "draft please" three times on a customer thread that
+  // happened to be email. The first two "draft please"s correctly produced
+  // an inline WhatsApp draft; the next two silently filed a Gmail/Zoho
+  // draft instead and told her to go open her email. Requirements A, B, C.
+
+  it('says the bare word "draft" always means compose and show inline, regardless of the customer channel', () => {
+    const p = prompt()
+    expect(p).toMatch(/COMPOSING A DRAFT VS\. FILING AN EXTERNAL ONE/)
+    expect(p).toMatch(/WORD "DRAFT" ALONE DOES NOT MEAN THIS TOOL|is NEVER enough on its own to justify it/)
+    expect(p).toMatch(/no matter what channel the CUSTOMER is on/)
+  })
+
+  it('requires an explicit request before filing into the external email drafts folder', () => {
+    const p = prompt()
+    expect(p).toMatch(/EXPLICITLY asks for that outcome/)
+    expect(p).toMatch(/put this in my email drafts/)
+  })
+
+  it('tells Caye to ask in plain language rather than guess when it is unclear', () => {
+    const p = prompt()
+    expect(p).toMatch(/Want me to send it, or put it in your email drafts/)
+    expect(p).toMatch(/never guess/)
+  })
+
+  it('lists draft_in_inbox among the HIGH-RISK tools, not the autonomous low-risk ones', () => {
+    const backOffice = TOOL_REGISTRY.filter((t) => t.modes.includes('back-office'))
+    const draftTool = backOffice.find((t) => t.name === 'draft_in_inbox')
+    expect(draftTool?.risk).toBe('high')
+    const p = prompt()
+    // autonomyBlock() derives its HIGH-RISK list straight from the registry,
+    // so this also locks in that draft_in_inbox appears there and NOT in
+    // the "execute immediately, no confirmation" low-risk sentence.
+    const highRiskLine = p.split('\n').find((l) => l.includes('HIGH-RISK WRITES'))
+    expect(highRiskLine).toContain('draft_in_inbox')
+    const lowRiskLine = p.split('\n').find((l) => l.includes('LOW-RISK WRITES'))
+    expect(lowRiskLine).not.toContain('draft_in_inbox')
+  })
+})
+
+describe('back-office prompt — internal tool names never reach the operator (2026-08-17 Pam Ott incident)', () => {
+  // The real leaked sentence: "should I stage it as a send_reply?"
+
+  it('explicitly bans saying a snake_case tool name out loud', () => {
+    const p = prompt()
+    expect(p).toMatch(/never say "send_reply", "draft_in_inbox", "confirm_pending_action"/)
+    expect(p).toMatch(/describe the OUTCOME each one produces/)
+  })
+
+  it('gives the corrected phrasing for the exact real leaked question', () => {
+    const p = prompt()
+    expect(p).toMatch(/want me to send it, or put it in your email drafts\?/i)
+  })
+})
+
+describe('back-office prompt — customer-target correction (regression, real Pam Ott incident)', () => {
+  // Mid-draft, Mrs. Max said "actually i want it for pam" — a correction of
+  // WHO the draft is for, not a new topic. Production correctly re-targeted
+  // onto Pam via a fresh search_threads/get_customer lookup and never
+  // touched the prior customer's (Sonja's) thread. This is pre-existing
+  // prompt behavior (unchanged by this fix); locked in here as a named
+  // regression so it can't silently drift while draft_in_inbox is reworked.
+  it('requires a tool lookup before naming a specific customer, never a guess from memory', () => {
+    const p = prompt()
+    expect(p).toMatch(/do NOT fill in the name/)
+    expect(p).toMatch(/call search_threads \/ get_customer \/ get_recent_activity \/ get_held_queue/)
+  })
+})
+
+describe('back-office prompt — current-channel continuity', () => {
+  it('says Caye\'s own reply always returns through the channel the operator is on', () => {
+    const p = prompt()
+    expect(p).toMatch(/your OWN reply always comes back through the channel/)
+    expect(p).toMatch(/Never conclude a turn by telling .* to go open/)
+  })
+})
+
 describe('morning briefing prompt — no manufactured questions', () => {
   const CLEAR = 'ATTENTION STATE: nothing is open. The owner is genuinely clear.'
 

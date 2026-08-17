@@ -168,6 +168,36 @@ export function founderBriefingLeak(text: string): string | null {
 }
 
 /**
+ * Does `text` bare-name one of Caye's own tools — "should I stage it as a
+ * send_reply?" — to the operator?
+ *
+ * WHY THIS EXISTS (2026-08-17, Pam Ott incident)
+ * Deciding between staging a customer send and filing an external email
+ * draft, the model asked the operator: "do you want this drafted into her
+ * Drafts folder..., or should I stage it as a send_reply?" — reaching for
+ * its own tool's internal name mid-sentence instead of describing the
+ * outcome. `detectInternalLeak` didn't catch it: that guard's patterns are
+ * exact machine-composed strings and bracketed `[snake_case]` tokens, and
+ * this was neither — a bare identifier inside otherwise-ordinary prose.
+ * `founderBriefingLeak` already catches ANY bare snake_case token, but it's
+ * tuned for a dashboard card a founder reads for five seconds, where that
+ * breadth is safe; a live back-and-forth conversation is more likely to
+ * legitimately contain an operator-chosen code or reference number with an
+ * underscore in it, so this is deliberately narrower — a closed vocabulary
+ * of Caye's OWN real tool names, not "any snake_case", so there is no
+ * false-positive risk against ordinary operator prose. Callers pass the
+ * live tool list (TOOL_REGISTRY names) rather than this module importing
+ * it directly, keeping this file's own dependency surface tool-free.
+ */
+export function detectToolNameLeak(text: string, toolNames: readonly string[]): string | null {
+  if (!text) return null
+  for (const name of toolNames) {
+    if (new RegExp(`\\b${name}\\b`).test(text)) return name
+  }
+  return null
+}
+
+/**
  * Remove tool markers from a rendered turn body, leaving the human-readable
  * text. Returns an empty string when the body was nothing but markers, which
  * is how callers detect "this turn has nothing to show a human."

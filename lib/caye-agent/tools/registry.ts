@@ -25,7 +25,6 @@ import { recordChannelIntake } from './write-low/record-channel-intake'
 import { markHandled } from './write-low/mark-handled'
 import { scheduleReminder } from './write-low/schedule-reminder'
 import { sendOperatorMessage } from './write-low/send-operator-message'
-import { draftInInbox } from './write-low/draft-in-inbox'
 import { addServiceAvailabilityRule } from './write-low/add-service-availability-rule'
 import { addBusinessFact } from './write-low/add-business-fact'
 import { confirmFactCandidate } from './write-low/confirm-fact-candidate'
@@ -74,7 +73,7 @@ import { createCustomerBooking } from './write-high/create-customer-booking'
  * Read tools (11): #38 + #40 — autonomous execution (adds
  * get_channel_status, 2026-08-06 — connect-walkthrough state, derived
  * from connected_accounts rather than stored)
- * Low-risk write tools (22): #37 — autonomous execution (adds
+ * Low-risk write tools (21): #37 — autonomous execution (adds
  * remove_business_fact, 2026-07-30 — mirrors add_business_fact so
  * temporary notes like a vacation closure can be retired once stale;
  * update_team_member_name, 2026-07-27 — self-service display name so
@@ -86,12 +85,15 @@ import { createCustomerBooking } from './write-high/create-customer-booking'
  * missing capability: a real, synchronous WhatsApp send to another
  * authorized operator, low-risk on the same reasoning as
  * schedule_reminder — it can only ever reach an operator, never a guest)
- * High-risk write tools (10): #42/#43 — gated through confirmation flow
+ * High-risk write tools (11): #42/#43 — gated through confirmation flow
  * (adds remove_pricing_tier, 2026-07-26; send_outreach_batch, 2026-08-01 —
  * step 3 of the 2026-07-21 staged-autonomy roadmap, batch-approved
- * first-touch outreach sends). Listed ungated in high-risk-registry.ts.
- * Plus confirm_pending_action (2026-08-08), which runs a staged action by
- * id and is itself ungated by design.
+ * first-touch outreach sends; draft_in_inbox, 2026-08-17 — raised from
+ * low-risk after it silently redirected an operator to her email instead
+ * of showing a draft in chat, see the tool's own doc comment). Listed
+ * ungated in high-risk-registry.ts. Plus confirm_pending_action
+ * (2026-08-08), which runs a staged action by id and is itself ungated by
+ * design.
  * Driver-mode tools (4, 2026-07-05): tagged modes: ['driver'] — never
  * shipped to back-office/front-desk requests, see execute.ts mode filter.
  */
@@ -123,7 +125,6 @@ export const TOOL_REGISTRY: AnyTool[] = [
   markHandled as AnyTool,
   scheduleReminder as AnyTool,
   sendOperatorMessage as AnyTool,
-  draftInInbox as AnyTool,
   addServiceAvailabilityRule as AnyTool,
   addBusinessFact as AnyTool,
   confirmFactCandidate as AnyTool,

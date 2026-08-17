@@ -3,7 +3,7 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { createZohoReplyDraft } from '@/lib/email-ai'
 import { checkZohoDraftGate, ZOHO_DRAFT_VERIFIED_KEY } from '@/lib/zoho-draft-gate'
 import type { Tool } from '../types'
-import { assertConversationOwnedByWorkspace } from './_guards'
+import { assertConversationOwnedByWorkspace } from '../write-low/_guards'
 
 interface DraftInInboxInput {
   conversation_id: string
@@ -12,7 +12,7 @@ interface DraftInInboxInput {
 
 /**
  * Put a composed reply in the operator's own Drafts folder instead of
- * sending it.
+ * showing it in this conversation.
  *
  * WHY THIS EXISTS (2026-08-09)
  * Mrs. Max wanted to send eleven tour photos to a guest with a written
@@ -29,19 +29,36 @@ interface DraftInInboxInput {
  * on the real thread (threading via findReplyTargetZohoMessageId), so she
  * opens her normal mail client, attaches whatever she likes, and sends it
  * herself — which is the part Caye genuinely cannot do.
+ *
+ * RISK RAISED low → high (2026-08-17, Pam Ott incident)
+ * On the real Bimini thread, Mrs. Max asked for a plain conversational
+ * "draft please" three times in a row (never once asking for anything to be
+ * saved to her email). The first two times Caye correctly staged send_reply
+ * and showed the draft in WhatsApp. The third and fourth time — after Caye
+ * herself asked "should I stage it as a send_reply?" and got no direct
+ * answer — she silently called this tool instead and told Mrs. Max to go
+ * open her email, twice, with nothing to confirm first. Low-risk execution
+ * meant that silent redirect happened with no checkpoint at all. The prompt
+ * fix (modes/back-office.ts) is the primary correction — this tool should
+ * essentially never be reached from the bare word "draft" — but a
+ * consequence this visible (the operator is pulled out of the channel
+ * she's managing Caye from) gets the same code-level confirmation
+ * checkpoint every other consequential action here already has, exactly
+ * because a model can still misjudge which tool a plain "draft please"
+ * means. See gateHighRisk (high-risk-gate.ts) for the mechanism.
  */
 export const draftInInbox: Tool<DraftInInboxInput> = {
   name: 'draft_in_inbox',
-  description: `Write a reply into the operator's OWN email Drafts folder, on the customer's thread. Does NOT send — nothing reaches the customer. They open their mail client, add anything you can't (photos, files, attachments), and send it themselves.
+  description: `HIGH-RISK — puts a draft into the operator's OWN external email Drafts folder, on the customer's thread, instead of showing it in this conversation. Staged and confirmed the same way send_reply is: the first call only stages it and returns it un-executed — call confirm_pending_action once the operator agrees, exactly as for any other high-risk tool.
 
-USE THIS WHENEVER ATTACHMENTS ARE INVOLVED. You cannot attach photos or files to a send_reply. The moment the operator says they want to send a customer images, documents, or anything you can't produce, offer this instead of collecting the files — say so BEFORE they start sending them to you.
+Does NOT send — nothing reaches the customer.
 
-Also right when the operator wants to add a personal note in their own words, or wants the message sitting in their inbox to send later on their own timing.
+THE WORD "DRAFT" ALONE DOES NOT MEAN THIS TOOL. "Draft please" / "draft a reply" / "write something for X" / "show me what you'd say" mean COMPOSE AND SHOW IT HERE — call send_reply and relay its staged draft in this same conversation, the same as any other draft request, regardless of whether the customer's own thread happens to be email. Only call this tool when the operator EXPLICITLY asks for the external artifact — "put this in my email drafts", "save it as a Gmail/email draft", "create an email draft for her", "I'll add the photos and send it myself" — or when attachments are the reason (below). If you can't tell which the operator wants, ask in plain language ("Want me to send it, or put it in your email drafts?") before calling either tool.
 
-Not a replacement for send_reply. If there's no attachment and no reason to hand it over, send_reply is fewer steps for them.
+USE THIS WHEN ATTACHMENTS ARE INVOLVED. You cannot attach photos or files to a send_reply. The moment the operator says they want to send a customer images, documents, or anything you can't produce, offer this instead of collecting the files — say so BEFORE they start sending them to you.
 
 Email threads only — the operator's mailbox is the delivery surface, so this does nothing for a WhatsApp or Instagram thread.`,
-  risk: 'low',
+  risk: 'high',
   roles: ['owner', 'founder'],
   modes: ['back-office'],
   inputSchema: {

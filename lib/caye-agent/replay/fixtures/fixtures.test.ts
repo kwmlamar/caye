@@ -11,6 +11,7 @@ import { buildSendRefinementFixture } from './send-refinement'
 import { buildNoUnnecessaryActionFixture } from './no-unnecessary-action'
 import { buildRealNbcLaneyFixture } from './real-nbc-laney'
 import { buildRealContinuityWillFixture } from './real-continuity-will'
+import { buildRealPamOttDraftChannelFixture } from './real-pam-ott-draft-channel'
 
 /**
  * These tests check FIXTURE CONSTRUCTION — that each Case A–F fixture
@@ -146,5 +147,26 @@ describe('replay fixtures — real-history construction (no PII, no DB access)',
     const lastTurn = fixture.messages[fixture.messages.length - 1]
     expect(lastTurn.content).toContain('Just laid it and got my receipt!')
     expect(fixture.messages.length).toBeGreaterThan(3)
+  })
+
+  it('real-pam-ott-draft-channel: verbatim "draft please" trigger, both send_reply and draft_in_inbox offered', () => {
+    const fixture = buildRealPamOttDraftChannelFixture()
+    const lastTurn = fixture.messages[fixture.messages.length - 1]
+    expect(lastTurn.role).toBe('user')
+    expect(lastTurn.content).toContain('draft please')
+    expect(lastTurn.content).not.toMatch(/email|inbox|gmail/i)
+    expect(fixture.tools.map((t) => t.name)).toEqual(
+      expect.arrayContaining(['send_reply', 'draft_in_inbox'])
+    )
+    // Both offered at HIGH risk post-fix — see registry.ts / high-risk-registry.ts.
+    expect(fixture.tools.find((t) => t.name === 'draft_in_inbox')?.risk).toBe('high')
+    expect(fixture.systemPrompt).toContain('COMPOSING A DRAFT VS. FILING AN EXTERNAL ONE')
+  })
+
+  it('real-pam-ott-draft-channel: no surname/email of the real customer appears anywhere in the fixture', () => {
+    const fixture = buildRealPamOttDraftChannelFixture()
+    const haystack = JSON.stringify(fixture)
+    expect(haystack).not.toContain('Ott')
+    expect(haystack).not.toContain('.com')
   })
 })

@@ -9,6 +9,7 @@ import { confirmBooking } from './write-high/confirm-booking'
 import { rescheduleBooking } from './write-high/reschedule-booking'
 import { cancelBooking } from './write-high/cancel-booking'
 import { sendOutreachBatch } from './write-high/send-outreach-batch'
+import { draftInInbox } from './write-high/draft-in-inbox'
 
 /**
  * The UNGATED high-risk tools, in one place.
@@ -43,6 +44,13 @@ export const HIGH_RISK_TOOLS: AnyTool[] = [
   // reviewed via get_pending_quotes, behind the same confirmation round-trip
   // as every other high-risk tool here.
   sendOutreachBatch as AnyTool,
+  // Raised from low-risk (2026-08-17, Pam Ott incident) — see
+  // write-high/draft-in-inbox.ts's doc comment. Filing something into the
+  // operator's own external inbox is reversible for the customer (nothing
+  // is sent) but pulls the operator out of the channel they're managing
+  // Caye from, so it gets the same confirm-before-it-happens checkpoint as
+  // every other consequential action here.
+  draftInInbox as AnyTool,
 ]
 
 export function findHighRiskTool(name: string): AnyTool | undefined {

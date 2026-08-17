@@ -307,3 +307,62 @@ describe('gateHighRisk supersession (Phase 3, Part E — refinement of a staged 
     expect(confirmB).toEqual({ ok: true, data: { sent: true } })
   })
 })
+
+describe('gateHighRisk — draft_in_inbox staged summary (2026-08-17 Pam Ott incident)', () => {
+  // draft_in_inbox was raised from low-risk (immediate, no checkpoint) to
+  // high-risk (staged + confirmed) after it silently filed a customer's
+  // draft into the operator's own email instead of showing it in chat. This
+  // locks in that the operator sees a clear, non-"sent" summary BEFORE
+  // confirming — the whole point of the risk-tier change.
+  function makeDraftInInboxTool(mutate: Tool<FakeSendArgs>['execute']): Tool<FakeSendArgs> {
+    return {
+      name: 'draft_in_inbox',
+      description: 'test draft-in-inbox tool',
+      risk: 'high',
+      roles: ['owner', 'founder'],
+      modes: ['back-office'],
+      inputSchema: {
+        type: 'object',
+        properties: { conversation_id: { type: 'string' }, body: { type: 'string' } },
+        required: ['conversation_id', 'body'],
+      },
+      execute: mutate,
+    }
+  }
+
+  it('stages with a summary that says NOT sent and shows the full body, without executing the real mutation', async () => {
+    const mutate = vi.fn<Tool<FakeSendArgs>['execute']>(async () => ({ ok: true, data: { sent: false } }))
+    const gated = gateHighRisk(makeDraftInInboxTool(mutate))
+
+    const result = await gated.execute(
+      { conversation_id: 'conv-pam', body: 'Dear Pam, thanks for your interest...' },
+      ctx({ workspaceId: 'ws-draft-1', requestId: 'req-1' })
+    )
+
+    expect(mutate).not.toHaveBeenCalled()
+    expect(result.ok).toBe(true)
+    const data = result.data as { pending: boolean; executed: boolean; summary: string }
+    expect(data.pending).toBe(true)
+    expect(data.executed).toBe(false)
+    expect(data.summary).toMatch(/Not sent/)
+    expect(data.summary).toContain('Dear Pam, thanks for your interest...')
+  })
+
+  it('confirms on a later, separate request — running the real mutation exactly once', async () => {
+    const mutate = vi.fn<Tool<FakeSendArgs>['execute']>(async () => ({ ok: true, data: { sent: false, draft_id: 'd1' } }))
+    const gated = gateHighRisk(makeDraftInInboxTool(mutate))
+    const wsId = 'ws-draft-2'
+
+    await gated.execute(
+      { conversation_id: 'conv-pam', body: 'Dear Pam...' },
+      ctx({ workspaceId: wsId, requestId: 'req-1' })
+    )
+    const confirmed = await gated.execute(
+      { conversation_id: 'conv-pam', body: 'Dear Pam...' },
+      ctx({ workspaceId: wsId, requestId: 'req-2' })
+    )
+
+    expect(mutate).toHaveBeenCalledTimes(1)
+    expect(confirmed).toEqual({ ok: true, data: { sent: false, draft_id: 'd1' } })
+  })
+})

@@ -771,3 +771,73 @@ describe('runToolLoop action-grounding on back-office (2026-08-16 Mrs. Max incid
     expect(result.replyText).toBe('Sent — she should have it now.')
   })
 })
+
+describe('runToolLoop — internal tool names never reach the operator (2026-08-17 Pam Ott incident)', () => {
+  const textTurn = (text: string): Anthropic.Message =>
+    ({
+      id: 'msg', type: 'message', role: 'assistant', model: 'claude-sonnet-4-6',
+      usage: { input_tokens: 0, output_tokens: 0 }, stop_reason: 'end_turn', stop_sequence: null,
+      content: [{ type: 'text', text }],
+    }) as Anthropic.Message
+
+  async function runBackOfficeTurn(text: string, tools: Tool<never>[]) {
+    vi.doMock('@/lib/llm-telemetry', () => ({
+      loggedMessagesCreate: async () => textTurn(text),
+    }))
+    vi.resetModules()
+    const { runToolLoop: freshRunToolLoop } = await import('./execute')
+    const ctx: ToolContext = { workspaceId: 'ws_test', callerRole: 'owner', requestId: 'req_leak' }
+    const result = await freshRunToolLoop({
+      client: {} as Anthropic,
+      model: 'claude-sonnet-4-6',
+      maxTokens: 256,
+      systemPrompt: 'back office agent',
+      initialMessages: [{ role: 'user', content: 'draft please' }],
+      ctx,
+      tools,
+    })
+    vi.doUnmock('@/lib/llm-telemetry')
+    return result
+  }
+
+  const dummyTool = (name: string): Tool<never> =>
+    ({
+      name,
+      description: 'test',
+      risk: 'high',
+      roles: ['owner', 'founder'],
+      modes: ['back-office'],
+      inputSchema: { type: 'object', properties: {} },
+      async execute() {
+        return { ok: true }
+      },
+    }) as unknown as Tool<never>
+
+  // The real, verbatim leaked sentence (2026-08-17): deciding between
+  // filing an external draft and staging a customer send, the model asked
+  // the operator "should I stage it as a send_reply?" instead of describing
+  // the outcome in plain language.
+  it('strips a reply naming a real registered tool, replacing it with a clean fallback', async () => {
+    const result = await runBackOfficeTurn(
+      'Also — do you want this drafted into her Drafts folder, or should I stage it as a send_reply?',
+      [dummyTool('send_reply'), dummyTool('draft_in_inbox')]
+    )
+    expect(result.replyText).not.toContain('send_reply')
+    expect(result.replyText).not.toBe('')
+  })
+
+  it('leaves ordinary text alone when no tool name is mentioned', async () => {
+    const result = await runBackOfficeTurn(
+      'Want me to send it, or put it in your email drafts?',
+      [dummyTool('send_reply'), dummyTool('draft_in_inbox')]
+    )
+    expect(result.replyText).toBe('Want me to send it, or put it in your email drafts?')
+  })
+
+  it('only matches tools actually in this turn\'s registry, not an arbitrary snake_case word', async () => {
+    // A business reference code the operator or model might legitimately
+    // type is not in the tool vocabulary and must survive untouched.
+    const result = await runBackOfficeTurn('Her code is BOOKING_REF_442.', [dummyTool('send_reply')])
+    expect(result.replyText).toBe('Her code is BOOKING_REF_442.')
+  })
+})
