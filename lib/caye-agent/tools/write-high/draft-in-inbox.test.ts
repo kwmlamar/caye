@@ -67,9 +67,6 @@ const ctx: ToolContext = {
 
 describe('draft_in_inbox — risk tier (2026-08-17 Pam Ott incident)', () => {
   it('is HIGH risk, gated through the same confirmation flow as send_reply', () => {
-    // Raised from 'low' — the tool used to execute immediately with no
-    // operator checkpoint, which is exactly what let it silently redirect
-    // Mrs. Max to her email instead of showing a draft in WhatsApp.
     expect(draftInInbox.risk).toBe('high')
   })
 
@@ -88,9 +85,15 @@ describe('draft_in_inbox — risk tier (2026-08-17 Pam Ott incident)', () => {
   it('still documents the attachment trigger this tool was originally built for', () => {
     expect(draftInInbox.description).toMatch(/USE THIS WHEN ATTACHMENTS ARE INVOLVED/)
   })
+
+  it('names Zoho as the current provider and forbids generic Gmail language', () => {
+    expect(draftInInbox.description).toMatch(/CURRENT PROVIDER: this tool writes to ZOHO MAIL/i)
+    expect(draftInInbox.description).toMatch(/NEVER call the destination Gmail/i)
+    expect(draftInInbox.description).toMatch(/Do not use "Gmail" as a generic synonym/i)
+  })
 })
 
-describe('draft_in_inbox — execute() behavior unchanged by the risk-tier move', () => {
+describe('draft_in_inbox — execute() behavior', () => {
   it('still refuses a non-email conversation', async () => {
     conversationRow = { ...conversationRow, channel_type: 'whatsapp' }
     const result = await draftInInbox.execute({ conversation_id: 'conv_1', body: 'Hello' }, ctx)
@@ -98,10 +101,16 @@ describe('draft_in_inbox — execute() behavior unchanged by the risk-tier move'
     conversationRow = { ...conversationRow, channel_type: 'email' }
   })
 
-  it('files the draft and reports it as NOT sent', async () => {
+  it('files the draft in Zoho and reports it as NOT sent', async () => {
     const result = await draftInInbox.execute({ conversation_id: 'conv_1', body: 'Hello Pam' }, ctx)
     expect(result.ok).toBe(true)
-    expect((result.data as { sent: boolean }).sent).toBe(false)
+    const data = result.data as Record<string, unknown>
+    expect(data.sent).toBe(false)
+    expect(data.provider).toBe('zoho')
+    expect(data.mailbox).toBe('Zoho Mail')
+    expect(data.folder).toBe('Drafts')
+    expect(String(data.next_step)).toMatch(/Zoho Mail/)
+    expect(String(data.next_step)).toMatch(/Do not tell them to check Gmail/i)
     expect(createZohoReplyDraftMock).toHaveBeenCalled()
   })
 
