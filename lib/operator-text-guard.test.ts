@@ -6,14 +6,13 @@ import {
   detectInternalLeak,
   founderBriefingLeak,
   detectToolNameLeak,
+  detectMailboxDraftRedirect,
   stripToolMarkers,
   mediaPlaceholder,
 } from './operator-text-guard'
 import { detectForcedEscalation } from './forced-escalation'
 import { QUIET_SENTINEL } from './quiet-scan'
 
-// The two strings that actually reached Mrs. Max's Caye Direct thread on
-// 2026-08-07. Kept verbatim so these tests fail if either leak returns.
 const LEAKED_TURN = "You're welcome! Anytime. [tool_use: get_held_queue]"
 
 describe('stripToolMarkers', () => {
@@ -38,13 +37,6 @@ describe('detectInternalLeak', () => {
   })
 
   it('flags the historical forced-escalation stem if it ever reappears', () => {
-    // Hand-written fixture (not derived from the live producer) — this is
-    // the literal machine-templated string that leaked into Mrs. Max's
-    // Caye Direct thread on 2026-08-07. forced-escalation.ts was rewritten
-    // 2026-08-14 to stop producing this shape (see the Inbox-redesign
-    // pass), so the guard can no longer be exercised through the real
-    // producer — but the pattern itself must keep catching this exact
-    // shape if it's ever reintroduced anywhere else.
     const historicalLeak =
       'Forced escalation — b2b_partnership (inbound classifier — B2B / partnership voice). ' +
       'Customer message excerpt: "hi". Caye did not draft a substantive reply; the customer-facing ' +
@@ -52,11 +44,7 @@ describe('detectInternalLeak', () => {
     expect(detectInternalLeak(historicalLeak)).not.toBeNull()
   })
 
-  it('the real forced-escalation producer no longer leaks (2026-08-14 fix)', () => {
-    // Built through the real producer, now asserting the opposite of the
-    // pre-fix test above: internalContext is plain founder-readable prose
-    // (see TRIGGER_REASON / humanEscalationNote in forced-escalation.ts),
-    // so it should never trip this guard in the first place.
+  it('the real forced-escalation producer no longer leaks', () => {
     const forced = detectForcedEscalation('Partnership enquiry.', 'b2b_partnership')
     expect(forced).not.toBeNull()
     expect(detectInternalLeak(forced!.internalContext)).toBeNull()
@@ -74,11 +62,6 @@ describe('detectInternalLeak', () => {
     ).toBeNull()
   })
 
-  // Requirements 1, 2 and 10. The literal string "[operator_reminder]" was in
-  // Mrs. Max's Caye Direct thread on 2026-08-12 — operatorPingLogBody's
-  // `default:` branch returned `[${kind}]` for every kind it had no case for.
-  // The composer is fixed; this is the net under it, because the composer
-  // being fixed is not the same as the class being closed.
   describe('bracketed internal event tokens', () => {
     it('flags the exact tokens that leaked', () => {
       expect(detectInternalLeak('[operator_reminder]')).toMatch(/internal event token/)
@@ -91,9 +74,7 @@ describe('detectInternalLeak', () => {
       ).toMatch(/internal event token/)
     })
 
-    it('flags every kind the outbound worker can enqueue', () => {
-      // Enumerated rather than sampled: the point of the pattern is that a
-      // kind added tomorrow is covered without anyone remembering to add it.
+    it('flags every multiword kind the outbound worker can enqueue', () => {
       for (const kind of [
         'urgent_hold',
         'escalation',
@@ -106,8 +87,6 @@ describe('detectInternalLeak', () => {
         'operator_reminder',
         'dropped_confirmation',
       ]) {
-        // Single-word kinds have no underscore and are intentionally not
-        // matched — see the "ordinary bracketed prose" case below.
         if (!kind.includes('_')) continue
         expect(detectInternalLeak(`[${kind}]`), kind).toMatch(/internal event token/)
       }
@@ -118,7 +97,6 @@ describe('detectInternalLeak', () => {
     })
 
     it('leaves ordinary bracketed prose alone', () => {
-      // The pattern requires snake_case precisely so a human aside survives.
       expect(detectInternalLeak('Quoted her the group rate [see attached] and held it.')).toBeNull()
       expect(detectInternalLeak('Left it as a [draft] until you say go.')).toBeNull()
       expect(detectInternalLeak('Tour is $180 [per person] on the sunset run.')).toBeNull()
@@ -126,20 +104,11 @@ describe('detectInternalLeak', () => {
   })
 
   it('flags the quiet-scan protocol sentinel', () => {
-    // lib/quiet-scan.ts scrubs this belt-and-braces; this is the third layer,
-    // so a new consumer of scan text that forgets fails a test rather than
-    // shipping "NOTHING_TO_REPORT" to a phone. It leaked once, 2026-08-08.
     expect(detectInternalLeak('NOTHING_TO_REPORT — quiet round.')).toMatch(/quiet-scan sentinel/)
     expect(detectInternalLeak(QUIET_SENTINEL)).toMatch(/quiet-scan sentinel/)
   })
 })
 
-// The exact jargon that reached FounderHome's "Needs You" card live
-// (2026-08-11/12) — the escalate_to_team tool path passes internal_context
-// straight through from whatever the model generated, so a model narrating
-// its own tool calls reaches the dashboard verbatim unless something catches
-// it. Kept as hand-written fixtures, same reasoning as the forced-escalation
-// ones above.
 describe('founderBriefingLeak', () => {
   it('flags a bare snake_case tool/reason token in otherwise plain prose', () => {
     expect(founderBriefingLeak('lookup_price returned group_size_below_minimum for the golf cart tour.')).not.toBeNull()
@@ -173,11 +142,25 @@ describe('founderBriefingLeak', () => {
   })
 })
 
-// The exact real sentence from the Pam Ott incident (2026-08-17): Caye,
-// deciding between staging a customer send and filing an external email
-// draft, asked Mrs. Max "should I stage it as a send_reply?" instead of
-// describing the outcome in plain language.
-const TOOL_NAMES = ['send_reply', 'draft_in_inbox', 'confirm_pending_action', 'mark_handled']
+const TOOL_NAMES = ['send_reply', 'confirm_pending_action', 'mark_handled']
+
+describe('detectMailboxDraftRedirect — CAY-11 inline-only owner drafting', () => {
+  it('flags instructions that send an owner to Gmail/Zoho/email Drafts', () => {
+    expect(detectMailboxDraftRedirect("Open Gmail and check your Drafts folder for Pam's reply.")).not.toBeNull()
+    expect(detectMailboxDraftRedirect('Go into Zoho Mail Drafts and review it there.')).not.toBeNull()
+    expect(detectMailboxDraftRedirect('Check your email Drafts folder.')).not.toBeNull()
+  })
+
+  it('flags offers to file an owner draft externally', () => {
+    expect(detectMailboxDraftRedirect('Want me to put it in your email drafts?')).not.toBeNull()
+    expect(detectMailboxDraftRedirect('I can save this in Zoho Mail Drafts for you.')).not.toBeNull()
+  })
+
+  it('does not flag ordinary provider facts or inline drafting', () => {
+    expect(detectMailboxDraftRedirect('Your business email is connected through Zoho Mail.')).toBeNull()
+    expect(detectMailboxDraftRedirect('Here is the revised draft for Pam:')).toBeNull()
+  })
+})
 
 describe('detectToolNameLeak', () => {
   it('flags the real leaked sentence from the Pam Ott incident', () => {
@@ -190,7 +173,6 @@ describe('detectToolNameLeak', () => {
   })
 
   it('flags any tool name from the supplied list, whole-word only', () => {
-    expect(detectToolNameLeak('I could draft_in_inbox this for you.', TOOL_NAMES)).toBe('draft_in_inbox')
     expect(detectToolNameLeak('Call confirm_pending_action once you say go.', TOOL_NAMES)).toBe(
       'confirm_pending_action'
     )
@@ -200,29 +182,22 @@ describe('detectToolNameLeak', () => {
     expect(detectToolNameLeak('I already send_replyish this', ['send_reply'])).toBeNull()
   })
 
-  it('passes ordinary operator prose that never names a tool', () => {
+  it('treats external mailbox draft routing as forbidden even without a tool name', () => {
     expect(
-      detectToolNameLeak('Want me to send it, or put it in your email drafts so you can attach something?', TOOL_NAMES)
-    ).toBeNull()
+      detectToolNameLeak('Want me to put it in your email drafts so you can attach something?', TOOL_NAMES)
+    ).toMatch(/external mailbox|operator draft/i)
+  })
+
+  it('passes ordinary operator prose that never names a tool or redirects drafts', () => {
+    expect(detectToolNameLeak('Here is the revised draft. Send that?', TOOL_NAMES)).toBeNull()
     expect(detectToolNameLeak('', TOOL_NAMES)).toBeNull()
   })
 
-  it('is scoped to exactly the tool names it is given, not a general snake_case scan', () => {
-    // Unlike founderBriefingLeak, an arbitrary snake_case word that ISN'T in
-    // the supplied vocabulary must not trip this — e.g. an operator-typed
-    // reference code, which is plausible in live chat and would be a false
-    // positive if this were a blanket snake_case scanner.
+  it('is scoped to supplied tool names, not a general snake_case scan', () => {
     expect(detectToolNameLeak('Her code is BOOKING_REF_442.', TOOL_NAMES)).toBeNull()
   })
 })
 
-/**
- * Found in the 2026-08-12b audit. Four sites interpolated the raw WhatsApp
- * API enum into owner-facing text: two into caye_operator_messages.body
- * (Caye Direct), one into unified_conversations.last_message_preview — which
- * get_held_queue returns as `preview` for Caye to read out loud — and one
- * into unified_messages.content.
- */
 describe('mediaPlaceholder — no raw message-type enums reach a human', () => {
   it('renders each known type as something a person would say', () => {
     expect(mediaPlaceholder('image')).toBe('Photo')
@@ -236,8 +211,6 @@ describe('mediaPlaceholder — no raw message-type enums reach a human', () => {
   })
 
   it('never echoes an unmapped type', () => {
-    // Same rule as operatorPingLogBody's default: an unmapped value is a gap
-    // in the renderer, not something to show a customer.
     expect(mediaPlaceholder('reaction')).toBe('Attachment')
     expect(mediaPlaceholder('some_future_type')).toBe('Attachment')
     expect(mediaPlaceholder(null)).toBe('Attachment')
