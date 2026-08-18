@@ -1,5 +1,6 @@
 import type { Tool } from './types'
 import { gateHighRisk } from './high-risk-gate'
+import { gateExternalDraftIntent } from './external-draft-intent-gate'
 import { HIGH_RISK_TOOLS } from './high-risk-registry'
 import { confirmPendingAction } from './write-high/confirm-pending-action'
 import { getCalendar } from './read/get-calendar'
@@ -67,40 +68,9 @@ import { findBookingsTool } from './read/front-desk/find-bookings'
 import { sendCustomerReply } from './write-high/send-customer-reply'
 import { createCustomerBooking } from './write-high/create-customer-booking'
 
-/**
- * All tools available to the back-office agent.
- *
- * Read tools (11): #38 + #40 — autonomous execution (adds
- * get_channel_status, 2026-08-06 — connect-walkthrough state, derived
- * from connected_accounts rather than stored)
- * Low-risk write tools (21): #37 — autonomous execution (adds
- * remove_business_fact, 2026-07-30 — mirrors add_business_fact so
- * temporary notes like a vacation closure can be retired once stale;
- * update_team_member_name, 2026-07-27 — self-service display name so
- * greetings don't fall back to full_name/legal name; get_connect_link,
- * 2026-08-06 — mints signed channel connect links and hard-refuses
- * WhatsApp when the owner's number is their personal phone, since that
- * migration is destructive and can't be left to prompt text;
- * send_operator_message, 2026-08-16 — the action-grounding incident's
- * missing capability: a real, synchronous WhatsApp send to another
- * authorized operator, low-risk on the same reasoning as
- * schedule_reminder — it can only ever reach an operator, never a guest)
- * High-risk write tools (11): #42/#43 — gated through confirmation flow
- * (adds remove_pricing_tier, 2026-07-26; send_outreach_batch, 2026-08-01 —
- * step 3 of the 2026-07-21 staged-autonomy roadmap, batch-approved
- * first-touch outreach sends; draft_in_inbox, 2026-08-17 — raised from
- * low-risk after it silently redirected an operator to her email instead
- * of showing a draft in chat, see the tool's own doc comment). Listed
- * ungated in high-risk-registry.ts. Plus confirm_pending_action
- * (2026-08-08), which runs a staged action by id and is itself ungated by
- * design.
- * Driver-mode tools (4, 2026-07-05): tagged modes: ['driver'] — never
- * shipped to back-office/front-desk requests, see execute.ts mode filter.
- */
 type AnyTool = Tool<never>
 
 export const TOOL_REGISTRY: AnyTool[] = [
-  // Read
   getCalendar as AnyTool,
   getHeldQueue as AnyTool,
   getTodaySummary as AnyTool,
@@ -119,7 +89,6 @@ export const TOOL_REGISTRY: AnyTool[] = [
   getTeamMembers as AnyTool,
   getChannelStatus as AnyTool,
   getOutreachStatus as AnyTool,
-  // Low-risk write
   getConnectLink as AnyTool,
   recordChannelIntake as AnyTool,
   markHandled as AnyTool,
@@ -153,59 +122,25 @@ export const TOOL_REGISTRY: AnyTool[] = [
   notifyDriver as AnyTool,
   createOutreachLeads as AnyTool,
   relateToDirectThread as AnyTool,
-  // High-risk write — confirmation flow enforced in code (gateHighRisk,
-  // #64), not just the prompt. See lib/caye-agent/tools/high-risk-gate.ts.
-  // The ungated list lives in high-risk-registry.ts because
-  // confirm_pending_action needs it too and cannot import this module.
-  ...HIGH_RISK_TOOLS.map((t) => gateHighRisk(t) as AnyTool),
-  // Confirms a staged action by id (2026-08-08). Deliberately NOT gated —
-  // staging a confirmation would itself need confirming, forever. Its own
-  // safety comes from the staged row: expiry, execution, cancellation, the
-  // different-request rule, and the TARGET tool's role list are all
-  // re-checked inside it. See write-high/confirm-pending-action.ts for why
-  // confirming by id replaced confirming by re-derived args.
+  // External-draft intent is checked BEFORE the ordinary high-risk gate.
+  // That prevents a bare "draft please" from even staging the wrong kind
+  // of artifact; gateHighRisk still owns the separate confirmation round
+  // trip once explicit email-draft intent is established.
+  ...HIGH_RISK_TOOLS.map((t) =>
+    gateExternalDraftIntent(gateHighRisk(t) as AnyTool) as AnyTool
+  ),
   confirmPendingAction as AnyTool,
-  // Driver mode
   getMyAssignments as AnyTool,
   getLogisticsFacts as AnyTool,
   escalateDriverQuestion as AnyTool,
-  // Front-desk read-tool slice (2026-08-16, Phase 2 of runtime convergence).
-  // Thin adapters over lib/caye-reply.ts's canonical checkAvailability /
-  // lookupPriceForCaye / findBookings — no business logic duplicated, no
-  // write tools yet (deliberately narrow: proving the observe/reason/tool/
-  // observe loop on real booking/pricing data before anything executes).
-  // Inert for production today: nothing calls runToolLoop({mode:'front-desk'})
-  // without an explicit tools override (see execute.ts), and caye-reply.ts's
-  // own tool loop is untouched and continues to serve live customer traffic.
   checkAvailabilityTool as AnyTool,
   lookupPriceTool as AnyTool,
   findBookingsTool as AnyTool,
-  // send_customer_reply (2026-08-16, Phase 3): deliberately NOT in
-  // HIGH_RISK_TOOLS / NOT wrapped in gateHighRisk — see the tool's own doc
-  // comment for why the operator-confirmation-round-trip model doesn't fit
-  // an autonomous customer-facing reply. Its own execute() enforces the
-  // evidence/disposition gate (evidence.ts) directly, matching how
-  // lib/caye-reply.ts already gates production sends today. Still inert
-  // for production: nothing wires 'front-desk' mode into a live webhook.
   sendCustomerReply as AnyTool,
-  // create_customer_booking (2026-08-16, Phase 3): same non-gateHighRisk
-  // reasoning as sendCustomerReply above. Gated instead by evaluateAction's
-  // existing 'create_booking' evidence requirement list — see the tool's
-  // own doc comment. Cancel/reschedule/payment actions deliberately not
-  // ported this phase.
   createCustomerBooking as AnyTool,
-  // Admin Shell (2026-07-21) — founder-only dev/ops console, workspace-less.
-  // trigger_cron is gated via gateAdminHighRisk (a separate confirmation
-  // mechanism from gateHighRisk above, backed by caye_admin_pending_actions
-  // rather than caye_pending_actions — see admin-high-risk-gate.ts).
   getCronHealth as AnyTool,
   getWorkspaceAutonomy as AnyTool,
   gateAdminHighRisk(triggerCron) as AnyTool,
-  // set_workspace_autonomy is the only way to switch on the opportunity-scan
-  // and business-insights crons (both default false in the migration, and
-  // nothing in the customer dashboard touches them by design). Gated because
-  // enabling a scan points unprompted, recurring WhatsApp traffic at a paying
-  // customer's owner — see the tool's own doc comment.
   gateAdminHighRisk(setWorkspaceAutonomy) as AnyTool,
 ]
 
