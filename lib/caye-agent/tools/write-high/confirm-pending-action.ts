@@ -2,6 +2,7 @@ import 'server-only'
 import { createServiceClient } from '@/lib/supabase-server'
 import type { Tool, ToolContext, ToolResult } from '../types'
 import { findHighRiskTool } from '../high-risk-registry'
+import { verifyExternalDraftIntent } from '../external-draft-intent'
 
 interface ConfirmPendingActionInput {
   pending_action_id: string
@@ -80,8 +81,6 @@ If the operator asked for changes instead of approving, call the original tool a
       .select('id, tool_name, args, summary, created_in_request_id, expires_at, executed_at, cancelled_at, superseded_by')
       .eq('id', args.pending_action_id)
       .eq('workspace_id', ctx.workspaceId)
-    // Operator scoping mirrors gateHighRisk exactly, so two operators sharing
-    // a workspace's back-office channel can't confirm each other's actions.
     query = ctx.operatorId != null
       ? query.eq('operator_id', ctx.operatorId)
       : query.is('operator_id', null)
@@ -102,10 +101,6 @@ If the operator asked for changes instead of approving, call the original tool a
       }
     }
     if (row.cancelled_at) {
-      // Phase 3 (Part E): a superseded row was cancelled automatically by a
-      // newer refinement of the SAME target, not by the operator declining
-      // it — tell the model to go confirm the newer one instead of treating
-      // this as "nothing is staged anymore."
       return row.superseded_by
         ? {
             ok: false,
@@ -120,8 +115,6 @@ If the operator asked for changes instead of approving, call the original tool a
           'That staged action expired before it was confirmed. Nothing was sent or changed. Stage it again and ask the operator to confirm.',
       }
     }
-    // A scan-origin call can never supply the human half of a confirmation,
-    // and a model must not stage and confirm inside one turn.
     if (ctx.origin === 'scan') {
       return { ok: false, error: 'A scan cannot confirm a staged action. Only a real operator reply can.' }
     }
@@ -131,6 +124,16 @@ If the operator asked for changes instead of approving, call the original tool a
         error:
           'That action was staged in THIS turn. Relay the summary and stop — it can only be confirmed by a new message from the operator.',
       }
+    }
+
+    // CAY-9: a pending external email draft is not permission that lives
+    // forever in the conversation. Re-establish destination intent on the
+    // actual confirmation turn BEFORE claiming the row. This prevents an old
+    // email-draft pending action from being executed off a later generic
+    // "yes" that belongs to an inline revision or some other decision.
+    if (row.tool_name === 'draft_in_inbox') {
+      const intentError = await verifyExternalDraftIntent(ctx)
+      if (intentError) return intentError
     }
 
     const tool = findHighRiskTool(row.tool_name as string)
@@ -149,11 +152,6 @@ If the operator asked for changes instead of approving, call the original tool a
     // update is the actual mutual exclusion — only the caller whose write
     // finds executed_at still null gets the row back, and only that caller
     // runs the tool.
-    //
-    // The bias is deliberate: if execute() then throws, the row is left
-    // marked executed with a null result, which is inspectable and errs
-    // toward NOT re-sending. For an irreversible customer send, a missed
-    // retry is recoverable by hand; a duplicate send is not.
     const { data: claimed } = await supabase
       .from('caye_pending_actions')
       .update({ executed_at: new Date().toISOString() })
@@ -173,12 +171,6 @@ If the operator asked for changes instead of approving, call the original tool a
 
     await supabase.from('caye_pending_actions').update({ result }).eq('id', row.id)
 
-    // Tag which underlying tool actually ran, additively, so the action-
-    // grounding guard in execute.ts (lib/caye-agent/action-claim-guard.ts)
-    // can tell a real send that arrived via confirmation apart from one
-    // that never happened — without this the tool_use block visible to
-    // that guard just says "confirm_pending_action", never which action it
-    // confirmed.
     const data = result.data
     const taggedData =
       data && typeof data === 'object' && !Array.isArray(data)
