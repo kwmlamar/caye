@@ -25,11 +25,10 @@ import { sendOutreachBatch } from './write-high/send-outreach-batch'
  * means confirm_pending_action can never be pointed at something that was
  * never gated in the first place.
  *
- * `draft_in_inbox` is deliberately NOT registered. As of 2026-08-18 the
- * product rule is simpler: owner/operator drafting always happens inside the
- * active Caye conversation. Caye must never redirect an owner to Gmail, Zoho,
- * or any other mailbox Drafts folder. Historical pending draft_in_inbox rows
- * are retired safely inside confirm_pending_action rather than executed.
+ * `draft_in_inbox` is deliberately NOT registered. Owner/operator drafting
+ * always happens in the active Caye conversation. Caye never sends an owner
+ * to Gmail, Zoho Mail, or another mailbox Drafts folder to review its work.
+ * Historical pending rows are retired inside confirm_pending_action.
  */
 type AnyTool = Tool<never>
 
