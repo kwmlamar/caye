@@ -137,7 +137,7 @@ export function enforceActionGrounding(
 ): { text: string; violations: ActionClaimViolation[] } {
   const violations: ActionClaimViolation[] = []
   const replacedByCategory = new Set<string>()
-  const chunks = splitKeepingSeparators(text)
+  const chunks = splitKeepingSeparators(replyText)
 
   for (let i = 0; i < chunks.length; i += 2) {
     const chunk = chunks[i]
