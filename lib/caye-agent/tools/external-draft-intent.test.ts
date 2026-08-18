@@ -30,7 +30,7 @@ describe('hasExplicitExternalDraftIntent — CAY-9 Pam regression', () => {
     expect(hasExplicitExternalDraftIntent({ operatorText })).toBe(true)
   })
 
-  it.each(['yes', 'yes please', 'yes as a draft', 'go ahead']) (
+  it.each(['yes', 'yes please', 'yes as a draft', 'go ahead'])(
     'allows %s only when Caye immediately offered the external destination',
     (operatorText) => {
       expect(
