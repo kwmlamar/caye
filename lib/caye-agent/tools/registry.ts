@@ -1,6 +1,11 @@
 import type { Tool } from './types'
 import { gateHighRisk } from './high-risk-gate'
 import { HIGH_RISK_TOOLS } from './high-risk-registry'
+import {
+  cancelPendingExternalDraftsForConversation,
+  EXTERNAL_DRAFT_INTENT_REQUIRED,
+  verifyExternalDraftIntent,
+} from './external-draft-intent'
 import { confirmPendingAction } from './write-high/confirm-pending-action'
 import { getCalendar } from './read/get-calendar'
 import { getHeldQueue } from './read/get-held-queue'
@@ -99,6 +104,70 @@ import { createCustomerBooking } from './write-high/create-customer-booking'
  */
 type AnyTool = Tool<never>
 
+const inlineSendReply = HIGH_RISK_TOOLS.find((tool) => tool.name === 'send_reply') as AnyTool | undefined
+
+async function stageInlineDraftFallback(
+  args: never,
+  ctx: Parameters<AnyTool['execute']>[1]
+) {
+  if (!inlineSendReply) {
+    return { ok: false, error: 'Inline reply drafting is unavailable.' }
+  }
+
+  const conversationId = (args as { conversation_id?: unknown }).conversation_id
+  if (typeof conversationId === 'string') {
+    await cancelPendingExternalDraftsForConversation({ ctx, conversationId })
+  }
+
+  return gateHighRisk(inlineSendReply).execute(args, ctx)
+}
+
+/**
+ * CAY-9 adds two destination-specific protections around the existing
+ * high-risk gate without changing the risk model for any other tool.
+ *
+ * - draft_in_inbox: verify the CURRENT operator turn explicitly chose the
+ *   external email artifact before a pending row can even be staged. If the
+ *   model picked that tool for an ordinary "draft/revise" turn anyway,
+ *   deterministically stage the exact same body through send_reply so the
+ *   operator still gets the inline review flow instead of another model guess.
+ * - send_reply: when the operator returns to the normal inline draft path,
+ *   retire any still-pending external draft for that same customer thread so
+ *   a later generic confirmation cannot target the obsolete destination.
+ */
+function registeredHighRiskTool(tool: AnyTool): AnyTool {
+  const gated = gateHighRisk(tool) as AnyTool
+
+  if (tool.name === 'draft_in_inbox') {
+    return {
+      ...gated,
+      async execute(args, ctx) {
+        const intentError = await verifyExternalDraftIntent(ctx)
+        if (intentError?.error_code === EXTERNAL_DRAFT_INTENT_REQUIRED) {
+          return stageInlineDraftFallback(args, ctx)
+        }
+        if (intentError) return intentError
+        return gated.execute(args, ctx)
+      },
+    }
+  }
+
+  if (tool.name === 'send_reply') {
+    return {
+      ...gated,
+      async execute(args, ctx) {
+        const conversationId = (args as { conversation_id?: unknown }).conversation_id
+        if (typeof conversationId === 'string') {
+          await cancelPendingExternalDraftsForConversation({ ctx, conversationId })
+        }
+        return gated.execute(args, ctx)
+      },
+    }
+  }
+
+  return gated
+}
+
 export const TOOL_REGISTRY: AnyTool[] = [
   // Read
   getCalendar as AnyTool,
@@ -157,7 +226,7 @@ export const TOOL_REGISTRY: AnyTool[] = [
   // #64), not just the prompt. See lib/caye-agent/tools/high-risk-gate.ts.
   // The ungated list lives in high-risk-registry.ts because
   // confirm_pending_action needs it too and cannot import this module.
-  ...HIGH_RISK_TOOLS.map((t) => gateHighRisk(t) as AnyTool),
+  ...HIGH_RISK_TOOLS.map((t) => registeredHighRiskTool(t as AnyTool)),
   // Confirms a staged action by id (2026-08-08). Deliberately NOT gated —
   // staging a confirmation would itself need confirming, forever. Its own
   // safety comes from the staged row: expiry, execution, cancellation, the

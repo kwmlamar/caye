@@ -2,6 +2,7 @@ import 'server-only'
 import { createServiceClient } from '@/lib/supabase-server'
 import type { Tool, ToolContext, ToolResult } from '../types'
 import { findHighRiskTool } from '../high-risk-registry'
+import { verifyExternalDraftIntent } from '../external-draft-intent'
 
 interface ConfirmPendingActionInput {
   pending_action_id: string
@@ -131,6 +132,16 @@ If the operator asked for changes instead of approving, call the original tool a
         error:
           'That action was staged in THIS turn. Relay the summary and stop — it can only be confirmed by a new message from the operator.',
       }
+    }
+
+    // CAY-9: a pending external email draft is not permission that lives
+    // forever in the conversation. Re-establish destination intent on the
+    // actual confirmation turn BEFORE claiming the row. This prevents an old
+    // email-draft pending action from being executed off a later generic
+    // "yes" that belongs to an inline revision or some other decision.
+    if (row.tool_name === 'draft_in_inbox') {
+      const intentError = await verifyExternalDraftIntent(ctx)
+      if (intentError) return intentError
     }
 
     const tool = findHighRiskTool(row.tool_name as string)

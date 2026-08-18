@@ -97,6 +97,16 @@ const RULES: readonly ClaimRule[] = [
       "I have not actually sent anything — I don't have a tool that lets me message an operator directly on my own. Here's the draft, for you to send yourself or ask me to relay a different way:",
   },
   {
+    category: 'external-draft',
+    // CAY-9 / Pam Ott: Caye said both "Updated draft is in your inbox"
+    // and "Drafted into your inbox" while draft_in_inbox was still only
+    // staged. A pending action is not a filed artifact.
+    claimPattern:
+      /\b(?:draft(?:ed)?|it|that|reply)\b[\s\S]{0,45}\b(?:is|is now|['’]s|was|has been)\b[\s\S]{0,35}\b(?:in|into|filed|saved)\b[\s\S]{0,35}\b(?:gmail|e-?mail|mail|inbox|drafts? folder|drafts?)\b|\bi(?:'ve| have)?\s+(?:already\s+|just\s+)?(?:filed|saved|put|created|drafted)\b[\s\S]{0,45}\b(?:gmail|e-?mail|mail|inbox|drafts?)\b|\b(?:drafted|filed|saved|put)\b[\s\S]{0,30}\b(?:in|into)\b[\s\S]{0,30}\b(?:gmail|e-?mail|mail|inbox|drafts?)\b/i,
+    groundedBy: ['draft_in_inbox'],
+    correction: "I haven't filed that into your email Drafts yet.",
+  },
+  {
     category: 'schedule',
     claimPattern:
       /\bi(?:'ve| have)?\s+(?:already\s+|just\s+|earlier\s+|previously\s+)*(?:set|created|scheduled)\s+(?:up\s+)?(?:a\s+)?(?:reminder|follow[- ]?up)\b/i,
