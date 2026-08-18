@@ -4,7 +4,6 @@ import { createServiceClient } from '@/lib/supabase-server'
 import type { Tool, ToolContext, ToolResult } from '../types'
 import { findHighRiskTool } from '../high-risk-registry'
 import { stableArgsKey } from '../high-risk-gate'
-import { verifyExternalDraftIntent } from '../external-draft-intent'
 
 interface ConfirmPendingActionInput {
   pending_action_id: string
@@ -59,6 +58,12 @@ const RENEWED_CONFIRMATION_TTL_MINUTES = 15
  * fresh confirmation question. No countdowns, expiry notices, or database
  * vocabulary belong in the operator conversation.
  *
+ * CAY-11 (2026-08-18): external mailbox drafts are retired from the product.
+ * Owners draft with Caye inside the active conversation. Historical
+ * draft_in_inbox rows may still exist in caye_pending_actions, so this tool
+ * explicitly cancels those rows and returns their reviewed body for inline
+ * display rather than ever executing them.
+ *
  * Deliberately NOT wrapped in gateHighRisk in the registry — staging a
  * confirmation would need its own confirmation, forever.
  */
@@ -71,6 +76,8 @@ Use this INSTEAD of re-calling the original tool. When you stage a high-risk act
 Do NOT re-call the original tool to confirm. Re-calling only matches if your arguments are byte-identical to what was staged, and any rewording — even fixing a comma — silently stages a SECOND action instead of running the first. That has stranded real sends.
 
 If this tool returns a fresh pending_action_id instead of executing, the earlier approval checkpoint is no longer current. NOTHING HAS HAPPENED YET. Show the same reviewed summary and ask one simple confirmation question again. Do not mention timing windows, expiration, TTLs, staging, database rows, or system mechanics to the operator.
+
+If this tool returns retired_external_draft=true, an old mailbox-draft action has been retired. Show draft_body inline in the current conversation. Do NOT tell the operator to open Gmail, Zoho, email Drafts, or any external mailbox.
 
 If the operator asked for changes instead of approving, call the original tool again with the corrected arguments (that stages a fresh draft), and confirm THAT id once they approve.`,
   risk: 'high',
@@ -117,10 +124,6 @@ If the operator asked for changes instead of approving, call the original tool a
       }
     }
     if (row.cancelled_at) {
-      // Phase 3 (Part E): a superseded row was cancelled automatically by a
-      // newer refinement of the SAME target, not by the operator declining
-      // it — tell the model to go confirm the newer one instead of treating
-      // this as "nothing is staged anymore."
       return row.superseded_by
         ? {
             ok: false,
@@ -142,6 +145,36 @@ If the operator asked for changes instead of approving, call the original tool a
       }
     }
 
+    // Product rule: owner/operator drafts live in the conversation, never in
+    // an external mailbox. Retire any pre-CAY-11 staged external draft rather
+    // than executing it, and preserve the exact reviewed body for Caye to show
+    // inline. This runs before high-risk registry lookup because the retired
+    // tool is intentionally no longer registered/confirmable.
+    if (row.tool_name === 'draft_in_inbox') {
+      const nowISO = new Date().toISOString()
+      await supabase
+        .from('caye_pending_actions')
+        .update({ cancelled_at: nowISO })
+        .eq('id', row.id)
+
+      const storedArgs = (row.args ?? {}) as Record<string, unknown>
+      const body = typeof storedArgs.body === 'string' ? storedArgs.body : ''
+      const conversationId =
+        typeof storedArgs.conversation_id === 'string' ? storedArgs.conversation_id : null
+
+      return {
+        ok: true,
+        data: {
+          retired_external_draft: true,
+          executed: false,
+          draft_body: body,
+          conversation_id: conversationId,
+          note:
+            'External mailbox drafts are retired. Show draft_body inline in the current owner conversation. Do not tell the operator to open Gmail, Zoho Mail, email Drafts, or any other mailbox.',
+        },
+      }
+    }
+
     const tool = findHighRiskTool(row.tool_name as string)
     if (!tool) {
       return { ok: false, error: `Unknown staged tool: ${row.tool_name}` }
@@ -151,14 +184,6 @@ If the operator asked for changes instead of approving, call the original tool a
         ok: false,
         error: `Tool '${tool.name}' is not available to role '${ctx.callerRole}'. Permitted roles: ${tool.roles.join(', ')}.`,
       }
-    }
-
-    // CAY-9: a pending external email draft is not permission that lives
-    // forever in the conversation. Re-establish destination intent on the
-    // actual confirmation turn BEFORE either renewing or claiming the row.
-    if (row.tool_name === 'draft_in_inbox') {
-      const intentError = await verifyExternalDraftIntent(ctx)
-      if (intentError) return intentError
     }
 
     if (new Date(row.expires_at as string).getTime() <= Date.now()) {
@@ -192,9 +217,6 @@ If the operator asked for changes instead of approving, call the original tool a
         }
       }
 
-      // Retain the old immutable row for audit while making its replacement
-      // explicit. It was already non-executable due to freshness; this link
-      // prevents later recovery logic from treating it as an independent item.
       await supabase
         .from('caye_pending_actions')
         .update({ cancelled_at: nowISO, superseded_by: renewedId })
@@ -220,11 +242,6 @@ If the operator asked for changes instead of approving, call the original tool a
     // update is the actual mutual exclusion — only the caller whose write
     // finds executed_at still null gets the row back, and only that caller
     // runs the tool.
-    //
-    // The bias is deliberate: if execute() then throws, the row is left
-    // marked executed with a null result, which is inspectable and errs
-    // toward NOT re-sending. For an irreversible customer send, a missed
-    // retry is recoverable by hand; a duplicate send is not.
     const { data: claimed } = await supabase
       .from('caye_pending_actions')
       .update({ executed_at: new Date().toISOString() })
@@ -244,12 +261,6 @@ If the operator asked for changes instead of approving, call the original tool a
 
     await supabase.from('caye_pending_actions').update({ result }).eq('id', row.id)
 
-    // Tag which underlying tool actually ran, additively, so the action-
-    // grounding guard in execute.ts (lib/caye-agent/action-claim-guard.ts)
-    // can tell a real send that arrived via confirmation apart from one
-    // that never happened — without this the tool_use block visible to
-    // that guard just says "confirm_pending_action", never which action it
-    // confirmed.
     const data = result.data
     const taggedData =
       data && typeof data === 'object' && !Array.isArray(data)
