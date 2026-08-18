@@ -3,32 +3,8 @@
  * operator actually reads. Sibling of policy-figure-guard.ts and
  * caye-identity-guard.ts — same reasoning: the structural fix is upstream,
  * and a backstop in code is what keeps it fixed.
- *
- * WHY THIS EXISTS (2026-08-07)
- * Two leaks landed in Mrs. Max's Caye Direct thread on the same screen:
- *
- *   1. "You're welcome! Anytime. [tool_use: get_held_queue]"
- *      summarizeTurnBody (lib/caye-operator-messages.ts) renders a turn's
- *      tool_use blocks as "[tool_use: name]" markers for the audit column.
- *      isInternalOnlyBody then hides turns that are NOTHING BUT markers — but
- *      a turn carrying both text and a tool call strips to non-empty, so it
- *      rendered with the marker still glued to the end.
- *
- *   2. "Forced escalation — b2b_partnership (inbound classifier — B2B /
- *      partnership voice). Customer message excerpt: "…". Caye did not draft a
- *      substantive reply… Owner: review the thread and respond directly."
- *      That is forced-escalation.ts's `internalContext` verbatim — written for
- *      the dashboard internal note, not for a human. buildProseBrief used it
- *      as the brief body, so it went out over WhatsApp as the ping.
- *
- * Both root causes are fixed at their source. This module exists because the
- * brief is an IRREVERSIBLE channel: once a machine payload is in the owner's
- * WhatsApp, "we fixed the composer" doesn't unsend it. Same conclusion the
- * outreach work reached after an LLM ignored its own ban list — an
- * irreversible channel gets a check in code, not a note in a prompt.
  */
 
-/** Tool markers emitted by summarizeTurnBody for the audit `body` column. */
 const TOOL_MARKER_PATTERN = /\s*\[tool_use:[^\]]*\]|\s*\[tool_result\]/g
 
 const INTERNAL_PROSE_PATTERNS: { pattern: RegExp; label: string }[] = [
@@ -52,10 +28,9 @@ const INTERNAL_PROSE_PATTERNS: { pattern: RegExp; label: string }[] = [
  * Product-level ban on redirecting an owner/operator to an external mailbox
  * to review a draft. Owner drafting lives in the active Caye conversation.
  *
- * This is deliberately phrased as a detector rather than a rewriter: callers
- * can fail closed and regenerate/surface the draft inline. It catches both
- * instructions ("check Gmail Drafts") and offers ("put it in your Zoho
- * Drafts?") while leaving ordinary mentions like "Gmail is connected" alone.
+ * Catches both instructions ("check Gmail Drafts") and offers ("put it in
+ * your Zoho Drafts?") while leaving ordinary provider facts such as "Zoho is
+ * connected" alone.
  */
 export function detectMailboxDraftRedirect(text: string): string | null {
   if (!text) return null
@@ -131,22 +106,18 @@ export function founderBriefingLeak(text: string): string | null {
 }
 
 /**
- * Does `text` bare-name one of Caye's own tools — "should I stage it as a
- * send_reply?" — to the operator?
+ * Does `text` bare-name one of Caye's own tools to the operator?
  *
- * As of CAY-11 this also treats external-mailbox draft routing as a forbidden
- * operator-facing mechanism. The retired draft_in_inbox tool is no longer in
- * the live registry, so its literal name alone is not enough to protect us
- * from stale prompt prose such as "put it in your email drafts".
+ * CAY-11 also treats external-mailbox draft routing as forbidden operator
+ * output. The draft_in_inbox tool is retired and no longer appears in the
+ * live registry, so stale prompt prose must be caught independently.
  */
 export function detectToolNameLeak(text: string, toolNames: readonly string[]): string | null {
   if (!text) return null
   for (const name of toolNames) {
     if (new RegExp(`\\b${name}\\b`).test(text)) return name
   }
-  const mailboxDraftRedirect = detectMailboxDraftRedirect(text)
-  if (mailboxDraftRedirect) return mailboxDraftRedirect
-  return null
+  return detectMailboxDraftRedirect(text)
 }
 
 export function stripToolMarkers(text: string): string {
