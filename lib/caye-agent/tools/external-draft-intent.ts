@@ -9,7 +9,7 @@ const ATTACHMENT_HANDOFF =
   /\b(?:attach|add|include)\b[\s\S]{0,50}\b(?:photos?|images?|files?|documents?|attachments?)\b/i
 
 const AFFIRMATIVE =
-  /^(?:yes|yes please|yep|yeah|sure|go ahead|do it|please|ok|okay|correct|that works)(?:[.!\s]*)$/i
+  /^(?:yes|yes please|yes as a draft|yep|yeah|sure|go ahead|do it|please|ok|okay|correct|that works)(?:[.!\s]*)$/i
 
 const EXPLICIT_EXTERNAL_DRAFT_OFFER =
   /(?:\b(?:put|save|file|create|push)\b[\s\S]{0,80}\b(?:gmail|e-?mail|mail|inbox|drafts? folder)\b|\b(?:put|file|save) it (?:to|in) your drafts?\b)/i
@@ -43,10 +43,9 @@ export function hasExplicitExternalDraftIntent(args: {
 }
 
 /**
- * Verify the latest real operator turn before draft_in_inbox can even enter
- * the normal high-risk staging flow. High-risk gating protects execution;
- * this protects intent, so the wrong external action cannot be staged from
- * the bare word "draft" in the first place.
+ * Verify the latest real operator turn before draft_in_inbox can enter the
+ * normal high-risk staging flow or execute through confirm_pending_action.
+ * High-risk gating protects execution; this protects intent.
  */
 export async function verifyExternalDraftIntent(
   ctx: ToolContext
