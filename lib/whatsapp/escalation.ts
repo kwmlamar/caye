@@ -193,7 +193,12 @@ export async function recordEscalation(
       await supabase
         .from('unified_conversations')
         .update({
-          human_agent_reason: `Escalation (${input.category}): ${input.internalContext.replace(/\s+/g, ' ').trim().slice(0, 120)}`,
+          // No "Escalation (category): " prefix — input.category is a
+          // routing enum ('gap'/'policy'/'knowledge'/'sensitive'), and this
+          // column is read directly (unstripped) by several owner-facing
+          // surfaces (lib/data/mobile.ts, app/api/caye/chat/route.ts), not
+          // just the two that call cleanHoldReason. See CAY-12.
+          human_agent_reason: input.internalContext.replace(/\s+/g, ' ').trim().slice(0, 120),
           human_agent_marked_at: new Date().toISOString(),
           target_date: resolvedTargetDate,
         })
@@ -274,7 +279,8 @@ export async function recordEscalation(
         .from('unified_conversations')
         .update({
           human_agent_enabled: true,
-          human_agent_reason: `Escalation (${input.category}): ${pingSummary.slice(0, 120)}`,
+          // See the matching comment above — no raw-category prefix.
+          human_agent_reason: pingSummary.slice(0, 120),
           human_agent_marked_at: new Date().toISOString(),
           target_date: resolvedTargetDate,
         })

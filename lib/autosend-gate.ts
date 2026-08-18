@@ -26,6 +26,10 @@
  */
 
 import type { CayeAutoReply } from './caye-reply'
+// Not imported from caye-reply.ts — see the doc comment on
+// escalationCategoryLabel for why it lives in the dependency-free guard
+// module instead (this file must stay importable without server-only deps).
+import { escalationCategoryLabel } from './operator-text-guard'
 
 export function applyAutosendGate(
   decision: CayeAutoReply,
@@ -46,7 +50,15 @@ export function applyAutosendGate(
   if (decision.action === 'escalate') {
     return {
       action: 'hold',
-      reason: `${holdReason} (would have escalated: ${decision.category})`,
+      // decision.category is a routing enum ('gap' | 'policy' | 'knowledge' |
+      // 'sensitive'), not owner-facing prose, and "would have escalated" is
+      // routing-engine narration Mrs. Max never asked for — she needs the
+      // business reason, not a description of what Caye's routing considered
+      // doing (Ruslan Prakapovich, CAY-12 follow-up). holdReason alone is
+      // generic ("Autosend disabled for this workspace"), so append the
+      // translated category as the direct reason instead of naming the
+      // escalation mechanics. See escalationCategoryLabel's doc comment.
+      reason: `${holdReason} — ${escalationCategoryLabel(decision.category)}`,
       note: decision.internalContext,
       proposedReply: decision.content,
     }

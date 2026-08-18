@@ -125,6 +125,59 @@ describe('detectInternalLeak', () => {
     })
   })
 
+  // CAY-12 — the two exact sentences from Mrs. Max's real operator thread
+  // (2026-08-17) that motivated this file's newest patterns.
+  describe('CAY-12 production leaks', () => {
+    it('flags the raw evidence-gate reason code (Pam Ott)', () => {
+      expect(
+        detectInternalLeak('Pam Ott came in — availability_claim_unverified. Want me to take a first pass, or you got this one?')
+      ).toMatch(/evidence-gate reason code/)
+      expect(detectInternalLeak('quote_without_database_price')).toMatch(/evidence-gate reason code/)
+    })
+
+    it('flags the raw escalation category in the autosend-gate parenthetical (Ruslan Prakapovich)', () => {
+      expect(
+        detectInternalLeak(
+          'Ruslan Prakapovich came in — Thread is held for a human — Caye did not reply ' +
+            '(would have escalated: sensitive). Want me to take a first pass, or you got this one?'
+        )
+      ).toMatch(/routing-engine narration/)
+    })
+
+    it('flags the historical "Escalation (category): " prefix', () => {
+      expect(detectInternalLeak('Escalation (sensitive): B2B enquiry from Ruslan.')).toMatch(
+        /raw escalation category prefix/
+      )
+    })
+
+    it('still flags "would have escalated" even once the category is translated to a human label', () => {
+      // escalationCategoryLabel('sensitive') === 'a sensitive or commercial matter' —
+      // translating the enum isn't enough on its own. "would have escalated"
+      // is routing-engine narration Mrs. Max never asked to hear regardless
+      // of what follows it, so the whole shape stays forbidden (CAY-12
+      // follow-up). The real producer (lib/autosend-gate.ts) no longer
+      // writes this phrase at all — this only guards against reintroduction.
+      expect(
+        detectInternalLeak(
+          'Ruslan Prakapovich came in — Thread is held for a human — Caye did not reply ' +
+            '(would have escalated: a sensitive or commercial matter). Want me to take a first pass, or you got this one?'
+        )
+      ).toMatch(/routing-engine narration/)
+    })
+
+    it('does not flag the direct reason the real producer now composes', () => {
+      // What applyAutosendGate actually writes today: the translated
+      // category appended as a plain reason, with no "would have escalated"
+      // framing at all.
+      expect(
+        detectInternalLeak(
+          'Ruslan Prakapovich came in — Thread is held for a human — Caye did not reply ' +
+            '— a sensitive or commercial matter. Want me to take a first pass, or you got this one?'
+        )
+      ).toBeNull()
+    })
+  })
+
   it('flags the quiet-scan protocol sentinel', () => {
     // lib/quiet-scan.ts scrubs this belt-and-braces; this is the third layer,
     // so a new consumer of scan text that forgets fails a test rather than

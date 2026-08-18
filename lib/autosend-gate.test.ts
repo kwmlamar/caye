@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { applyAutosendGate } from './autosend-gate'
+import { detectInternalLeak } from './operator-text-guard'
 import type { CayeAutoReply } from './caye-reply'
 
 describe('applyAutosendGate', () => {
@@ -85,6 +86,32 @@ describe('applyAutosendGate', () => {
     }
     const result = applyAutosendGate(decision, false, 'Thread is held for a human')
     expect((result as { reason?: string }).reason).toMatch(/held for a human/)
-    expect((result as { reason?: string }).reason).toMatch(/knowledge/)
+    expect((result as { reason?: string }).reason).toMatch(/what Caye knows about the business/)
+  })
+
+  it('drops routing-engine narration entirely instead of translating it (Ruslan Prakapovich, 2026-08-17/CAY-12 follow-up)', () => {
+    // The exact sentence that reached the operator: "Ruslan Prakapovich came
+    // in — Thread is held for a human — Caye did not reply (would have
+    // escalated: sensitive)." Translating `sensitive` to prose wasn't enough
+    // — a human would never be told what Caye's routing engine "would have"
+    // done. The reason must read as a direct business reason, with no
+    // "would have escalated" framing at all, translated or not.
+    const decision: CayeAutoReply = {
+      action: 'escalate',
+      content: "Thanks for reaching out — let me get this in front of the team and we'll be back to you shortly.",
+      category: 'sensitive',
+      routeTo: 'owner',
+      internalContext: 'B2B partnership inquiry from Ruslan Prakapovich.',
+    }
+    const result = applyAutosendGate(
+      decision,
+      false,
+      'Thread is held for a human — Caye did not reply'
+    )
+    const reason = (result as { reason?: string }).reason ?? ''
+    expect(reason).not.toMatch(/would have escalated/i)
+    expect(reason).toMatch(/held for a human/)
+    expect(reason).toMatch(/sensitive or commercial matter/)
+    expect(detectInternalLeak(reason)).toBeNull()
   })
 })
