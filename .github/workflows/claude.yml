@@ -37,6 +37,9 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           additional_permissions: |
             actions: read
+          claude_args: |
+            --max-turns 30
+            --allowedTools "Edit,Read,Write,Glob,Grep,Bash(npm ci),Bash(npm test *),Bash(npm run build),Bash(npx tsc --noEmit),Bash(git status *),Bash(git diff *),Bash(git log *)"
 
           # Claude receives the triggering issue/comment from the action itself.
           # Permanent repo rules live in /CLAUDE.md. Product requirements should
