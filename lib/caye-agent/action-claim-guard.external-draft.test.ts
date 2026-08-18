@@ -2,22 +2,18 @@ import { describe, expect, it } from 'vitest'
 import { enforceActionGrounding } from './action-claim-guard'
 
 describe('enforceActionGrounding — external draft claims (CAY-9)', () => {
-  it('rejects the real false-completion shape when draft_in_inbox only staged', () => {
-    const { text, violations } = enforceActionGrounding(
-      'Updated draft is in your inbox on Pam’s thread.',
-      [{ name: 'draft_in_inbox', ok: true, pendingOnly: true }]
-    )
+  it.each([
+    'Updated draft is in your inbox on Pam’s thread.',
+    'Drafted into your inbox on Pam’s thread — subject "Re: Tour Booking".',
+    'It’s filed in your email Drafts folder now.',
+    'Done — it is in your Gmail Drafts on Pam’s thread now.',
+  ])('rejects a false external-draft completion claim: %s', (reply) => {
+    const { text, violations } = enforceActionGrounding(reply, [
+      { name: 'draft_in_inbox', ok: true, pendingOnly: true },
+    ])
 
     expect(violations.map((v) => v.category)).toContain('external-draft')
     expect(text).toContain("I haven't filed that into your email Drafts yet")
-  })
-
-  it('rejects a Gmail Drafts completion claim when nothing executed', () => {
-    const { violations } = enforceActionGrounding(
-      'Done — it is in your Gmail Drafts on Pam’s thread now.',
-      []
-    )
-    expect(violations.map((v) => v.category)).toContain('external-draft')
   })
 
   it('allows the claim after draft_in_inbox actually executed', () => {
