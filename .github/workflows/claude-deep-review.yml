@@ -1,0 +1,40 @@
+name: Claude Deep Review
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  deep-review:
+    if: |
+      github.event.issue.pull_request && contains(github.event.comment.body, '@claude-deep-review')
+    concurrency:
+      group: claude-deep-review-${{ github.repository }}
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+      id-token: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Run Claude Deep Review
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
+          plugins: 'code-review@claude-code-plugins'
+          prompt: '/code-review:code-review ${{ github.repository }}/pull/${{ github.event.issue.number }}'
+          claude_args: |
+            --model claude-opus-4-8
+            --max-turns 30
+
+          # Deliberately expensive and manual. Trigger only after product/
+          # architecture review decides a second frontier-model judgment is
+          # worth the usage for authority, money, identity, security,
+          # migrations, or major runtime architecture.

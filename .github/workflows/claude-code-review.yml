@@ -1,31 +1,14 @@
 name: Claude Code Review
 
+# Normal PRs are reviewed by the product/architecture owner first.
+# This workflow intentionally does not run automatically on every PR.
+# Use the separate Claude Deep Review workflow only when a risky change merits
+# spending Opus-class usage for a second independent judgment.
 on:
-  pull_request:
-    types: [opened, synchronize, ready_for_review, reopened]
+  workflow_dispatch:
 
 jobs:
-  claude-review:
+  disabled-default-review:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: read
-      issues: read
-      id-token: write
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      - name: Run Claude Code Review
-        id: claude-review
-        uses: anthropics/claude-code-action@v1
-        with:
-          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
-          plugins: 'code-review@claude-code-plugins'
-          prompt: '/code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }}'
-          claude_args: |
-            --model claude-sonnet-5
+      - run: echo "Automatic Claude PR review is intentionally disabled. Use @claude-deep-review on a PR only after product/architecture review decides it is warranted."
