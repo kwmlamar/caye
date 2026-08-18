@@ -14,6 +14,8 @@ const AFFIRMATIVE =
 const EXPLICIT_EXTERNAL_DRAFT_OFFER =
   /(?:\b(?:put|save|file|create|push)\b[\s\S]{0,80}\b(?:gmail|e-?mail|mail|inbox|drafts? folder)\b|\b(?:put|file|save) it (?:to|in) your drafts?\b)/i
 
+export const EXTERNAL_DRAFT_INTENT_REQUIRED = 'EXTERNAL_DRAFT_INTENT_REQUIRED'
+
 /**
  * External-draft destination is turn-scoped, never sticky.
  *
@@ -111,6 +113,7 @@ export async function verifyExternalDraftIntent(
   ) {
     return {
       ok: false,
+      error_code: EXTERNAL_DRAFT_INTENT_REQUIRED,
       error:
         'This turn does not explicitly request an external Gmail/email Draft. Compose or revise the message in the current operator conversation instead. A previous external draft does not carry forward to later revisions.',
     }
