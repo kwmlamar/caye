@@ -26,6 +26,10 @@
  */
 
 import type { CayeAutoReply } from './caye-reply'
+// Not imported from caye-reply.ts — see the doc comment on
+// escalationCategoryLabel for why it lives in the dependency-free guard
+// module instead (this file must stay importable without server-only deps).
+import { escalationCategoryLabel } from './operator-text-guard'
 
 export function applyAutosendGate(
   decision: CayeAutoReply,
@@ -46,7 +50,10 @@ export function applyAutosendGate(
   if (decision.action === 'escalate') {
     return {
       action: 'hold',
-      reason: `${holdReason} (would have escalated: ${decision.category})`,
+      // decision.category is a routing enum ('gap' | 'policy' | 'knowledge' |
+      // 'sensitive'), not owner-facing prose — translate it (Ruslan
+      // Prakapovich, CAY-12). See escalationCategoryLabel's doc comment.
+      reason: `${holdReason} (would have escalated: ${escalationCategoryLabel(decision.category)})`,
       note: decision.internalContext,
       proposedReply: decision.content,
     }

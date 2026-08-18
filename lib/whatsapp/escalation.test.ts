@@ -272,4 +272,24 @@ describe('recordEscalation — digest extraction and attention bookkeeping', () 
     expect(extractInboundDigest).not.toHaveBeenCalled()
     vi.resetModules()
   })
+
+  it('writes human_agent_reason without the raw category prefix (CAY-12)', async () => {
+    // Used to write `Escalation (${category}): ${pingSummary}` straight into
+    // the column — lib/data/mobile.ts and app/api/caye/chat/route.ts read
+    // human_agent_reason unstripped (only ConversationRow.tsx and the People
+    // route pass it through cleanHoldReason), so a founder using the mobile
+    // "needs my call" narrative or Caye Direct chat could still read
+    // "Escalation (sensitive): ...".
+    const { client, updateCalls } = makeFakeSupabase()
+    vi.doMock('@/lib/supabase-server', () => ({ createServiceClient: () => client }))
+    const { recordEscalation } = await import('./escalation')
+
+    await recordEscalation({ ...base, body: 'Some prose enquiry.' })
+
+    const convUpdate = updateCalls.find((c) => c.table === 'unified_conversations')
+    expect(convUpdate?.patch.human_agent_reason).toBeDefined()
+    expect(convUpdate?.patch.human_agent_reason as string).not.toMatch(/^Escalation \(/)
+    expect(convUpdate?.patch.human_agent_reason as string).not.toContain('sensitive')
+    vi.resetModules()
+  })
 })

@@ -125,6 +125,44 @@ describe('detectInternalLeak', () => {
     })
   })
 
+  // CAY-12 — the two exact sentences from Mrs. Max's real operator thread
+  // (2026-08-17) that motivated this file's newest patterns.
+  describe('CAY-12 production leaks', () => {
+    it('flags the raw evidence-gate reason code (Pam Ott)', () => {
+      expect(
+        detectInternalLeak('Pam Ott came in — availability_claim_unverified. Want me to take a first pass, or you got this one?')
+      ).toMatch(/evidence-gate reason code/)
+      expect(detectInternalLeak('quote_without_database_price')).toMatch(/evidence-gate reason code/)
+    })
+
+    it('flags the raw escalation category in the autosend-gate parenthetical (Ruslan Prakapovich)', () => {
+      expect(
+        detectInternalLeak(
+          'Ruslan Prakapovich came in — Thread is held for a human — Caye did not reply ' +
+            '(would have escalated: sensitive). Want me to take a first pass, or you got this one?'
+        )
+      ).toMatch(/raw escalation category/)
+    })
+
+    it('flags the historical "Escalation (category): " prefix', () => {
+      expect(detectInternalLeak('Escalation (sensitive): B2B enquiry from Ruslan.')).toMatch(
+        /raw escalation category prefix/
+      )
+    })
+
+    it('does not flag the human-readable label that replaced the raw category', () => {
+      // escalationCategoryLabel('sensitive') === 'a sensitive or commercial matter' —
+      // multi-word, so it must NOT trip the single-token patterns above even
+      // though it contains the word "sensitive".
+      expect(
+        detectInternalLeak(
+          'Ruslan Prakapovich came in — Thread is held for a human — Caye did not reply ' +
+            '(would have escalated: a sensitive or commercial matter). Want me to take a first pass, or you got this one?'
+        )
+      ).toBeNull()
+    })
+  })
+
   it('flags the quiet-scan protocol sentinel', () => {
     // lib/quiet-scan.ts scrubs this belt-and-braces; this is the third layer,
     // so a new consumer of scan text that forgets fails a test rather than
