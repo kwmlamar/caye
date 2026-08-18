@@ -1,6 +1,7 @@
 import type { Tool } from './types'
 import { gateHighRisk } from './high-risk-gate'
 import { HIGH_RISK_TOOLS } from './high-risk-registry'
+import { verifyExternalDraftIntent } from './external-draft-intent'
 import { confirmPendingAction } from './write-high/confirm-pending-action'
 import { getCalendar } from './read/get-calendar'
 import { getHeldQueue } from './read/get-held-queue'
@@ -99,6 +100,27 @@ import { createCustomerBooking } from './write-high/create-customer-booking'
  */
 type AnyTool = Tool<never>
 
+/**
+ * CAY-9: high-risk gating protects execution but normally stages before the
+ * target tool's execute() runs. draft_in_inbox additionally needs an INTENT
+ * boundary before staging, because merely staging the wrong destination is
+ * already a disruptive operator-visible failure. Wrap the gated tool on the
+ * outside so the current turn is verified before gateHighRisk can create a
+ * pending row. All other high-risk tools keep the exact existing path.
+ */
+function registeredHighRiskTool(tool: AnyTool): AnyTool {
+  const gated = gateHighRisk(tool) as AnyTool
+  if (tool.name !== 'draft_in_inbox') return gated
+  return {
+    ...gated,
+    async execute(args, ctx) {
+      const intentError = await verifyExternalDraftIntent(ctx)
+      if (intentError) return intentError
+      return gated.execute(args, ctx)
+    },
+  }
+}
+
 export const TOOL_REGISTRY: AnyTool[] = [
   // Read
   getCalendar as AnyTool,
@@ -157,7 +179,7 @@ export const TOOL_REGISTRY: AnyTool[] = [
   // #64), not just the prompt. See lib/caye-agent/tools/high-risk-gate.ts.
   // The ungated list lives in high-risk-registry.ts because
   // confirm_pending_action needs it too and cannot import this module.
-  ...HIGH_RISK_TOOLS.map((t) => gateHighRisk(t) as AnyTool),
+  ...HIGH_RISK_TOOLS.map((t) => registeredHighRiskTool(t as AnyTool)),
   // Confirms a staged action by id (2026-08-08). Deliberately NOT gated —
   // staging a confirmation would itself need confirming, forever. Its own
   // safety comes from the staged row: expiry, execution, cancellation, the
