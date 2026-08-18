@@ -38,6 +38,7 @@ jobs:
           additional_permissions: |
             actions: read
           claude_args: |
+            --model claude-sonnet-5
             --max-turns 80
             --allowedTools "Edit,Read,Write,Glob,Grep,Bash(npm ci),Bash(npm test *),Bash(npx vitest *),Bash(npm run build),Bash(npx tsc --noEmit),Bash(git status *),Bash(git diff *),Bash(git log *)"
 
