@@ -1,12 +1,16 @@
 import 'server-only'
+import { randomUUID } from 'node:crypto'
 import { createServiceClient } from '@/lib/supabase-server'
 import type { Tool, ToolContext, ToolResult } from '../types'
 import { findHighRiskTool } from '../high-risk-registry'
+import { stableArgsKey } from '../high-risk-gate'
 import { verifyExternalDraftIntent } from '../external-draft-intent'
 
 interface ConfirmPendingActionInput {
   pending_action_id: string
 }
+
+const RENEWED_CONFIRMATION_TTL_MINUTES = 15
 
 /**
  * Execute an action that was already staged, identified by ID.
@@ -38,7 +42,7 @@ interface ConfirmPendingActionInput {
  *     was shown to the operator, so what was reviewed and what runs cannot
  *     drift apart — the property gateHighRisk's doc comment claims, now
  *     actually guaranteed rather than dependent on the model
- *   - the row is re-checked for expiry, execution, and cancellation here,
+ *   - the row is re-checked for freshness, execution, and cancellation here,
  *     so a stale or already-run action can't be replayed
  *   - the same different-request rule applies, so a model cannot stage and
  *     confirm inside one turn
@@ -46,6 +50,14 @@ interface ConfirmPendingActionInput {
  *     something that was never gated
  *   - the caller's role is checked against the TARGET tool's roles, not
  *     just this tool's, so confirming can't widen access
+ *
+ * CAY-10 (2026-08-18): the authorization row has an internal safety TTL, but
+ * that is not a business deadline and must never become operator UX. If a real
+ * operator confirms after the old authorization is stale, we do NOT execute
+ * it. We create a fresh pending row with the exact immutable args + summary,
+ * retire the old row in the audit trail, and make the model ask one ordinary
+ * fresh confirmation question. No countdowns, expiry notices, or database
+ * vocabulary belong in the operator conversation.
  *
  * Deliberately NOT wrapped in gateHighRisk in the registry — staging a
  * confirmation would need its own confirmation, forever.
@@ -57,6 +69,8 @@ export const confirmPendingAction: Tool<ConfirmPendingActionInput> = {
 Use this INSTEAD of re-calling the original tool. When you stage a high-risk action you get back a pending_action_id — hold onto it. As soon as the operator approves in a NEW message ("yes", "send it", "confirm", "go ahead"), call this with that id and the action runs exactly as it was shown to them.
 
 Do NOT re-call the original tool to confirm. Re-calling only matches if your arguments are byte-identical to what was staged, and any rewording — even fixing a comma — silently stages a SECOND action instead of running the first. That has stranded real sends.
+
+If this tool returns a fresh pending_action_id instead of executing, the earlier approval checkpoint is no longer current. NOTHING HAS HAPPENED YET. Show the same reviewed summary and ask one simple confirmation question again. Do not mention timing windows, expiration, TTLs, staging, database rows, or system mechanics to the operator.
 
 If the operator asked for changes instead of approving, call the original tool again with the corrected arguments (that stages a fresh draft), and confirm THAT id once they approve.`,
   risk: 'high',
@@ -114,13 +128,7 @@ If the operator asked for changes instead of approving, call the original tool a
           }
         : { ok: false, error: 'That action was cancelled. Stage a fresh one if it is still wanted.' }
     }
-    if (new Date(row.expires_at as string).getTime() <= Date.now()) {
-      return {
-        ok: false,
-        error:
-          'That staged action expired before it was confirmed. Nothing was sent or changed. Stage it again and ask the operator to confirm.',
-      }
-    }
+
     // A scan-origin call can never supply the human half of a confirmation,
     // and a model must not stage and confirm inside one turn.
     if (ctx.origin === 'scan') {
@@ -134,16 +142,6 @@ If the operator asked for changes instead of approving, call the original tool a
       }
     }
 
-    // CAY-9: a pending external email draft is not permission that lives
-    // forever in the conversation. Re-establish destination intent on the
-    // actual confirmation turn BEFORE claiming the row. This prevents an old
-    // email-draft pending action from being executed off a later generic
-    // "yes" that belongs to an inline revision or some other decision.
-    if (row.tool_name === 'draft_in_inbox') {
-      const intentError = await verifyExternalDraftIntent(ctx)
-      if (intentError) return intentError
-    }
-
     const tool = findHighRiskTool(row.tool_name as string)
     if (!tool) {
       return { ok: false, error: `Unknown staged tool: ${row.tool_name}` }
@@ -152,6 +150,68 @@ If the operator asked for changes instead of approving, call the original tool a
       return {
         ok: false,
         error: `Tool '${tool.name}' is not available to role '${ctx.callerRole}'. Permitted roles: ${tool.roles.join(', ')}.`,
+      }
+    }
+
+    // CAY-9: a pending external email draft is not permission that lives
+    // forever in the conversation. Re-establish destination intent on the
+    // actual confirmation turn BEFORE either renewing or claiming the row.
+    if (row.tool_name === 'draft_in_inbox') {
+      const intentError = await verifyExternalDraftIntent(ctx)
+      if (intentError) return intentError
+    }
+
+    if (new Date(row.expires_at as string).getTime() <= Date.now()) {
+      // The old authorization is stale, so executing it would be unsafe. But
+      // the reviewed action itself is still useful. Preserve the exact stored
+      // args + summary in a fresh row rather than asking the model to recreate
+      // them from conversation text, where recipient/body drift can happen.
+      const renewedId = randomUUID()
+      const now = new Date()
+      const nowISO = now.toISOString()
+      const renewedExpiresAt = new Date(
+        now.getTime() + RENEWED_CONFIRMATION_TTL_MINUTES * 60 * 1000
+      ).toISOString()
+
+      const { error: insertError } = await supabase.from('caye_pending_actions').insert({
+        id: renewedId,
+        workspace_id: ctx.workspaceId,
+        operator_id: ctx.operatorId ?? null,
+        tool_name: row.tool_name,
+        args: row.args,
+        args_key: stableArgsKey(row.args),
+        summary: row.summary,
+        created_in_request_id: ctx.requestId,
+        expires_at: renewedExpiresAt,
+      })
+
+      if (insertError) {
+        return {
+          ok: false,
+          error: 'I could not refresh that confirmation safely. Nothing was sent or changed.',
+        }
+      }
+
+      // Retain the old immutable row for audit while making its replacement
+      // explicit. It was already non-executable due to freshness; this link
+      // prevents later recovery logic from treating it as an independent item.
+      await supabase
+        .from('caye_pending_actions')
+        .update({ cancelled_at: nowISO, superseded_by: renewedId })
+        .eq('id', row.id)
+
+      return {
+        ok: true,
+        data: {
+          pending: true,
+          executed: false,
+          status: 'awaiting_operator_confirmation',
+          pending_action_id: renewedId,
+          summary: row.summary,
+          renewed_from_pending_action_id: row.id,
+          note:
+            'NOTHING HAS BEEN SENT OR CHANGED YET. Keep the exact reviewed summary above and ask one natural confirmation question again, such as "Just confirming, you still want me to send this?" Do not mention timing windows, expiration, TTLs, staging, database rows, or system mechanics.',
+        },
       }
     }
 
