@@ -116,13 +116,14 @@ const INTERNAL_PROSE_PATTERNS: { pattern: RegExp; label: string }[] = [
       /\b(?:availability_claim_unverified|quote_without_database_price|high_stakes_claim_without_verified_context|model_reported_uncertainty|owner_followup_requested)\b/,
     label: 'evidence-gate reason code',
   },
-  // applyAutosendGate's held-reply reason used to interpolate the raw
-  // EscalationCategory enum ('gap'/'policy'/'knowledge'/'sensitive') here —
-  // "Ruslan Prakapovich came in — Thread is held for a human — Caye did not
-  // reply (would have escalated: sensitive)." (2026-08-17). Root-fixed to
-  // use escalationCategoryLabel (lib/caye-reply.ts); this catches the shape
-  // if it's ever reintroduced.
-  { pattern: /\(would have escalated:\s*[a-z_]+\)/i, label: 'raw escalation category' },
+  // applyAutosendGate's held-reply reason used to say "(would have
+  // escalated: sensitive)", then later "(would have escalated: a sensitive
+  // or commercial matter)" once the raw enum was translated to prose — both
+  // are routing-engine narration, not a business reason a human would say
+  // (Ruslan Prakapovich, CAY-12 follow-up). Root-fixed to drop the
+  // "would have escalated" framing entirely; this catches the whole shape,
+  // translated suffix or not, if it's ever reintroduced.
+  { pattern: /\bwould have escalated:/i, label: 'routing-engine narration' },
   // The "Escalation (category): " prefix lib/whatsapp/escalation.ts used to
   // write into human_agent_reason, read unstripped by lib/data/mobile.ts and
   // app/api/caye/chat/route.ts. Root-fixed to stop writing it (CAY-12); kept

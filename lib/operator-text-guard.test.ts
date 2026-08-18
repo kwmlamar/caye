@@ -141,7 +141,7 @@ describe('detectInternalLeak', () => {
           'Ruslan Prakapovich came in — Thread is held for a human — Caye did not reply ' +
             '(would have escalated: sensitive). Want me to take a first pass, or you got this one?'
         )
-      ).toMatch(/raw escalation category/)
+      ).toMatch(/routing-engine narration/)
     })
 
     it('flags the historical "Escalation (category): " prefix', () => {
@@ -150,14 +150,29 @@ describe('detectInternalLeak', () => {
       )
     })
 
-    it('does not flag the human-readable label that replaced the raw category', () => {
+    it('still flags "would have escalated" even once the category is translated to a human label', () => {
       // escalationCategoryLabel('sensitive') === 'a sensitive or commercial matter' —
-      // multi-word, so it must NOT trip the single-token patterns above even
-      // though it contains the word "sensitive".
+      // translating the enum isn't enough on its own. "would have escalated"
+      // is routing-engine narration Mrs. Max never asked to hear regardless
+      // of what follows it, so the whole shape stays forbidden (CAY-12
+      // follow-up). The real producer (lib/autosend-gate.ts) no longer
+      // writes this phrase at all — this only guards against reintroduction.
       expect(
         detectInternalLeak(
           'Ruslan Prakapovich came in — Thread is held for a human — Caye did not reply ' +
             '(would have escalated: a sensitive or commercial matter). Want me to take a first pass, or you got this one?'
+        )
+      ).toMatch(/routing-engine narration/)
+    })
+
+    it('does not flag the direct reason the real producer now composes', () => {
+      // What applyAutosendGate actually writes today: the translated
+      // category appended as a plain reason, with no "would have escalated"
+      // framing at all.
+      expect(
+        detectInternalLeak(
+          'Ruslan Prakapovich came in — Thread is held for a human — Caye did not reply ' +
+            '— a sensitive or commercial matter. Want me to take a first pass, or you got this one?'
         )
       ).toBeNull()
     })

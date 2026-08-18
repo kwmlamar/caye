@@ -89,12 +89,13 @@ describe('applyAutosendGate', () => {
     expect((result as { reason?: string }).reason).toMatch(/what Caye knows about the business/)
   })
 
-  it('translates the category into a human label instead of the raw enum (Ruslan Prakapovich, 2026-08-17)', () => {
+  it('drops routing-engine narration entirely instead of translating it (Ruslan Prakapovich, 2026-08-17/CAY-12 follow-up)', () => {
     // The exact sentence that reached the operator: "Ruslan Prakapovich came
     // in — Thread is held for a human — Caye did not reply (would have
-    // escalated: sensitive)." `sensitive` is the raw EscalationCategory enum
-    // value — applyAutosendGate wrote it straight into the reason that later
-    // gets composed into the WhatsApp ping.
+    // escalated: sensitive)." Translating `sensitive` to prose wasn't enough
+    // — a human would never be told what Caye's routing engine "would have"
+    // done. The reason must read as a direct business reason, with no
+    // "would have escalated" framing at all, translated or not.
     const decision: CayeAutoReply = {
       action: 'escalate',
       content: "Thanks for reaching out — let me get this in front of the team and we'll be back to you shortly.",
@@ -108,11 +109,9 @@ describe('applyAutosendGate', () => {
       'Thread is held for a human — Caye did not reply'
     )
     const reason = (result as { reason?: string }).reason ?? ''
-    // The bare enum shape must be gone — a human phrase describing the
-    // matter (which may itself legitimately use the word "sensitive") is
-    // fine; the raw single-token enum in a machine-shaped parenthetical is
-    // not.
-    expect(reason).not.toMatch(/\(would have escalated:\s*[a-z_]+\)/i)
+    expect(reason).not.toMatch(/would have escalated/i)
+    expect(reason).toMatch(/held for a human/)
+    expect(reason).toMatch(/sensitive or commercial matter/)
     expect(detectInternalLeak(reason)).toBeNull()
   })
 })

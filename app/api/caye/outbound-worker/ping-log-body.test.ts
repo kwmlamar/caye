@@ -158,24 +158,29 @@ describe('operatorPingLogBody — no internal identifiers reach the operator', (
       expect(detectInternalLeak(realBody)).toBeNull()
     })
 
-    it('never renders the raw escalation category (Ruslan Prakapovich, 2026-08-17)', () => {
+    it('never renders the raw escalation category or "would have escalated" narration (Ruslan Prakapovich, 2026-08-17/CAY-12 follow-up)', () => {
       // Shipped as: "Ruslan Prakapovich came in — Thread is held for a
       // human — Caye did not reply (would have escalated: sensitive). Want
       // me to take a first pass, or you got this one?" — applyAutosendGate
-      // wrote the raw EscalationCategory enum into the reason.
+      // wrote the raw EscalationCategory enum into the reason. Translating
+      // the enum to prose wasn't enough either: "would have escalated" is
+      // routing-engine narration a human employee would never say, so the
+      // whole shape is forbidden regardless of what follows it.
       const body = operatorPingLogBody('urgent_hold', {
         contactName: 'Ruslan Prakapovich',
         reason: 'Thread is held for a human — Caye did not reply (would have escalated: sensitive)',
       })
-      expect(body).not.toMatch(/\(would have escalated:\s*sensitive\)/)
+      expect(body).not.toMatch(/would have escalated/i)
       expect(detectInternalLeak(body)).toBeNull()
 
-      // The real producer now runs the category through escalationCategoryLabel.
+      // The real producer no longer writes "would have escalated" at all —
+      // applyAutosendGate composes a direct reason from the translated
+      // category instead (lib/autosend-gate.ts).
       const realBody = operatorPingLogBody('urgent_hold', {
         contactName: 'Ruslan Prakapovich',
-        reason:
-          'Thread is held for a human — Caye did not reply (would have escalated: a sensitive or commercial matter)',
+        reason: 'Thread is held for a human — Caye did not reply — a sensitive or commercial matter',
       })
+      expect(realBody).not.toMatch(/would have escalated/i)
       expect(detectInternalLeak(realBody)).toBeNull()
     })
   })

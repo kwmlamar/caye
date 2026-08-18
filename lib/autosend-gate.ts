@@ -51,9 +51,14 @@ export function applyAutosendGate(
     return {
       action: 'hold',
       // decision.category is a routing enum ('gap' | 'policy' | 'knowledge' |
-      // 'sensitive'), not owner-facing prose — translate it (Ruslan
-      // Prakapovich, CAY-12). See escalationCategoryLabel's doc comment.
-      reason: `${holdReason} (would have escalated: ${escalationCategoryLabel(decision.category)})`,
+      // 'sensitive'), not owner-facing prose, and "would have escalated" is
+      // routing-engine narration Mrs. Max never asked for — she needs the
+      // business reason, not a description of what Caye's routing considered
+      // doing (Ruslan Prakapovich, CAY-12 follow-up). holdReason alone is
+      // generic ("Autosend disabled for this workspace"), so append the
+      // translated category as the direct reason instead of naming the
+      // escalation mechanics. See escalationCategoryLabel's doc comment.
+      reason: `${holdReason} — ${escalationCategoryLabel(decision.category)}`,
       note: decision.internalContext,
       proposedReply: decision.content,
     }
