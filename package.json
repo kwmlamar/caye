@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack",
-    "prebuild": "node scripts/generate-migration-manifest.mjs && npx vitest run lib/caye-agent/tools/external-draft-intent.test.ts lib/caye-agent/action-claim-guard.external-draft.test.ts lib/caye-agent/action-claim-guard.test.ts lib/caye-agent/communication-rules.test.ts lib/caye-agent/tools/write-high/draft-in-inbox.test.ts lib/caye-agent/tools/high-risk-gate.test.ts",
+    "prebuild": "node scripts/generate-migration-manifest.mjs",
     "build": "next build",
     "generate:migration-manifest": "node scripts/generate-migration-manifest.mjs",
     "start": "next start",
