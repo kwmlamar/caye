@@ -104,8 +104,7 @@ const RULES: readonly ClaimRule[] = [
     claimPattern:
       /\b(?:draft(?:ed)?|it|that|reply)\b[\s\S]{0,45}\b(?:is|is now|['’]s|was|has been)\b[\s\S]{0,35}\b(?:in|into|filed|saved)\b[\s\S]{0,35}\b(?:gmail|e-?mail|mail|inbox|drafts? folder|drafts?)\b|\bi(?:'ve| have)?\s+(?:already\s+|just\s+)?(?:filed|saved|put|created|drafted)\b[\s\S]{0,45}\b(?:gmail|e-?mail|mail|inbox|drafts?)\b|\b(?:drafted|filed|saved|put)\b[\s\S]{0,30}\b(?:in|into)\b[\s\S]{0,30}\b(?:gmail|e-?mail|mail|inbox|drafts?)\b/i,
     groundedBy: ['draft_in_inbox'],
-    correction:
-      "I haven't filed that into your email Drafts yet — it's still waiting for confirmation.",
+    correction: "I haven't filed that into your email Drafts yet.",
   },
   {
     category: 'schedule',
@@ -138,7 +137,7 @@ export function enforceActionGrounding(
 ): { text: string; violations: ActionClaimViolation[] } {
   const violations: ActionClaimViolation[] = []
   const replacedByCategory = new Set<string>()
-  const chunks = splitKeepingSeparators(replyText)
+  const chunks = splitKeepingSeparators(text)
 
   for (let i = 0; i < chunks.length; i += 2) {
     const chunk = chunks[i]
