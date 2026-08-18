@@ -46,6 +46,11 @@ interface DraftInInboxInput {
  * and is repeated before confirm_pending_action claims the staged row, so a
  * transient history-read failure cannot occur after the action has been
  * atomically marked executed.
+ *
+ * CAY-11 (2026-08-18): this implementation is specifically Zoho-backed.
+ * Never describe its destination as Gmail. The model must report the provider
+ * returned by the tool rather than inventing a mailbox brand from generic
+ * words like "email" or "Drafts".
  */
 export const draftInInbox: Tool<DraftInInboxInput> = {
   name: 'draft_in_inbox',
@@ -53,9 +58,11 @@ export const draftInInbox: Tool<DraftInInboxInput> = {
 
 Does NOT send — nothing reaches the customer.
 
-THE WORD "DRAFT" ALONE DOES NOT MEAN THIS TOOL. "Draft please" / "draft a reply" / "write something for X" / "show me what you'd say" mean COMPOSE AND SHOW IT HERE — call send_reply and relay its staged draft in this same conversation, the same as any other draft request, regardless of whether the customer's own thread happens to be email. Only call this tool when the operator EXPLICITLY asks for the external artifact — "put this in my email drafts", "save it as a Gmail/email draft", "create an email draft for her", "I'll add the photos and send it myself" — or when attachments are the reason (below).
+CURRENT PROVIDER: this tool writes to ZOHO MAIL. If it succeeds, tell the operator to look in Zoho Mail → Drafts. NEVER call the destination Gmail unless a future provider-aware implementation explicitly returns Gmail. Do not use "Gmail" as a generic synonym for email.
 
-EXTERNAL-DRAFT INTENT IS NOT STICKY. Even if this tool was used earlier on the same customer thread, later requests like "draft please", "change the price", "make it shorter", or "add the group size" are ordinary compose/revise requests again unless the CURRENT operator turn explicitly asks for Gmail/email Drafts. Never carry an old destination forward by conversational inertia.
+THE WORD "DRAFT" ALONE DOES NOT MEAN THIS TOOL. "Draft please" / "draft a reply" / "write something for X" / "show me what you'd say" mean COMPOSE AND SHOW IT HERE — call send_reply and relay its staged draft in this same conversation, the same as any other draft request, regardless of whether the customer's own thread happens to be email. Only call this tool when the operator EXPLICITLY asks for the external artifact — "put this in my email drafts", "save it in my mail drafts", "create an email draft for her", "I'll add the photos and send it myself" — or when attachments are the reason (below).
+
+EXTERNAL-DRAFT INTENT IS NOT STICKY. Even if this tool was used earlier on the same customer thread, later requests like "draft please", "change the price", "make it shorter", or "add the group size" are ordinary compose/revise requests again unless the CURRENT operator turn explicitly asks for external email Drafts. Never carry an old destination forward by conversational inertia.
 
 USE THIS WHEN ATTACHMENTS ARE INVOLVED. You cannot attach photos or files to a send_reply. The moment the operator says they want to send a customer images, documents, or anything you can't produce, offer this instead of collecting the files — say so BEFORE they start sending them to you.
 
@@ -137,10 +144,14 @@ Email threads only — the operator's mailbox is the delivery surface, so this d
           subject: replySubject,
           draft_id: draftId,
           sent: false,
+          provider: 'zoho',
+          mailbox: 'Zoho Mail',
+          folder: 'Drafts',
           // Spelled out because the distinction is the entire point of the
-          // tool, and reporting it as "sent" would be a trust failure.
+          // tool, and reporting it as "sent" or pointing at Gmail would be a
+          // trust failure.
           next_step:
-            "It's in their Drafts folder on this thread, not sent. Tell them to open their email, attach what they need, and send it from there.",
+            "It's in Zoho Mail → Drafts on this thread, not sent. Tell the operator to open Zoho Mail, attach what they need, and send it from there. Do not tell them to check Gmail.",
         },
       }
     } catch (err) {
