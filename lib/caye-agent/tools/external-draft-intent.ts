@@ -5,11 +5,11 @@ import type { ToolContext, ToolResult } from './types'
 /**
  * Compatibility surface for the retired external-mailbox draft path.
  *
- * Owner/operator drafting is inline-only as of 2026-08-18. The live tool is
+ * Owner/operator drafting is inline-only. The live external-draft tool is
  * gone from HIGH_RISK_TOOLS/TOOL_REGISTRY. These exports remain temporarily
  * because registry.ts still contains the old wrapper branch; if that branch
- * somehow becomes reachable, it fails closed and routes the model back toward
- * inline drafting rather than restoring external mailbox behavior.
+ * somehow becomes reachable, it fails closed and routes Caye back toward
+ * inline drafting rather than restoring mailbox behavior.
  */
 export const EXTERNAL_DRAFT_INTENT_REQUIRED = 'EXTERNAL_DRAFT_RETIRED'
 
@@ -24,8 +24,8 @@ export async function verifyExternalDraftIntent(_ctx: ToolContext): Promise<Tool
 
 /**
  * Historical cleanup only. When Caye stages a normal inline send_reply draft
- * for a customer, retire any still-live pre-CAY-11 external-draft row for the
- * same customer so a later generic confirmation cannot target it.
+ * for a customer, retire any still-live pre-retirement external-draft row for
+ * the same customer so a later generic confirmation cannot target it.
  */
 export async function cancelPendingExternalDraftsForConversation(args: {
   ctx: ToolContext
