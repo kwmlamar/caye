@@ -9,7 +9,6 @@ import { confirmBooking } from './write-high/confirm-booking'
 import { rescheduleBooking } from './write-high/reschedule-booking'
 import { cancelBooking } from './write-high/cancel-booking'
 import { sendOutreachBatch } from './write-high/send-outreach-batch'
-import { draftInInbox } from './write-high/draft-in-inbox'
 
 /**
  * The UNGATED high-risk tools, in one place.
@@ -25,6 +24,11 @@ import { draftInInbox } from './write-high/draft-in-inbox'
  * A tool must be in this list to be confirmable. That's deliberate: it
  * means confirm_pending_action can never be pointed at something that was
  * never gated in the first place.
+ *
+ * `draft_in_inbox` is deliberately NOT registered. Owner/operator drafting
+ * always happens in the active Caye conversation. Caye never sends an owner
+ * to Gmail, Zoho Mail, or another mailbox Drafts folder to review its work.
+ * Historical pending rows are retired inside confirm_pending_action.
  */
 type AnyTool = Tool<never>
 
@@ -44,13 +48,6 @@ export const HIGH_RISK_TOOLS: AnyTool[] = [
   // reviewed via get_pending_quotes, behind the same confirmation round-trip
   // as every other high-risk tool here.
   sendOutreachBatch as AnyTool,
-  // Raised from low-risk (2026-08-17, Pam Ott incident) — see
-  // write-high/draft-in-inbox.ts's doc comment. Filing something into the
-  // operator's own external inbox is reversible for the customer (nothing
-  // is sent) but pulls the operator out of the channel they're managing
-  // Caye from, so it gets the same confirm-before-it-happens checkpoint as
-  // every other consequential action here.
-  draftInInbox as AnyTool,
 ]
 
 export function findHighRiskTool(name: string): AnyTool | undefined {
