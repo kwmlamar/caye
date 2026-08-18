@@ -8,6 +8,7 @@ import { loadRelationshipContext, loadOperationalContext } from './situation'
 import { buildFrontDeskSituationSystemPrompt } from './modes/front-desk-situation'
 import { persistFrontDeskAgentTurns } from '@/lib/caye-frontdesk-agent-turns'
 import { enqueueHoldPing } from '@/lib/whatsapp/triggers'
+import { authorizeAutonomousOutbound } from '@/lib/authorize-autonomous-outbound'
 
 /**
  * frontdesk-entry.ts (2026-08-16, global Zoho cutover)
@@ -113,6 +114,24 @@ export async function runConvergedFrontDeskTurn(
   const supabase = createServiceClient()
 
   try {
+    // Owner policy beats model judgment, always (#88). Resolve standing
+    // rules + the existing hold BEFORE the model gets a chance to run — an
+    // owner_only match or a held conversation must never reach the tool
+    // loop, let alone send_customer_reply.
+    const authz = await authorizeAutonomousOutbound({
+      workspaceId: input.workspaceId,
+      conversationId: input.conversationId,
+      inboundBody: input.inboundBody,
+    })
+    if (!authz.allowed) {
+      const holdReason =
+        authz.reason === 'blocked_by_owner_policy'
+          ? (authz.escalation?.internalContext ?? 'Owner-only standing rule matched — held for the owner.')
+          : 'Conversation is already held for the owner — Caye will not reply autonomously until it is released.'
+      await markHeld(supabase, input, holdReason)
+      return { outcome: 'held', toolsUsed: [], usedOutputFallbackPath: false, holdReason }
+    }
+
     const [{ history: historyForModel }, relationshipCtx, operational] = await Promise.all([
       // loadFrontDeskConversationContext's `history` field is ALREADY
       // relative-time-annotated + compacted (see context.ts's own doc

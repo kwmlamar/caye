@@ -25,7 +25,15 @@ export interface StandingRule {
   id: string
   trigger_type: 'service_mention' | 'keyword'
   match_value: string
-  action: 'escalate'
+  /**
+   * 'escalate' — the original action. Subject to standdown
+   * (lib/standing-rule-standdown.ts) when the enquiry is fully answerable
+   * from deterministic catalog/availability/pricing data.
+   * 'owner_only' — a hard block, added for #88. Never eligible for
+   * standdown; a match must halt autonomous outbound until the owner
+   * explicitly resolves it. See lib/authorize-autonomous-outbound.ts.
+   */
+  action: 'escalate' | 'owner_only'
   route_to: 'owner' | 'founder' | 'both'
 }
 

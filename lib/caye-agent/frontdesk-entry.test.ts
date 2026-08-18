@@ -7,10 +7,15 @@ const mockState = vi.hoisted(() => ({
   historyForModel: [{ role: 'user', content: 'How much for 2 guests?' }] as Anthropic.MessageParam[],
   runToolLoopResult: { newTurns: [] as Anthropic.MessageParam[], replyText: '' },
   runToolLoopThrows: null as Error | null,
+  runToolLoopCalls: 0,
   conversationUpdates: [] as unknown[],
   internalMessagesInserted: [] as unknown[],
   persistCalls: [] as unknown[],
   holdPingCalls: [] as unknown[],
+  authzDecision: { allowed: true } as
+    | { allowed: true }
+    | { allowed: false; reason: 'blocked_by_owner_policy' | 'blocked_by_existing_hold'; escalation?: { internalContext: string } },
+  authzCalls: [] as unknown[],
 }))
 
 vi.mock('@/lib/supabase-server', () => ({
@@ -41,8 +46,16 @@ vi.mock('@/lib/supabase-server', () => ({
 
 vi.mock('./execute', () => ({
   runToolLoop: async () => {
+    mockState.runToolLoopCalls += 1
     if (mockState.runToolLoopThrows) throw mockState.runToolLoopThrows
     return mockState.runToolLoopResult
+  },
+}))
+
+vi.mock('@/lib/authorize-autonomous-outbound', () => ({
+  authorizeAutonomousOutbound: async (...args: unknown[]) => {
+    mockState.authzCalls.push(args)
+    return mockState.authzDecision
   },
 }))
 
@@ -116,10 +129,53 @@ describe('runConvergedFrontDeskTurn', () => {
     mockState.historyForModel = [{ role: 'user', content: 'How much for 2 guests?' }]
     mockState.runToolLoopResult = { newTurns: [], replyText: '' }
     mockState.runToolLoopThrows = null
+    mockState.runToolLoopCalls = 0
     mockState.conversationUpdates = []
     mockState.internalMessagesInserted = []
     mockState.persistCalls = []
     mockState.holdPingCalls = []
+    mockState.authzDecision = { allowed: true }
+    mockState.authzCalls = []
+  })
+
+  it('blocks before the LLM runs when an owner_only standing rule matches (#88)', async () => {
+    mockState.authzDecision = {
+      allowed: false,
+      reason: 'blocked_by_owner_policy',
+      escalation: { internalContext: 'You asked me to always bring you anything that mentions "Full Bimini Experience", so I held this rather than answer it myself.' },
+    }
+
+    const result = await runConvergedFrontDeskTurn(BASE_INPUT)
+
+    expect(result.outcome).toBe('held')
+    expect(mockState.runToolLoopCalls).toBe(0)
+    expect(mockState.authzCalls).toHaveLength(1)
+    expect(mockState.authzCalls[0]).toEqual([
+      { workspaceId: 'ws1', conversationId: 'conv1', inboundBody: 'How much for 2 guests?' },
+    ])
+    expect(mockState.conversationUpdates).toHaveLength(1)
+    expect(mockState.internalMessagesInserted).toHaveLength(1)
+    expect(mockState.holdPingCalls).toHaveLength(1)
+    expect(mockState.persistCalls).toHaveLength(0)
+  })
+
+  it('blocks before the LLM runs when the conversation already has an owner hold', async () => {
+    mockState.authzDecision = { allowed: false, reason: 'blocked_by_existing_hold' }
+
+    const result = await runConvergedFrontDeskTurn(BASE_INPUT)
+
+    expect(result.outcome).toBe('held')
+    expect(mockState.runToolLoopCalls).toBe(0)
+    expect(mockState.holdPingCalls).toHaveLength(1)
+  })
+
+  it('lets an ordinary, non-matching conversation reach the LLM as before', async () => {
+    mockState.runToolLoopResult = { newTurns: sendCustomerReplySuccessTurns(), replyText: 'Sure!' }
+
+    const result = await runConvergedFrontDeskTurn(BASE_INPUT)
+
+    expect(result.outcome).toBe('sent')
+    expect(mockState.runToolLoopCalls).toBe(1)
   })
 
   it('reports outcome:sent and persists agent turns when send_customer_reply succeeded', async () => {
