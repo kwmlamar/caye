@@ -73,8 +73,6 @@ function makeFakeSupabase() {
 
 vi.mock('@/lib/supabase-server', () => ({ createServiceClient: () => makeFakeSupabase() }))
 
-// The tool the staged row points at. Records what args it actually ran with —
-// which is the whole point of the fix.
 const ran: unknown[] = []
 const targetTool: Tool<{ body: string }> = {
   name: 'send_reply',
@@ -135,9 +133,6 @@ beforeEach(() => {
 
 describe('confirm_pending_action — executes what was shown', () => {
   it('runs the STAGED args, not anything re-derived', async () => {
-    // The bug this replaces: the model reworded the draft, so its confirming
-    // call no longer matched the staged args and staged a second row instead
-    // of sending. Confirming by id makes the model's wording irrelevant.
     const id = stage()
     const result = await confirmPendingAction.execute({ pending_action_id: id }, ctx())
 
@@ -157,8 +152,6 @@ describe('confirm_pending_action — executes what was shown', () => {
   })
 
   it('runs once when two confirmations race', async () => {
-    // Both pass the read-time checks; the conditional update is the real
-    // mutual exclusion. A duplicate customer send is not recoverable.
     const id = stage()
     const [a, b] = await Promise.all([
       confirmPendingAction.execute({ pending_action_id: id }, ctx()),
@@ -200,6 +193,32 @@ describe('confirm_pending_action — stale authorization recovery', () => {
     expect(data.summary).toBe(oldSummary)
     expect(String(data.note)).toMatch(/one natural confirmation/i)
     expect(String(data.note)).toMatch(/do not mention timing windows/i)
+  })
+})
+
+describe('confirm_pending_action — retired external mailbox drafts', () => {
+  it('never executes a historical draft_in_inbox row and returns its exact body inline instead', async () => {
+    const body = 'Dear Pam,\n\nHere are the two tour options...'
+    const id = stage({
+      tool_name: 'draft_in_inbox',
+      args: { conversation_id: 'conv-pam', body },
+      summary: 'Not sent — file this into Zoho Mail Drafts on Pam Ott\'s thread',
+    })
+
+    const result = await confirmPendingAction.execute({ pending_action_id: id }, ctx())
+
+    expect(result.ok).toBe(true)
+    expect(ran).toHaveLength(0)
+    expect(rows[0].executed_at).toBeNull()
+    expect(rows[0].cancelled_at).not.toBeNull()
+
+    const data = result.data as Record<string, unknown>
+    expect(data.retired_external_draft).toBe(true)
+    expect(data.executed).toBe(false)
+    expect(data.draft_body).toBe(body)
+    expect(data.conversation_id).toBe('conv-pam')
+    expect(String(data.note)).toMatch(/show draft_body inline/i)
+    expect(String(data.note)).toMatch(/do not tell the operator to open Gmail, Zoho Mail/i)
   })
 })
 
@@ -245,7 +264,6 @@ describe('confirm_pending_action — refuses', () => {
   })
 
   it('a role the TARGET tool does not permit', async () => {
-    // Confirming must not widen access — send_reply is owner/founder only.
     const id = stage()
     const result = await confirmPendingAction.execute({ pending_action_id: id }, ctx({ callerRole: 'driver' }))
     expect(result.ok).toBe(false)
