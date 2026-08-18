@@ -9,8 +9,9 @@ const rows: Row[] = []
 /**
  * Fake of the supabase chains confirm-pending-action.ts uses:
  *   from().select().eq().eq()/is().maybeSingle()
- *   from().update().eq().is().select().maybeSingle()   (the atomic claim)
- *   from().update().eq()                                (the result write)
+ *   from().insert()                                   (stale renewal)
+ *   from().update().eq().is().select().maybeSingle() (the atomic claim)
+ *   from().update().eq()                              (result / supersede write)
  */
 function makeFakeSupabase() {
   return {
@@ -32,6 +33,10 @@ function makeFakeSupabase() {
             },
           }
           return b
+        },
+        insert(row: Row) {
+          rows.push({ ...row })
+          return Promise.resolve({ data: row, error: null })
         },
         update(patch: Row) {
           return {
@@ -107,6 +112,7 @@ function stage(overrides: Row = {}): string {
     expires_at: FUTURE(),
     executed_at: null,
     cancelled_at: null,
+    superseded_by: null,
     ...overrides,
   })
   return id
@@ -164,19 +170,44 @@ describe('confirm_pending_action — executes what was shown', () => {
   })
 })
 
+describe('confirm_pending_action — stale authorization recovery', () => {
+  it('does not execute a stale row; it renews the exact reviewed action for one fresh confirmation', async () => {
+    const id = stage({ expires_at: new Date(Date.now() - 1000).toISOString() })
+    const oldArgs = rows[0].args
+    const oldSummary = rows[0].summary
+
+    const result = await confirmPendingAction.execute({ pending_action_id: id }, ctx())
+
+    expect(result.ok).toBe(true)
+    expect(ran).toHaveLength(0)
+    expect(rows).toHaveLength(2)
+
+    const renewed = rows[1]
+    expect(renewed.args).toEqual(oldArgs)
+    expect(renewed.summary).toBe(oldSummary)
+    expect(renewed.workspace_id).toBe('ws-1')
+    expect(renewed.operator_id).toBe(20)
+    expect(renewed.created_in_request_id).toBe('req-confirming')
+    expect(Date.parse(renewed.expires_at as string)).toBeGreaterThan(Date.now())
+
+    expect(rows[0].cancelled_at).not.toBeNull()
+    expect(rows[0].superseded_by).toBe(renewed.id)
+
+    const data = result.data as Record<string, unknown>
+    expect(data.pending).toBe(true)
+    expect(data.executed).toBe(false)
+    expect(data.pending_action_id).toBe(renewed.id)
+    expect(data.summary).toBe(oldSummary)
+    expect(String(data.note)).toMatch(/one natural confirmation/i)
+    expect(String(data.note)).toMatch(/do not mention timing windows/i)
+  })
+})
+
 describe('confirm_pending_action — refuses', () => {
   it('an action staged in this same turn', async () => {
     const id = stage({ created_in_request_id: 'req-confirming' })
     const result = await confirmPendingAction.execute({ pending_action_id: id }, ctx())
     expect(result.ok).toBe(false)
-    expect(ran).toHaveLength(0)
-  })
-
-  it('an expired action', async () => {
-    const id = stage({ expires_at: new Date(Date.now() - 1000).toISOString() })
-    const result = await confirmPendingAction.execute({ pending_action_id: id }, ctx())
-    expect(result.ok).toBe(false)
-    expect(result.ok === false && result.error).toMatch(/expired/i)
     expect(ran).toHaveLength(0)
   })
 
