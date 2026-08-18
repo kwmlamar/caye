@@ -43,7 +43,7 @@ describe('hasExplicitExternalDraftIntent — CAY-9 Pam regression', () => {
     expect(
       hasExplicitExternalDraftIntent({
         operatorText: 'yes please',
-        previousCayeText: 'Ready — confirm and I’ll file it to your Drafts now.',
+        previousCayeText: 'The revised draft is ready here. Send that?',
       })
     ).toBe(false)
   })
