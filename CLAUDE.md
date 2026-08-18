@@ -22,6 +22,18 @@ The customer-facing and owner-facing interfaces are surfaces of the same employe
 4. Identify whether the task touches authority, customer communication, money, identity, workspace isolation, persistence, migrations, or production side effects.
 5. Keep the task scoped. Do not absorb unrelated cleanup or nearby experimental work.
 
+## Usage discipline
+
+The normal developer worker runs on Sonnet and has an 80-turn emergency ceiling, not an 80-turn target.
+
+- Aim to finish ordinary scoped implementation tasks in roughly 20–30 turns when practical.
+- Do not perform a broad repo audit unless the dispatch explicitly asks for one.
+- Reuse investigation already recorded in the issue/PR instead of rediscovering the same code paths.
+- Read narrowly: start with named incidents, files, callers, tests, and schema relevant to the task; widen only when evidence requires it.
+- Once root cause is established, implement and validate. Do not keep exploring merely because more context exists.
+- Prefer targeted tests first. Run broader validation only when the change warrants it.
+- If the requested work is fundamentally architectural, security-sensitive, or ambiguous enough to need substantially more reasoning, stop and report that escalation rather than consuming the full turn budget by default. Product/architecture review may explicitly invoke the separate deep-review path.
+
 ## Product invariants
 
 - One employee, not a visible multi-agent product.
