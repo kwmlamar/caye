@@ -81,12 +81,15 @@ async function describePendingAction(
       // result, because this summary is what the operator sees BEFORE
       // confirming (2026-08-17, Pam Ott incident: the prior low-risk path
       // let this happen with no summary shown at all).
+      //
+      // This path is Zoho-backed today. Name the provider explicitly so the
+      // model cannot turn generic "email Drafts" into "Gmail" on its own.
       const body = typeof args.body === 'string' ? args.body : ''
       const conversationId = typeof args.conversation_id === 'string' ? args.conversation_id : null
       const recipient = conversationId ? await describeConversationRecipient(supabase, conversationId) : null
       const heading = recipient
-        ? `Not sent — file this into your email drafts on ${recipient}'s thread, for you to open, attach anything, and send yourself:`
-        : 'Not sent — file this into your email drafts, for you to open, attach anything, and send yourself:'
+        ? `Not sent — file this into Zoho Mail Drafts on ${recipient}'s thread, for you to open, attach anything, and send yourself:`
+        : 'Not sent — file this into Zoho Mail Drafts, for you to open, attach anything, and send yourself:'
       return `${heading}\n\n${body}`
     }
     case 'cancel_booking':
@@ -172,9 +175,9 @@ async function describeConversationRecipient(
  * read as "confirming" the first and auto-execute. A scan-origin call
  * may only ever stage; only a chat-origin (real inbound message) call
  * may confirm. ttlMinutes is overridable for the same reason — a scan
- * proposal is notify-then-wait-for-a-reply-later, not synchronous chat,
- * so the default 15-minute window would expire before the owner even
- * sees the WhatsApp ping.
+ * proposal is notify-then-wait-for-a-reply-later, not synchronous chat.
+ * The TTL is internal authorization state only and must never be surfaced as
+ * an operator deadline or countdown.
  */
 export function gateHighRisk<T>(tool: Tool<T>, ttlMinutes: number = PENDING_TTL_MINUTES): Tool<T> {
   return {
@@ -242,8 +245,8 @@ export function gateHighRisk<T>(tool: Tool<T>, ttlMinutes: number = PENDING_TTL_
             summary,
             note:
               ctx.origin === 'scan'
-                ? 'NOTHING HAS HAPPENED YET. Already staged (possibly from an earlier scan) — do not re-propose unless the situation has materially changed. This cannot be confirmed by a scan; only a real reply from the operator confirms it.'
-                : 'NOTHING HAS HAPPENED YET — do not tell the operator this was sent or done. Already staged this turn: relay the summary and stop. When they approve in a NEW message, call confirm_pending_action with pending_action_id.',
+                ? 'NOTHING HAS HAPPENED YET. Already staged (possibly from an earlier scan) — do not re-propose unless the situation has materially changed. This cannot be confirmed by a scan; only a real reply from the operator confirms it. Never mention internal confirmation timing or lifecycle mechanics to the operator.'
+                : 'NOTHING HAS HAPPENED YET — do not tell the operator this was sent or done. Already staged this turn: relay the summary and stop. When they approve in a NEW message, call confirm_pending_action with pending_action_id. Never mention internal confirmation timing or lifecycle mechanics to the operator.',
           },
         }
       }
@@ -260,7 +263,7 @@ export function gateHighRisk<T>(tool: Tool<T>, ttlMinutes: number = PENDING_TTL_
       // stale draft of the thing being staged now (a refinement changes
       // args_key every time, by design — args must stay immutable once
       // shown for confirmation). Retire it explicitly rather than leaving
-      // it to expire silently: its args/summary are untouched, only
+      // it to age out silently: its args/summary are untouched, only
       // cancelled_at + superseded_by are written, so the original draft
       // stays in the audit trail. See stableArgsKey/describePendingAction
       // above for why args can't just be mutated in place instead.
@@ -313,7 +316,6 @@ export function gateHighRisk<T>(tool: Tool<T>, ttlMinutes: number = PENDING_TTL_
           status: 'awaiting_operator_confirmation',
           pending_action_id: pendingActionId,
           summary,
-          expires_in_minutes: ttlMinutes,
           note:
             'NOTHING HAS BEEN SENT OR CHANGED YET — do not tell the operator otherwise. ' +
             'Relay this summary VERBATIM: for a send_reply it already contains the full draft, ' +
@@ -321,7 +323,8 @@ export function gateHighRisk<T>(tool: Tool<T>, ttlMinutes: number = PENDING_TTL_
             'your own words and do not ask twice. When they approve in a NEW message, call ' +
             'confirm_pending_action with pending_action_id — NOT this tool again. Re-calling this ' +
             'tool only matches if your arguments are byte-identical, so any rewording silently ' +
-            'stages a SECOND action instead of running this one.',
+            'stages a SECOND action instead of running this one. Never mention internal confirmation ' +
+            'timing, expiration, TTLs, or lifecycle mechanics to the operator.',
         },
       }
     },
