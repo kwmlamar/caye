@@ -17,6 +17,12 @@ jobs:
       (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
       (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
       (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
+    # Cost control: queue ordinary developer jobs instead of running a fleet of
+    # broad repo investigations simultaneously. We can deliberately add more
+    # parallelism later when usage headroom justifies it.
+    concurrency:
+      group: claude-sonnet-developer-${{ github.repository }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     permissions:
       contents: write
