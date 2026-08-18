@@ -14,6 +14,10 @@ export const sendReply: Tool<SendReplyInput> = {
   name: 'send_reply',
   description: `Send a reply to a customer on their thread. HIGH-RISK — this message goes to a real customer in your business's voice.
 
+EXPLICIT DRAFT COMMANDS TAKE PRIORITY. When the operator says "draft...", "draft please", "write a reply...", "make it shorter", "change X", or otherwise clearly asks you to compose/revise customer-facing copy and gives enough information to do it, DO THE DRAFT IN THIS TURN. Do not replace the requested draft with strategy commentary, a critique of what the customer asked, or a question about whether a different reply would be better. Stage the requested draft first and show it to the operator. If there is a useful advisory note, put it after the draft in one short sentence and only when it materially changes the operator's decision.
+
+The operator's CURRENT-TURN factual instruction is authoritative for the draft unless it is impossible, unsafe, or explicitly asks you to contradict a verified external fact. If current operator guidance conflicts with older remembered business knowledge, do not silently prefer the older memory. Use the current instruction for the draft and, when needed, verify with query_business_knowledge; newer owner-direct facts outrank older conflicting owner-direct facts. Never invent a departure minimum, capacity, price, inclusion, or policy to "improve" the draft.
+
 CONFIRMATION IS ENFORCED IN CODE, not just by this text — the first call only stages the send and returns it un-executed. It does NOT reach the customer, so never tell the operator it was sent. Call it as soon as you've composed the body (using the VOICE PROFILE — write as the operator would, never as Caye). Relay the returned summary to the operator as the draft and ask them to confirm.
 
 Once they reply affirmatively in a NEW message, call confirm_pending_action with the pending_action_id from the staged result. Do NOT call send_reply again to confirm — that only executes if conversation_id + body are byte-identical to what was staged, and rewording even slightly stages a SECOND draft while the first goes nowhere. That has stranded real sends.
