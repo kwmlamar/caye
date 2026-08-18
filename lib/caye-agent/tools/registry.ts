@@ -3,6 +3,7 @@ import { gateHighRisk } from './high-risk-gate'
 import { HIGH_RISK_TOOLS } from './high-risk-registry'
 import {
   cancelPendingExternalDraftsForConversation,
+  EXTERNAL_DRAFT_INTENT_REQUIRED,
   verifyExternalDraftIntent,
 } from './external-draft-intent'
 import { confirmPendingAction } from './write-high/confirm-pending-action'
@@ -103,12 +104,33 @@ import { createCustomerBooking } from './write-high/create-customer-booking'
  */
 type AnyTool = Tool<never>
 
+const inlineSendReply = HIGH_RISK_TOOLS.find((tool) => tool.name === 'send_reply') as AnyTool | undefined
+
+async function stageInlineDraftFallback(
+  args: never,
+  ctx: Parameters<AnyTool['execute']>[1]
+) {
+  if (!inlineSendReply) {
+    return { ok: false, error: 'Inline reply drafting is unavailable.' }
+  }
+
+  const conversationId = (args as { conversation_id?: unknown }).conversation_id
+  if (typeof conversationId === 'string') {
+    await cancelPendingExternalDraftsForConversation({ ctx, conversationId })
+  }
+
+  return gateHighRisk(inlineSendReply).execute(args, ctx)
+}
+
 /**
  * CAY-9 adds two destination-specific protections around the existing
  * high-risk gate without changing the risk model for any other tool.
  *
  * - draft_in_inbox: verify the CURRENT operator turn explicitly chose the
- *   external email artifact before a pending row can even be staged.
+ *   external email artifact before a pending row can even be staged. If the
+ *   model picked that tool for an ordinary "draft/revise" turn anyway,
+ *   deterministically stage the exact same body through send_reply so the
+ *   operator still gets the inline review flow instead of another model guess.
  * - send_reply: when the operator returns to the normal inline draft path,
  *   retire any still-pending external draft for that same customer thread so
  *   a later generic confirmation cannot target the obsolete destination.
@@ -121,6 +143,9 @@ function registeredHighRiskTool(tool: AnyTool): AnyTool {
       ...gated,
       async execute(args, ctx) {
         const intentError = await verifyExternalDraftIntent(ctx)
+        if (intentError?.error_code === EXTERNAL_DRAFT_INTENT_REQUIRED) {
+          return stageInlineDraftFallback(args, ctx)
+        }
         if (intentError) return intentError
         return gated.execute(args, ctx)
       },
