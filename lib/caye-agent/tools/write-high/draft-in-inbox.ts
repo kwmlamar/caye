@@ -3,7 +3,6 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { createZohoReplyDraft } from '@/lib/email-ai'
 import { checkZohoDraftGate, ZOHO_DRAFT_VERIFIED_KEY } from '@/lib/zoho-draft-gate'
 import type { Tool } from '../types'
-import { verifyExternalDraftIntent } from '../external-draft-intent'
 import { assertConversationOwnedByWorkspace } from '../write-low/_guards'
 
 interface DraftInInboxInput {
@@ -41,11 +40,12 @@ interface DraftInInboxInput {
  * open her email, twice, with nothing to confirm first. Low-risk execution
  * meant that silent redirect happened with no checkpoint at all.
  *
- * CAY-9 (2026-08-17) adds a second, independent protection: before this tool
- * can even enter the normal high-risk staging flow, the latest operator turn
- * must itself establish explicit external-draft intent. That intent is
- * turn-scoped. A previous Gmail/Zoho draft never makes later revisions
- * automatically continue in email.
+ * CAY-9 (2026-08-17) adds a second, independent protection before the normal
+ * high-risk staging flow: the current operator turn must establish explicit
+ * external-draft intent. That check lives outside this raw tool in registry.ts
+ * and is repeated before confirm_pending_action claims the staged row, so a
+ * transient history-read failure cannot occur after the action has been
+ * atomically marked executed.
  */
 export const draftInInbox: Tool<DraftInInboxInput> = {
   name: 'draft_in_inbox',
@@ -80,14 +80,6 @@ Email threads only — the operator's mailbox is the delivery surface, so this d
   },
 
   async execute(args, ctx) {
-    // Structural intent boundary. gateHighRisk (which wraps this tool in the
-    // registry) prevents execution without confirmation, but the raw tool is
-    // also invoked by confirm_pending_action. Re-checking here means both the
-    // staging call and the eventual confirmed execution remain tied to an
-    // explicit operator choice rather than a stale conversational destination.
-    const intentError = await verifyExternalDraftIntent(ctx)
-    if (intentError) return intentError
-
     const body = args.body.trim()
     if (!body) return { ok: false, error: 'Body cannot be empty' }
 
@@ -145,6 +137,8 @@ Email threads only — the operator's mailbox is the delivery surface, so this d
           subject: replySubject,
           draft_id: draftId,
           sent: false,
+          // Spelled out because the distinction is the entire point of the
+          // tool, and reporting it as "sent" would be a trust failure.
           next_step:
             "It's in their Drafts folder on this thread, not sent. Tell them to open their email, attach what they need, and send it from there.",
         },
