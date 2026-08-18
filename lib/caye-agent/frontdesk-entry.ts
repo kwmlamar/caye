@@ -124,10 +124,25 @@ export async function runConvergedFrontDeskTurn(
       inboundBody: input.inboundBody,
     })
     if (!authz.allowed) {
+      // blocked_by_existing_hold means the conversation was ALREADY held
+      // before this turn — nothing new happened that the owner doesn't
+      // already know about. Skip markHeld entirely: it would otherwise (a)
+      // overwrite the real original human_agent_reason with this generic
+      // placeholder, and (b) enqueue a fresh urgent_hold ping every single
+      // inbound turn a customer sends while the thread sits held, which
+      // reads to the owner as a new, distinct event each time. Both
+      // blocked_by_owner_policy and blocked_by_authority_check_error ARE
+      // new information this turn (a rule just fired, or we just lost the
+      // ability to tell) and still go through markHeld below.
+      if (authz.reason === 'blocked_by_existing_hold') {
+        const holdReason =
+          'Conversation is already held for the owner — Caye will not reply autonomously until it is released.'
+        return { outcome: 'held', toolsUsed: [], usedOutputFallbackPath: false, holdReason }
+      }
       const holdReason =
         authz.reason === 'blocked_by_owner_policy'
           ? (authz.escalation?.internalContext ?? 'Owner-only standing rule matched — held for the owner.')
-          : 'Conversation is already held for the owner — Caye will not reply autonomously until it is released.'
+          : 'Caye could not verify whether this conversation is safe to answer automatically (an owner-authority check failed) — held for the owner.'
       await markHeld(supabase, input, holdReason)
       return { outcome: 'held', toolsUsed: [], usedOutputFallbackPath: false, holdReason }
     }

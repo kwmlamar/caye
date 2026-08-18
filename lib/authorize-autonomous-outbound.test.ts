@@ -12,6 +12,7 @@ const mockState = vi.hoisted(() => ({
     action: 'escalate' | 'owner_only'
     route_to: 'owner' | 'founder' | 'both'
   }>,
+  standingRulesError: null as { message: string } | null,
 }))
 
 vi.mock('@/lib/supabase-server', () => ({
@@ -33,7 +34,11 @@ vi.mock('@/lib/supabase-server', () => ({
             eq: () => ({
               eq: () => ({
                 order: () => ({
-                  limit: () => Promise.resolve({ data: mockState.standingRules, error: null }),
+                  limit: () =>
+                    Promise.resolve({
+                      data: mockState.standingRulesError ? null : mockState.standingRules,
+                      error: mockState.standingRulesError,
+                    }),
                 }),
               }),
             }),
@@ -53,6 +58,7 @@ describe('authorizeAutonomousOutbound', () => {
     mockState.conversationRow = { human_agent_enabled: false }
     mockState.conversationError = null
     mockState.standingRules = []
+    mockState.standingRulesError = null
   })
 
   it('blocks with blocked_by_owner_policy when an owner_only rule matches', async () => {
@@ -130,5 +136,33 @@ describe('authorizeAutonomousOutbound', () => {
     })
 
     expect(decision).toEqual({ allowed: true })
+  })
+
+  it('fails CLOSED (blocked) when the conversation-hold lookup errors — uncertainty must not permit an autonomous send', async () => {
+    mockState.conversationError = { message: 'connection reset' }
+
+    const decision = await authorizeAutonomousOutbound({
+      workspaceId: 'ws1',
+      conversationId: 'conv1',
+      inboundBody: 'What time does the sunset cruise leave?',
+    })
+
+    expect(decision.allowed).toBe(false)
+    if (!decision.allowed) expect(decision.reason).toBe('blocked_by_authority_check_error')
+  })
+
+  it('fails CLOSED (blocked) when the standing-rules fetch errors, even though the conversation itself is not held', async () => {
+    mockState.conversationRow = { human_agent_enabled: false }
+    mockState.conversationError = null
+    mockState.standingRulesError = { message: 'relation "caye_standing_rules" does not exist' }
+
+    const decision = await authorizeAutonomousOutbound({
+      workspaceId: 'ws1',
+      conversationId: 'conv1',
+      inboundBody: 'What time does the sunset cruise leave?',
+    })
+
+    expect(decision.allowed).toBe(false)
+    if (!decision.allowed) expect(decision.reason).toBe('blocked_by_authority_check_error')
   })
 })

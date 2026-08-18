@@ -14,7 +14,11 @@ const mockState = vi.hoisted(() => ({
   holdPingCalls: [] as unknown[],
   authzDecision: { allowed: true } as
     | { allowed: true }
-    | { allowed: false; reason: 'blocked_by_owner_policy' | 'blocked_by_existing_hold'; escalation?: { internalContext: string } },
+    | {
+        allowed: false
+        reason: 'blocked_by_owner_policy' | 'blocked_by_existing_hold' | 'blocked_by_authority_check_error'
+        escalation?: { internalContext: string }
+      },
   authzCalls: [] as unknown[],
 }))
 
@@ -159,13 +163,47 @@ describe('runConvergedFrontDeskTurn', () => {
     expect(mockState.persistCalls).toHaveLength(0)
   })
 
-  it('blocks before the LLM runs when the conversation already has an owner hold', async () => {
+  it('blocks before the LLM runs when the conversation already has an owner hold, without re-pinging or touching conversation state (#89 follow-up)', async () => {
     mockState.authzDecision = { allowed: false, reason: 'blocked_by_existing_hold' }
 
     const result = await runConvergedFrontDeskTurn(BASE_INPUT)
 
     expect(result.outcome).toBe('held')
     expect(mockState.runToolLoopCalls).toBe(0)
+    // Already held before this turn — nothing new to tell the owner. A ping
+    // or a conversation-state rewrite here would (a) look like a fresh
+    // event every inbound message while held, and (b) stomp the real
+    // original human_agent_reason with this generic placeholder.
+    expect(mockState.holdPingCalls).toHaveLength(0)
+    expect(mockState.conversationUpdates).toHaveLength(0)
+    expect(mockState.internalMessagesInserted).toHaveLength(0)
+  })
+
+  it('does not generate a duplicate owner ping on repeated inbound turns while a conversation stays held (#89 follow-up)', async () => {
+    mockState.authzDecision = { allowed: false, reason: 'blocked_by_existing_hold' }
+
+    await runConvergedFrontDeskTurn(BASE_INPUT)
+    await runConvergedFrontDeskTurn({ ...BASE_INPUT, inboundBody: 'Following up — still there?' })
+    await runConvergedFrontDeskTurn({ ...BASE_INPUT, inboundBody: 'Any update?' })
+
+    expect(mockState.holdPingCalls).toHaveLength(0)
+    expect(mockState.conversationUpdates).toHaveLength(0)
+    expect(mockState.internalMessagesInserted).toHaveLength(0)
+  })
+
+  it('marks held and pings the owner when the authority check itself fails (fail-closed, #89 follow-up)', async () => {
+    mockState.authzDecision = { allowed: false, reason: 'blocked_by_authority_check_error' }
+
+    const result = await runConvergedFrontDeskTurn(BASE_INPUT)
+
+    expect(result.outcome).toBe('held')
+    expect(result.holdReason).toContain('owner-authority check failed')
+    expect(mockState.runToolLoopCalls).toBe(0)
+    // Unlike blocked_by_existing_hold, this IS new information this turn —
+    // the owner needs to know the deterministic gate couldn't verify
+    // safety, so this must still surface as a real hold + ping.
+    expect(mockState.conversationUpdates).toHaveLength(1)
+    expect(mockState.internalMessagesInserted).toHaveLength(1)
     expect(mockState.holdPingCalls).toHaveLength(1)
   })
 

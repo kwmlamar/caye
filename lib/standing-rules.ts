@@ -168,8 +168,9 @@ export async function conversationHasOpenEscalation(
   return !!data
 }
 
-/** Active rules for a workspace, oldest first. */
-export async function fetchStandingRules(workspaceId: string): Promise<StandingRule[]> {
+async function queryStandingRules(
+  workspaceId: string
+): Promise<{ data: StandingRule[] | null; error: { message: string } | null }> {
   const supabase = createServiceClient()
   const { data, error } = await supabase
     .from('caye_standing_rules')
@@ -178,16 +179,43 @@ export async function fetchStandingRules(workspaceId: string): Promise<StandingR
     .eq('is_active', true)
     .order('created_at', { ascending: true })
     .limit(100)
+  return { data: data as StandingRule[] | null, error }
+}
+
+/** Active rules for a workspace, oldest first. */
+export async function fetchStandingRules(workspaceId: string): Promise<StandingRule[]> {
+  const { data, error } = await queryStandingRules(workspaceId)
   if (error) {
     // Fail OPEN on a read error, deliberately. A standing rule escalates
     // instead of replying; if the table is unreachable we lose enforcement
     // but Caye still answers the guest. The alternative — treating a DB
     // blip as "escalate everything" — would bury the owner during exactly
     // the incident where they can least afford noise.
+    //
+    // This posture is specific to the escalate path. The owner_only
+    // authority gate (lib/authorize-autonomous-outbound.ts) has the
+    // opposite requirement — see fetchStandingRulesOrThrow below — and
+    // must NOT reuse this fail-open behavior.
     console.error('[standing-rules] fetch failed:', error)
     return []
   }
-  return (data ?? []) as StandingRule[]
+  return data ?? []
+}
+
+/**
+ * Same query as fetchStandingRules, but fails CLOSED: a read error throws
+ * instead of returning []. Exists solely for
+ * lib/authorize-autonomous-outbound.ts's owner_only gate, where an
+ * unreadable rules table must block autonomous outbound rather than silently
+ * behave as "no rules configured" (#88 follow-up — uncertainty must not
+ * permit an autonomous customer send).
+ */
+export async function fetchStandingRulesOrThrow(workspaceId: string): Promise<StandingRule[]> {
+  const { data, error } = await queryStandingRules(workspaceId)
+  if (error) {
+    throw new Error(`standing rules fetch failed: ${error.message}`)
+  }
+  return data ?? []
 }
 
 /**
