@@ -1,6 +1,7 @@
 import 'server-only'
 import { createServiceClient } from '@/lib/supabase-server'
 import { loadScheduleConfig, localDateISO, endOfLocalDayUTC } from '@/lib/whatsapp/schedule'
+import { findConflictingFact } from '@/lib/business-fact-conflict'
 import type { Tool } from '../types'
 
 interface AddBusinessFactInput {
@@ -81,6 +82,47 @@ export const addBusinessFact: Tool<AddBusinessFactInput> = {
     }
 
     const supabase = createServiceClient()
+
+    // CAY-14: owner-direct corrections are first-class learning events, not
+    // just appends. Before saving, check whether this fact contradicts an
+    // active one — production incident: an older "cash not accepted" fact
+    // stayed active after the owner's policy moved on, Caye repeated it to a
+    // guest, and the owner had to correct it live mid-conversation. Only
+    // check against ACTIVE facts (already-superseded rows are history, not
+    // live candidates for a fresh conflict).
+    const { data: existingRows, error: existingErr } = await supabase
+      .from('business_facts')
+      .select('id, fact, source, expires_at')
+      .eq('workspace_id', ctx.workspaceId)
+      .is('superseded_at', null)
+
+    if (existingErr) return { ok: false, error: existingErr.message }
+
+    const now = Date.now()
+    const active = (existingRows ?? []).filter(
+      (r) => !r.expires_at || new Date(r.expires_at as string).getTime() > now
+    )
+
+    const conflict = await findConflictingFact(
+      fact,
+      active.map((r) => ({ id: r.id, text: r.fact, source: r.source })),
+      { workspaceId: ctx.workspaceId, source: 'add-business-fact.ts:execute' }
+    )
+    const conflictingRow = conflict.conflictId ? active.find((r) => r.id === conflict.conflictId) : undefined
+
+    // Fail closed on a real-but-unclear contradiction: don't save this
+    // version, don't touch the old fact, ask the owner to say explicitly
+    // which one governs before either is used with a guest.
+    if (conflictingRow && conflict.resolution === 'ambiguous') {
+      return {
+        ok: false,
+        error:
+          `This may conflict with an existing fact instead of just adding to it: "${conflictingRow.fact}". ` +
+          `Ask the owner directly whether this replaces that fact or whether both still apply in different ` +
+          `situations, then save the clarified version.`,
+      }
+    }
+
     const { data, error } = await supabase
       .from('business_facts')
       .insert({
@@ -95,6 +137,24 @@ export const addBusinessFact: Tool<AddBusinessFactInput> = {
       .single()
 
     if (error) return { ok: false, error: error.message }
+
+    let supersededFact: string | null = null
+    if (conflictingRow && conflict.resolution === 'supersede') {
+      const { error: supersedeErr } = await supabase
+        .from('business_facts')
+        .update({ superseded_by: data.id, superseded_at: new Date().toISOString() })
+        .eq('id', conflictingRow.id)
+      if (supersedeErr) {
+        // The new fact is already saved — that's the part that matters to
+        // future replies. A failure marking the old row superseded only
+        // risks a stale duplicate surviving in retrieval, so surface it but
+        // don't roll back the insert.
+        console.warn('[add_business_fact] fact saved but supersession failed:', supersedeErr.message)
+      } else {
+        supersededFact = conflictingRow.fact
+      }
+    }
+
     return {
       ok: true,
       data: {
@@ -103,6 +163,7 @@ export const addBusinessFact: Tool<AddBusinessFactInput> = {
         fact,
         expires_on: args.expires_on ?? null,
         created_at: data.created_at,
+        superseded_fact: supersededFact,
         // The operator must be told, verbatim, what got stored. On
         // 2026-08-07 Karenda gave three instructions in nine minutes; two
         // were saved, one ("50% to hold, balance 7 days prior") was used in
@@ -111,9 +172,11 @@ export const addBusinessFact: Tool<AddBusinessFactInput> = {
         // three looked equally received — so the next day Caye quoted that
         // package with no deposit terms. Saving without confirming is how
         // an owner ends up trusting memory that isn't there.
-        tell_the_owner:
-          `Confirm back in your reply that you've saved this, quoting it: "${fact}". ` +
-          `If they told you several things at once, say which ones you saved and which you did not.`,
+        tell_the_owner: supersededFact
+          ? `Confirm back in your reply that you've saved this, quoting it: "${fact}". Also tell them this ` +
+            `replaces the old fact "${supersededFact}", which Caye will no longer use.`
+          : `Confirm back in your reply that you've saved this, quoting it: "${fact}". ` +
+            `If they told you several things at once, say which ones you saved and which you did not.`,
       },
     }
   },

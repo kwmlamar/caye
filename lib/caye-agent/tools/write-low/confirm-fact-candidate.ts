@@ -2,6 +2,7 @@ import 'server-only'
 import { createServiceClient } from '@/lib/supabase-server'
 import { normalizeSentence } from '@/lib/business-fact-candidate-detection'
 import { loadScheduleConfig, localDateISO, endOfLocalDayUTC } from '@/lib/whatsapp/schedule'
+import { findConflictingFact, outranksForSupersession } from '@/lib/business-fact-conflict'
 import type { Tool } from '../types'
 
 interface ConfirmFactCandidateInput {
@@ -110,6 +111,45 @@ export const confirmFactCandidate: Tool<ConfirmFactCandidateInput> = {
 
     const category = args.category ?? candidate.category_guess
 
+    // CAY-14: this fact is Caye's own inference (a repeated pattern the
+    // owner approved), not an owner-direct statement — rule 3 says
+    // owner-direct corrections outrank inferred/model-generated knowledge,
+    // so it must never silently supersede an explicit owner-direct fact.
+    // Check against active facts the same way add_business_fact does.
+    const { data: existingRows, error: existingErr } = await supabase
+      .from('business_facts')
+      .select('id, fact, source, expires_at')
+      .eq('workspace_id', ctx.workspaceId)
+      .is('superseded_at', null)
+
+    if (existingErr) return { ok: false, error: existingErr.message }
+
+    const now = Date.now()
+    const active = (existingRows ?? []).filter(
+      (r) => !r.expires_at || new Date(r.expires_at as string).getTime() > now
+    )
+
+    const conflict = await findConflictingFact(
+      fact,
+      active.map((r) => ({ id: r.id, text: r.fact, source: r.source })),
+      { workspaceId: ctx.workspaceId, source: 'confirm-fact-candidate.ts:execute' }
+    )
+    const conflictingRow = conflict.conflictId ? active.find((r) => r.id === conflict.conflictId) : undefined
+
+    if (conflictingRow) {
+      const allowedToSupersede =
+        conflict.resolution === 'supersede' && outranksForSupersession('candidate-confirmed', conflictingRow.source)
+      if (!allowedToSupersede) {
+        return {
+          ok: false,
+          error:
+            `This may conflict with an existing fact instead of just adding to it: "${conflictingRow.fact}". ` +
+            `Ask the owner directly whether this replaces that fact before saving — an inferred pattern ` +
+            `cannot silently override an owner-taught fact.`,
+        }
+      }
+    }
+
     const { data: newFact, error: insertErr } = await supabase
       .from('business_facts')
       .insert({
@@ -124,6 +164,16 @@ export const confirmFactCandidate: Tool<ConfirmFactCandidateInput> = {
       .single()
 
     if (insertErr) return { ok: false, error: insertErr.message }
+
+    if (conflictingRow && conflict.resolution === 'supersede') {
+      const { error: supersedeErr } = await supabase
+        .from('business_facts')
+        .update({ superseded_by: newFact.id, superseded_at: new Date().toISOString() })
+        .eq('id', conflictingRow.id)
+      if (supersedeErr) {
+        console.warn('[confirm_fact_candidate] fact saved but supersession failed:', supersedeErr.message)
+      }
+    }
 
     // Whitespace-insensitive comparison, same as classifyOutboundAuthorship
     // (lib/message-authorship.ts) — reflowing a sentence isn't a correction.
