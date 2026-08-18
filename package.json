@@ -41,6 +41,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@types/three": "^0.185.4",
+    "@vitest/ui": "^4.1.7",
     "sharp": "^0.32.1",
     "tailwindcss": "^4",
     "typescript": "^5",
