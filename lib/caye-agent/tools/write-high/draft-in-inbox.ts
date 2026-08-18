@@ -3,6 +3,7 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { createZohoReplyDraft } from '@/lib/email-ai'
 import { checkZohoDraftGate, ZOHO_DRAFT_VERIFIED_KEY } from '@/lib/zoho-draft-gate'
 import type { Tool } from '../types'
+import { verifyExternalDraftIntent } from '../external-draft-intent'
 import { assertConversationOwnedByWorkspace } from '../write-low/_guards'
 
 interface DraftInInboxInput {
@@ -38,14 +39,13 @@ interface DraftInInboxInput {
  * herself asked "should I stage it as a send_reply?" and got no direct
  * answer — she silently called this tool instead and told Mrs. Max to go
  * open her email, twice, with nothing to confirm first. Low-risk execution
- * meant that silent redirect happened with no checkpoint at all. The prompt
- * fix (modes/back-office.ts) is the primary correction — this tool should
- * essentially never be reached from the bare word "draft" — but a
- * consequence this visible (the operator is pulled out of the channel
- * she's managing Caye from) gets the same code-level confirmation
- * checkpoint every other consequential action here already has, exactly
- * because a model can still misjudge which tool a plain "draft please"
- * means. See gateHighRisk (high-risk-gate.ts) for the mechanism.
+ * meant that silent redirect happened with no checkpoint at all.
+ *
+ * CAY-9 (2026-08-17) adds a second, independent protection: before this tool
+ * can even enter the normal high-risk staging flow, the latest operator turn
+ * must itself establish explicit external-draft intent. That intent is
+ * turn-scoped. A previous Gmail/Zoho draft never makes later revisions
+ * automatically continue in email.
  */
 export const draftInInbox: Tool<DraftInInboxInput> = {
   name: 'draft_in_inbox',
@@ -53,7 +53,9 @@ export const draftInInbox: Tool<DraftInInboxInput> = {
 
 Does NOT send — nothing reaches the customer.
 
-THE WORD "DRAFT" ALONE DOES NOT MEAN THIS TOOL. "Draft please" / "draft a reply" / "write something for X" / "show me what you'd say" mean COMPOSE AND SHOW IT HERE — call send_reply and relay its staged draft in this same conversation, the same as any other draft request, regardless of whether the customer's own thread happens to be email. Only call this tool when the operator EXPLICITLY asks for the external artifact — "put this in my email drafts", "save it as a Gmail/email draft", "create an email draft for her", "I'll add the photos and send it myself" — or when attachments are the reason (below). If you can't tell which the operator wants, ask in plain language ("Want me to send it, or put it in your email drafts?") before calling either tool.
+THE WORD "DRAFT" ALONE DOES NOT MEAN THIS TOOL. "Draft please" / "draft a reply" / "write something for X" / "show me what you'd say" mean COMPOSE AND SHOW IT HERE — call send_reply and relay its staged draft in this same conversation, the same as any other draft request, regardless of whether the customer's own thread happens to be email. Only call this tool when the operator EXPLICITLY asks for the external artifact — "put this in my email drafts", "save it as a Gmail/email draft", "create an email draft for her", "I'll add the photos and send it myself" — or when attachments are the reason (below).
+
+EXTERNAL-DRAFT INTENT IS NOT STICKY. Even if this tool was used earlier on the same customer thread, later requests like "draft please", "change the price", "make it shorter", or "add the group size" are ordinary compose/revise requests again unless the CURRENT operator turn explicitly asks for Gmail/email Drafts. Never carry an old destination forward by conversational inertia.
 
 USE THIS WHEN ATTACHMENTS ARE INVOLVED. You cannot attach photos or files to a send_reply. The moment the operator says they want to send a customer images, documents, or anything you can't produce, offer this instead of collecting the files — say so BEFORE they start sending them to you.
 
@@ -78,6 +80,14 @@ Email threads only — the operator's mailbox is the delivery surface, so this d
   },
 
   async execute(args, ctx) {
+    // Structural intent boundary. gateHighRisk (which wraps this tool in the
+    // registry) prevents execution without confirmation, but the raw tool is
+    // also invoked by confirm_pending_action. Re-checking here means both the
+    // staging call and the eventual confirmed execution remain tied to an
+    // explicit operator choice rather than a stale conversational destination.
+    const intentError = await verifyExternalDraftIntent(ctx)
+    if (intentError) return intentError
+
     const body = args.body.trim()
     if (!body) return { ok: false, error: 'Body cannot be empty' }
 
@@ -135,8 +145,6 @@ Email threads only — the operator's mailbox is the delivery surface, so this d
           subject: replySubject,
           draft_id: draftId,
           sent: false,
-          // Spelled out because the distinction is the entire point of the
-          // tool, and reporting it as "sent" would be a trust failure.
           next_step:
             "It's in their Drafts folder on this thread, not sent. Tell them to open their email, attach what they need, and send it from there.",
         },
