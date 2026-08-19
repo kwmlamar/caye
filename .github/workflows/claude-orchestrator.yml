@@ -1,0 +1,129 @@
+name: Claude Orchestrator
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  advance-queue:
+    if: github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'claude/issue-')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Advance serialized Claude queue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ ! "${HEAD_REF}" =~ ^claude/issue-([0-9]+)- ]]; then
+            echo "Claude branch does not encode an issue number; nothing to advance."
+            exit 0
+          fi
+          CURRENT_ISSUE="${BASH_REMATCH[1]}"
+
+          ensure_label() {
+            local name="$1"
+            local color="$2"
+            local description="$3"
+            gh api "repos/${REPO}/labels/${name}" >/dev/null 2>&1 || \
+              gh api -X POST "repos/${REPO}/labels" \
+                -f name="$name" -f color="$color" -f description="$description" >/dev/null
+          }
+          ensure_label claude-active d4c5f9 "Claude implementation is currently active"
+          ensure_label claude-failed d73a4a "Claude implementation failed or stopped before review-ready completion"
+          ensure_label claude-ready-for-review 0e8a16 "Claude implementation produced a PR ready for controlled review"
+          ensure_label claude-done 5319e7 "Claude implementation was merged through controlled review"
+          ensure_label claude-queued 1d76db "Queued for serialized Claude implementation"
+
+          for old in claude-active claude-failed claude-ready-for-review claude-queued; do
+            gh api -X DELETE "repos/${REPO}/issues/${CURRENT_ISSUE}/labels/${old}" >/dev/null 2>&1 || true
+          done
+          gh api -X POST "repos/${REPO}/issues/${CURRENT_ISSUE}/labels" -f 'labels[]=claude-done' >/dev/null
+          gh api -X POST "repos/${REPO}/issues/${CURRENT_ISSUE}/comments" \
+            -f body="<!-- caye-orchestrator:state=merged;pr=${PR_NUMBER} -->
+### Controlled review merged
+
+PR #${PR_NUMBER} was merged at \`${MERGE_SHA}\`. The implementation queue may advance now.
+
+Orchestrator run: ${RUN_URL}" >/dev/null
+
+          if [[ ! -f .github/caye-claude-queue.json ]]; then
+            echo "No queue config on main; stopping after recording merge state."
+            exit 0
+          fi
+
+          AUTO_DISPATCH="$(jq -r '.auto_dispatch // false' .github/caye-claude-queue.json)"
+          if [[ "${AUTO_DISPATCH}" != "true" ]]; then
+            echo "Queue auto_dispatch is disabled."
+            exit 0
+          fi
+
+          mapfile -t QUEUE < <(jq -r '.issues[]' .github/caye-claude-queue.json)
+          FOUND_CURRENT=false
+          NEXT_ISSUE=""
+          for issue in "${QUEUE[@]}"; do
+            if [[ "${FOUND_CURRENT}" == "false" ]]; then
+              if [[ "${issue}" == "${CURRENT_ISSUE}" ]]; then
+                FOUND_CURRENT=true
+              fi
+              continue
+            fi
+
+            STATE="$(gh api "repos/${REPO}/issues/${issue}" --jq '.state' 2>/dev/null || echo missing)"
+            if [[ "${STATE}" == "open" ]]; then
+              NEXT_ISSUE="${issue}"
+              break
+            fi
+          done
+
+          if [[ -z "${NEXT_ISSUE}" ]]; then
+            echo "No next open queued issue."
+            exit 0
+          fi
+
+          # Idempotency: never dispatch the same queue step twice just because a
+          # workflow is re-run. The marker lives in the issue discussion.
+          ALREADY_DISPATCHED="$(gh api --paginate "repos/${REPO}/issues/${NEXT_ISSUE}/comments?per_page=100" \
+            --jq '.[] | select(.body | contains("caye-orchestrator:dispatch-from='"${CURRENT_ISSUE}"'")) | .id' | head -n 1)"
+          if [[ -n "${ALREADY_DISPATCHED}" ]]; then
+            echo "Issue #${NEXT_ISSUE} was already dispatched from #${CURRENT_ISSUE}."
+            exit 0
+          fi
+
+          # A queued issue should not be launched if it already has an open
+          # Claude implementation PR. This is the second idempotency boundary.
+          OPEN_PR="$(gh api "repos/${REPO}/pulls?state=open&per_page=100" \
+            --jq '.[] | select(.head.ref | startswith("claude/issue-'"${NEXT_ISSUE}"'-")) | .number' | head -n 1)"
+          if [[ -n "${OPEN_PR}" ]]; then
+            echo "Issue #${NEXT_ISSUE} already has open Claude PR #${OPEN_PR}."
+            exit 0
+          fi
+
+          gh api -X DELETE "repos/${REPO}/issues/${NEXT_ISSUE}/labels/claude-failed" >/dev/null 2>&1 || true
+          gh api -X DELETE "repos/${REPO}/issues/${NEXT_ISSUE}/labels/claude-done" >/dev/null 2>&1 || true
+          gh api -X POST "repos/${REPO}/issues/${NEXT_ISSUE}/labels" -f 'labels[]=claude-queued' >/dev/null
+
+          gh api -X POST "repos/${REPO}/issues/${NEXT_ISSUE}/comments" \
+            -f body="<!-- caye-orchestrator:dispatch-from=${CURRENT_ISSUE} -->
+@claude Execute this issue from current \`main\` now. Treat the issue body as the complete product specification. Keep scope narrow and preserve all newer reliability boundaries. Prioritize producing a saved branch/PR over broad investigation: implement, add focused regressions, commit/push, then run additional validation if budget remains. Do not merge, deploy, mutate production data, or create real customer/operator side effects." >/dev/null
+
+          gh api -X DELETE "repos/${REPO}/issues/${NEXT_ISSUE}/labels/claude-queued" >/dev/null 2>&1 || true
+          gh api -X POST "repos/${REPO}/issues/${NEXT_ISSUE}/labels" -f 'labels[]=claude-active' >/dev/null
+
+          echo "Dispatched queued issue #${NEXT_ISSUE}."
