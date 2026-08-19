@@ -1,0 +1,233 @@
+name: Apply CAY-99 owner attention patch
+
+on:
+  push:
+    branches:
+      - fix/99-owner-attention-noise
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/99-owner-attention-noise
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Apply deterministic novelty gate
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          sync = Path('lib/owner-attention-sync.ts')
+          s = sync.read_text()
+
+          marker = "interface ReminderRow {\n  id: string\n  payload: Record<string, unknown> | null\n  scheduled_for: string | null\n}\n"
+          insert = marker + r'''
+
+/**
+ * CAY-99: customer acknowledgements are observations, not developments.
+ * A held thread can receive a final "Thank you!" after the owner has already
+ * been told about the substantive booking/decision. Updating the attention
+ * fingerprint from that courtesy reply re-earns owner attention even though
+ * nothing actionable changed (NBC Crew, 2026-08-19).
+ *
+ * Keep this deliberately narrow. Questions, requests, amounts, dates, and
+ * substantive prose still count as developments. Only obvious acknowledgements
+ * are absorbed silently.
+ */
+export function isNonActionableOwnerObservation(args: {
+  lastSenderType: string | null
+  lastMessagePreview: string | null
+}): boolean {
+  if (args.lastSenderType !== 'customer') return false
+  const raw = (args.lastMessagePreview ?? '').trim().toLowerCase()
+  if (!raw) return false
+  const normalized = raw
+    .replace(/[.!?,;:]+/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return /^(?:thank you|thanks|thank you so much|thanks so much|many thanks|got it|okay|ok|sounds good|perfect|great|awesome|understood|noted|👍|🙏|😊|👌)+$/.test(normalized)
+}
+
+export type OwnerAttentionReasonCode =
+  | 'suppressed_duplicate'
+  | 'suppressed_non_actionable'
+  | 'surfaced_actionable'
+
+/** Pure reason-code layer used by tests/telemetry and future notifiers. */
+export function ownerAttentionReasonCode(args: {
+  nonActionable: boolean
+  stateFingerprint?: string | null
+  notifiedFingerprint?: string | null
+}): OwnerAttentionReasonCode {
+  if (args.nonActionable) return 'suppressed_non_actionable'
+  if (
+    args.stateFingerprint != null &&
+    args.notifiedFingerprint != null &&
+    args.stateFingerprint === args.notifiedFingerprint
+  ) return 'suppressed_duplicate'
+  return 'surfaced_actionable'
+}
+'''
+          if marker not in s:
+            raise SystemExit('ReminderRow marker not found')
+          s = s.replace(marker, insert, 1)
+
+          old = """      add({
+        subjectType: SUBJECT_CONVERSATION,
+        subjectId: h.id,
+        conversationId: h.id,
+        title: `${who} — ${(h.human_agent_reason ?? 'waiting on you').replace(/\\s+/g, ' ').slice(0, 80)}`,
+        // A date that has already gone by with no reply sent is the one hold
+        // state that gets worse purely by sitting there.
+        priority: datePassed ? 'critical' : 'decision',
+        nextAction: hasDraft
+          ? 'Draft ready — needs your approval'
+          : escalated.has(h.id)
+            ? 'Waiting on your call'
+            : 'Waiting on your reply',
+        // What re-earns attention: a new message from them, a new reason, a
+        // draft appearing, the date lapsing. NOT the passage of time alone —
+        // an item that has merely aged belongs in the unchanged bucket.
+        fingerprintParts: [h.human_agent_reason, h.last_message_at, hasDraft, datePassed],
+      })
+"""
+          new = """      const nonActionableObservation = isNonActionableOwnerObservation({
+        lastSenderType: h.last_sender_type,
+        lastMessagePreview: h.last_message_preview,
+      })
+
+      add({
+        subjectType: SUBJECT_CONVERSATION,
+        subjectId: h.id,
+        conversationId: h.id,
+        title: `${who} — ${(h.human_agent_reason ?? 'waiting on you').replace(/\\s+/g, ' ').slice(0, 80)}`,
+        // A date that has already gone by with no reply sent is the one hold
+        // state that gets worse purely by sitting there.
+        priority: datePassed ? 'critical' : 'decision',
+        nextAction: hasDraft
+          ? 'Draft ready — needs your approval'
+          : escalated.has(h.id)
+            ? 'Waiting on your call'
+            : 'Waiting on your reply',
+        // What re-earns attention: a substantive new customer message, a new
+        // reason, a draft appearing, or the date lapsing. Courtesy acks such
+        // as "Thank you!" are reconciliation noise, not owner news. Omitting
+        // fingerprintParts makes observeAttentionItem preserve the prior
+        // fingerprint, so this also avoids a one-time fingerprint-version
+        // migration that would itself create noise.
+        fingerprintParts: nonActionableObservation
+          ? undefined
+          : [h.human_agent_reason, h.last_message_at, hasDraft, datePassed],
+      })
+"""
+          if old not in s:
+            raise SystemExit('held add block not found')
+          s = s.replace(old, new, 1)
+          sync.write_text(s)
+
+          test = Path('lib/owner-attention-sync.test.ts')
+          t = test.read_text()
+          t = t.replace(
+            "import { syncOwnerAttention } from './owner-attention-sync'",
+            "import { isNonActionableOwnerObservation, ownerAttentionReasonCode, syncOwnerAttention } from './owner-attention-sync'",
+            1,
+          )
+          old_test = """  it('changes when the customer writes again', async () => {
+    HELD = [heldConv()]
+    await syncOwnerAttention('ws-1')
+    const first = observedFor('conv-1')!.fingerprintParts
+
+    OBSERVED = []
+    HELD = [heldConv({ last_message_at: '2026-08-13T10:00:00Z' })]
+    await syncOwnerAttention('ws-1')
+    expect(observedFor('conv-1')!.fingerprintParts).not.toEqual(first)
+  })
+"""
+          new_test = """  it('changes when the customer writes a substantive message', async () => {
+    HELD = [heldConv({ last_message_preview: 'Can you confirm the ferry time?' })]
+    await syncOwnerAttention('ws-1')
+    const first = observedFor('conv-1')!.fingerprintParts
+
+    OBSERVED = []
+    HELD = [heldConv({
+      last_message_at: '2026-08-13T10:00:00Z',
+      last_message_preview: 'Actually, can we move it to 3pm?',
+    })]
+    await syncOwnerAttention('ws-1')
+    expect(observedFor('conv-1')!.fingerprintParts).not.toEqual(first)
+  })
+
+  it('NBC Crew regression: absorbs a final thank-you instead of re-earning owner attention', async () => {
+    HELD = [heldConv({ last_message_preview: 'Can you confirm our ferry booking?' })]
+    await syncOwnerAttention('ws-1')
+    expect(observedFor('conv-1')!.fingerprintParts).toBeDefined()
+
+    OBSERVED = []
+    HELD = [heldConv({
+      last_message_at: '2026-08-13T10:00:00Z',
+      last_message_preview: 'Thank you!',
+    })]
+    await syncOwnerAttention('ws-1')
+    expect(observedFor('conv-1')!.fingerprintParts).toBeUndefined()
+  })
+"""
+          if old_test not in t:
+            raise SystemExit('customer writes test not found')
+          t = t.replace(old_test, new_test, 1)
+          t += r'''
+
+describe('CAY-99 owner-attention novelty gate', () => {
+  it.each(['Thank you!', 'Thanks', 'OK', 'Got it.', 'Perfect!', '👍'])(
+    'classifies %s as non-actionable owner noise',
+    (preview) => {
+      expect(isNonActionableOwnerObservation({ lastSenderType: 'customer', lastMessagePreview: preview })).toBe(true)
+    }
+  )
+
+  it('never suppresses a real customer question', () => {
+    expect(isNonActionableOwnerObservation({
+      lastSenderType: 'customer',
+      lastMessagePreview: 'Thanks — can we change the ferry to 3pm?',
+    })).toBe(false)
+  })
+
+  it('emits explicit observability reason codes', () => {
+    expect(ownerAttentionReasonCode({ nonActionable: true })).toBe('suppressed_non_actionable')
+    expect(ownerAttentionReasonCode({
+      nonActionable: false,
+      stateFingerprint: 'same',
+      notifiedFingerprint: 'same',
+    })).toBe('suppressed_duplicate')
+    expect(ownerAttentionReasonCode({
+      nonActionable: false,
+      stateFingerprint: 'new',
+      notifiedFingerprint: 'old',
+    })).toBe('surfaced_actionable')
+  })
+})
+'''
+          test.write_text(t)
+
+          # Temporary workflow deletes itself from the resulting branch.
+          Path('.github/workflows/apply-99-owner-attention.yml').unlink()
+          PY
+      - name: Focused tests
+        run: npx vitest run lib/owner-attention-sync.test.ts
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Commit patch
+        run: |
+          git config user.name 'caye-reliability-bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add lib/owner-attention-sync.ts lib/owner-attention-sync.test.ts .github/workflows/apply-99-owner-attention.yml
+          git commit -m 'fix: suppress non-actionable proactive owner updates (#99)'
+          git push origin HEAD:fix/99-owner-attention-noise
