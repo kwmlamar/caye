@@ -13,6 +13,7 @@ export interface OutreachOperationalStatus {
   lastScan: { ranAt: string | null; succeeded: boolean | null; summary: Record<string, unknown> | null; error: string | null }
   lastSourcing: { ranAt: string | null; succeeded: boolean | null; summary: Record<string, unknown> | null; error: string | null }
   sendsToday: { sent: number; dailyLimit: number; remaining: number }
+  sendsThisMonth: { firstTouch: number; followups: number; total: number }
   queue: { pendingDrafts: number; stalled: number; sourcingJobs: number }
   sourcing: { availableCandidates: number; cooldownCandidates: number; lastFound: number | null; lastQualified: number | null; lastRejected: number | null; lastDuplicates: number | null }
   provider: { connected: boolean; healthy: boolean; kind: string | null; lastError: string | null }
@@ -55,12 +56,18 @@ export async function getOutreachOperationalStatus(workspaceId: string): Promise
     ? await db.from('unified_conversations').select('id,updated_at,metadata').eq('connected_account_id', account.data.id).eq('human_agent_enabled', true)
     : { data: [] as Array<{ id: string; updated_at: string; metadata: unknown }> }
   const timezone = customer.data?.timezone || 'UTC'
-  const start = startOfBusinessDay(new Date(), timezone)
-  const [first, follow] = await Promise.all([
+  const now = new Date()
+  const start = startOfBusinessDay(now, timezone)
+  const monthStart = startOfBusinessMonth(now, timezone)
+  const [first, follow, monthFirst, monthFollow] = await Promise.all([
     db.from('outreach_leads').select('id', { count: 'exact', head: true }).eq('workspace_id', workspaceId).gte('first_touch_sent_at', start),
     db.from('outreach_leads').select('id', { count: 'exact', head: true }).eq('workspace_id', workspaceId).gte('last_nudge_at', start),
+    db.from('outreach_leads').select('id', { count: 'exact', head: true }).eq('workspace_id', workspaceId).gte('first_touch_sent_at', monthStart),
+    db.from('outreach_leads').select('id', { count: 'exact', head: true }).eq('workspace_id', workspaceId).gte('last_nudge_at', monthStart),
   ])
   const sent = (first.count ?? 0) + (follow.count ?? 0)
+  const monthFirstTouch = monthFirst.count ?? 0
+  const monthFollowups = monthFollow.count ?? 0
   const pending = (drafts.data ?? []).filter((r) => ['outreach_first_touch', 'outreach_followup'].includes(String((r.metadata as Record<string, unknown>)?.hold_kind))).length
   const sourcingSummary = (sourcingRun.data?.last_summary as Record<string, unknown> | null) ?? null
   // Field names match runOutreachSourcingJob's summary (lib/outreach-
@@ -80,6 +87,7 @@ export async function getOutreachOperationalStatus(workspaceId: string): Promise
     lastScan: { ranAt: scan.data?.last_started_at ?? null, succeeded: scan.data ? scan.data.last_status === 'ok' : null, summary: (scan.data?.last_summary as Record<string, unknown>) ?? null, error: scan.data?.last_error ?? null },
     lastSourcing: { ranAt: sourcingRun.data?.last_started_at ?? null, succeeded: sourcingRun.data ? sourcingRun.data.last_status === 'ok' : null, summary: sourcingSummary, error: sourcingRun.data?.last_error ?? null },
     sendsToday: { sent, dailyLimit: OUTREACH_DAILY_SEND_CAP, remaining: Math.max(0, OUTREACH_DAILY_SEND_CAP - sent) },
+    sendsThisMonth: { firstTouch: monthFirstTouch, followups: monthFollowups, total: monthFirstTouch + monthFollowups },
     queue: { pendingDrafts: pending, stalled: stalled.count ?? 0, sourcingJobs: sourcingJobs.count ?? 0 },
     sourcing: { availableCandidates, cooldownCandidates: cooldown.count ?? 0, lastFound, lastQualified, lastRejected: numeric(sourcingSummary?.total_rejected_no_email) ?? (lastFound !== null && lastQualified !== null ? lastFound - lastQualified : null), lastDuplicates: numeric(sourcingSummary?.total_duplicates) ?? (lastQualified !== null && lastInserted !== null ? lastQualified - lastInserted : null) },
     provider: { connected: Boolean(account.data), healthy: tokenUsable, kind: account.data?.channel_type ?? null, lastError: account.data && !tokenUsable ? 'No usable access or refresh token' : null },
@@ -95,10 +103,24 @@ function numeric(value: unknown): number | null { return typeof value === 'numbe
 function nextHourlyRun(): string { const d = new Date(); d.setUTCMinutes(0, 0, 0); d.setUTCHours(d.getUTCHours() + 1); return d.toISOString() }
 
 export function startOfBusinessDay(now: Date, timeZone: string): string {
+  const parts = businessDateParts(now, timeZone)
+  return localDateBoundaryUtc(parts.year, parts.month, parts.day, timeZone).toISOString()
+}
+
+export function startOfBusinessMonth(now: Date, timeZone: string): string {
+  const parts = businessDateParts(now, timeZone)
+  return localDateBoundaryUtc(parts.year, parts.month, 1, timeZone).toISOString()
+}
+
+function businessDateParts(now: Date, timeZone: string): { year: number; month: number; day: number } {
   const parts = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(now)
   const get = (type: string) => Number(parts.find((p) => p.type === type)?.value)
-  const noonUtc = new Date(Date.UTC(get('year'), get('month') - 1, get('day'), 12))
+  return { year: get('year'), month: get('month'), day: get('day') }
+}
+
+function localDateBoundaryUtc(year: number, month: number, day: number, timeZone: string): Date {
+  const noonUtc = new Date(Date.UTC(year, month - 1, day, 12))
   const localHourAtNoon = Number(new Intl.DateTimeFormat('en-US', { timeZone, hour: '2-digit', hour12: false }).format(noonUtc))
   const offsetHours = localHourAtNoon - 12
-  return new Date(Date.UTC(get('year'), get('month') - 1, get('day'), -offsetHours)).toISOString()
+  return new Date(Date.UTC(year, month - 1, day, -offsetHours))
 }

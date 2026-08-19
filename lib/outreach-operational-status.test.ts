@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 vi.mock('server-only', () => ({}))
-import { explainNoOutreach, startOfBusinessDay, type OutreachOperationalStatus } from './outreach-operational-status'
+import { explainNoOutreach, startOfBusinessDay, startOfBusinessMonth, type OutreachOperationalStatus } from './outreach-operational-status'
 
 function state(patch: Partial<OutreachOperationalStatus> = {}): Omit<OutreachOperationalStatus, 'reasonNoOutreach'> {
   const base: OutreachOperationalStatus = {
@@ -8,6 +8,7 @@ function state(patch: Partial<OutreachOperationalStatus> = {}): Omit<OutreachOpe
     schedule: { sourcing: '', autosend: '', nextRunAt: null },
     lastScan: { ranAt: '2026-08-13T10:00:00Z', succeeded: true, summary: {}, error: null },
     sendsToday: { sent: 0, dailyLimit: 50, remaining: 50 },
+    sendsThisMonth: { firstTouch: 100, followups: 25, total: 125 },
     lastSourcing: { ranAt: '2026-08-13T09:00:00Z', succeeded: true, summary: {}, error: null },
     queue: { pendingDrafts: 0, stalled: 0, sourcingJobs: 0 }, sourcing: { availableCandidates: 1, cooldownCandidates: 0, lastFound: 20, lastQualified: 14, lastRejected: 6, lastDuplicates: 2 },
     provider: { connected: true, healthy: true, kind: 'email', lastError: null }, blockers: [], telemetryComplete: true, reasonNoOutreach: null,
@@ -29,4 +30,5 @@ describe('authoritative outreach explanation', () => {
   it('does not hallucinate when telemetry is incomplete', () => expect(explainNoOutreach(state({ telemetryComplete: false, lastScan: { ranAt: null, succeeded: null, summary: null, error: null } }))).toMatch(/does not establish/))
   it('keeps the workspace identifier in the read model contract', () => expect(state({ workspaceId: 'ws-b' }).workspaceId).toBe('ws-b'))
   it('uses the Nassau business-day boundary rather than UTC', () => expect(startOfBusinessDay(new Date('2026-08-13T22:00:00Z'), 'America/Nassau')).toBe('2026-08-13T04:00:00.000Z'))
+  it('uses the business-local month boundary rather than UTC', () => expect(startOfBusinessMonth(new Date('2026-08-13T22:00:00Z'), 'America/Nassau')).toBe('2026-08-01T04:00:00.000Z'))
 })
