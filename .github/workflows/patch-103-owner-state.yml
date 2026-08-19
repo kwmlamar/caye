@@ -1,0 +1,56 @@
+name: Patch 103 owner state
+
+on:
+  push:
+    branches: [fix/103-authoritative-owner-state]
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/103-authoritative-owner-state
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Wire authoritative state before model reasoning
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('lib/caye-agent/index.ts')
+          s = p.read_text()
+          anchor = "import { businessTodayLabel } from '@/lib/booking-time'\n"
+          addition = "import { loadAuthoritativeOwnerOperationalState, renderAuthoritativeOwnerOperationalState } from './owner-operational-state'\n"
+          if addition not in s:
+              s = s.replace(anchor, anchor + addition)
+          old = "  const systemPrompt = buildBackOfficeSystemPrompt({\n"
+          new = "  const currentUserText = typeof input.userMessage === 'string'\n    ? input.userMessage\n    : input.userMessage\n        .filter((block): block is Anthropic.TextBlockParam => block.type === 'text')\n        .map((block) => block.text)\n        .join('\\n')\n\n  const ownerOperationalContext = renderAuthoritativeOwnerOperationalState(\n    await loadAuthoritativeOwnerOperationalState(input.workspaceId, currentUserText)\n  )\n\n  const baseSystemPrompt = buildBackOfficeSystemPrompt({\n"
+          if old in s:
+              s = s.replace(old, new, 1)
+          tail = "    threadContext: threadCtx?.promptBlock ?? null,\n  })\n\n  const history = threadCtx\n"
+          replacement = "    threadContext: threadCtx?.promptBlock ?? null,\n  })\n  const systemPrompt = ownerOperationalContext\n    ? `${baseSystemPrompt}\\n\\n${ownerOperationalContext}`\n    : baseSystemPrompt\n\n  const history = threadCtx\n"
+          if tail in s:
+              s = s.replace(tail, replacement, 1)
+          p.write_text(s)
+          PY
+      - name: Install and validate focused reliability slice
+        run: |
+          npm ci
+          npx vitest run lib/outreach-operational-status.test.ts lib/caye-agent/owner-operational-state.test.ts
+          npx tsc --noEmit
+      - name: Remove one-off workflow and commit result
+        shell: bash
+        run: |
+          rm .github/workflows/patch-103-owner-state.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add lib/caye-agent/index.ts lib/caye-agent/owner-operational-state.ts lib/caye-agent/owner-operational-state.test.ts lib/outreach-operational-status.ts lib/outreach-operational-status.test.ts .github/workflows/patch-103-owner-state.yml
+          git commit -m 'fix: ground owner analysis in authoritative state'
+          git push origin HEAD:fix/103-authoritative-owner-state
