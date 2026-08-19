@@ -165,9 +165,25 @@ describe('detectUnsupportedThirdPartyCommitment (2026-08-19, CAY-92 Jonathan sno
     expect(detectUnsupportedThirdPartyCommitment(draft, facts)).toBeNull()
   })
 
+  // ── Regression: bare "I'll"/"I can" is NOT a hedge (review on #96) ─────
+  it('blocks "I\'ll arrange ... through our partner" — plain future tense, not a hedge', () => {
+    const draft = "I'll arrange snorkeling through our partner for you."
+    expect(detectUnsupportedThirdPartyCommitment(draft, FACTS)).toMatch(/partner/)
+  })
+
+  it('blocks "I can coordinate ... through our vendor" — plain capability, not a hedge', () => {
+    const draft = "I can coordinate that with our vendor for you."
+    expect(detectUnsupportedThirdPartyCommitment(draft, FACTS)).toMatch(/vendor/)
+  })
+
   // ── Must not block honest uncertainty ──────────────────────────────────
   it('does not block offering to check with a partner rather than promising', () => {
     const draft = "Let me check with our partner on availability and get back to you."
+    expect(detectUnsupportedThirdPartyCommitment(draft, FACTS)).toBeNull()
+  })
+
+  it('does not block "I\'ll check with our partner" — genuine hedge', () => {
+    const draft = "I'll check with our partner and get back to you."
     expect(detectUnsupportedThirdPartyCommitment(draft, FACTS)).toBeNull()
   })
 
@@ -199,8 +215,24 @@ describe('detectUnsupportedRefundCommitment (2026-08-19, CAY-92)', () => {
     expect(detectUnsupportedRefundCommitment(draft, CANCELLATION_FACT)).toBeNull()
   })
 
+  // ── Regression: bare "I'll"/"I can" is NOT a hedge (review on #96) ─────
+  it('blocks "I\'ll issue a full refund" — plain future tense, not a hedge', () => {
+    const draft = "I'll issue a full refund to your card right away."
+    expect(detectUnsupportedRefundCommitment(draft, INVOICE_FACT)).toMatch(/refund/)
+  })
+
+  it('blocks "I can refund your deposit" — plain capability, not a hedge', () => {
+    const draft = "I can refund your deposit today, no problem."
+    expect(detectUnsupportedRefundCommitment(draft, INVOICE_FACT)).toMatch(/refund/)
+  })
+
   it('does not block offering to check on refund eligibility', () => {
     const draft = "Let me check whether this qualifies for a refund and get back to you."
+    expect(detectUnsupportedRefundCommitment(draft, FACTS)).toBeNull()
+  })
+
+  it('does not block "I can check whether a refund applies" — genuine hedge', () => {
+    const draft = "I can check whether a refund applies and get back to you."
     expect(detectUnsupportedRefundCommitment(draft, FACTS)).toBeNull()
   })
 

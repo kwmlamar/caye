@@ -218,9 +218,25 @@ export function detectUnverifiedPaymentMethodClaim(
  * one) grounds the concept. Getting the polarity right is a harder,
  * separate problem than "was this invented from nothing" — this module
  * only answers the question it can answer exactly.
+ *
+ * HEDGE FIX (2026-08-19, review on #96): the first pass matched bare
+ * "I'll" / "I will" / "I can" as a hedge — those are ordinary first-person
+ * future/capability markers, not uncertainty. "I'll arrange snorkeling
+ * through our partner" and "I can coordinate that with our vendor" are
+ * plainly affirmative commitments that were skipping the guard entirely.
+ * A hedge now requires the first-person construction to be paired with an
+ * actual checking/uncertainty verb (check, confirm, verify, ask, ...) —
+ * matching the "we'll ___" branch, which already required this.
  */
-const COMMITMENT_HEDGE_PATTERN =
-  /\b(?:let me|i'?ll|i will|i can|we(?:'ll| will)?\s+(?:check|see|ask|reach out|find out|look into)|checking|check with|confirm|verify|whether|if (?:it'?s|we|they)|see if|once (?:i|we)|get back|find out|not sure|might be|should be|may be|would need to|reach out to)\b/i
+const HEDGE_CHECKING_VERB = '(?:check|see|ask|reach out|find out|look into|confirm|verify)'
+const COMMITMENT_HEDGE_PATTERN = new RegExp(
+  `\\b(?:let me\\s+(?:${HEDGE_CHECKING_VERB}|know)|` +
+    `i(?:'?ll|\\s+will|\\s+can)\\s+${HEDGE_CHECKING_VERB}|` +
+    `we(?:'ll|\\s+will)?\\s+${HEDGE_CHECKING_VERB}|` +
+    'checking|check with|confirm|verify|whether|if (?:it\'?s|we|they)|see if|' +
+    'once (?:i|we)|get back|find out|not sure|might be|should be|may be|would need to|reach out to)\\b',
+  'i'
+)
 
 const THIRD_PARTY_COMMIT_VERB_PATTERN =
   /\b(?:coordinate[sd]?|coordinating|arrange[sd]?|arranging|set(?:s|ting)?\s+up|book(?:ed|s|ing)?|organiz(?:e[sd]?|ing)|handle[sd]?|handling|take\s+care\s+of|took\s+care\s+of|line[sd]?\s+up|lining\s+up)\b/i
