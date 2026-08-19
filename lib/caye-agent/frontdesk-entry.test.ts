@@ -20,6 +20,7 @@ const mockState = vi.hoisted(() => ({
         escalation?: { internalContext: string }
       },
   authzCalls: [] as unknown[],
+  customerTimezone: null as string | null,
 }))
 
 vi.mock('@/lib/supabase-server', () => ({
@@ -41,6 +42,15 @@ vi.mock('@/lib/supabase-server', () => ({
             mockState.internalMessagesInserted.push(row)
             return Promise.resolve({ error: null })
           },
+        }
+      }
+      if (table === 'customers') {
+        return {
+          select: () => ({
+            eq: () => ({
+              maybeSingle: () => Promise.resolve({ data: { timezone: mockState.customerTimezone } }),
+            }),
+          }),
         }
       }
       throw new Error(`unexpected table: ${table}`)
