@@ -5,6 +5,7 @@ import { createServiceClient } from '@/lib/supabase-server'
 import type { VoiceProfile } from '@/lib/voice-profile'
 import { loadAttentionDelta, renderAttentionContext } from '@/lib/owner-attention'
 import { syncOwnerAttention } from '@/lib/owner-attention-sync'
+import { businessTodayLabel } from '@/lib/booking-time'
 import { loadOperatorContext, loadDirectThreadContext } from './context'
 import { buildBackOfficeSystemPrompt } from './modes/back-office'
 import { buildDriverSystemPrompt } from './modes/driver'
@@ -12,29 +13,14 @@ import { buildAdminShellSystemPrompt } from './modes/admin-shell'
 import { loadAdminShellContext } from './admin-shell-context'
 import { runToolLoop } from './execute'
 import type { Role } from './tools/types'
-import { businessTodayLabel } from '@/lib/booking-time'
+import {
+  loadAuthoritativeOwnerOperationalState,
+  renderAuthoritativeOwnerOperationalState,
+} from './owner-operational-state'
 
-// Same sane default caye-reply.ts falls back to when a workspace row has no
-// timezone set yet (lib/caye-reply.ts, workspaceTimezone). Kept in sync
-// manually — both are small, stable, front-desk/back-office-local defaults,
-// not worth a shared constant for one string.
 const DEFAULT_WORKSPACE_TIMEZONE = 'America/Nassau'
-
 const MODEL = 'claude-sonnet-4-6'
-// Was 1024 — nowhere near enough for a single tool call that drafts many
-// leads at once (create_outreach_leads with 16-20+ leads truncates mid-
-// JSON at 1024, producing a malformed tool call the model then narrates
-// as "something's blocking the tool call" and falls back to dumping text
-// in chat instead). 8192 is the standard non-extended ceiling for this
-// model family — comfortably covers large batch drafts without needing
-// the output-128k beta header.
 const MAX_OUTPUT_TOKENS = 8192
-
-// Not a real customers.id — admin-shell has no workspace concept at all.
-// Exists only so ToolContext.workspaceId (required, read by every other
-// mode's tools) and the llm_call_log telemetry insert (nullable, no FK)
-// stay well-formed. Admin-shell tools (get_cron_health, trigger_cron)
-// never read this value.
 const ADMIN_SHELL_PLACEHOLDER_WORKSPACE_ID = '00000000-0000-0000-0000-000000000000'
 
 export type CayeAgentMode = 'front-desk' | 'back-office' | 'driver' | 'admin-shell'
@@ -42,124 +28,37 @@ export type CayeAgentMode = 'front-desk' | 'back-office' | 'driver' | 'admin-she
 export interface CayeAgentInput {
   mode: CayeAgentMode
   workspaceId: string
-  /**
-   * Plain text for the common case. Also accepts an Anthropic content
-   * block array (e.g. an `image` block + optional caption `text` block)
-   * so back-office mode can pass through a WhatsApp photo/screenshot as a
-   * vision turn — see app/api/webhooks/whatsapp-operator/route.ts's image
-   * handling (2026-07-24).
-   */
   userMessage: string | Anthropic.MessageParam['content']
-  /**
-   * Caller's role from operator_allowlist (#48). Enforced per-tool in
-   * runToolLoop. Webhook callers pass the looked-up role; cron paths
-   * (briefings) bypass cayeAgent entirely and call runToolLoop directly
-   * with callerRole: 'founder'.
-   */
   callerRole: Role
-  /**
-   * Caller's display name from operator_allowlist.name when known. Used
-   * by the back-office prompt to distinguish the actual messenger from
-   * the workspace owner — load-bearing when a founder DMs into a
-   * workspace they don't own (e.g. Lamar texting Caye about Bimini).
-   * Without this, Caye conflates caller with workspace owner and answers
-   * "who am I?" with the wrong person.
-   */
   callerName?: string | null
-  /**
-   * The caller's operator_allowlist.id — scopes both the sliding-window
-   * context load and (via the caller persisting turns separately) the
-   * message history itself to this one operator's conversation with
-   * Caye, so multiple operators sharing a workspace's back-office
-   * channel don't bleed into each other's context or Caye Direct view.
-   * Null only for pre-migration rows that couldn't be backfilled.
-   */
   operatorId: number | null
-  /**
-   * Caller's E.164 phone as seen by the webhook. Only used by driver
-   * mode (2026-07-05) — driver tools scope "my assigned booking" off
-   * this rather than an operator identity concept.
-   */
   callerPhone?: string | null
-  /**
-   * Set to 'scan' by the opportunity-scan cron (2026-07-28) — a
-   * system-generated periodic invocation, not a real inbound message.
-   * Threaded into ToolContext.origin, which gateHighRisk uses to refuse
-   * treating a scan-origin call as human confirmation of a staged
-   * high-risk action. Undefined (real chat) everywhere else.
-   */
   origin?: 'chat' | 'scan'
-  /**
-   * Set when this back-office turn is a founder Caye Direct thread reply
-   * (2026-08-13) — routes context loading through loadDirectThreadContext
-   * (messages linked into this thread) instead of loadOperatorContext (the
-   * operator's global sliding window), and renders the thread's
-   * title/summary/linked-entities into the prompt. Undefined for every
-   * WhatsApp operator turn and for a founder message sent before any
-   * thread exists — those keep using the operator window exactly as
-   * before. Back-office mode only; other modes ignore this field.
-   */
   threadId?: string | null
 }
 
 export interface CayeAgentResult {
-  /** Plain-text reply, ready to send to WhatsApp. Empty string if nothing useful was produced. */
   replyText: string
-  /**
-   * All new turns produced this round (intermediate assistant turns with
-   * tool_use, intermediate user turns with tool_result, and the final
-   * assistant text turn). Caller persists each to
-   * `caye_operator_messages.claude_format` so the next sliding-window
-   * load reconstructs the full Claude history.
-   */
   newTurns: Anthropic.MessageParam[]
-  /**
-   * Caye Direct thread ids the relate_to_direct_thread tool asked to be
-   * linked to this exchange (2026-08-13), deduped. Empty on every turn
-   * that didn't call the tool — which is most WhatsApp turns, by design.
-   * The caller links each newly-persisted turn (from persistAgentTurns'
-   * return value) into every thread listed here via
-   * lib/caye-direct-threads.ts's linkMessageToThread, since the turns
-   * don't have row ids yet at the point the tool ran.
-   */
   linkedThreadIds: string[]
 }
 
-/**
- * Entry point for the unified Caye agent (epic #35).
- *
- * Slice #38 scope (this file):
- *   - mode: 'back-office' — full operator identity/voice-profile prompt
- *   - mode: 'driver' (2026-07-05) — narrow prompt, no operator identity
- *     block, tiny tool surface (see modes/driver.ts + registry tools
- *     tagged modes: ['driver'])
- *   - Tool-use loop with the tools registered in tools/registry.ts
- *   - Sliding window context from caye_operator_messages
- *   - Returns every turn for the webhook to persist individually
- *
- * Front-desk mode still routes through lib/caye-reply.ts; the mode arg
- * is here to lock the API shape for later refactors.
- */
-/**
- * Reconcile the attention ledger against reality, then read the delta.
- *
- * The sync must run first or the delta only reflects items that happened to
- * push themselves into the ledger — which was the original bug, one layer up.
- * Both calls are individually failure-tolerant, so a bookkeeping problem
- * degrades the context block rather than the scan.
- */
 async function reconciledAttention(workspaceId: string) {
   await syncOwnerAttention(workspaceId)
   return loadAttentionDelta({ workspaceId })
 }
 
+function textFromUserMessage(content: CayeAgentInput['userMessage']): string {
+  if (typeof content === 'string') return content
+  return content
+    .map((block) => (block.type === 'text' ? block.text : ''))
+    .filter(Boolean)
+    .join('\n')
+}
+
 export async function cayeAgent(input: CayeAgentInput): Promise<CayeAgentResult> {
-  if (input.mode === 'driver') {
-    return runDriverAgent(input)
-  }
-  if (input.mode === 'admin-shell') {
-    return runAdminShellAgent(input)
-  }
+  if (input.mode === 'driver') return runDriverAgent(input)
+  if (input.mode === 'admin-shell') return runAdminShellAgent(input)
   if (input.mode !== 'back-office') {
     throw new Error(
       `[caye-agent] mode '${input.mode}' is not yet routed through the unified agent (see epic #35).`
@@ -167,22 +66,12 @@ export async function cayeAgent(input: CayeAgentInput): Promise<CayeAgentResult>
   }
 
   const supabase = createServiceClient()
-
-  // Base query — only columns confirmed present in the production schema
-  // as of 2026-06-22. The 20260622 migration adds operator_personal_email,
-  // operator_personal_phone, and team_notes; until that's applied to a
-  // given environment, those are fetched separately in a best-effort
-  // pass below so this path still works.
   const { data: customer } = await supabase
     .from('customers')
     .select('business_name, full_name, ai_voice_profile, contact_email, contact_phone, whatsapp_business_number, timezone, business_hours, business_brief')
     .eq('id', input.workspaceId)
     .maybeSingle()
 
-  // Best-effort fetch of the new operator-personal columns. Swallows
-  // "column does not exist" errors so the back-office path keeps working
-  // pre-migration. Once the migration is applied everywhere, merge this
-  // into the main select.
   let operatorPersonalEmail: string | null = null
   let operatorPersonalPhone: string | null = null
   let teamNotes: string | null = null
@@ -193,38 +82,26 @@ export async function cayeAgent(input: CayeAgentInput): Promise<CayeAgentResult>
       .eq('id', input.workspaceId)
       .maybeSingle()
     if (!extrasErr && extras) {
-      operatorPersonalEmail =
-        (extras.operator_personal_email as string | null) ?? null
-      operatorPersonalPhone =
-        (extras.operator_personal_phone as string | null) ?? null
+      operatorPersonalEmail = (extras.operator_personal_email as string | null) ?? null
+      operatorPersonalPhone = (extras.operator_personal_phone as string | null) ?? null
       teamNotes = (extras.team_notes as string | null) ?? null
     }
   } catch {
-    // Pre-migration: columns don't exist. Leave the three values null.
+    // Pre-migration environments may not have these columns yet.
   }
 
   const voiceProfile = (customer?.ai_voice_profile as VoiceProfile | null) ?? null
   const workspaceTimezone = (customer?.timezone as string | null) || DEFAULT_WORKSPACE_TIMEZONE
-
-  // business_brief is the jsonb populated during onboarding (address,
-  // tagline, website, payment methods, business hours availability text,
-  // etc.) — we surface the slow-changing identity fields from it into
-  // the prompt so Caye can answer "what's our address?" without a tool.
   const brief = (customer?.business_brief as Record<string, unknown> | null) ?? null
   const briefAddress = typeof brief?.address === 'string' ? brief.address : null
   const briefTagline = typeof brief?.tagline === 'string' ? brief.tagline : null
   const briefWebsite = typeof brief?.website === 'string' ? brief.website : null
-  const briefAvailability =
-    typeof brief?.availability === 'string' ? brief.availability : null
+  const briefAvailability = typeof brief?.availability === 'string' ? brief.availability : null
   const briefPaymentMethodsRaw = brief?.paymentMethods
   const briefPaymentMethods = Array.isArray(briefPaymentMethodsRaw)
     ? briefPaymentMethodsRaw.filter((m): m is string => typeof m === 'string')
     : null
 
-  // Hours: prefer the structured business_hours jsonb if non-empty, else
-  // fall back to the free-text availability blurb from business_brief.
-  // We only format for display — full structured rendering lives in the
-  // booking flow, not the operator prompt.
   let businessHoursDisplay: string | null = null
   if (customer?.business_hours && typeof customer.business_hours === 'object') {
     const entries = Object.entries(customer.business_hours as Record<string, unknown>)
@@ -243,17 +120,24 @@ export async function cayeAgent(input: CayeAgentInput): Promise<CayeAgentResult>
         .join(', ')
     }
   }
-  if (!businessHoursDisplay && briefAvailability) {
-    businessHoursDisplay = briefAvailability
-  }
+  if (!businessHoursDisplay && briefAvailability) businessHoursDisplay = briefAvailability
 
-  // Thread-scoped context replaces the operator sliding window only when
-  // this is a founder Direct thread turn — see CayeAgentInput.threadId.
   const threadCtx = input.threadId
     ? await loadDirectThreadContext(input.workspaceId, input.threadId)
     : null
 
-  const systemPrompt = buildBackOfficeSystemPrompt({
+  // CAY-103: consequential owner analysis gets current authoritative state
+  // before the model reasons. The model no longer decides whether to call the
+  // outreach status tool for these questions; current system-of-record facts
+  // are pinned into the prompt ahead of history/memory/inference.
+  const ownerOperationalContext = renderAuthoritativeOwnerOperationalState(
+    await loadAuthoritativeOwnerOperationalState(
+      input.workspaceId,
+      textFromUserMessage(input.userMessage)
+    )
+  )
+
+  const baseSystemPrompt = buildBackOfficeSystemPrompt({
     profile: {
       operatorName: (customer?.full_name as string | null) ?? null,
       businessName: (customer?.business_name as string | null) ?? null,
@@ -261,8 +145,7 @@ export async function cayeAgent(input: CayeAgentInput): Promise<CayeAgentResult>
       website: briefWebsite,
       contactEmail: (customer?.contact_email as string | null) ?? null,
       contactPhone: (customer?.contact_phone as string | null) ?? null,
-      whatsappBusinessNumber:
-        (customer?.whatsapp_business_number as string | null) ?? null,
+      whatsappBusinessNumber: (customer?.whatsapp_business_number as string | null) ?? null,
       businessAddress: briefAddress,
       operatorPersonalEmail,
       operatorPersonalPhone,
@@ -278,15 +161,16 @@ export async function cayeAgent(input: CayeAgentInput): Promise<CayeAgentResult>
       name: input.callerName ?? null,
     },
     origin: input.origin,
-    // Only on proactive turns. A scan speaks unprompted, so it's the path
-    // that can contradict something Caye already said; an ordinary chat turn
-    // is answering a live question and should trust the read tools.
     attentionContext:
       input.origin === 'scan'
         ? renderAttentionContext(await reconciledAttention(input.workspaceId))
         : null,
     threadContext: threadCtx?.promptBlock ?? null,
   })
+
+  const systemPrompt = ownerOperationalContext
+    ? `${baseSystemPrompt}\n\n${ownerOperationalContext}`
+    : baseSystemPrompt
 
   const history = threadCtx
     ? threadCtx.history
@@ -296,10 +180,9 @@ export async function cayeAgent(input: CayeAgentInput): Promise<CayeAgentResult>
     content: input.userMessage,
   }
   const initialMessages: Anthropic.MessageParam[] = [...history, currentUserTurn]
-
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
-
   const directThreadLinks: string[] = []
+
   const { replyText, newTurns } = await runToolLoop({
     client,
     model: MODEL,
@@ -321,12 +204,6 @@ export async function cayeAgent(input: CayeAgentInput): Promise<CayeAgentResult>
   return { replyText, newTurns, linkedThreadIds: [...new Set(directThreadLinks)] }
 }
 
-/**
- * Driver mode (2026-07-05). Deliberately skips everything back-office
- * loads (voice profile, operator-personal fields, business_brief) — a
- * driver never needs "what's my email" or Caye-voiced customer drafting.
- * Just the business name (for the greeting) + the narrow driver prompt.
- */
 async function runDriverAgent(input: CayeAgentInput): Promise<CayeAgentResult> {
   const supabase = createServiceClient()
   const { data: customer } = await supabase
@@ -345,7 +222,6 @@ async function runDriverAgent(input: CayeAgentInput): Promise<CayeAgentResult> {
     ...history,
     { role: 'user', content: input.userMessage },
   ]
-
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
   const { replyText, newTurns } = await runToolLoop({
@@ -366,23 +242,15 @@ async function runDriverAgent(input: CayeAgentInput): Promise<CayeAgentResult> {
   return { replyText, newTurns, linkedThreadIds: [] }
 }
 
-/**
- * Admin Shell mode (2026-07-21). Founder-only dev/ops console — no
- * workspace, no operator, no voice profile, no customer/business lookup
- * at all. Mirrors runDriverAgent's shape (narrowest existing mode) rather
- * than back-office's: this is not a variant of the business-ops agent.
- */
 async function runAdminShellAgent(input: CayeAgentInput): Promise<CayeAgentResult> {
   const systemPrompt = buildAdminShellSystemPrompt({
     callerName: input.callerName ?? null,
   })
-
   const history = await loadAdminShellContext()
   const initialMessages: Anthropic.MessageParam[] = [
     ...history,
     { role: 'user', content: input.userMessage },
   ]
-
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
   const { replyText, newTurns } = await runToolLoop({
