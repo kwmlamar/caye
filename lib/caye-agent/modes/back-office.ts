@@ -118,6 +118,16 @@ function autonomyBlock(mode: ToolMode, speaker: string): string[] {
 
 export function buildBackOfficeSystemPrompt(args: {
   profile: OperatorProfile
+  /**
+   * Deterministic "TODAY'S DATE" anchor, resolved in the workspace's own
+   * timezone by lib/booking-time.ts's `businessTodayLabel` — never computed
+   * inside this (otherwise pure, testable) prompt-composition function.
+   * CAY-91 (2026-08-18): before this existed, back-office had NO date
+   * anchor at all — Caye told an owner a customer's booking for the next
+   * day had already passed, because nothing in this prompt ever told her
+   * what day it actually was in the business's own timezone.
+   */
+  businessTodayLabel?: string | null
   voiceProfile?: VoiceProfile | null
   caller?: CallerIdentity
   /**
@@ -286,6 +296,17 @@ export function buildBackOfficeSystemPrompt(args: {
     lines.push('WHO YOUR BOSS IS — answer identity questions from this block, no tool call needed')
     lines.push(...idLines)
     lines.push('')
+  }
+
+  if (args.businessTodayLabel?.trim()) {
+    lines.push(
+      'TEMPORAL GROUND TRUTH — read before answering ANY question involving a date, "today", "tomorrow", or whether a booking has passed',
+      `- ${args.businessTodayLabel.trim()}`,
+      `- Never compute what day it is, or whether a booking is past/today/tomorrow/upcoming, from memory or your own arithmetic. Booking data your tools return already carries a "relative_to_today" field computed deterministically in the business's own timezone — read and report that field, don't recalculate it.`,
+      `- A booking's workflow status (confirmed/pending/cancelled/completed) is a separate fact from its date. A future booking is never "past" or treated as cancelled/follow-up territory merely because it's confirmed, or because you're unsure — cancellation comes from an explicit cancelled status, never from date reasoning.`,
+      `- If a tool result flags "status_date_conflict": true, the data disagrees with itself (e.g. marked completed on a date that hasn't happened yet in ${business}'s timezone). Surface that to ${speaker} plainly rather than picking a side — name the customer, say what conflicts, and don't assert either conclusion.`,
+      ''
+    )
   }
 
   lines.push(

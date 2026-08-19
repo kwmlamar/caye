@@ -7,6 +7,9 @@ import {
   BOOKING_WITH_SERVICE_PRICE_SELECT,
   type ServiceJoin,
 } from '../_revenue'
+import { businessLocalDate } from '@/lib/booking-time'
+
+const DEFAULT_WORKSPACE_TIMEZONE = 'America/Nassau'
 
 interface BookingRow {
   status: string
@@ -28,7 +31,11 @@ export const getTodaySummary: Tool<Record<string, never>> = {
 
   async execute(_args, ctx) {
     const supabase = createServiceClient()
-    const today = new Date().toISOString().slice(0, 10)
+    // Business-local calendar date (CAY-91) — NOT the server's UTC date.
+    // "Today" for the workspace's owner means today in the workspace's own
+    // timezone; a UTC-only date can be a full calendar day off depending on
+    // the workspace and time of day.
+    const today = businessLocalDate(ctx.workspaceTimezone || DEFAULT_WORKSPACE_TIMEZONE)
 
     const { data: bookings, error: bookingsErr } = await supabase
       .from('bookings')

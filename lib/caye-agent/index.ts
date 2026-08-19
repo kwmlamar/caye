@@ -12,6 +12,13 @@ import { buildAdminShellSystemPrompt } from './modes/admin-shell'
 import { loadAdminShellContext } from './admin-shell-context'
 import { runToolLoop } from './execute'
 import type { Role } from './tools/types'
+import { businessTodayLabel } from '@/lib/booking-time'
+
+// Same sane default caye-reply.ts falls back to when a workspace row has no
+// timezone set yet (lib/caye-reply.ts, workspaceTimezone). Kept in sync
+// manually — both are small, stable, front-desk/back-office-local defaults,
+// not worth a shared constant for one string.
+const DEFAULT_WORKSPACE_TIMEZONE = 'America/Nassau'
 
 const MODEL = 'claude-sonnet-4-6'
 // Was 1024 — nowhere near enough for a single tool call that drafts many
@@ -197,6 +204,7 @@ export async function cayeAgent(input: CayeAgentInput): Promise<CayeAgentResult>
   }
 
   const voiceProfile = (customer?.ai_voice_profile as VoiceProfile | null) ?? null
+  const workspaceTimezone = (customer?.timezone as string | null) || DEFAULT_WORKSPACE_TIMEZONE
 
   // business_brief is the jsonb populated during onboarding (address,
   // tagline, website, payment methods, business hours availability text,
@@ -263,6 +271,7 @@ export async function cayeAgent(input: CayeAgentInput): Promise<CayeAgentResult>
       paymentMethods: briefPaymentMethods,
       timezone: (customer?.timezone as string | null) ?? null,
     },
+    businessTodayLabel: businessTodayLabel(workspaceTimezone),
     voiceProfile,
     caller: {
       role: input.callerRole,
@@ -304,6 +313,7 @@ export async function cayeAgent(input: CayeAgentInput): Promise<CayeAgentResult>
       requestId: randomUUID(),
       origin: input.origin,
       directThreadLinks,
+      workspaceTimezone,
     },
     mode: 'back-office',
   })

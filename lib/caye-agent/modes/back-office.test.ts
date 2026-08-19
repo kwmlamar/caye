@@ -111,6 +111,55 @@ describe('buildBackOfficeSystemPrompt — scan origin', () => {
 })
 
 /**
+ * CAY-91 regression fixture (2026-08-18 Sonja incident): on Aug 18, Caye
+ * told Mrs. Max that a customer's Aug 19 tour had already passed and
+ * treated it as cancelled/follow-up territory. Root cause: back-office had
+ * NO deterministic date anchor at all — it had to guess "today" itself.
+ * `businessTodayLabel` closes that gap; assert it actually reaches the
+ * prompt and carries the guardrails that prevent the same failure mode.
+ */
+describe('buildBackOfficeSystemPrompt — CAY-91 temporal ground truth (Sonja incident)', () => {
+  it('renders the business-local date anchor when provided', () => {
+    const prompt = buildBackOfficeSystemPrompt({
+      profile: BIMINI,
+      caller: { role: 'owner', name: 'Mrs. Max' },
+      businessTodayLabel:
+        "TODAY'S DATE (business-local, America/Nassau): 2026-08-18 (Tuesday, August 18, 2026). This is the authoritative \"today\"...",
+    })
+    expect(prompt).toContain('TEMPORAL GROUND TRUTH')
+    expect(prompt).toContain('2026-08-18')
+  })
+
+  it('instructs Caye to trust the deterministic relative_to_today field over her own arithmetic', () => {
+    const prompt = buildBackOfficeSystemPrompt({
+      profile: BIMINI,
+      caller: { role: 'owner', name: 'Mrs. Max' },
+      businessTodayLabel: "TODAY'S DATE (business-local, America/Nassau): 2026-08-18 (Tuesday).",
+    })
+    expect(prompt).toContain('relative_to_today')
+    expect(prompt).toContain('Never compute what day it is')
+  })
+
+  it('separates booking status from temporal status and requires surfacing status/date conflicts', () => {
+    const prompt = buildBackOfficeSystemPrompt({
+      profile: BIMINI,
+      caller: { role: 'owner', name: 'Mrs. Max' },
+      businessTodayLabel: "TODAY'S DATE (business-local, America/Nassau): 2026-08-18 (Tuesday).",
+    })
+    expect(prompt).toContain('cancellation comes from an explicit cancelled status, never from date reasoning')
+    expect(prompt).toContain('status_date_conflict')
+  })
+
+  it('omits the temporal ground truth block when no label is provided', () => {
+    const prompt = buildBackOfficeSystemPrompt({
+      profile: BIMINI,
+      caller: { role: 'owner', name: 'Mrs. Max' },
+    })
+    expect(prompt).not.toContain('TEMPORAL GROUND TRUTH')
+  })
+})
+
+/**
  * Regression cover for 2026-08-07: query_business_knowledge is registered
  * for back-office mode and technically always sent to Claude regardless of
  * prompt wording, but it was the one read tool never called out in the

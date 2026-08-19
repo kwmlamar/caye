@@ -6,6 +6,9 @@ import {
   BOOKING_WITH_SERVICE_PRICE_SELECT,
   type ServiceJoin,
 } from '../_revenue'
+import { businessLocalDate, classifyBookingDate, bookingStatusConflict } from '@/lib/booking-time'
+
+const DEFAULT_WORKSPACE_TIMEZONE = 'America/Nassau'
 
 interface GetRecentBookingsInput {
   days?: number
@@ -56,24 +59,32 @@ export const getRecentBookings: Tool<GetRecentBookingsInput> = {
 
     if (error) return { ok: false, error: error.message }
     const rows = (data ?? []) as unknown as BookingRow[]
+    const today = businessLocalDate(ctx.workspaceTimezone || DEFAULT_WORKSPACE_TIMEZONE)
     return {
       ok: true,
       data: {
         days,
-        bookings: rows.map((r) => ({
-          customer: r.customer_name,
-          date: r.booking_date,
-          time: r.booking_time?.slice(0, 5) ?? null,
-          guests: r.number_of_people,
-          price: bookingRevenue({
-            servicePrice: r.service?.[0]?.price,
-            priceType: r.service?.[0]?.price_type,
+        bookings: rows.map((r) => {
+          const relative = classifyBookingDate(r.booking_date, today)
+          return {
+            customer: r.customer_name,
+            date: r.booking_date,
+            time: r.booking_time?.slice(0, 5) ?? null,
             guests: r.number_of_people,
-          }),
-          status: r.status,
-          service: r.service?.[0]?.name ?? null,
-          created_at: r.created_at,
-        })),
+            price: bookingRevenue({
+              servicePrice: r.service?.[0]?.price,
+              priceType: r.service?.[0]?.price_type,
+              guests: r.number_of_people,
+            }),
+            status: r.status,
+            // Deterministic, computed in the workspace's own timezone —
+            // never derive this yourself from the date (CAY-91).
+            relative_to_today: relative,
+            status_date_conflict: bookingStatusConflict(r.status, relative),
+            service: r.service?.[0]?.name ?? null,
+            created_at: r.created_at,
+          }
+        }),
         count: rows.length,
       },
     }

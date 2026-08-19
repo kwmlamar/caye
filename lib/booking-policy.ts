@@ -1,3 +1,5 @@
+import { zonedInstantMs } from './booking-time'
+
 /**
  * Pure policy logic for the reschedule/cancel tools. Extracted from
  * caye-reply.ts so the autonomy boundary can be unit tested without
@@ -44,7 +46,7 @@ export type PolicyGateResult =
  */
 export function checkBookingAutonomy(input: PolicyGateInput): PolicyGateResult {
   const now = input.now ?? new Date()
-  const bookingMs = bookingInstantMs(input.bookingDate, input.bookingTime, input.timezone)
+  const bookingMs = zonedInstantMs(input.bookingDate, input.bookingTime, input.timezone)
   // Compare in integer milliseconds so the policy boundary is exact —
   // floating-point hours can land at 47.9999... at the exact 48h mark
   // and false-trigger the window.
@@ -59,51 +61,4 @@ export function checkBookingAutonomy(input: PolicyGateInput): PolicyGateResult {
     return { ok: false, reason: 'within_policy_window', hoursUntilBooking }
   }
   return { ok: true, hoursUntilBooking }
-}
-
-/**
- * Resolve a "date + time + timezone" tuple to a UTC millisecond instant.
- * We need this because bookings.booking_date is a DATE (timezone-naive)
- * and booking_time is a TIME (timezone-naive) — together they represent
- * "10:00 on June 3rd in the workspace's local timezone", which can be
- * many different UTC moments depending on the workspace.
- *
- * Approach: format the candidate UTC moment back into the workspace's
- * timezone using Intl.DateTimeFormat, then adjust until the formatted
- * wall-clock matches the input. One pass is enough for our purposes
- * because we don't hit DST transitions for non-DST Caribbean timezones,
- * but we loop twice for safety against US/EU timezones (Karenda is
- * America/Nassau which doesn't observe DST, but other workspaces might).
- */
-function bookingInstantMs(date: string, time: string, timezone: string): number {
-  // Start with the naive interpretation (treat as UTC) and correct.
-  const [y, m, d] = date.split('-').map(Number)
-  const [hh, mm] = time.split(':').map(Number)
-  let utcGuess = Date.UTC(y, m - 1, d, hh, mm)
-
-  for (let pass = 0; pass < 2; pass++) {
-    const offsetMs = timezoneOffsetMs(utcGuess, timezone)
-    utcGuess = Date.UTC(y, m - 1, d, hh, mm) - offsetMs
-  }
-  return utcGuess
-}
-
-/**
- * For a given UTC instant, returns how many ms the named timezone is
- * ahead of UTC. America/Nassau in winter = -5h = -18,000,000 ms.
- */
-function timezoneOffsetMs(utcMs: number, timezone: string): number {
-  const dtf = new Intl.DateTimeFormat('en-US', {
-    timeZone: timezone,
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit',
-    hour12: false,
-  })
-  const parts = dtf.formatToParts(new Date(utcMs))
-  const get = (t: string) => Number(parts.find(p => p.type === t)?.value ?? 0)
-  const localAsUtc = Date.UTC(
-    get('year'), get('month') - 1, get('day'),
-    get('hour') === 24 ? 0 : get('hour'), get('minute'), get('second')
-  )
-  return localAsUtc - utcMs
 }
