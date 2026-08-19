@@ -1,0 +1,145 @@
+name: Apply CAY-99 now
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/99-owner-attention-noise
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Apply patch
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          sync = Path('lib/owner-attention-sync.ts')
+          s = sync.read_text()
+          marker = "interface ReminderRow {\n  id: string\n  payload: Record<string, unknown> | null\n  scheduled_for: string | null\n}\n"
+          addition = marker + r'''
+
+/** CAY-99: obvious courtesy acknowledgements are observations, not developments. */
+export function isNonActionableOwnerObservation(args: {
+  lastSenderType: string | null
+  lastMessagePreview: string | null
+}): boolean {
+  if (args.lastSenderType !== 'customer') return false
+  const raw = (args.lastMessagePreview ?? '').trim().toLowerCase()
+  if (!raw) return false
+  const normalized = raw.replace(/[.!?,;:]+/g, '').replace(/\s+/g, ' ').trim()
+  return /^(?:thank you|thanks|thank you so much|thanks so much|many thanks|got it|okay|ok|sounds good|perfect|great|awesome|understood|noted|👍|🙏|😊|👌)$/.test(normalized)
+}
+
+export type OwnerAttentionReasonCode = 'suppressed_duplicate' | 'suppressed_non_actionable' | 'surfaced_actionable'
+
+export function ownerAttentionReasonCode(args: {
+  nonActionable: boolean
+  stateFingerprint?: string | null
+  notifiedFingerprint?: string | null
+}): OwnerAttentionReasonCode {
+  if (args.nonActionable) return 'suppressed_non_actionable'
+  if (args.stateFingerprint != null && args.notifiedFingerprint != null && args.stateFingerprint === args.notifiedFingerprint) {
+    return 'suppressed_duplicate'
+  }
+  return 'surfaced_actionable'
+}
+'''
+          if 'isNonActionableOwnerObservation' not in s:
+            if marker not in s: raise SystemExit('marker missing')
+            s = s.replace(marker, addition, 1)
+
+          old = "        fingerprintParts: [h.human_agent_reason, h.last_message_at, hasDraft, datePassed],"
+          new = """        fingerprintParts: isNonActionableOwnerObservation({
+          lastSenderType: h.last_sender_type,
+          lastMessagePreview: h.last_message_preview,
+        })
+          ? undefined
+          : [h.human_agent_reason, h.last_message_at, hasDraft, datePassed],"""
+          if old not in s: raise SystemExit('fingerprint line missing')
+          s = s.replace(old, new, 1)
+          sync.write_text(s)
+
+          test = Path('lib/owner-attention-sync.test.ts')
+          t = test.read_text()
+          t = t.replace(
+            "import { syncOwnerAttention } from './owner-attention-sync'",
+            "import { isNonActionableOwnerObservation, ownerAttentionReasonCode, syncOwnerAttention } from './owner-attention-sync'",
+            1,
+          )
+          old_test = "    HELD = [heldConv({ last_message_at: '2026-08-13T10:00:00Z' })]"
+          new_test = "    HELD = [heldConv({ last_message_at: '2026-08-13T10:00:00Z', last_message_preview: 'Can you move it to 3pm?' })]"
+          if old_test in t:
+            t = t.replace(old_test, new_test, 1)
+          if 'NBC Crew regression' not in t:
+            t += r'''
+
+describe('CAY-99 owner-attention novelty gate', () => {
+  it('NBC Crew regression: final thank-you is silently absorbed', async () => {
+    HELD = [heldConv({ last_message_preview: 'Can you confirm our ferry booking?' })]
+    await syncOwnerAttention('ws-1')
+    expect(observedFor('conv-1')!.fingerprintParts).toBeDefined()
+
+    OBSERVED = []
+    HELD = [heldConv({
+      last_message_at: '2026-08-13T10:00:00Z',
+      last_message_preview: 'Thank you!',
+    })]
+    await syncOwnerAttention('ws-1')
+    expect(observedFor('conv-1')!.fingerprintParts).toBeUndefined()
+  })
+
+  it.each(['Thank you!', 'Thanks', 'OK', 'Got it.', 'Perfect!', '👍'])(
+    'suppresses courtesy acknowledgement %s',
+    (preview) => {
+      expect(isNonActionableOwnerObservation({ lastSenderType: 'customer', lastMessagePreview: preview })).toBe(true)
+    }
+  )
+
+  it('does not suppress a substantive question containing thanks', () => {
+    expect(isNonActionableOwnerObservation({
+      lastSenderType: 'customer',
+      lastMessagePreview: 'Thanks — can we move the ferry to 3pm?',
+    })).toBe(false)
+  })
+
+  it('exposes deterministic observability reason codes', () => {
+    expect(ownerAttentionReasonCode({ nonActionable: true })).toBe('suppressed_non_actionable')
+    expect(ownerAttentionReasonCode({ nonActionable: false, stateFingerprint: 'same', notifiedFingerprint: 'same' })).toBe('suppressed_duplicate')
+    expect(ownerAttentionReasonCode({ nonActionable: false, stateFingerprint: 'new', notifiedFingerprint: 'old' })).toBe('surfaced_actionable')
+  })
+})
+'''
+          test.write_text(t)
+
+          temp = Path('.github/workflows/apply-99-owner-attention.yml')
+          if temp.exists(): temp.unlink()
+          PY
+      - run: npx vitest run lib/owner-attention-sync.test.ts
+      - run: npx tsc --noEmit
+      - name: Commit target branch
+        run: |
+          git config user.name 'caye-reliability-bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add -A
+          git commit -m 'fix: suppress duplicate and non-actionable owner updates (#99)'
+          git push origin HEAD:fix/99-owner-attention-noise
+      - name: Remove one-shot workflow from main
+        run: |
+          git fetch origin main
+          git checkout -B main origin/main
+          git rm .github/workflows/apply-99-now.yml
+          git commit -m 'chore: remove one-shot #99 workflow'
+          git push origin main
