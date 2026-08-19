@@ -156,6 +156,7 @@ describe('shouldAutoCompleteBooking', () => {
           booking_date: '2026-05-31',
           booking_time: '09:00',
           duration_minutes: 120,
+          timezone: 'UTC',
         },
         NOW
       )
@@ -172,6 +173,7 @@ describe('shouldAutoCompleteBooking', () => {
           booking_date: '2026-06-01',
           booking_time: '05:00',
           duration_minutes: 120,
+          timezone: 'UTC',
         },
         NOW
       )
@@ -186,6 +188,7 @@ describe('shouldAutoCompleteBooking', () => {
           booking_date: '2026-06-05',
           booking_time: '09:00',
           duration_minutes: 120,
+          timezone: 'UTC',
         },
         NOW
       )
@@ -200,6 +203,7 @@ describe('shouldAutoCompleteBooking', () => {
           booking_date: '2026-05-30',
           booking_time: '09:00',
           duration_minutes: 120,
+          timezone: 'UTC',
         },
         NOW
       )
@@ -216,6 +220,7 @@ describe('shouldAutoCompleteBooking', () => {
           booking_date: '2026-05-31',
           booking_time: '06:00',
           duration_minutes: null,
+          timezone: 'UTC',
         },
         NOW
       )
@@ -230,8 +235,30 @@ describe('shouldAutoCompleteBooking', () => {
           booking_date: '2026-05-31',
           booking_time: '09:00',
           duration_minutes: 120,
+          timezone: 'UTC',
         },
         NOW
+      )
+    ).toBe(true)
+  })
+
+  // CAY-95 regression: booking_date/booking_time are the workspace's local
+  // wall clock, not UTC. Booking 2026-06-01 20:00 in Pacific/Auckland
+  // (UTC+12 in June, no DST) is really 2026-06-01T08:00Z — ends 10:00Z,
+  // clears the 6h buffer at 16:00Z. The old UTC-naive implementation read
+  // "20:00" as literal UTC and would not have considered this past-buffer
+  // until 2026-06-02T04:00Z — 12 hours late.
+  it('resolves booking_date/time in the workspace timezone, not literal UTC', () => {
+    expect(
+      shouldAutoCompleteBooking(
+        {
+          status: 'confirmed',
+          booking_date: '2026-06-01',
+          booking_time: '20:00',
+          duration_minutes: 120,
+          timezone: 'Pacific/Auckland',
+        },
+        new Date('2026-06-01T18:00:00Z')
       )
     ).toBe(true)
   })

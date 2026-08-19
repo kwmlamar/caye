@@ -4,6 +4,7 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { fetchStandingRules, type StandingRule } from '@/lib/standing-rules'
 import { fetchBusinessFacts, formatBusinessFactsBlock, type BusinessFactRow } from '@/lib/business-facts'
 import { loadAttentionDelta, renderAttentionContext, type AttentionDelta } from '@/lib/owner-attention'
+import { businessLocalDate } from '@/lib/booking-time'
 
 /**
  * situation.ts
@@ -139,6 +140,9 @@ export interface OperationalContext {
 export interface CayeSituation {
   channel: SituationChannel
   workspaceId: string
+  /** Workspace IANA timezone, e.g. "America/Nassau" — the business-local
+   *  anchor for `todaysDateLabel` (CAY-95). Never UTC. */
+  timezone: string
   now: string
   /** Real, ordered, multi-turn conversation — never flattened into one string. */
   history: Anthropic.MessageParam[]
@@ -179,17 +183,23 @@ export interface CayeSituation {
  * the kind of relative reasoning ("this Friday" vs "next Friday") this is
  * meant to make possible without the model doing its own calendar math
  * from a bare ISO string.
+ *
+ * CAY-95: `timezone` is the workspace's IANA timezone. Both the ISO date
+ * and the spelled-out form resolve in it via `businessLocalDate`
+ * (lib/booking-time.ts) — the shared business-local primitive, not UTC.
+ * This function used to format in UTC regardless of the workspace's real
+ * timezone; see lib/booking-time.ts's header for why that was wrong.
  */
-export function todaysDateLabel(nowISO: string): string {
+export function todaysDateLabel(nowISO: string, timezone: string): string {
   const now = new Date(nowISO)
   if (Number.isNaN(now.getTime())) return ''
-  const iso = nowISO.slice(0, 10)
+  const iso = businessLocalDate(timezone, now)
   const spelled = now.toLocaleDateString('en-US', {
     weekday: 'long',
     month: 'long',
     day: 'numeric',
     year: 'numeric',
-    timeZone: 'UTC',
+    timeZone: timezone,
   })
   return `TODAY'S DATE: ${iso} (${spelled}). Resolve any date the customer or operator gives — a day of week, "next Friday", a month/day with no year — relative to this, not from memory or assumption.`
 }
@@ -201,7 +211,7 @@ export function todaysDateLabel(nowISO: string): string {
  */
 export function renderSituationForPrompt(situation: CayeSituation): string {
   const lines: string[] = []
-  const dateLabel = todaysDateLabel(situation.now)
+  const dateLabel = todaysDateLabel(situation.now, situation.timezone)
   if (dateLabel) lines.push(dateLabel)
 
   if (situation.relationship) {

@@ -89,32 +89,42 @@ describe('annotateHistoryWithRelativeTime', () => {
 
 describe('todaysDateLabel (2026-08-16, final pre-canary closure — the Scenario C date-resolution defect)', () => {
   it('renders both the ISO date and a spelled-out weekday/month/day/year form', () => {
-    const label = todaysDateLabel('2026-08-16T12:00:00.000Z')
+    const label = todaysDateLabel('2026-08-16T12:00:00.000Z', 'UTC')
     expect(label).toContain('2026-08-16')
     expect(label).toContain('Sunday, August 16, 2026')
   })
 
   it('instructs resolving relative/partial dates against this anchor, not memory', () => {
-    const label = todaysDateLabel('2026-08-16T12:00:00.000Z')
+    const label = todaysDateLabel('2026-08-16T12:00:00.000Z', 'UTC')
     expect(label).toMatch(/relative to this, not from memory or assumption/i)
   })
 
-  it('is stable across different times of day on the same UTC date', () => {
-    expect(todaysDateLabel('2026-08-16T00:00:01.000Z')).toContain('2026-08-16')
-    expect(todaysDateLabel('2026-08-16T23:59:59.000Z')).toContain('2026-08-16')
+  it('is stable across different times of day on the same date in the given timezone', () => {
+    expect(todaysDateLabel('2026-08-16T00:00:01.000Z', 'UTC')).toContain('2026-08-16')
+    expect(todaysDateLabel('2026-08-16T23:59:59.000Z', 'UTC')).toContain('2026-08-16')
   })
 
   it('returns empty string for an invalid date rather than throwing', () => {
-    expect(todaysDateLabel('not-a-date')).toBe('')
+    expect(todaysDateLabel('not-a-date', 'UTC')).toBe('')
   })
 
   it('correctly resolves a year boundary — the exact class of mistake this closes', () => {
     // The real defect: "Friday, November 20" was resolved to 2025 when the
     // actual runtime date was 2026-08-16. A model with THIS label present
     // has the correct year stated outright, not left to infer.
-    const label = todaysDateLabel('2026-08-16T12:00:00.000Z')
+    const label = todaysDateLabel('2026-08-16T12:00:00.000Z', 'UTC')
     expect(label).toContain('2026')
     expect(label).not.toContain('2025')
+  })
+
+  // CAY-95 regression: the front-desk anchor used to format in UTC
+  // regardless of the workspace's real timezone. The same instant must
+  // resolve to a different calendar date for a workspace ahead of UTC vs.
+  // one behind it — proving this is business-local, not UTC-naive.
+  it('resolves the anchor date in the workspace timezone, not UTC — same instant, different workspaces', () => {
+    const now = '2026-06-01T23:30:00.000Z'
+    expect(todaysDateLabel(now, 'Pacific/Auckland')).toContain('2026-06-02')
+    expect(todaysDateLabel(now, 'Pacific/Honolulu')).toContain('2026-06-01')
   })
 })
 
@@ -122,6 +132,7 @@ describe('renderSituationForPrompt', () => {
   const baseSituation: CayeSituation = {
     channel: 'front-desk',
     workspaceId: 'ws_1',
+    timezone: 'America/Nassau',
     now: '2026-08-16T12:00:00.000Z',
     history: [],
     historyTimestamps: [],
@@ -133,7 +144,7 @@ describe('renderSituationForPrompt', () => {
 
   it('renders only the date anchor, and does not throw, when there is no background state', () => {
     expect(() => renderSituationForPrompt(baseSituation)).not.toThrow()
-    expect(renderSituationForPrompt(baseSituation)).toBe(todaysDateLabel(baseSituation.now))
+    expect(renderSituationForPrompt(baseSituation)).toBe(todaysDateLabel(baseSituation.now, baseSituation.timezone))
   })
 
   it('renders relationship state as read-only background, never as an authorization', () => {
