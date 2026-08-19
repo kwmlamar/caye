@@ -41,6 +41,10 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # The merge orchestrator dispatches the next issue by posting an
+          # @claude issue comment as github-actions[bot]. Anthropic blocks bots
+          # by default, so allow only this specific trusted bot, never '*'.
+          allowed_bots: "github-actions[bot]"
           additional_permissions: |
             actions: read
           claude_args: |
@@ -60,7 +64,11 @@ jobs:
       # causes customer/operator side effects. It only records run state and, on
       # successful issue work, turns a pushed Claude branch into a reviewable PR.
       - name: Reconcile issue implementation state
-        if: always() && github.event_name == 'issue_comment' && github.event.issue.pull_request == null
+        if: >-
+          always() &&
+          github.event_name == 'issue_comment' &&
+          github.event.issue.pull_request == null &&
+          (github.actor == github.repository_owner || github.actor == 'github-actions[bot]')
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -98,10 +106,22 @@ jobs:
           ensure_label claude-done 5319e7 "Claude implementation was merged through controlled review"
           ensure_label claude-queued 1d76db "Queued for serialized Claude implementation"
 
-          # Branch names created by claude-code-action for issue work include the
-          # issue number and a sortable timestamp. Pick the newest remote branch.
-          BRANCH="$(gh api --paginate "repos/${REPO}/git/matching-refs/heads/claude/issue-${ISSUE_NUMBER}-" \
-            --jq '.[].ref' 2>/dev/null | sed 's#refs/heads/##' | sort | tail -n 1)"
+          # Do not accidentally attach a stale branch from an older retry to the
+          # current run. matching-refs can return every historical Claude branch
+          # for this issue, so require the branch head commit to be no older than
+          # this workflow run's start time, then choose the newest timestamped ref.
+          RUN_STARTED_AT="$(gh api "repos/${REPO}/actions/runs/${RUN_ID}" --jq '.run_started_at' 2>/dev/null || echo '')"
+          BRANCH=""
+          while IFS= read -r candidate; do
+            [[ -z "${candidate}" ]] && continue
+            COMMIT_DATE="$(gh api "repos/${REPO}/commits/${candidate}" --jq '.commit.committer.date' 2>/dev/null || echo '')"
+            if [[ -n "${RUN_STARTED_AT}" && -n "${COMMIT_DATE}" && "${COMMIT_DATE}" < "${RUN_STARTED_AT}" ]]; then
+              continue
+            fi
+            BRANCH="${candidate}"
+            break
+          done < <(gh api --paginate "repos/${REPO}/git/matching-refs/heads/claude/issue-${ISSUE_NUMBER}-" \
+            --jq '.[].ref' 2>/dev/null | sed 's#refs/heads/##' | sort -r)
 
           AHEAD=0
           if [[ -n "${BRANCH}" ]]; then
@@ -115,7 +135,7 @@ jobs:
 ### Claude implementation stopped
 
 - outcome: \`${CLAUDE_OUTCOME}\`
-- saved branch: \`${BRANCH:-none}\`
+- saved branch from this run: \`${BRANCH:-none}\`
 - branch commits ahead of main: \`${AHEAD}\`
 - run: ${RUN_URL}
 
@@ -129,7 +149,7 @@ No merge, deploy, production database change, or customer/operator side effect w
               -f body="<!-- caye-orchestrator:state=failed_no_branch;run=${RUN_ID} -->
 ### Claude reported success without saved implementation
 
-No remote Claude branch with commits ahead of \`main\` was found for issue #${ISSUE_NUMBER}. Treating this as not review-ready rather than pretending the work exists.
+No remote Claude branch created by this run with commits ahead of \`main\` was found for issue #${ISSUE_NUMBER}. Treating this as not review-ready rather than pretending the work exists.
 
 Run: ${RUN_URL}" >/dev/null
             exit 0
