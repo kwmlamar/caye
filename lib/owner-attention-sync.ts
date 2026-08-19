@@ -9,40 +9,6 @@ import {
   type AttentionPriority,
 } from '@/lib/owner-attention'
 
-/**
- * Reconcile the shared attention ledger against the state the business is
- * actually in.
- *
- * WHY A RECONCILER AND NOT observe() AT EVERY PRODUCER (2026-08-12b)
- * Seventeen separate call sites set `unified_conversations.human_agent_enabled
- * = true` — webhooks for five channels, two email pollers, the outreach nudge
- * scan, the admin respond route, caye-reply itself. Asking each to remember an
- * `observeAttentionItem` call is exactly the drift that put "[operator_reminder]"
- * in Mrs. Max's thread: two code paths that must agree, with nothing enforcing
- * that they do. The eighteenth producer would forget, and `allClear` would
- * quietly start lying again.
- *
- * So the ledger is DERIVED, not pushed. The canonical sources already exist and
- * are already the thing every read tool trusts; this reads them and syncs. A new
- * hold path added tomorrow is covered the moment it flips the flag nobody has to
- * remember anything.
- *
- * escalation.ts still calls observeAttentionItem directly at composition time —
- * not as a competing producer, but because that is the only moment the digest
- * and the composed brief exist. This sync then owns the item's lifecycle from
- * there. Both write the SAME row (see the identity rule below), so they
- * reinforce rather than duplicate.
- *
- * IDENTITY IS THE THING THE OWNER ACTS ON, NOT THE RECORD THAT NOTICED IT.
- * An escalation, a held thread, and a drafted reply awaiting approval can all
- * describe one conversation. The owner experiences ONE item. So anything
- * conversation-backed is keyed by conversation id under SUBJECT_CONVERSATION,
- * and the contributors raise its priority rather than adding rows. Keying on
- * escalation id would have produced two ledger entries for one thread — the
- * duplicate-record failure this rule exists to prevent.
- */
-
-/** Bound the reconcile. Well above anything real; exists to cap worst case. */
 const REMINDER_SCAN_CAP = 100
 
 interface Candidate {
@@ -52,7 +18,7 @@ interface Candidate {
   title: string
   priority: AttentionPriority
   nextAction: string
-  fingerprintParts: unknown[]
+  fingerprintParts?: unknown[]
 }
 
 interface HeldConvRow {
@@ -67,19 +33,51 @@ interface ReminderRow {
 }
 
 /**
- * Bring the ledger in line with reality for one workspace.
- *
- * Adds/updates a row for everything currently needing the owner, and resolves
- * every row this sync owns whose underlying item is gone. Never throws — a
- * bookkeeping failure must not take down the briefing that calls it.
+ * CAY-99: obvious courtesy acknowledgements are observations, not
+ * developments. They must not re-earn owner attention just because the
+ * conversation timestamp moved.
  */
+export function isNonActionableOwnerObservation(args: {
+  lastSenderType: string | null
+  lastMessagePreview: string | null
+}): boolean {
+  if (args.lastSenderType !== 'customer') return false
+  const raw = (args.lastMessagePreview ?? '').trim().toLowerCase()
+  if (!raw) return false
+  const normalized = raw
+    .replace(/[.!?,;:]+/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return /^(?:thank you|thanks|thank you so much|thanks so much|many thanks|got it|okay|ok|sounds good|perfect|great|awesome|understood|noted|👍|🙏|😊|👌)$/.test(normalized)
+}
+
+export type OwnerAttentionReasonCode =
+  | 'suppressed_duplicate'
+  | 'suppressed_non_actionable'
+  | 'surfaced_actionable'
+
+export function ownerAttentionReasonCode(args: {
+  nonActionable: boolean
+  stateFingerprint?: string | null
+  notifiedFingerprint?: string | null
+}): OwnerAttentionReasonCode {
+  if (args.nonActionable) return 'suppressed_non_actionable'
+  if (
+    args.stateFingerprint != null &&
+    args.notifiedFingerprint != null &&
+    args.stateFingerprint === args.notifiedFingerprint
+  ) {
+    return 'suppressed_duplicate'
+  }
+  return 'surfaced_actionable'
+}
+
 export async function syncOwnerAttention(workspaceId: string): Promise<void> {
   try {
     const supabase = createServiceClient()
     const candidates = new Map<string, Candidate>()
     const key = (c: { subjectType: string; subjectId: string }) => `${c.subjectType}:${c.subjectId}`
 
-    /** Merge a candidate in, keeping the strongest priority seen for it. */
     const add = (c: Candidate) => {
       const existing = candidates.get(key(c))
       if (!existing) {
@@ -89,61 +87,59 @@ export async function syncOwnerAttention(workspaceId: string): Promise<void> {
       candidates.set(key(c), {
         ...existing,
         priority: strongerPriority(existing.priority, c.priority),
-        // The more specific next action wins — "approve the draft" tells the
-        // owner more than "someone's waiting".
         nextAction: c.nextAction || existing.nextAction,
-        fingerprintParts: [...existing.fingerprintParts, ...c.fingerprintParts],
+        fingerprintParts:
+          existing.fingerprintParts && c.fingerprintParts
+            ? [...existing.fingerprintParts, ...c.fingerprintParts]
+            : existing.fingerprintParts ?? c.fingerprintParts,
       })
     }
 
-    // ── 1. Held conversations ────────────────────────────────────────────
-    // getHeldSummary is the canonical "a person is waiting on the owner" read
-    // (lib/hold-kinds.ts) and already excludes queue holds — drafted cold
-    // outreach nobody is waiting on. Reusing it means the ledger and
-    // get_held_queue can never disagree about what counts.
     const held = await getHeldSummary(supabase, workspaceId)
     const heldIds = held.attention.map((h) => h.id)
-
-    // Which held threads carry a draft awaiting approval. Same two sources
-    // get_pending_quotes uses: the conversation's own metadata.proposed_reply
-    // (outreach path) and the latest internal note carrying one (reply path).
     const withDrafts = await conversationsWithDrafts(supabase, heldIds)
-
-    // Which held threads have an open escalation — the tier that means Caye
-    // deliberately declined to answer, not merely that she paused.
     const escalated = await conversationsWithOpenEscalations(supabase, heldIds)
-
     const todayISO = new Date().toISOString().slice(0, 10)
 
     for (const h of held.attention) {
       const datePassed = !!h.target_date && h.target_date < todayISO
       const hasDraft = withDrafts.has(h.id)
       const who = h.customer_name || h.customer_id || 'a customer'
+      const nonActionable = isNonActionableOwnerObservation({
+        lastSenderType: h.last_sender_type,
+        lastMessagePreview: h.last_message_preview,
+      })
+
+      // Omitting fingerprintParts is deliberate. observeAttentionItem preserves
+      // the previous fingerprint when no fingerprint is supplied, so a final
+      // "Thank you!" cannot turn a previously-notified item into CHANGED. This
+      // also avoids a one-time fingerprint migration that would itself create
+      // owner noise after deploy.
+      if (nonActionable) {
+        console.info('[owner-attention-gate]', {
+          reason_code: 'suppressed_non_actionable',
+          workspaceId,
+          conversationId: h.id,
+        })
+      }
 
       add({
         subjectType: SUBJECT_CONVERSATION,
         subjectId: h.id,
         conversationId: h.id,
         title: `${who} — ${(h.human_agent_reason ?? 'waiting on you').replace(/\s+/g, ' ').slice(0, 80)}`,
-        // A date that has already gone by with no reply sent is the one hold
-        // state that gets worse purely by sitting there.
         priority: datePassed ? 'critical' : 'decision',
         nextAction: hasDraft
           ? 'Draft ready — needs your approval'
           : escalated.has(h.id)
             ? 'Waiting on your call'
             : 'Waiting on your reply',
-        // What re-earns attention: a new message from them, a new reason, a
-        // draft appearing, the date lapsing. NOT the passage of time alone —
-        // an item that has merely aged belongs in the unchanged bucket.
-        fingerprintParts: [h.human_agent_reason, h.last_message_at, hasDraft, datePassed],
+        fingerprintParts: nonActionable
+          ? undefined
+          : [h.human_agent_reason, h.last_message_at, hasDraft, datePassed],
       })
     }
 
-    // ── 2. Scheduled reminders ───────────────────────────────────────────
-    // The owner asked to be reminded; until it fires, it is a thing they are
-    // owed. Awareness tier: a reminder is a nudge, never a judgment call, and
-    // must never be phrased as a question.
     const { data: reminders } = await supabase
       .from('caye_outbound_queue')
       .select('id, payload, scheduled_for')
@@ -171,7 +167,6 @@ export async function syncOwnerAttention(workspaceId: string): Promise<void> {
       })
     }
 
-    // ── 3. Write ─────────────────────────────────────────────────────────
     for (const c of candidates.values()) {
       await observeAttentionItem({
         workspaceId,
@@ -185,10 +180,6 @@ export async function syncOwnerAttention(workspaceId: string): Promise<void> {
       })
     }
 
-    // ── 4. Resolve what's gone ───────────────────────────────────────────
-    // Only types this sync owns. An item recorded by a producer whose source
-    // this function doesn't read must not be closed here just because it
-    // wasn't in the candidate set.
     const owned = [SUBJECT_CONVERSATION, SUBJECT_REMINDER]
     const { data: openRows } = await supabase
       .from('caye_owner_attention')
@@ -199,10 +190,6 @@ export async function syncOwnerAttention(workspaceId: string): Promise<void> {
 
     const ownedSet = new Set(owned)
     for (const row of (openRows ?? []) as Array<{ subject_type: string; subject_id: string }>) {
-      // Belt and braces with the .in() filter above. Resolving is
-      // irreversible from the owner's point of view — the item silently stops
-      // appearing — so the ownership check lives here too rather than only in
-      // the query, where a later edit could quietly drop it.
       if (!ownedSet.has(row.subject_type)) continue
       if (candidates.has(`${row.subject_type}:${row.subject_id}`)) continue
       await setAttentionStatus({
@@ -228,7 +215,6 @@ function strongerPriority(a: AttentionPriority, b: AttentionPriority): Attention
   return PRIORITY_STRENGTH[a] >= PRIORITY_STRENGTH[b] ? a : b
 }
 
-/** Held conversations carrying a drafted reply awaiting approval. */
 async function conversationsWithDrafts(
   supabase: ReturnType<typeof createServiceClient>,
   conversationIds: string[]
@@ -261,7 +247,6 @@ async function conversationsWithDrafts(
   return out
 }
 
-/** Held conversations with an escalation still open. */
 async function conversationsWithOpenEscalations(
   supabase: ReturnType<typeof createServiceClient>,
   conversationIds: string[]
