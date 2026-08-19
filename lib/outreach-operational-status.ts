@@ -63,9 +63,13 @@ export async function getOutreachOperationalStatus(workspaceId: string): Promise
   const sent = (first.count ?? 0) + (follow.count ?? 0)
   const pending = (drafts.data ?? []).filter((r) => ['outreach_first_touch', 'outreach_followup'].includes(String((r.metadata as Record<string, unknown>)?.hold_kind))).length
   const sourcingSummary = (sourcingRun.data?.last_summary as Record<string, unknown> | null) ?? null
-  const lastFound = numeric(sourcingSummary?.found)
-  const lastQualified = numeric(sourcingSummary?.with_email)
-  const lastInserted = numeric(sourcingSummary?.inserted)
+  // Field names match runOutreachSourcingJob's summary (lib/outreach-
+  // sourcing-job.ts): totals across every target attempted in the run, not
+  // a single target — CAY-98 made one run walk the whole active-target
+  // rotation instead of stopping after the first.
+  const lastFound = numeric(sourcingSummary?.total_found)
+  const lastQualified = numeric(sourcingSummary?.total_with_email)
+  const lastInserted = numeric(sourcingSummary?.total_inserted)
   const availableCandidates = (sourced.data ?? []).filter((row) => isValidOutreachEmail(row.lead_email)).length
   const tokenUsable = Boolean(account.data && (account.data.refresh_token || (account.data.token_expires_at && Date.parse(account.data.token_expires_at) > Date.now())))
   const base: Omit<OutreachOperationalStatus, 'reasonNoOutreach'> = {
@@ -77,7 +81,7 @@ export async function getOutreachOperationalStatus(workspaceId: string): Promise
     lastSourcing: { ranAt: sourcingRun.data?.last_started_at ?? null, succeeded: sourcingRun.data ? sourcingRun.data.last_status === 'ok' : null, summary: sourcingSummary, error: sourcingRun.data?.last_error ?? null },
     sendsToday: { sent, dailyLimit: OUTREACH_DAILY_SEND_CAP, remaining: Math.max(0, OUTREACH_DAILY_SEND_CAP - sent) },
     queue: { pendingDrafts: pending, stalled: stalled.count ?? 0, sourcingJobs: sourcingJobs.count ?? 0 },
-    sourcing: { availableCandidates, cooldownCandidates: cooldown.count ?? 0, lastFound, lastQualified, lastRejected: numeric(sourcingSummary?.rejected_no_email) ?? (lastFound !== null && lastQualified !== null ? lastFound - lastQualified : null), lastDuplicates: numeric(sourcingSummary?.duplicates) ?? (lastQualified !== null && lastInserted !== null ? lastQualified - lastInserted : null) },
+    sourcing: { availableCandidates, cooldownCandidates: cooldown.count ?? 0, lastFound, lastQualified, lastRejected: numeric(sourcingSummary?.total_rejected_no_email) ?? (lastFound !== null && lastQualified !== null ? lastFound - lastQualified : null), lastDuplicates: numeric(sourcingSummary?.total_duplicates) ?? (lastQualified !== null && lastInserted !== null ? lastQualified - lastInserted : null) },
     provider: { connected: Boolean(account.data), healthy: tokenUsable, kind: account.data?.channel_type ?? null, lastError: account.data && !tokenUsable ? 'No usable access or refresh token' : null },
     blockers: [],
     telemetryComplete: Boolean(scan.data && sourcingRun.data && history.count !== null),
