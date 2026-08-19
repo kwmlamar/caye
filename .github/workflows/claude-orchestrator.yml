@@ -100,7 +100,7 @@ Orchestrator run: ${RUN_URL}" >/dev/null
           # Idempotency: never dispatch the same queue step twice just because a
           # workflow is re-run. The marker lives in the issue discussion.
           ALREADY_DISPATCHED="$(gh api --paginate "repos/${REPO}/issues/${NEXT_ISSUE}/comments?per_page=100" \
-            --jq '.[] | select(.body | contains("caye-orchestrator:dispatch-from='"${CURRENT_ISSUE}"'")) | .id' | head -n 1)"
+            --jq ".[] | select(.body | contains(\"caye-orchestrator:dispatch-from=${CURRENT_ISSUE}\")) | .id" | head -n 1)"
           if [[ -n "${ALREADY_DISPATCHED}" ]]; then
             echo "Issue #${NEXT_ISSUE} was already dispatched from #${CURRENT_ISSUE}."
             exit 0
@@ -109,7 +109,7 @@ Orchestrator run: ${RUN_URL}" >/dev/null
           # A queued issue should not be launched if it already has an open
           # Claude implementation PR. This is the second idempotency boundary.
           OPEN_PR="$(gh api "repos/${REPO}/pulls?state=open&per_page=100" \
-            --jq '.[] | select(.head.ref | startswith("claude/issue-'"${NEXT_ISSUE}"'-")) | .number' | head -n 1)"
+            --jq ".[] | select(.head.ref | startswith(\"claude/issue-${NEXT_ISSUE}-\")) | .number" | head -n 1)"
           if [[ -n "${OPEN_PR}" ]]; then
             echo "Issue #${NEXT_ISSUE} already has open Claude PR #${OPEN_PR}."
             exit 0
