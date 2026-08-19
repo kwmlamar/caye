@@ -3,7 +3,12 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { dispatchOperatorReply } from '@/lib/whatsapp/channel-dispatch'
 import { fetchBusinessFacts } from '@/lib/business-facts'
 import { detectIdentityLeak } from '@/lib/caye-identity-guard'
-import { detectUnverifiedPaymentFigure, detectUnverifiedPaymentMethodClaim } from '@/lib/policy-figure-guard'
+import {
+  detectUnverifiedPaymentFigure,
+  detectUnverifiedPaymentMethodClaim,
+  detectUnsupportedThirdPartyCommitment,
+  detectUnsupportedRefundCommitment,
+} from '@/lib/policy-figure-guard'
 import type { Tool } from '../types'
 import { assertConversationOwnedByWorkspace } from '../write-low/_guards'
 import { unsupportedLogisticsTimeClaims } from '../../logistics-grounding'
@@ -163,6 +168,29 @@ If evidence is insufficient, you'll get back a held/not-sent result explaining w
         status: 'NEEDS_HUMAN',
         error_code: 'UNVERIFIED_PAYMENT_METHOD',
         error: `Payment-method guard: ${paymentMethod}. Nothing was sent — do not state a payment-method policy that isn't documented; say you'll confirm and follow up instead.`,
+      }
+    }
+    // CAY-92: third-party/partner coordination and refund/cancellation are
+    // consequential commitments a customer will hold the business to — same
+    // reasoning as the payment guards above, same factsGrounding (business
+    // facts + this thread's own owner-sent messages), extended to the two
+    // claim categories from the Jonathan snorkeling/Snuba incident.
+    const thirdPartyCommitment = detectUnsupportedThirdPartyCommitment(body, factsGrounding)
+    if (thirdPartyCommitment) {
+      return {
+        ok: false,
+        status: 'NEEDS_HUMAN',
+        error_code: 'UNSUPPORTED_THIRD_PARTY_COMMITMENT',
+        error: `Commitment guard: ${thirdPartyCommitment}. Nothing was sent — do not promise a partner/vendor arrangement that isn't documented; say you'll confirm and follow up instead.`,
+      }
+    }
+    const refundCommitment = detectUnsupportedRefundCommitment(body, factsGrounding)
+    if (refundCommitment) {
+      return {
+        ok: false,
+        status: 'NEEDS_HUMAN',
+        error_code: 'UNSUPPORTED_REFUND_COMMITMENT',
+        error: `Commitment guard: ${refundCommitment}. Nothing was sent — do not promise a refund/cancellation outcome that isn't documented; say you'll confirm and follow up instead.`,
       }
     }
 

@@ -6,7 +6,11 @@ import { stripWrappingQuotes } from '@/lib/voice-profile'
 import type { ContactStyleProfile } from '@/types/database'
 import { createServiceClient } from './supabase-server'
 import { detectIdentityLeak } from './caye-identity-guard'
-import { detectUnverifiedPaymentFigure } from './policy-figure-guard'
+import {
+  detectUnverifiedPaymentFigure,
+  detectUnsupportedThirdPartyCommitment,
+  detectUnsupportedRefundCommitment,
+} from './policy-figure-guard'
 import { sanitizeDashes } from './sanitize-dashes'
 import { FRONT_DESK_RESPONSE_STYLE } from './front-desk-response-style'
 import { formatHistoryBlock } from './conversation-history'
@@ -2273,6 +2277,10 @@ async function generateCayeAutoReplyCore(
     if (leak) return `Identity guard: ${leak}`
     const figure = detectUnverifiedPaymentFigure(content, factsGrounding)
     if (figure) return `Payment-figure guard: ${figure}`
+    const thirdParty = detectUnsupportedThirdPartyCommitment(content, factsGrounding)
+    if (thirdParty) return `Commitment guard: ${thirdParty}`
+    const refund = detectUnsupportedRefundCommitment(content, factsGrounding)
+    if (refund) return `Commitment guard: ${refund}`
     return null
   }
 
