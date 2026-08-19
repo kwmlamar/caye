@@ -7,10 +7,19 @@ const mockState = vi.hoisted(() => ({
   historyForModel: [{ role: 'user', content: 'How much for 2 guests?' }] as Anthropic.MessageParam[],
   runToolLoopResult: { newTurns: [] as Anthropic.MessageParam[], replyText: '' },
   runToolLoopThrows: null as Error | null,
+  runToolLoopCalls: 0,
   conversationUpdates: [] as unknown[],
   internalMessagesInserted: [] as unknown[],
   persistCalls: [] as unknown[],
   holdPingCalls: [] as unknown[],
+  authzDecision: { allowed: true } as
+    | { allowed: true }
+    | {
+        allowed: false
+        reason: 'blocked_by_owner_policy' | 'blocked_by_existing_hold' | 'blocked_by_authority_check_error'
+        escalation?: { internalContext: string }
+      },
+  authzCalls: [] as unknown[],
 }))
 
 vi.mock('@/lib/supabase-server', () => ({
@@ -41,8 +50,16 @@ vi.mock('@/lib/supabase-server', () => ({
 
 vi.mock('./execute', () => ({
   runToolLoop: async () => {
+    mockState.runToolLoopCalls += 1
     if (mockState.runToolLoopThrows) throw mockState.runToolLoopThrows
     return mockState.runToolLoopResult
+  },
+}))
+
+vi.mock('@/lib/authorize-autonomous-outbound', () => ({
+  authorizeAutonomousOutbound: async (...args: unknown[]) => {
+    mockState.authzCalls.push(args)
+    return mockState.authzDecision
   },
 }))
 
@@ -116,10 +133,87 @@ describe('runConvergedFrontDeskTurn', () => {
     mockState.historyForModel = [{ role: 'user', content: 'How much for 2 guests?' }]
     mockState.runToolLoopResult = { newTurns: [], replyText: '' }
     mockState.runToolLoopThrows = null
+    mockState.runToolLoopCalls = 0
     mockState.conversationUpdates = []
     mockState.internalMessagesInserted = []
     mockState.persistCalls = []
     mockState.holdPingCalls = []
+    mockState.authzDecision = { allowed: true }
+    mockState.authzCalls = []
+  })
+
+  it('blocks before the LLM runs when an owner_only standing rule matches (#88)', async () => {
+    mockState.authzDecision = {
+      allowed: false,
+      reason: 'blocked_by_owner_policy',
+      escalation: { internalContext: 'You asked me to always bring you anything that mentions "Full Bimini Experience", so I held this rather than answer it myself.' },
+    }
+
+    const result = await runConvergedFrontDeskTurn(BASE_INPUT)
+
+    expect(result.outcome).toBe('held')
+    expect(mockState.runToolLoopCalls).toBe(0)
+    expect(mockState.authzCalls).toHaveLength(1)
+    expect(mockState.authzCalls[0]).toEqual([
+      { workspaceId: 'ws1', conversationId: 'conv1', inboundBody: 'How much for 2 guests?' },
+    ])
+    expect(mockState.conversationUpdates).toHaveLength(1)
+    expect(mockState.internalMessagesInserted).toHaveLength(1)
+    expect(mockState.holdPingCalls).toHaveLength(1)
+    expect(mockState.persistCalls).toHaveLength(0)
+  })
+
+  it('blocks before the LLM runs when the conversation already has an owner hold, without re-pinging or touching conversation state (#89 follow-up)', async () => {
+    mockState.authzDecision = { allowed: false, reason: 'blocked_by_existing_hold' }
+
+    const result = await runConvergedFrontDeskTurn(BASE_INPUT)
+
+    expect(result.outcome).toBe('held')
+    expect(mockState.runToolLoopCalls).toBe(0)
+    // Already held before this turn — nothing new to tell the owner. A ping
+    // or a conversation-state rewrite here would (a) look like a fresh
+    // event every inbound message while held, and (b) stomp the real
+    // original human_agent_reason with this generic placeholder.
+    expect(mockState.holdPingCalls).toHaveLength(0)
+    expect(mockState.conversationUpdates).toHaveLength(0)
+    expect(mockState.internalMessagesInserted).toHaveLength(0)
+  })
+
+  it('does not generate a duplicate owner ping on repeated inbound turns while a conversation stays held (#89 follow-up)', async () => {
+    mockState.authzDecision = { allowed: false, reason: 'blocked_by_existing_hold' }
+
+    await runConvergedFrontDeskTurn(BASE_INPUT)
+    await runConvergedFrontDeskTurn({ ...BASE_INPUT, inboundBody: 'Following up — still there?' })
+    await runConvergedFrontDeskTurn({ ...BASE_INPUT, inboundBody: 'Any update?' })
+
+    expect(mockState.holdPingCalls).toHaveLength(0)
+    expect(mockState.conversationUpdates).toHaveLength(0)
+    expect(mockState.internalMessagesInserted).toHaveLength(0)
+  })
+
+  it('marks held and pings the owner when the authority check itself fails (fail-closed, #89 follow-up)', async () => {
+    mockState.authzDecision = { allowed: false, reason: 'blocked_by_authority_check_error' }
+
+    const result = await runConvergedFrontDeskTurn(BASE_INPUT)
+
+    expect(result.outcome).toBe('held')
+    expect(result.holdReason).toContain('owner-authority check failed')
+    expect(mockState.runToolLoopCalls).toBe(0)
+    // Unlike blocked_by_existing_hold, this IS new information this turn —
+    // the owner needs to know the deterministic gate couldn't verify
+    // safety, so this must still surface as a real hold + ping.
+    expect(mockState.conversationUpdates).toHaveLength(1)
+    expect(mockState.internalMessagesInserted).toHaveLength(1)
+    expect(mockState.holdPingCalls).toHaveLength(1)
+  })
+
+  it('lets an ordinary, non-matching conversation reach the LLM as before', async () => {
+    mockState.runToolLoopResult = { newTurns: sendCustomerReplySuccessTurns(), replyText: 'Sure!' }
+
+    const result = await runConvergedFrontDeskTurn(BASE_INPUT)
+
+    expect(result.outcome).toBe('sent')
+    expect(mockState.runToolLoopCalls).toBe(1)
   })
 
   it('reports outcome:sent and persists agent turns when send_customer_reply succeeded', async () => {

@@ -2135,7 +2135,13 @@ async function generateCayeAutoReplyCore(
     if (!forced && !isSalesWorkspace) {
       const rules = await fetchStandingRules(inbound.workspaceId)
       const matched = findMatchingRule(rules, inbound.body)
-      if (matched) {
+      if (matched && matched.action === 'owner_only') {
+        // Hard rule (#88): never eligible for standdown, no matter how
+        // deterministically answerable the enquiry looks. Owner policy
+        // beats model judgment, always.
+        forced = buildStandingRuleEscalation(matched, inbound.body)
+        recordRuleFired(matched.id)
+      } else if (matched) {
         // The rule stands down only when the enquiry contains no question the
         // owner hasn't already answered in writing — exact catalog match,
         // stated date and party size, a clean verdict from her own
