@@ -8,6 +8,7 @@ import type { CayeSituation } from '../situation'
 const baseSituation: CayeSituation = {
   channel: 'front-desk',
   workspaceId: 'ws_1',
+  timezone: 'America/Nassau',
   now: '2026-08-16T12:00:00.000Z',
   history: [],
   historyTimestamps: [],

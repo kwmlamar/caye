@@ -33,6 +33,11 @@ import { authorizeAutonomousOutbound } from '@/lib/authorize-autonomous-outbound
  * already did both, or correctly did neither (held).
  */
 
+// Same fallback used by every other business-local read site (e.g.
+// lib/caye-agent/index.ts, lib/caye-agent/tools/read/*) for workspaces
+// with no `customers.timezone` set yet.
+const DEFAULT_WORKSPACE_TIMEZONE = 'America/Nassau'
+
 export interface ConvergedFrontDeskTurnInput {
   workspaceId: string
   conversationId: string
@@ -147,7 +152,7 @@ export async function runConvergedFrontDeskTurn(
       return { outcome: 'held', toolsUsed: [], usedOutputFallbackPath: false, holdReason }
     }
 
-    const [{ history: historyForModel }, relationshipCtx, operational] = await Promise.all([
+    const [{ history: historyForModel }, relationshipCtx, operational, { data: customerRow }] = await Promise.all([
       // loadFrontDeskConversationContext's `history` field is ALREADY
       // relative-time-annotated + compacted (see context.ts's own doc
       // comment) — this is the form to feed the model directly, not a raw
@@ -155,7 +160,9 @@ export async function runConvergedFrontDeskTurn(
       loadFrontDeskConversationContext(input.conversationId),
       loadRelationshipContext(input.workspaceId, input.contactId ?? null),
       loadOperationalContext(input.workspaceId, 'front-desk'),
+      supabase.from('customers').select('timezone').eq('id', input.workspaceId).maybeSingle(),
     ])
+    const workspaceTimezone = (customerRow?.timezone as string | null) || DEFAULT_WORKSPACE_TIMEZONE
 
     // The customer's current message is already the last row of the
     // reloaded history — claimInboundMessage persisted it BEFORE this
@@ -167,6 +174,7 @@ export async function runConvergedFrontDeskTurn(
     const situation = {
       channel: 'front-desk' as const,
       workspaceId: input.workspaceId,
+      timezone: workspaceTimezone,
       now: new Date().toISOString(),
       history: historyForModel,
       historyTimestamps: historyForModel.map(() => null),

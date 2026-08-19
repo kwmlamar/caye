@@ -32,6 +32,10 @@ const DEFAULT_SYSTEM_PROMPT =
   'You are a helpful assistant for a service business. Write warmly and ' +
   'professionally on the owner\'s behalf.'
 
+// Same fallback used by every other business-local read site (e.g.
+// lib/caye-agent/index.ts) for workspaces with no `customers.timezone` set.
+const DEFAULT_WORKSPACE_TIMEZONE = 'America/Nassau'
+
 export async function GET(request: NextRequest) {
   const secret = process.env.CRON_SECRET
   if (secret) {
@@ -47,7 +51,7 @@ export async function GET(request: NextRequest) {
   // Active workspaces with nudges enabled
   const { data: workspaces } = await supabase
     .from('customers')
-    .select('id, business_name, proactive_nudges_enabled')
+    .select('id, business_name, proactive_nudges_enabled, timezone')
     .eq('proactive_nudges_enabled', true)
 
   const summary = {
@@ -61,7 +65,8 @@ export async function GET(request: NextRequest) {
   for (const workspace of workspaces ?? []) {
     summary.workspaces_scanned++
     try {
-      const wsCounts = await processWorkspace(workspace.id, workspace.business_name, now)
+      const workspaceTimezone = (workspace.timezone as string | null) || DEFAULT_WORKSPACE_TIMEZONE
+      const wsCounts = await processWorkspace(workspace.id, workspace.business_name, now, workspaceTimezone)
       summary.auto_completed += wsCounts.auto_completed
       summary.review_requests_sent += wsCounts.review_requests_sent
       summary.ghosted_nudges_sent += wsCounts.ghosted_nudges_sent
@@ -85,7 +90,8 @@ interface WorkspaceCounts {
 async function processWorkspace(
   workspaceId: string,
   businessName: string,
-  now: Date
+  now: Date,
+  workspaceTimezone: string
 ): Promise<WorkspaceCounts> {
   const supabase = createServiceClient()
   const counts: WorkspaceCounts = {
@@ -189,6 +195,7 @@ async function processWorkspace(
           booking_date: b.booking_date,
           booking_time: String(b.booking_time).slice(0, 5),
           duration_minutes: b.duration_minutes,
+          timezone: workspaceTimezone,
         },
         now
       )
