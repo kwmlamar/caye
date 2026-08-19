@@ -12,6 +12,7 @@ jobs:
       contents: read
       issues: write
       pull-requests: read
+      actions: write
     steps:
       - name: Checkout main
         uses: actions/checkout@v4
@@ -45,7 +46,7 @@ jobs:
               gh api -X POST "repos/${REPO}/labels" \
                 -f name="$name" -f color="$color" -f description="$description" >/dev/null
           }
-          ensure_label claude-active d4c5f9 "Claude implementation is currently active"
+          ensure_label claude-active d4c5f9 "Claude implementation has a real workflow run in progress"
           ensure_label claude-failed d73a4a "Claude implementation failed or stopped before review-ready completion"
           ensure_label claude-ready-for-review 0e8a16 "Claude implementation produced a PR ready for controlled review"
           ensure_label claude-done 5319e7 "Claude implementation was merged through controlled review"
@@ -97,17 +98,14 @@ Orchestrator run: ${RUN_URL}" >/dev/null
             exit 0
           fi
 
-          # Idempotency: never dispatch the same queue step twice just because a
-          # workflow is re-run. The marker lives in the issue discussion.
+          # Idempotency: never dispatch the same queue edge twice on a rerun.
           ALREADY_DISPATCHED="$(gh api --paginate "repos/${REPO}/issues/${NEXT_ISSUE}/comments?per_page=100" \
-            --jq ".[] | select(.body | contains(\"caye-orchestrator:dispatch-from=${CURRENT_ISSUE}\")) | .id" | head -n 1)"
+            --jq ".[] | select(.body | contains(\"caye-orchestrator:workflow-dispatch-from=${CURRENT_ISSUE}\")) | .id" | head -n 1)"
           if [[ -n "${ALREADY_DISPATCHED}" ]]; then
-            echo "Issue #${NEXT_ISSUE} was already dispatched from #${CURRENT_ISSUE}."
+            echo "Issue #${NEXT_ISSUE} was already workflow-dispatched from #${CURRENT_ISSUE}."
             exit 0
           fi
 
-          # A queued issue should not be launched if it already has an open
-          # Claude implementation PR. This is the second idempotency boundary.
           OPEN_PR="$(gh api "repos/${REPO}/pulls?state=open&per_page=100" \
             --jq ".[] | select(.head.ref | startswith(\"claude/issue-${NEXT_ISSUE}-\")) | .number" | head -n 1)"
           if [[ -n "${OPEN_PR}" ]]; then
@@ -119,11 +117,32 @@ Orchestrator run: ${RUN_URL}" >/dev/null
           gh api -X DELETE "repos/${REPO}/issues/${NEXT_ISSUE}/labels/claude-done" >/dev/null 2>&1 || true
           gh api -X POST "repos/${REPO}/issues/${NEXT_ISSUE}/labels" -f 'labels[]=claude-queued' >/dev/null
 
+          # Do not rely on an issue comment created with GITHUB_TOKEN to trigger
+          # another workflow: GitHub intentionally suppresses that recursion.
+          # Dispatch the dedicated issue workflow through the Actions API instead.
+          if ! gh workflow run claude-issue-dispatch.yml \
+            --repo "${REPO}" \
+            --ref main \
+            -f issue_number="${NEXT_ISSUE}" \
+            -f dispatch_from="${CURRENT_ISSUE}"; then
+            gh api -X DELETE "repos/${REPO}/issues/${NEXT_ISSUE}/labels/claude-queued" >/dev/null 2>&1 || true
+            gh api -X POST "repos/${REPO}/issues/${NEXT_ISSUE}/labels" -f 'labels[]=claude-failed' >/dev/null
+            gh api -X POST "repos/${REPO}/issues/${NEXT_ISSUE}/comments" \
+              -f body="<!-- caye-orchestrator:workflow-dispatch-failed-from=${CURRENT_ISSUE} -->
+### Claude dispatch failed
+
+The queue selected this issue after #${CURRENT_ISSUE}, but GitHub did not accept the direct workflow dispatch. No Claude run was marked active.
+
+Orchestrator run: ${RUN_URL}" >/dev/null
+            exit 1
+          fi
+
           gh api -X POST "repos/${REPO}/issues/${NEXT_ISSUE}/comments" \
-            -f body="<!-- caye-orchestrator:dispatch-from=${CURRENT_ISSUE} -->
-@claude Execute this issue from current \`main\` now. Treat the issue body as the complete product specification. Keep scope narrow and preserve all newer reliability boundaries. Prioritize producing a saved branch/PR over broad investigation: implement, add focused regressions, commit/push, then run additional validation if budget remains. Do not merge, deploy, mutate production data, or create real customer/operator side effects." >/dev/null
+            -f body="<!-- caye-orchestrator:workflow-dispatch-from=${CURRENT_ISSUE} -->
+### Claude implementation queued
 
-          gh api -X DELETE "repos/${REPO}/issues/${NEXT_ISSUE}/labels/claude-queued" >/dev/null 2>&1 || true
-          gh api -X POST "repos/${REPO}/issues/${NEXT_ISSUE}/labels" -f 'labels[]=claude-active' >/dev/null
+A direct Actions workflow dispatch was accepted for this issue after #${CURRENT_ISSUE}. The dedicated workflow will mark \`claude-active\` only after the real run starts.
 
-          echo "Dispatched queued issue #${NEXT_ISSUE}."
+Orchestrator run: ${RUN_URL}" >/dev/null
+
+          echo "Directly workflow-dispatched queued issue #${NEXT_ISSUE}."
