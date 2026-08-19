@@ -182,3 +182,96 @@ export function detectUnverifiedPaymentMethodClaim(
 
   return null
 }
+
+/**
+ * WHY THIS EXISTS (2026-08-19, CAY-92)
+ * Bimini Island Tours, Jonathan thread: asked about snorkeling/Snuba, Caye
+ * told him the business could coordinate it through a trusted partner —
+ * before any owner had ever said that was true. No business fact, no owner
+ * instruction anywhere: pure invented commitment, and unlike a wrong number
+ * it doesn't just misinform, it obligates the business to a partner
+ * arrangement the customer will expect followed through. Same incident
+ * class as a separate thread where Caye asserted a cancellation/date
+ * situation had occurred when the underlying date reasoning was simply
+ * wrong.
+ *
+ * Same shape and tradeoff as the two guards above: narrow, sentence-scoped,
+ * requires an affirmative committing construction (a hedge — "let me check
+ * with our partner" — asserts nothing and must not trip this), and
+ * "grounded" means the same claim shape already appears in a hedge-free
+ * sentence of what the business actually told Caye. On the front-desk send
+ * path that grounding text includes the owner's own words sent into THIS
+ * thread (send-customer-reply.ts's factsGrounding — the same mechanism the
+ * payment guards already use for the Juli-class in-thread correction), so
+ * an owner saying "we can coordinate through one of our trusted partners"
+ * authorises exactly that commitment for that thread — CAY-92 fixture 2.
+ *
+ * Two categories, both with real incident evidence and both the kind of
+ * claim a customer holds a business to indefinitely:
+ *   - coordinating/arranging something through a THIRD PARTY (partner,
+ *     vendor, outside operator — the Jonathan snorkeling/Snuba incident)
+ *   - a REFUND/CANCELLATION outcome (money promised back, or a booking
+ *     promised undone)
+ *
+ * NOT a semantic/polarity check, same limitation as the payment-method
+ * guard above: a business fact merely mentioning "refund" (even to deny
+ * one) grounds the concept. Getting the polarity right is a harder,
+ * separate problem than "was this invented from nothing" — this module
+ * only answers the question it can answer exactly.
+ */
+const COMMITMENT_HEDGE_PATTERN =
+  /\b(?:let me|i'?ll|i will|i can|we(?:'ll| will)?\s+(?:check|see|ask|reach out|find out|look into)|checking|check with|confirm|verify|whether|if (?:it'?s|we|they)|see if|once (?:i|we)|get back|find out|not sure|might be|should be|may be|would need to|reach out to)\b/i
+
+const THIRD_PARTY_COMMIT_VERB_PATTERN =
+  /\b(?:coordinate[sd]?|coordinating|arrange[sd]?|arranging|set(?:s|ting)?\s+up|book(?:ed|s|ing)?|organiz(?:e[sd]?|ing)|handle[sd]?|handling|take\s+care\s+of|took\s+care\s+of|line[sd]?\s+up|lining\s+up)\b/i
+
+const THIRD_PARTY_NOUN_PATTERN =
+  /\b(?:(?:trusted\s+)?partners?|vendors?|affiliates?|third[- ]part(?:y|ies)|outside\s+(?:company|companies|operator|vendor)|another\s+(?:company|operator|provider)|local\s+operators?|tour\s+operators?|dive\s+(?:shop|operator|company)|charter\s+(?:company|operator|boat)|snuba|snorkel(?:l?ing)?\s+(?:company|operator|outfit|excursion))\b/i
+
+const REFUND_CANCELLATION_COMMIT_PATTERN =
+  /\b(?:refund(?:ed|ing|s)?|reimburse(?:d|ment|s)?|money\s+back|(?:full|partial)\s+refund|cancel(?:led|ling|s)?\s+(?:your|the)\s+(?:booking|reservation)\s+and\s+refund|refund\s+(?:your|the)\s+(?:deposit|payment|booking))\b/i
+
+/** True when `groundingText` contains the same claim shape in a hedge-free sentence of its own. */
+function groundedBySentence(groundingText: string, requiredPatterns: readonly RegExp[]): boolean {
+  return sentences(groundingText).some(
+    (s) => !COMMITMENT_HEDGE_PATTERN.test(s) && requiredPatterns.every((p) => p.test(s))
+  )
+}
+
+/**
+ * Returns a short reason string when the draft affirmatively commits the
+ * business to coordinating/arranging something through a third party
+ * (partner, vendor, outside operator) that no business fact or in-thread
+ * owner instruction backs, otherwise null. See module doc above.
+ */
+export function detectUnsupportedThirdPartyCommitment(
+  content: string,
+  groundingText: string
+): string | null {
+  for (const sentence of sentences(content)) {
+    if (COMMITMENT_HEDGE_PATTERN.test(sentence)) continue
+    if (!THIRD_PARTY_COMMIT_VERB_PATTERN.test(sentence)) continue
+    if (!THIRD_PARTY_NOUN_PATTERN.test(sentence)) continue
+    if (groundedBySentence(groundingText, [THIRD_PARTY_COMMIT_VERB_PATTERN, THIRD_PARTY_NOUN_PATTERN])) continue
+    return `states a third-party/partner commitment ("${sentence}") with no matching business fact or owner instruction`
+  }
+  return null
+}
+
+/**
+ * Returns a short reason string when the draft affirmatively promises a
+ * refund/cancellation outcome that no business fact or in-thread owner
+ * instruction backs, otherwise null. See module doc above.
+ */
+export function detectUnsupportedRefundCommitment(
+  content: string,
+  groundingText: string
+): string | null {
+  for (const sentence of sentences(content)) {
+    if (COMMITMENT_HEDGE_PATTERN.test(sentence)) continue
+    if (!REFUND_CANCELLATION_COMMIT_PATTERN.test(sentence)) continue
+    if (groundedBySentence(groundingText, [REFUND_CANCELLATION_COMMIT_PATTERN])) continue
+    return `states a refund/cancellation commitment ("${sentence}") with no matching business fact or owner instruction`
+  }
+  return null
+}
