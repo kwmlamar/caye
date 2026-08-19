@@ -182,6 +182,19 @@ export interface ToolContext {
    * tools never read or write it).
    */
   evidenceCollected?: EvidenceFact[]
+  /**
+   * The workspace's IANA timezone (customers.timezone), e.g.
+   * "America/Nassau" (2026-08-18, CAY-91). Read tools that classify a
+   * booking as past/today/tomorrow/upcoming — or compute "today" at all —
+   * must resolve it in THIS timezone via lib/booking-time.ts, never in UTC
+   * or by asking the model to do the arithmetic. Set once in index.ts from
+   * the same `customers` row already fetched for the back-office prompt so
+   * every tool call in the turn shares one resolved value. Undefined for
+   * modes with no workspace timezone concept (driver, admin-shell); tools
+   * that read it fall back to 'America/Nassau' (the same sane default
+   * caye-reply.ts already uses) rather than silently reasoning in UTC.
+   */
+  workspaceTimezone?: string | null
 }
 
 /**

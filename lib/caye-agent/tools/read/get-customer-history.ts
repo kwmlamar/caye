@@ -13,6 +13,9 @@ import {
   BOOKING_WITH_SERVICE_PRICE_SELECT,
   type ServiceJoin,
 } from '../_revenue'
+import { businessLocalDate, classifyBookingDate, bookingStatusConflict } from '@/lib/booking-time'
+
+const DEFAULT_WORKSPACE_TIMEZONE = 'America/Nassau'
 
 interface GetCustomerHistoryInput {
   contact_id?: string
@@ -258,18 +261,30 @@ export const getCustomerHistory: Tool<GetCustomerHistoryInput> = {
           facts: contact.facts,
           has_full_profile: contact.id !== null,
         },
-        bookings: bookingRows.map((b) => ({
-          date: b.booking_date,
-          time: b.booking_time?.slice(0, 5) ?? null,
-          status: b.status,
-          guests: b.number_of_people,
-          price: bookingRevenue({
-            servicePrice: b.service?.[0]?.price,
-            priceType: b.service?.[0]?.price_type,
+        bookings: bookingRows.map((b) => {
+          const relative = classifyBookingDate(
+            b.booking_date,
+            businessLocalDate(ctx.workspaceTimezone || DEFAULT_WORKSPACE_TIMEZONE)
+          )
+          return {
+            date: b.booking_date,
+            time: b.booking_time?.slice(0, 5) ?? null,
+            status: b.status,
             guests: b.number_of_people,
-          }),
-          service: b.service?.[0]?.name ?? null,
-        })),
+            price: bookingRevenue({
+              servicePrice: b.service?.[0]?.price,
+              priceType: b.service?.[0]?.price_type,
+              guests: b.number_of_people,
+            }),
+            service: b.service?.[0]?.name ?? null,
+            // Deterministic, computed in the workspace's own timezone —
+            // never derive this yourself from the date (CAY-91, the Sonja
+            // incident: a customer's booking for the following business day
+            // was told to the owner as already past).
+            relative_to_today: relative,
+            status_date_conflict: bookingStatusConflict(b.status, relative),
+          }
+        }),
         recent_messages: messageRows,
       },
     }
