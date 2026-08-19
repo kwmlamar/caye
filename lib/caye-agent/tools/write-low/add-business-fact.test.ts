@@ -18,6 +18,7 @@ interface ExistingFact {
 let activeFacts: ExistingFact[] = []
 let insertedFact: Record<string, unknown> | null = null
 let supersededUpdate: Record<string, unknown> | null = null
+let rpcError: { message: string } | null = null
 
 // findConflictingFact itself is unit tested against the real LLM-judge shape
 // in business-fact-conflict.test.ts — mocked here so these tests control the
@@ -44,20 +45,31 @@ vi.mock('@/lib/supabase-server', () => ({
             is: async () => ({ data: activeFacts, error: null }),
           }),
         }),
-        insert: (row: Record<string, unknown>) => ({
-          select: () => ({
-            single: async () => {
-              insertedFact = row
-              return { data: { id: 'fact-new', created_at: '2026-08-18T00:00:00Z' }, error: null }
-            },
-          }),
-        }),
-        update: (patch: Record<string, unknown>) => ({
-          eq: async () => {
-            supersededUpdate = patch
-            return { error: null }
-          },
-        }),
+      }
+    },
+    // Mirrors the atomic add_business_fact_with_supersession RPC
+    // (20260819_business_facts_supersede_rpc.sql): a single call that does
+    // the insert and — when p_supersede_id is set — the supersede update
+    // together. On rpcError, neither insertedFact nor supersededUpdate is
+    // ever set, the same all-or-nothing guarantee the real Postgres
+    // function gives via a single transactional function call.
+    rpc(fn: string, params: Record<string, unknown>) {
+      if (fn !== 'add_business_fact_with_supersession') throw new Error(`unexpected rpc: ${fn}`)
+      return {
+        single: async () => {
+          if (rpcError) return { data: null, error: rpcError }
+          insertedFact = {
+            workspace_id: params.p_workspace_id,
+            category: params.p_category,
+            fact: params.p_fact,
+            source: params.p_source,
+            created_by: params.p_created_by,
+          }
+          if (params.p_supersede_id) {
+            supersededUpdate = { superseded_by: 'fact-new', id: params.p_supersede_id }
+          }
+          return { data: { id: 'fact-new', created_at: '2026-08-18T00:00:00Z' }, error: null }
+        },
       }
     },
   }),
@@ -72,6 +84,7 @@ beforeEach(() => {
   conflictResult = { conflictId: null, resolution: null }
   insertedFact = null
   supersededUpdate = null
+  rpcError = null
 })
 
 describe('add_business_fact', () => {
@@ -178,5 +191,28 @@ describe('add_business_fact', () => {
     const res = await addBusinessFact.execute({ category: 'policy', fact: 'Hi' }, ctx)
     expect(res.ok).toBe(false)
     expect(insertedFact).toBeNull()
+  })
+
+  // CAY-14 atomicity fix: add_business_fact_with_supersession does the
+  // insert and the supersede update inside one transactional Postgres call,
+  // so a DB-level failure (constraint violation, unknown/foreign-workspace
+  // supersede target — see the migration test for exact cases against real
+  // Postgres) fails the whole write. Nothing gets half-saved.
+  it('supersession DB failure surfaces as a plain error and never leaves a dual-active state', async () => {
+    activeFacts = [
+      { id: 'fact-old-payment', fact: 'Cash is not accepted.', source: 'owner-direct', expires_at: null },
+    ]
+    conflictResult = { conflictId: 'fact-old-payment', resolution: 'supersede' }
+    rpcError = { message: 'business fact fact-old-payment does not belong to workspace ws-1' }
+
+    const res = await addBusinessFact.execute(
+      { category: 'policy', fact: 'Cash is fine with Max.' },
+      ctx
+    )
+
+    expect(res.ok).toBe(false)
+    expect((res as { error: string }).error).toContain('does not belong to workspace')
+    expect(insertedFact).toBeNull()
+    expect(supersededUpdate).toBeNull()
   })
 })

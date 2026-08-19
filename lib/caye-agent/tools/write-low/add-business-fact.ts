@@ -137,37 +137,31 @@ export const addBusinessFact: Tool<AddBusinessFactInput> = {
       }
     }
 
-    const { data, error } = await supabase
-      .from('business_facts')
-      .insert({
-        workspace_id: ctx.workspaceId,
-        category: args.category,
-        fact,
-        source: 'owner-direct',
-        created_by: ctx.callerRole,
-        ...(expiresAt ? { expires_at: expiresAt } : {}),
+    // CAY-14 atomicity fix: insert-then-update as two independent Supabase
+    // calls left a window where the insert succeeded but the supersede
+    // update failed, leaving the old and new fact both active — the exact
+    // failure mode this feature exists to prevent. add_business_fact_with_
+    // supersession (20260819_business_facts_supersede_rpc.sql) does both
+    // writes inside one Postgres function call, which is atomic: either
+    // the whole thing lands, or nothing does.
+    const supersedeId = conflictingRow && conflict.resolution === 'supersede' ? conflictingRow.id : null
+
+    const { data: rpcResult, error } = await supabase
+      .rpc('add_business_fact_with_supersession', {
+        p_workspace_id: ctx.workspaceId,
+        p_category: args.category,
+        p_fact: fact,
+        p_source: 'owner-direct',
+        p_created_by: ctx.callerRole,
+        p_expires_at: expiresAt ?? null,
+        p_supersede_id: supersedeId,
       })
-      .select('id, created_at')
       .single()
 
     if (error) return { ok: false, error: error.message }
 
-    let supersededFact: string | null = null
-    if (conflictingRow && conflict.resolution === 'supersede') {
-      const { error: supersedeErr } = await supabase
-        .from('business_facts')
-        .update({ superseded_by: data.id, superseded_at: new Date().toISOString() })
-        .eq('id', conflictingRow.id)
-      if (supersedeErr) {
-        // The new fact is already saved — that's the part that matters to
-        // future replies. A failure marking the old row superseded only
-        // risks a stale duplicate surviving in retrieval, so surface it but
-        // don't roll back the insert.
-        console.warn('[add_business_fact] fact saved but supersession failed:', supersedeErr.message)
-      } else {
-        supersededFact = conflictingRow.fact
-      }
-    }
+    const data = rpcResult as { id: string; created_at: string }
+    const supersededFact = supersedeId ? conflictingRow!.fact : null
 
     return {
       ok: true,

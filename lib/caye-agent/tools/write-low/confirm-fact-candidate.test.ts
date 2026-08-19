@@ -28,6 +28,7 @@ let activeFacts: ExistingFact[] = []
 let insertedFact: Record<string, unknown> | null = null
 let updatedCandidate: Record<string, unknown> | null = null
 let supersededFact: Record<string, unknown> | null = null
+let rpcError: { message: string } | null = null
 
 // findConflictingFact itself is unit tested (business-fact-conflict.test.ts)
 // against the real LLM-judge shape — mocked here so this file's tests control
@@ -75,23 +76,32 @@ vi.mock('@/lib/supabase-server', () => ({
               is: async () => ({ data: activeFacts, error: null }),
             }),
           }),
-          insert: (row: Record<string, unknown>) => ({
-            select: () => ({
-              single: async () => {
-                insertedFact = row
-                return { data: { id: 'fact-1', created_at: '2026-08-07T00:00:00Z' }, error: null }
-              },
-            }),
-          }),
-          update: (patch: Record<string, unknown>) => ({
-            eq: async () => {
-              supersededFact = patch
-              return { error: null }
-            },
-          }),
         }
       }
       throw new Error(`unexpected table: ${table}`)
+    },
+    // Mirrors the atomic add_business_fact_with_supersession RPC
+    // (20260819_business_facts_supersede_rpc.sql) — see add-business-fact.test.ts
+    // for the same shape. On rpcError, neither insertedFact nor
+    // supersededFact is ever set.
+    rpc(fn: string, params: Record<string, unknown>) {
+      if (fn !== 'add_business_fact_with_supersession') throw new Error(`unexpected rpc: ${fn}`)
+      return {
+        single: async () => {
+          if (rpcError) return { data: null, error: rpcError }
+          insertedFact = {
+            workspace_id: params.p_workspace_id,
+            category: params.p_category,
+            fact: params.p_fact,
+            source: params.p_source,
+            created_by: params.p_created_by,
+          }
+          if (params.p_supersede_id) {
+            supersededFact = { superseded_by: 'fact-1', id: params.p_supersede_id }
+          }
+          return { data: { id: 'fact-1', created_at: '2026-08-07T00:00:00Z' }, error: null }
+        },
+      }
     },
   }),
 }))
@@ -113,6 +123,7 @@ beforeEach(() => {
   insertedFact = null
   updatedCandidate = null
   supersededFact = null
+  rpcError = null
 })
 
 describe('confirm_fact_candidate', () => {
@@ -256,6 +267,27 @@ describe('confirm_fact_candidate', () => {
         ctx
       )
       expect(res.ok).toBe(false)
+      expect(insertedFact).toBeNull()
+      expect(supersededFact).toBeNull()
+    })
+
+    // CAY-14 atomicity fix: the insert and the supersede update happen
+    // inside one transactional RPC call (add_business_fact_with_
+    // supersession) — a DB-level failure fails the whole write, never a
+    // saved fact with an un-superseded (or double-superseded) old row.
+    it('supersession DB failure never leaves a dual-active state', async () => {
+      activeFacts = [
+        { id: 'fact-old', fact: 'Parking is free at the north lot.', source: 'candidate-confirmed', expires_at: null },
+      ]
+      conflictResult = { conflictId: 'fact-old', resolution: 'supersede' }
+      rpcError = { message: 'business fact fact-old is already superseded' }
+
+      const res = await confirmFactCandidate.execute(
+        { candidate_id: 'cand-1', fact: 'Parking now costs $10/day at the north lot.' },
+        ctx
+      )
+      expect(res.ok).toBe(false)
+      expect((res as { error: string }).error).toContain('already superseded')
       expect(insertedFact).toBeNull()
       expect(supersededFact).toBeNull()
     })

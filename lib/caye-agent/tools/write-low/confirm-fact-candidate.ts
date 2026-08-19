@@ -164,30 +164,25 @@ export const confirmFactCandidate: Tool<ConfirmFactCandidateInput> = {
       }
     }
 
-    const { data: newFact, error: insertErr } = await supabase
-      .from('business_facts')
-      .insert({
-        workspace_id: ctx.workspaceId,
-        category,
-        fact,
-        source: 'candidate-confirmed',
-        created_by: ctx.callerRole,
-        ...(expiresAt ? { expires_at: expiresAt } : {}),
+    // CAY-14 atomicity fix: same RPC add_business_fact uses, so this path
+    // gets the same all-or-nothing guarantee — see the comment there.
+    const supersedeId = conflictingRow && conflict.resolution === 'supersede' ? conflictingRow.id : null
+
+    const { data: rpcResult, error: insertErr } = await supabase
+      .rpc('add_business_fact_with_supersession', {
+        p_workspace_id: ctx.workspaceId,
+        p_category: category,
+        p_fact: fact,
+        p_source: 'candidate-confirmed',
+        p_created_by: ctx.callerRole,
+        p_expires_at: expiresAt ?? null,
+        p_supersede_id: supersedeId,
       })
-      .select('id, created_at')
       .single()
 
     if (insertErr) return { ok: false, error: insertErr.message }
 
-    if (conflictingRow && conflict.resolution === 'supersede') {
-      const { error: supersedeErr } = await supabase
-        .from('business_facts')
-        .update({ superseded_by: newFact.id, superseded_at: new Date().toISOString() })
-        .eq('id', conflictingRow.id)
-      if (supersedeErr) {
-        console.warn('[confirm_fact_candidate] fact saved but supersession failed:', supersedeErr.message)
-      }
-    }
+    const newFact = rpcResult as { id: string; created_at: string }
 
     // Whitespace-insensitive comparison, same as classifyOutboundAuthorship
     // (lib/message-authorship.ts) — reflowing a sentence isn't a correction.
