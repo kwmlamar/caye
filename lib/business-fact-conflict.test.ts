@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from 'vitest'
 
 vi.mock('server-only', () => ({}))
-vi.mock('@/lib/llm-telemetry', () => ({ loggedMessagesCreate: vi.fn() }))
+const loggedMessagesCreate = vi.fn()
+vi.mock('@/lib/llm-telemetry', () => ({ loggedMessagesCreate }))
 
 const { findConflictingFact, outranksForSupersession, factSourceRank } = await import('./business-fact-conflict')
 
@@ -26,6 +27,40 @@ describe('findConflictingFact — guard paths (no LLM call)', () => {
       { workspaceId: 'ws-1', source: 'test' }
     )
     expect(result).toEqual({ conflictId: null, resolution: null })
+  })
+})
+
+// CAY-14 reliability fix: a judge/infra failure must never be treated the
+// same as "no conflict" once there's a plausible candidate to check against
+// — that's exactly how the original incident happened (an old fact stayed
+// active because nothing flagged the contradiction). These tests only
+// reach the LLM call because the fact shares a word with an active fact,
+// so the guard path above does not short-circuit them.
+describe('findConflictingFact — judge/infra failure fails closed', () => {
+  it('fails closed (checkFailed) when the model call throws, instead of reporting no conflict', async () => {
+    loggedMessagesCreate.mockRejectedValueOnce(new Error('network error'))
+
+    const result = await findConflictingFact(
+      'Cash is fine with Max.',
+      [{ id: 'fact-old-payment', text: 'Cash is not accepted.', source: 'owner-direct' }],
+      { workspaceId: 'ws-1', source: 'test' }
+    )
+
+    expect(result).toEqual({ conflictId: null, resolution: null, checkFailed: true })
+  })
+
+  it('fails closed (checkFailed) when the model returns unparseable JSON', async () => {
+    loggedMessagesCreate.mockResolvedValueOnce({
+      content: [{ type: 'text', text: 'not valid json' }],
+    })
+
+    const result = await findConflictingFact(
+      'Cash is fine with Max.',
+      [{ id: 'fact-old-payment', text: 'Cash is not accepted.', source: 'owner-direct' }],
+      { workspaceId: 'ws-1', source: 'test' }
+    )
+
+    expect(result).toEqual({ conflictId: null, resolution: null, checkFailed: true })
   })
 })
 

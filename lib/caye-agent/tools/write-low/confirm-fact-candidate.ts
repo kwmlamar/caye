@@ -134,6 +134,20 @@ export const confirmFactCandidate: Tool<ConfirmFactCandidateInput> = {
       active.map((r) => ({ id: r.id, text: r.fact, source: r.source })),
       { workspaceId: ctx.workspaceId, source: 'confirm-fact-candidate.ts:execute' }
     )
+
+    // Same fail-closed rule as add_business_fact: an inferred candidate-
+    // confirmed fact must never slip past a conflict check that couldn't
+    // actually run.
+    if (conflict.checkFailed) {
+      return {
+        ok: false,
+        error:
+          "Couldn't verify whether this conflicts with an existing fact right now (the conflict check " +
+          'failed). Try again in a moment, or confirm with the owner whether this replaces an existing ' +
+          'fact before retrying.',
+      }
+    }
+
     const conflictingRow = conflict.conflictId ? active.find((r) => r.id === conflict.conflictId) : undefined
 
     if (conflictingRow) {

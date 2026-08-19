@@ -22,7 +22,11 @@ let supersededUpdate: Record<string, unknown> | null = null
 // findConflictingFact itself is unit tested against the real LLM-judge shape
 // in business-fact-conflict.test.ts — mocked here so these tests control the
 // resolution directly instead of steering an LLM prompt into a verdict.
-let conflictResult: { conflictId: string | null; resolution: 'supersede' | 'ambiguous' | null } = {
+let conflictResult: {
+  conflictId: string | null
+  resolution: 'supersede' | 'ambiguous' | null
+  checkFailed?: boolean
+} = {
   conflictId: null,
   resolution: null,
 }
@@ -134,6 +138,25 @@ describe('add_business_fact', () => {
 
     const res = await addBusinessFact.execute(
       { category: 'service_detail', fact: 'The heritage tour now starts at 10am.' },
+      ctx
+    )
+
+    expect(res.ok).toBe(false)
+    expect(insertedFact).toBeNull()
+    expect(supersededUpdate).toBeNull()
+  })
+
+  // CAY-14 reliability fix: production incident happened because "couldn't
+  // check for a conflict" was treated the same as "no conflict". A judge/
+  // infra failure must fail closed exactly like an ambiguous verdict.
+  it('fails closed when the conflict check itself failed, without saving or superseding anything', async () => {
+    activeFacts = [
+      { id: 'fact-old-payment', fact: 'Cash is not accepted.', source: 'owner-direct', expires_at: null },
+    ]
+    conflictResult = { conflictId: null, resolution: null, checkFailed: true }
+
+    const res = await addBusinessFact.execute(
+      { category: 'policy', fact: 'Cash is accepted now.' },
       ctx
     )
 

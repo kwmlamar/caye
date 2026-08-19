@@ -34,11 +34,20 @@ export type ConflictResolution = 'supersede' | 'ambiguous'
 export interface ConflictCheckResult {
   conflictId: string | null
   resolution: ConflictResolution | null
+  /**
+   * True when a conflict check was actually needed (there were plausible
+   * candidates) but the judge call itself failed — model/network error, or
+   * an unparseable response. Distinct from "no conflict": callers MUST treat
+   * this as fail-closed, the same as an 'ambiguous' resolution, because we
+   * genuinely don't know whether the new fact contradicts an active one.
+   */
+  checkFailed?: boolean
 }
 
 const MAX_CANDIDATES = 25
 
 const NO_CONFLICT: ConflictCheckResult = { conflictId: null, resolution: null }
+const CHECK_FAILED: ConflictCheckResult = { conflictId: null, resolution: null, checkFailed: true }
 
 /**
  * Provenance rank used to decide whether a new fact is ALLOWED to supersede
@@ -70,13 +79,17 @@ export function outranksForSupersession(newSource: string, oldSource: string): b
  * the common case, and the only one that lets the new fact save
  * independently alongside what's already there.
  *
- * Deliberately mirrors findSemanticFactMatch's fail-open-on-infra-error
- * stance: an LLM/network failure returns no-conflict rather than blocking
- * every fact save while the model is unreachable. That is NOT the same as
- * failing open on a genuine judgment call — when the model itself is
- * unsure whether a real contradiction is a clean replacement or context-
- * dependent, it is instructed to return 'ambiguous', and callers must
- * treat that as fail-closed (do not save either version silently).
+ * Unlike findSemanticFactMatch's fail-open-on-infra-error stance, this judge
+ * fails CLOSED on an infra error whenever there was something worth checking
+ * (`plausible.length > 0`): a duplicate-detection miss just means a fact gets
+ * saved twice, but a conflict-detection miss can silently recreate the exact
+ * CAY-14 incident — an old and a new contradictory fact both left active
+ * because "couldn't check" was treated as "no conflict". When there is
+ * nothing plausible to conflict with, the LLM is never called and this
+ * correctly returns no-conflict — that path carries no risk to fail open on.
+ * See `checkFailed` on the result: callers must treat it exactly like
+ * 'ambiguous' (do not save, ask the owner / retry) rather than proceeding as
+ * if nothing was found.
  */
 export async function findConflictingFact(
   newFact: string,
@@ -143,7 +156,10 @@ export async function findConflictingFact(
 
     return { conflictId: parsed.conflict_id, resolution }
   } catch (err) {
-    console.error('[business-fact-conflict] conflict check failed, treating as no conflict:', err)
-    return NO_CONFLICT
+    // plausible.length > 0 here (the guard above already returned NO_CONFLICT
+    // otherwise) — there was something worth checking and the check itself
+    // failed, so this must fail closed, not silently report no conflict.
+    console.error('[business-fact-conflict] conflict check failed against plausible candidates, failing closed:', err)
+    return CHECK_FAILED
   }
 }

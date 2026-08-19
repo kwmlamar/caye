@@ -32,7 +32,11 @@ let supersededFact: Record<string, unknown> | null = null
 // findConflictingFact itself is unit tested (business-fact-conflict.test.ts)
 // against the real LLM-judge shape — mocked here so this file's tests control
 // the resolution directly instead of steering an LLM prompt into a verdict.
-let conflictResult: { conflictId: string | null; resolution: 'supersede' | 'ambiguous' | null } = {
+let conflictResult: {
+  conflictId: string | null
+  resolution: 'supersede' | 'ambiguous' | null
+  checkFailed?: boolean
+} = {
   conflictId: null,
   resolution: null,
 }
@@ -231,6 +235,24 @@ describe('confirm_fact_candidate', () => {
 
       const res = await confirmFactCandidate.execute(
         { candidate_id: 'cand-1', fact: 'The heritage tour now starts at 10am.' },
+        ctx
+      )
+      expect(res.ok).toBe(false)
+      expect(insertedFact).toBeNull()
+      expect(supersededFact).toBeNull()
+    })
+
+    // CAY-14 reliability fix: a conflict check that couldn't run at all
+    // (judge/infra failure) must never be treated as "no conflict" — that's
+    // exactly how the original incident happened.
+    it('fails closed when the conflict check itself failed, without saving or superseding anything', async () => {
+      activeFacts = [
+        { id: 'fact-old', fact: 'Cash is not accepted.', source: 'candidate-confirmed', expires_at: null },
+      ]
+      conflictResult = { conflictId: null, resolution: null, checkFailed: true }
+
+      const res = await confirmFactCandidate.execute(
+        { candidate_id: 'cand-1', fact: 'Cash is accepted.' },
         ctx
       )
       expect(res.ok).toBe(false)

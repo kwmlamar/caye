@@ -108,6 +108,20 @@ export const addBusinessFact: Tool<AddBusinessFactInput> = {
       active.map((r) => ({ id: r.id, text: r.fact, source: r.source })),
       { workspaceId: ctx.workspaceId, source: 'add-business-fact.ts:execute' }
     )
+
+    // The judge couldn't be reached against plausible candidates — do not
+    // treat "couldn't check" as "no conflict". Fail closed the same way an
+    // ambiguous verdict does: don't save, ask to retry or clarify.
+    if (conflict.checkFailed) {
+      return {
+        ok: false,
+        error:
+          "Couldn't verify whether this conflicts with an existing fact right now (the conflict check " +
+          'failed). Try saving again in a moment, or confirm with the owner whether this replaces an ' +
+          'existing fact before retrying.',
+      }
+    }
+
     const conflictingRow = conflict.conflictId ? active.find((r) => r.id === conflict.conflictId) : undefined
 
     // Fail closed on a real-but-unclear contradiction: don't save this
