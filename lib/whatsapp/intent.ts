@@ -13,7 +13,7 @@ import { loggedMessagesCreate } from '@/lib/llm-telemetry'
 export type SingleOperatorIntent =
   | { kind: 'send'; item_ref?: string }
   | { kind: 'skip'; item_ref?: string }
-  | { kind: 'edit'; item_ref?: string; instruction: string }
+  | { kind: 'edit'; item_ref?: string; instruction: string; verbatim?: boolean }
   | { kind: 'handled'; item_ref?: string }
   | { kind: 'query'; question: string }
   | { kind: 'mute'; duration_hours?: number; until_iso?: string }
@@ -41,6 +41,7 @@ You return EXACTLY ONE structured intent via the classify_intent tool. Pick the 
 - send: operator wants Caye to send a drafted reply to the guest. Examples: "send it", "yes ship it", "good", "go ahead with 1", "looks good for 2".
 - skip: operator wants Caye to close the item without replying. Examples: "skip", "ignore", "no reply", "leave it".
 - edit: operator wants Caye to revise the draft (this stages a new draft for confirmation, it does NOT send). Examples: "tell her $250 instead", "say we're booked", "change the date to Friday", "recommend the heritage tour, $75, give me a draft".
+  VERBATIM DRAFTS — set verbatim=true when the operator's message IS ALREADY the complete, ready-to-send reply itself (a full note written TO the guest, often ending with "(Draft)" or similar, or introduced with "use this instead") rather than an instruction describing a change. Put that exact text — unedited, marker stripped — as the instruction field. This is critical: the operator's own words are the authoritative content and must never be replaced by something Caye composes instead. When in doubt between "this reads like a complete message to the customer" and "this reads like a note about what to change," prefer verbatim=true — under-composing is safe, silently discarding the operator's actual words is not. Omit or set verbatim=false only for genuine instructions ("add X", "make it shorter", "change the price") that describe a change to an existing draft rather than supplying the reply text itself.
 - handled: operator already replied to the guest through their own channel. Examples: "handled", "I got it", "replied directly", "took care of it".
 - query: operator is asking a question about workspace state. Examples: "what bookings today?", "anyone holding?", "what's pending?".
 - mute: operator wants Caye to pause auto-replies (WhatsApp + email) for a duration. Examples: "mute 2h", "quiet for 8 hours", "shush until tomorrow 8am", "mute me", "pause yuhself", "pause yuhself til tuesday", "shush gyal", "quiet down til monday morning".
@@ -88,7 +89,11 @@ const TOOL: Anthropic.Tool = {
       },
       instruction: {
         type: 'string',
-        description: 'For kind=edit: operator\'s instruction on how to change the draft.',
+        description: 'For kind=edit: operator\'s instruction on how to change the draft, OR (when verbatim=true) the operator\'s own complete reply text, marker stripped.',
+      },
+      verbatim: {
+        type: 'boolean',
+        description: 'For kind=edit: true when `instruction` is the operator\'s own complete, ready-to-send reply text to use as-is, not a description of a change.',
       },
       question: {
         type: 'string',
@@ -198,6 +203,7 @@ function normalizeIntent(raw: Record<string, unknown>): OperatorIntent {
         kind: 'edit',
         item_ref: optString(raw.item_ref),
         instruction: optString(raw.instruction) ?? '',
+        verbatim: raw.verbatim === true,
       }
     case 'handled':
       return { kind: 'handled', item_ref: optString(raw.item_ref) }

@@ -3,6 +3,7 @@ import {
   resolveItemRefOutcome,
   describeUnresolved,
   formatChoices,
+  namesUnresolvedTarget,
   type ResolvableItem,
 } from './item-ref-resolution'
 
@@ -82,5 +83,34 @@ describe('describeUnresolved', () => {
 
   it('reports an empty queue with the action-specific copy', () => {
     expect(describeUnresolved({ status: 'no-pending' }, [], COPY)).toBe("Nothing's on hold.")
+  })
+})
+
+describe('namesUnresolvedTarget (CAY-90, Christopher/GGT incident)', () => {
+  // GGT is currently held; Christopher — a customer discussed earlier in the
+  // same conversation, but with nothing pending on his thread right now —
+  // is not. This is exactly the Bimini queue shape from the incident.
+  const QUEUE: ResolvableItem[] = [{ index: 1, contactName: 'GGT' }]
+
+  it('is true when the operator names someone real but not currently held', () => {
+    // The legacy path only knows the held queue — it cannot see that
+    // Christopher was just discussed earlier in the agent's own memory, so
+    // this must be flagged for hand-off rather than answered locally.
+    expect(namesUnresolvedTarget(QUEUE, 'Christopher')).toBe(true)
+  })
+
+  it('is false when the name resolves against the held queue', () => {
+    expect(namesUnresolvedTarget(QUEUE, 'GGT')).toBe(false)
+  })
+
+  it('is false when no reference was given at all — that is a genuine "which one?"', () => {
+    // Distinct from a named miss: nobody, agent included, can resolve a
+    // bare ref from nothing, so this stays a normal disambiguation ask.
+    expect(namesUnresolvedTarget(QUEUE, undefined)).toBe(false)
+    expect(namesUnresolvedTarget(QUEUE, '   ')).toBe(false)
+  })
+
+  it('is false against an empty queue — "nothing pending" is the honest answer either way', () => {
+    expect(namesUnresolvedTarget([], 'Christopher')).toBe(false)
   })
 })
