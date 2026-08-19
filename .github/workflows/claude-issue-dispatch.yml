@@ -1,0 +1,212 @@
+name: Claude Issue Dispatch
+
+on:
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: GitHub issue number to implement
+        required: true
+        type: string
+      dispatch_from:
+        description: Queue predecessor issue, when applicable
+        required: false
+        type: string
+
+concurrency:
+  group: claude-sonnet-developer-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  claude:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Load issue specification
+        id: issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TITLE="$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}" --jq '.title')"
+          BODY="$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}" --jq '.body // ""')"
+          {
+            echo 'title<<EOF_TITLE'
+            printf '%s\n' "$TITLE"
+            echo 'EOF_TITLE'
+            echo 'body<<EOF_BODY'
+            printf '%s\n' "$BODY"
+            echo 'EOF_BODY'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Mark real dispatch active
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for old in claude-failed claude-ready-for-review claude-done claude-queued; do
+            gh api -X DELETE "repos/${REPO}/issues/${ISSUE_NUMBER}/labels/${old}" >/dev/null 2>&1 || true
+          done
+          gh api -X POST "repos/${REPO}/issues/${ISSUE_NUMBER}/labels" -f 'labels[]=claude-active' >/dev/null
+          gh api -X POST "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" \
+            -f body="<!-- caye-orchestrator:state=active;run=${{ github.run_id }} -->
+### Claude implementation started
+
+A real workflow run has been dispatched for this issue.
+
+Run: ${RUN_URL}" >/dev/null
+
+      - name: Run Claude Code
+        id: claude
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          branch_name_template: "claude/issue-${{ inputs.issue_number }}-{{timestamp}}"
+          prompt: |
+            REPOSITORY: ${{ github.repository }}
+            ISSUE: #${{ inputs.issue_number }}
+            TITLE: ${{ steps.issue.outputs.title }}
+
+            Implement this issue from current main. The issue body below is the canonical product specification.
+
+            --- ISSUE BODY ---
+            ${{ steps.issue.outputs.body }}
+            --- END ISSUE BODY ---
+
+            Execution rules:
+            - Keep scope narrow and preserve all newer reliability boundaries.
+            - Prioritize a saved implementation branch over broad investigation: implement, add focused regressions, commit/push, then run broader validation if budget remains.
+            - Do not merge, deploy, mutate production data, or create real customer/operator side effects.
+            - If blocked, preserve any useful checkpoint and report the blocker instead of repeatedly exploring the same path.
+          additional_permissions: |
+            actions: read
+          claude_args: |
+            --model claude-sonnet-5
+            --max-turns 80
+            --allowedTools "Edit,Read,Write,Glob,Grep,Bash(npm ci),Bash(npm test *),Bash(npx vitest *),Bash(npm run build),Bash(npx tsc --noEmit),Bash(git status *),Bash(git diff *),Bash(git log *)"
+
+      - name: Reconcile dispatched issue state
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          ISSUE_TITLE: ${{ steps.issue.outputs.title }}
+          CLAUDE_OUTCOME: ${{ steps.claude.outcome }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        shell: bash
+        run: |
+          set -uo pipefail
+
+          set_issue_state() {
+            local add="$1"
+            for old in claude-active claude-failed claude-ready-for-review claude-done claude-queued; do
+              if [[ "$old" != "$add" ]]; then
+                gh api -X DELETE "repos/${REPO}/issues/${ISSUE_NUMBER}/labels/${old}" >/dev/null 2>&1 || true
+              fi
+            done
+            gh api -X POST "repos/${REPO}/issues/${ISSUE_NUMBER}/labels" -f "labels[]=$add" >/dev/null
+          }
+
+          RUN_STARTED_AT="$(gh api "repos/${REPO}/actions/runs/${RUN_ID}" --jq '.run_started_at' 2>/dev/null || echo '')"
+          BRANCH=""
+          while IFS= read -r candidate; do
+            [[ -z "${candidate}" ]] && continue
+            COMMIT_DATE="$(gh api "repos/${REPO}/commits/${candidate}" --jq '.commit.committer.date' 2>/dev/null || echo '')"
+            if [[ -n "${RUN_STARTED_AT}" && -n "${COMMIT_DATE}" && "${COMMIT_DATE}" < "${RUN_STARTED_AT}" ]]; then
+              continue
+            fi
+            BRANCH="${candidate}"
+            break
+          done < <(gh api --paginate "repos/${REPO}/git/matching-refs/heads/claude/issue-${ISSUE_NUMBER}-" \
+            --jq '.[].ref' 2>/dev/null | sed 's#refs/heads/##' | sort -r)
+
+          AHEAD=0
+          if [[ -n "${BRANCH}" ]]; then
+            AHEAD="$(gh api "repos/${REPO}/compare/main...${BRANCH}" --jq '.ahead_by' 2>/dev/null || echo 0)"
+          fi
+
+          if [[ "${CLAUDE_OUTCOME}" != "success" ]]; then
+            set_issue_state claude-failed
+            gh api -X POST "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" \
+              -f body="<!-- caye-orchestrator:state=failed;run=${RUN_ID} -->
+### Claude implementation stopped
+
+- outcome: \`${CLAUDE_OUTCOME}\`
+- saved branch from this run: \`${BRANCH:-none}\`
+- branch commits ahead of main: \`${AHEAD}\`
+- run: ${RUN_URL}
+
+No merge, deploy, production database change, or customer/operator side effect was attempted." >/dev/null
+            exit 0
+          fi
+
+          if [[ -z "${BRANCH}" || "${AHEAD}" -le 0 ]]; then
+            set_issue_state claude-failed
+            gh api -X POST "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" \
+              -f body="<!-- caye-orchestrator:state=failed_no_branch;run=${RUN_ID} -->
+### Claude reported success without saved implementation
+
+No Claude branch created by this run with commits ahead of \`main\` was found.
+
+Run: ${RUN_URL}" >/dev/null
+            exit 0
+          fi
+
+          OWNER="${REPO%%/*}"
+          PR_NUMBER="$(gh api "repos/${REPO}/pulls?state=open&head=${OWNER}:${BRANCH}" --jq '.[0].number // empty' 2>/dev/null)"
+          if [[ -z "${PR_NUMBER}" ]]; then
+            PR_JSON="$(gh api -X POST "repos/${REPO}/pulls" \
+              -f title="Claude: ${ISSUE_TITLE}" \
+              -f head="${BRANCH}" \
+              -f base="main" \
+              -f body="Implements #${ISSUE_NUMBER} for controlled product/safety review.
+
+Generated after a directly dispatched Claude implementation run saved commits to \`${BRANCH}\`.
+
+The orchestrator does **not** merge, deploy, mutate production data, or perform customer/operator side effects." 2>/dev/null || true)"
+            PR_NUMBER="$(printf '%s' "${PR_JSON}" | jq -r '.number // empty')"
+          fi
+
+          if [[ -z "${PR_NUMBER}" ]]; then
+            set_issue_state claude-failed
+            gh api -X POST "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" \
+              -f body="<!-- caye-orchestrator:state=branch_saved_pr_blocked;run=${RUN_ID} -->
+### Claude implementation saved, PR creation blocked
+
+- branch: \`${BRANCH}\`
+- commits ahead of main: \`${AHEAD}\`
+- run: ${RUN_URL}" >/dev/null
+            exit 0
+          fi
+
+          gh api -X POST "repos/${REPO}/issues/${PR_NUMBER}/labels" -f 'labels[]=claude-ready-for-review' >/dev/null
+          set_issue_state claude-ready-for-review
+          gh api -X POST "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" \
+            -f body="<!-- caye-orchestrator:state=ready_for_review;pr=${PR_NUMBER};run=${RUN_ID} -->
+### Claude implementation ready for review
+
+- PR: #${PR_NUMBER}
+- branch: \`${BRANCH}\`
+- commits ahead of main: \`${AHEAD}\`
+- run: ${RUN_URL}
+
+Waiting at the controlled review boundary. The orchestrator will not merge or deploy this PR." >/dev/null
