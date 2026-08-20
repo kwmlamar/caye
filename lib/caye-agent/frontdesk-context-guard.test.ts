@@ -94,4 +94,13 @@ describe('CAY-110 future-action commitment grounding', () => {
       )
     ).toBeNull()
   })
+
+  it('does not mistake experiential sharing for a promised file transfer', () => {
+    expect(
+      detectUnsupportedFutureActionCommitment(
+        'We will share the history, culture, and beauty of Bimini with you during the tour.',
+        ''
+      )
+    ).toBeNull()
+  })
 })
