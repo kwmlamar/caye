@@ -13,6 +13,12 @@ describe('slugOf', () => {
     expect(slugOf('20260721e_caye_admin_pending_actions')).toBe('caye_admin_pending_actions')
   })
 
+  it('strips a full timestamp prefix', () => {
+    expect(slugOf('20260814163945_caye_authorizations_and_jobs')).toBe(
+      'caye_authorizations_and_jobs'
+    )
+  })
+
   it('leaves an already-bare slug alone', () => {
     expect(slugOf('caye_cron_runs')).toBe('caye_cron_runs')
   })
@@ -31,6 +37,15 @@ describe('findMissingMigrations', () => {
 
   it('matches on the date-stripped slug, for ledger entries recorded the old way', () => {
     expect(findMissingMigrations(['20260611_eod_summary'], ['eod_summary'])).toEqual([])
+  })
+
+  it('matches timestamped filenames against bare ledger slugs', () => {
+    expect(
+      findMissingMigrations(
+        ['20260814163945_caye_authorizations_and_jobs'],
+        ['caye_authorizations_and_jobs']
+      )
+    ).toEqual([])
   })
 
   it('reports a migration the ledger has never heard of', () => {
