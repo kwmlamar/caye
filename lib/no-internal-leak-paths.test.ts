@@ -43,6 +43,7 @@ const ALLOWED = new Map<string, string>([
   // The indices are prompt scaffolding, never echoed to a human.
   ['app/api/caye/discovery/route.ts', 'prompt-internal numbering'],
   ['lib/business-fact-semantic-match.ts', 'prompt-internal candidate ids'],
+  ['lib/business-fact-conflict.ts', 'prompt-internal candidate ids'],
 ])
 
 function sourceFiles(dir: string, out: string[] = []): string[] {

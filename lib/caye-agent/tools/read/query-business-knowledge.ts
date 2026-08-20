@@ -73,6 +73,9 @@ export const queryBusinessKnowledge: Tool<QueryBusinessKnowledgeInput> = {
       .from('business_facts')
       .select('id, category, fact, source, created_at')
       .eq('workspace_id', ctx.workspaceId)
+      // CAY-14: normal retrieval never surfaces a fact an owner correction
+      // has superseded — the row still exists for history, just not here.
+      .is('superseded_at', null)
     if (args.category) query = query.eq('category', args.category)
 
     const { data, error } = await query.limit(200)

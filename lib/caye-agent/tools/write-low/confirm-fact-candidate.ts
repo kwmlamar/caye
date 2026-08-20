@@ -2,6 +2,7 @@ import 'server-only'
 import { createServiceClient } from '@/lib/supabase-server'
 import { normalizeSentence } from '@/lib/business-fact-candidate-detection'
 import { loadScheduleConfig, localDateISO, endOfLocalDayUTC } from '@/lib/whatsapp/schedule'
+import { findConflictingFact, outranksForSupersession } from '@/lib/business-fact-conflict'
 import type { Tool } from '../types'
 
 interface ConfirmFactCandidateInput {
@@ -110,20 +111,78 @@ export const confirmFactCandidate: Tool<ConfirmFactCandidateInput> = {
 
     const category = args.category ?? candidate.category_guess
 
-    const { data: newFact, error: insertErr } = await supabase
+    // CAY-14: this fact is Caye's own inference (a repeated pattern the
+    // owner approved), not an owner-direct statement — rule 3 says
+    // owner-direct corrections outrank inferred/model-generated knowledge,
+    // so it must never silently supersede an explicit owner-direct fact.
+    // Check against active facts the same way add_business_fact does.
+    const { data: existingRows, error: existingErr } = await supabase
       .from('business_facts')
-      .insert({
-        workspace_id: ctx.workspaceId,
-        category,
-        fact,
-        source: 'candidate-confirmed',
-        created_by: ctx.callerRole,
-        ...(expiresAt ? { expires_at: expiresAt } : {}),
+      .select('id, fact, source, expires_at')
+      .eq('workspace_id', ctx.workspaceId)
+      .is('superseded_at', null)
+
+    if (existingErr) return { ok: false, error: existingErr.message }
+
+    const now = Date.now()
+    const active = (existingRows ?? []).filter(
+      (r) => !r.expires_at || new Date(r.expires_at as string).getTime() > now
+    )
+
+    const conflict = await findConflictingFact(
+      fact,
+      active.map((r) => ({ id: r.id, text: r.fact, source: r.source })),
+      { workspaceId: ctx.workspaceId, source: 'confirm-fact-candidate.ts:execute' }
+    )
+
+    // Same fail-closed rule as add_business_fact: an inferred candidate-
+    // confirmed fact must never slip past a conflict check that couldn't
+    // actually run.
+    if (conflict.checkFailed) {
+      return {
+        ok: false,
+        error:
+          "Couldn't verify whether this conflicts with an existing fact right now (the conflict check " +
+          'failed). Try again in a moment, or confirm with the owner whether this replaces an existing ' +
+          'fact before retrying.',
+      }
+    }
+
+    const conflictingRow = conflict.conflictId ? active.find((r) => r.id === conflict.conflictId) : undefined
+
+    if (conflictingRow) {
+      const allowedToSupersede =
+        conflict.resolution === 'supersede' && outranksForSupersession('candidate-confirmed', conflictingRow.source)
+      if (!allowedToSupersede) {
+        return {
+          ok: false,
+          error:
+            `This may conflict with an existing fact instead of just adding to it: "${conflictingRow.fact}". ` +
+            `Ask the owner directly whether this replaces that fact before saving — an inferred pattern ` +
+            `cannot silently override an owner-taught fact.`,
+        }
+      }
+    }
+
+    // CAY-14 atomicity fix: same RPC add_business_fact uses, so this path
+    // gets the same all-or-nothing guarantee — see the comment there.
+    const supersedeId = conflictingRow && conflict.resolution === 'supersede' ? conflictingRow.id : null
+
+    const { data: rpcResult, error: insertErr } = await supabase
+      .rpc('add_business_fact_with_supersession', {
+        p_workspace_id: ctx.workspaceId,
+        p_category: category,
+        p_fact: fact,
+        p_source: 'candidate-confirmed',
+        p_created_by: ctx.callerRole,
+        p_expires_at: expiresAt ?? null,
+        p_supersede_id: supersedeId,
       })
-      .select('id, created_at')
       .single()
 
     if (insertErr) return { ok: false, error: insertErr.message }
+
+    const newFact = rpcResult as { id: string; created_at: string }
 
     // Whitespace-insensitive comparison, same as classifyOutboundAuthorship
     // (lib/message-authorship.ts) — reflowing a sentence isn't a correction.

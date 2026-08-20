@@ -23,6 +23,10 @@ export async function fetchBusinessFacts(workspaceId: string): Promise<BusinessF
     .from('business_facts')
     .select('id, category, fact, expires_at')
     .eq('workspace_id', workspaceId)
+    // CAY-14: a superseded fact was replaced by an owner correction and must
+    // never reach normal retrieval again, even though the row itself stays
+    // (superseded_at + superseded_by preserve the history, never a delete).
+    .is('superseded_at', null)
     .order('created_at', { ascending: true })
     .limit(150)
   if (error) {

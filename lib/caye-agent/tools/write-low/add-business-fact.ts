@@ -1,6 +1,7 @@
 import 'server-only'
 import { createServiceClient } from '@/lib/supabase-server'
 import { loadScheduleConfig, localDateISO, endOfLocalDayUTC } from '@/lib/whatsapp/schedule'
+import { findConflictingFact } from '@/lib/business-fact-conflict'
 import type { Tool } from '../types'
 
 interface AddBusinessFactInput {
@@ -81,20 +82,87 @@ export const addBusinessFact: Tool<AddBusinessFactInput> = {
     }
 
     const supabase = createServiceClient()
-    const { data, error } = await supabase
+
+    // CAY-14: owner-direct corrections are first-class learning events, not
+    // just appends. Before saving, check whether this fact contradicts an
+    // active one — production incident: an older "cash not accepted" fact
+    // stayed active after the owner's policy moved on, Caye repeated it to a
+    // guest, and the owner had to correct it live mid-conversation. Only
+    // check against ACTIVE facts (already-superseded rows are history, not
+    // live candidates for a fresh conflict).
+    const { data: existingRows, error: existingErr } = await supabase
       .from('business_facts')
-      .insert({
-        workspace_id: ctx.workspaceId,
-        category: args.category,
-        fact,
-        source: 'owner-direct',
-        created_by: ctx.callerRole,
-        ...(expiresAt ? { expires_at: expiresAt } : {}),
+      .select('id, fact, source, expires_at')
+      .eq('workspace_id', ctx.workspaceId)
+      .is('superseded_at', null)
+
+    if (existingErr) return { ok: false, error: existingErr.message }
+
+    const now = Date.now()
+    const active = (existingRows ?? []).filter(
+      (r) => !r.expires_at || new Date(r.expires_at as string).getTime() > now
+    )
+
+    const conflict = await findConflictingFact(
+      fact,
+      active.map((r) => ({ id: r.id, text: r.fact, source: r.source })),
+      { workspaceId: ctx.workspaceId, source: 'add-business-fact.ts:execute' }
+    )
+
+    // The judge couldn't be reached against plausible candidates — do not
+    // treat "couldn't check" as "no conflict". Fail closed the same way an
+    // ambiguous verdict does: don't save, ask to retry or clarify.
+    if (conflict.checkFailed) {
+      return {
+        ok: false,
+        error:
+          "Couldn't verify whether this conflicts with an existing fact right now (the conflict check " +
+          'failed). Try saving again in a moment, or confirm with the owner whether this replaces an ' +
+          'existing fact before retrying.',
+      }
+    }
+
+    const conflictingRow = conflict.conflictId ? active.find((r) => r.id === conflict.conflictId) : undefined
+
+    // Fail closed on a real-but-unclear contradiction: don't save this
+    // version, don't touch the old fact, ask the owner to say explicitly
+    // which one governs before either is used with a guest.
+    if (conflictingRow && conflict.resolution === 'ambiguous') {
+      return {
+        ok: false,
+        error:
+          `This may conflict with an existing fact instead of just adding to it: "${conflictingRow.fact}". ` +
+          `Ask the owner directly whether this replaces that fact or whether both still apply in different ` +
+          `situations, then save the clarified version.`,
+      }
+    }
+
+    // CAY-14 atomicity fix: insert-then-update as two independent Supabase
+    // calls left a window where the insert succeeded but the supersede
+    // update failed, leaving the old and new fact both active — the exact
+    // failure mode this feature exists to prevent. add_business_fact_with_
+    // supersession (20260819_business_facts_supersede_rpc.sql) does both
+    // writes inside one Postgres function call, which is atomic: either
+    // the whole thing lands, or nothing does.
+    const supersedeId = conflictingRow && conflict.resolution === 'supersede' ? conflictingRow.id : null
+
+    const { data: rpcResult, error } = await supabase
+      .rpc('add_business_fact_with_supersession', {
+        p_workspace_id: ctx.workspaceId,
+        p_category: args.category,
+        p_fact: fact,
+        p_source: 'owner-direct',
+        p_created_by: ctx.callerRole,
+        p_expires_at: expiresAt ?? null,
+        p_supersede_id: supersedeId,
       })
-      .select('id, created_at')
       .single()
 
     if (error) return { ok: false, error: error.message }
+
+    const data = rpcResult as { id: string; created_at: string }
+    const supersededFact = supersedeId ? conflictingRow!.fact : null
+
     return {
       ok: true,
       data: {
@@ -103,6 +171,7 @@ export const addBusinessFact: Tool<AddBusinessFactInput> = {
         fact,
         expires_on: args.expires_on ?? null,
         created_at: data.created_at,
+        superseded_fact: supersededFact,
         // The operator must be told, verbatim, what got stored. On
         // 2026-08-07 Karenda gave three instructions in nine minutes; two
         // were saved, one ("50% to hold, balance 7 days prior") was used in
@@ -111,9 +180,11 @@ export const addBusinessFact: Tool<AddBusinessFactInput> = {
         // three looked equally received — so the next day Caye quoted that
         // package with no deposit terms. Saving without confirming is how
         // an owner ends up trusting memory that isn't there.
-        tell_the_owner:
-          `Confirm back in your reply that you've saved this, quoting it: "${fact}". ` +
-          `If they told you several things at once, say which ones you saved and which you did not.`,
+        tell_the_owner: supersededFact
+          ? `Confirm back in your reply that you've saved this, quoting it: "${fact}". Also tell them this ` +
+            `replaces the old fact "${supersededFact}", which Caye will no longer use.`
+          : `Confirm back in your reply that you've saved this, quoting it: "${fact}". ` +
+            `If they told you several things at once, say which ones you saved and which you did not.`,
       },
     }
   },
