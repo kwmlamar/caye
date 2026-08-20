@@ -13,7 +13,7 @@ import {
   BOOKING_WITH_SERVICE_PRICE_SELECT,
   type ServiceJoin,
 } from '../_revenue'
-import { businessLocalDate, classifyBookingDate, bookingStatusConflict } from '@/lib/booking-time'
+import { businessLocalDate, classifyBookingDate, bookingStatusConflict, zonedInstantMs } from '@/lib/booking-time'
 
 const DEFAULT_WORKSPACE_TIMEZONE = 'America/Nassau'
 
@@ -33,15 +33,25 @@ interface BookingRow {
 interface MessageRow {
   content: string | null
   sender_type: string | null
+  sender_attribution: string | null
   sent_at: string
   channel_type: string | null
+}
+
+function outboundActor(senderType: string | null, attribution: string | null): 'customer' | 'caye' | 'operator' | 'business_unknown' {
+  if (senderType === 'customer') return 'customer'
+  const normalized = attribution?.trim().toLowerCase() ?? ''
+  if (/\bcaye\b|\bai\b|\bautonomous\b/.test(normalized)) return 'caye'
+  if (/\boperator\b|\bowner\b|\bstaff\b|\bhuman\b|\bmanual\b/.test(normalized)) return 'operator'
+  return 'business_unknown'
 }
 
 export const getCustomerHistory: Tool<GetCustomerHistoryInput> = {
   name: 'get_customer_history',
   description:
     "Get a customer's past bookings + the last 10 messages with them. Pass contact_id (richer profile) OR conversation_id (for conversation-only customers without an enriched contact row — the majority on outreach workspaces). Use after a get_customer call: if the match's source was 'contact', pass contact_id; if 'conversation', pass conversation_id. " +
-    "`contact.emails` / `contact.phones` carry every address attributable to them with provenance; `contact.relay_only` holds forwarding addresses that reach them but are not their own (a contact-form relay is not their email). `contact.absent` is what we checked for and genuinely do not have — the ONLY basis for saying we don't have it. `contact.not_checked` was not fetched by this call; never report those as missing.",
+    "`contact.emails` / `contact.phones` carry every address attributable to them with provenance; `contact.relay_only` holds forwarding addresses that reach them but are not their own (a contact-form relay is not their email). `contact.absent` is what we checked for and genuinely do not have — the ONLY basis for saying we don't have it. `contact.not_checked` was not fetched by this call; never report those as missing. " +
+    "Recent messages include deterministic `actor` provenance. `business_unknown` means the business sent the message but the stored record does NOT prove whether Caye or a human sent it; never turn that into `I sent it`. Bookings include deterministic `scheduled_start_state`; never infer `happening now` from `relative_to_today=today` alone.",
   risk: 'read',
   roles: ['owner', 'founder'],
   modes: ['back-office'],
@@ -65,14 +75,9 @@ export const getCustomerHistory: Tool<GetCustomerHistoryInput> = {
     }
     const supabase = createServiceClient()
 
-    // Resolve contact_id from conversation_id if necessary.
     let resolvedContactId = args.contact_id ?? null
     let conversationCustomerName: string | null = null
     let conversationChannel: string | null = null
-    // Every address we can attribute to this customer, from every source.
-    // The thread's own channel-native address matters most: on the outreach
-    // workspace ZERO threads have a contacts row, so customer_id is the only
-    // place an address exists. See ../../customer-profile.ts.
     const identities: (Identity | null)[] = []
 
     if (!resolvedContactId && args.conversation_id) {
@@ -102,8 +107,6 @@ export const getCustomerHistory: Tool<GetCustomerHistoryInput> = {
       )
     }
 
-    // Load contact profile if we have a contact_id. May be null for
-    // conversation-only customers.
     let contact: {
       id: string | null
       name: string | null
@@ -124,9 +127,6 @@ export const getCustomerHistory: Tool<GetCustomerHistoryInput> = {
           notes: c.notes as string | null,
           facts: c.ai_contact_facts,
         }
-        // Stored contact fields are additional identities, not replacements —
-        // a contacts row can hold an address the thread never used, and vice
-        // versa. Both are kept; mergeIdentities collapses exact duplicates.
         const lastSeen = (c.last_message_at as string | null) ?? null
         identities.push(identityFromField('email', c.email as string | null, 'verified', lastSeen))
         identities.push(
@@ -143,12 +143,6 @@ export const getCustomerHistory: Tool<GetCustomerHistoryInput> = {
       }
     }
 
-    // Gather the addresses from every thread this contact owns. Without this,
-    // calling with contact_id (rather than conversation_id) would report
-    // absent: ['email'] for a contacts row that has no email while the address
-    // sits on the conversation — which is exactly the false negative `absent`
-    // exists to make impossible. `absent` is only trustworthy if we really did
-    // look everywhere before claiming it.
     if (contact.id) {
       const { data: accounts } = await supabase
         .from('connected_accounts')
@@ -177,8 +171,6 @@ export const getCustomerHistory: Tool<GetCustomerHistoryInput> = {
 
     const reachability = summarizeReachability(mergeIdentities(identities))
 
-    // Bookings: only when we have a real contact_id (booking schema joins
-    // through contact_id, not conversation).
     let bookingRows: BookingRow[] = []
     if (contact.id) {
       const { data: bookings } = await supabase
@@ -193,25 +185,24 @@ export const getCustomerHistory: Tool<GetCustomerHistoryInput> = {
       bookingRows = (bookings ?? []) as unknown as BookingRow[]
     }
 
-    // Messages: prefer contact_id (covers all their threads). Fall back to
-    // the explicit conversation_id when contact_id is missing.
-    let messages: { content: string | null; sender_type: string | null; sent_at: string; channel_type: string | null }[] = []
+    let messages: MessageRow[] = []
     if (contact.id) {
       const { data } = await supabase
         .from('unified_messages')
         .select(
-          'content, sender_type, sent_at, conversation:unified_conversations!inner(channel_type, contact_id)'
+          'content, sender_type, sender_attribution, sent_at, conversation:unified_conversations!inner(channel_type, contact_id)'
         )
         .eq('conversation.contact_id', contact.id)
         .eq('is_internal', false)
         .order('sent_at', { ascending: false })
         .limit(10)
-      type Row = MessageRow & {
+      type Row = Omit<MessageRow, 'channel_type'> & {
         conversation: { channel_type: string } | { channel_type: string }[] | null
       }
       messages = ((data ?? []) as unknown as Row[]).map((r) => ({
         content: r.content,
         sender_type: r.sender_type,
+        sender_attribution: r.sender_attribution,
         sent_at: r.sent_at,
         channel_type: Array.isArray(r.conversation)
           ? r.conversation[0]?.channel_type ?? null
@@ -220,27 +211,35 @@ export const getCustomerHistory: Tool<GetCustomerHistoryInput> = {
     } else if (args.conversation_id) {
       const { data } = await supabase
         .from('unified_messages')
-        .select('content, sender_type, sent_at')
+        .select('content, sender_type, sender_attribution, sent_at')
         .eq('conversation_id', args.conversation_id)
         .eq('is_internal', false)
         .order('sent_at', { ascending: false })
         .limit(10)
-      type Row = MessageRow
+      type Row = Omit<MessageRow, 'channel_type'>
       messages = ((data ?? []) as unknown as Row[]).map((r) => ({
         content: r.content,
         sender_type: r.sender_type,
+        sender_attribution: r.sender_attribution,
         sent_at: r.sent_at,
         channel_type: conversationChannel,
       }))
     }
+
     const messageRows = messages
       .map((m) => ({
         text: m.content,
         from: m.sender_type === 'customer' ? 'customer' : 'business',
+        actor: outboundActor(m.sender_type, m.sender_attribution),
+        sender_attribution: m.sender_attribution,
         sent_at: m.sent_at,
         channel: m.channel_type,
       }))
       .reverse()
+
+    const timezone = ctx.workspaceTimezone || DEFAULT_WORKSPACE_TIMEZONE
+    const now = new Date()
+    const today = businessLocalDate(timezone, now)
 
     return {
       ok: true,
@@ -248,10 +247,6 @@ export const getCustomerHistory: Tool<GetCustomerHistoryInput> = {
         contact: {
           contact_id: contact.id,
           name: contact.name,
-          // Every address we can attribute to them, with how we know it.
-          // `absent` means we looked everywhere and it genuinely isn't
-          // recorded — that is the ONLY basis for telling the operator we
-          // don't have something.
           emails: reachability.emails,
           phones: reachability.phones,
           relay_only: reachability.relay_only,
@@ -262,10 +257,12 @@ export const getCustomerHistory: Tool<GetCustomerHistoryInput> = {
           has_full_profile: contact.id !== null,
         },
         bookings: bookingRows.map((b) => {
-          const relative = classifyBookingDate(
-            b.booking_date,
-            businessLocalDate(ctx.workspaceTimezone || DEFAULT_WORKSPACE_TIMEZONE)
-          )
+          const relative = classifyBookingDate(b.booking_date, today)
+          const scheduledStartState = !b.booking_time
+            ? 'time_unknown'
+            : zonedInstantMs(b.booking_date, b.booking_time, timezone) > now.getTime()
+              ? 'future_start'
+              : 'start_time_passed'
           return {
             date: b.booking_date,
             time: b.booking_time?.slice(0, 5) ?? null,
@@ -277,15 +274,21 @@ export const getCustomerHistory: Tool<GetCustomerHistoryInput> = {
               guests: b.number_of_people,
             }),
             service: b.service?.[0]?.name ?? null,
-            // Deterministic, computed in the workspace's own timezone —
-            // never derive this yourself from the date (CAY-91, the Sonja
-            // incident: a customer's booking for the following business day
-            // was told to the owner as already past).
             relative_to_today: relative,
+            scheduled_start_state: scheduledStartState,
+            starts_later_today: relative === 'today' && scheduledStartState === 'future_start',
+            start_state_constraint:
+              scheduledStartState === 'start_time_passed'
+                ? 'The scheduled start time has passed; this does NOT prove the service is currently in progress or completed.'
+                : scheduledStartState === 'future_start'
+                  ? 'The scheduled start is still in the future; do NOT describe the service as happening now.'
+                  : 'No scheduled time is available; do not infer whether the service is happening now.',
             status_date_conflict: bookingStatusConflict(b.status, relative),
           }
         }),
         recent_messages: messageRows,
+        provenance_constraint:
+          'actor=business_unknown proves only that the business sent the message. It does not prove Caye sent it; never say "I sent it" without actor=caye or separate audited Caye execution evidence.',
       },
     }
   },

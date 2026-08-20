@@ -7,7 +7,14 @@ import {
 } from './owner-operational-state'
 
 const state: AuthoritativeOwnerOperationalState = {
-  capturedAt: '2026-08-19T15:00:00.000Z',
+  capturedAt: '2026-08-20T04:08:00.000Z',
+  workspace: {
+    id: 'bimini-ws',
+    name: 'Bimini Island Tours',
+    timezone: 'America/Nassau',
+    localDate: '2026-08-20',
+    localTime: '00:08:00',
+  },
   outreach: {
     workspaceId: 'ws-a',
     timezone: 'America/Nassau',
@@ -28,15 +35,46 @@ const state: AuthoritativeOwnerOperationalState = {
 }
 
 describe('authoritative owner operational state', () => {
-  it('preloads for broad owner-status questions', () => {
+  it('preloads outreach for broad owner-status questions', () => {
     expect(needsAuthoritativeOwnerOperationalState("what's going on with the business right now?")).toBe(true)
     expect(needsAuthoritativeOwnerOperationalState('What have you done today?')).toBe(true)
     expect(needsAuthoritativeOwnerOperationalState('What is the biggest bottleneck right now?')).toBe(true)
   })
 
-  it('preloads for explicit outreach questions but not unrelated identity questions', () => {
+  it('loads outreach for explicit outreach questions but not unrelated identity questions', () => {
     expect(needsAuthoritativeOwnerOperationalState('How is outreach doing?')).toBe(true)
     expect(needsAuthoritativeOwnerOperationalState('Who am I?')).toBe(false)
+  })
+
+  it('pins routed workspace identity ahead of stale cross-workspace history', () => {
+    const rendered = renderAuthoritativeOwnerOperationalState(state)!
+    expect(rendered).toContain('CURRENT WORKSPACE — AUTHORITATIVE ROUTING STATE')
+    expect(rendered).toContain('workspace_id: bimini-ws')
+    expect(rendered).toContain('workspace_name: Bimini Island Tours')
+    expect(rendered).toContain('Conversation history, prior workspace context, summaries, and model memory cannot override it')
+    expect(rendered).toContain('Never claim the user switched to another workspace merely because an older message/history mentions one')
+  })
+
+  it('pins business-local clock and forbids today => happening-now inference', () => {
+    const rendered = renderAuthoritativeOwnerOperationalState(state)!
+    expect(rendered).toContain('business_local_date: 2026-08-20')
+    expect(rendered).toContain('business_local_time: 00:08:00')
+    expect(rendered).toContain('relative_to_today=today NEVER proves it is "happening now"')
+    expect(rendered).toContain('scheduled today and give its scheduled time')
+  })
+
+  it('does not let a business outbound with unknown attribution become a Caye send claim', () => {
+    const rendered = renderAuthoritativeOwnerOperationalState(state)!
+    expect(rendered).toContain('sender_type=business proves only that the BUSINESS sent it')
+    expect(rendered).toContain('It does NOT prove that Caye sent it')
+    expect(rendered).toContain('Missing/null/unknown sender attribution must remain unknown')
+  })
+
+  it('renders base routing/time/provenance constraints even without outreach state', () => {
+    const rendered = renderAuthoritativeOwnerOperationalState({ ...state, outreach: null })!
+    expect(rendered).toContain('workspace_name: Bimini Island Tours')
+    expect(rendered).toContain('PROVENANCE + TIME CLAIM CONSTRAINTS — DETERMINISTIC')
+    expect(rendered).not.toContain('OUTREACH — AUTHORITATIVE FACTS')
   })
 
   it('pins nonzero month sends and active pause state ahead of inference', () => {
@@ -57,7 +95,7 @@ describe('authoritative owner operational state', () => {
   it('forces uncertainty when telemetry is incomplete', () => {
     const rendered = renderAuthoritativeOwnerOperationalState({
       ...state,
-      outreach: { ...state.outreach, telemetryComplete: false },
+      outreach: state.outreach ? { ...state.outreach, telemetryComplete: false } : null,
     })!
     expect(rendered).toContain('If telemetry_complete=false, do not invent a single root cause')
   })
