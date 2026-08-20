@@ -29,17 +29,23 @@ export const LEGACY_RECONCILED: ReadonlySet<string> = new Set([
   '20260723b_team_consent_template', // → team_consent_template_seed
 ])
 
-/** Strips the date prefix: `20260728b_foo_bar` → `foo_bar`. */
+/**
+ * Strips the migration date/timestamp prefix.
+ *
+ * Supports both naming conventions present in this repo:
+ *   20260728b_foo_bar        → foo_bar
+ *   20260814163945_foo_bar   → foo_bar
+ */
 export function slugOf(basename: string): string {
-  return basename.replace(/^\d{8}[a-z]?_/, '')
+  return basename.replace(/^(?:\d{14}|\d{8}[a-z]?)_/, '')
 }
 
 /**
  * Repo migrations with no corresponding entry in the DB's applied ledger.
  *
- * Matches on the full filename first, then the date-stripped slug, because
- * the ledger holds both shapes: older entries were recorded as bare slugs,
- * newer ones as the full filename.
+ * Matches on the full filename first, then the date/timestamp-stripped slug,
+ * because the ledger holds both shapes: older/manual applies were often
+ * recorded as bare slugs while others retain the full filename.
  */
 export function findMissingMigrations(
   repoMigrations: readonly string[],
