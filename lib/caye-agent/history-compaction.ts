@@ -21,14 +21,12 @@ import type Anthropic from '@anthropic-ai/sdk'
  * the waste here, not the tool call itself.
  *
  * WHAT IS PRESERVED, AND WHY IT MATTERS
- * Every block is kept, including its tool_use_id. The Anthropic API requires
- * each tool_use block to be answered by a tool_result carrying the same id in
- * the next turn; dropping or reordering blocks produces a 400, not a saving.
- * Only the `content` of an out-of-budget tool_result is replaced.
- *
- * tool_use inputs are left alone. They are 17.4% of bytes against
- * tool_result's 59.2%, and they record what the model asked for — rewriting
- * those is a worse trade for a third of the benefit.
+ * Every valid block is kept, including its tool_use_id. The Anthropic API
+ * requires each tool_use block to be answered by a tool_result carrying the
+ * same id in the next turn. The sliding DB window can, however, cut across a
+ * persisted tool exchange and leave an orphan result/use at either edge. We
+ * repair those boundary fragments before compaction so replay is always a
+ * structurally valid Anthropic conversation instead of a production 400.
  */
 
 /**
@@ -50,6 +48,89 @@ const ELIDED = JSON.stringify({
 
 type ContentBlock = Anthropic.MessageParam['content']
 
+interface ToolUseBlock {
+  type: 'tool_use'
+  id: string
+}
+
+interface ToolResultBlock {
+  type: 'tool_result'
+  tool_use_id: string
+  content?: unknown
+  is_error?: boolean
+}
+
+function isToolUse(block: unknown): block is ToolUseBlock {
+  return (
+    typeof block === 'object' &&
+    block !== null &&
+    (block as { type?: unknown }).type === 'tool_use' &&
+    typeof (block as { id?: unknown }).id === 'string'
+  )
+}
+
+function isToolResult(block: unknown): block is ToolResultBlock {
+  return (
+    typeof block === 'object' &&
+    block !== null &&
+    (block as { type?: unknown }).type === 'tool_result' &&
+    typeof (block as { tool_use_id?: unknown }).tool_use_id === 'string'
+  )
+}
+
+function blocksOf(message: Anthropic.MessageParam): unknown[] {
+  return Array.isArray(message.content) ? message.content : []
+}
+
+/**
+ * Remove only structurally impossible tool blocks created by a sliding-window
+ * boundary or old bad persistence. Anthropic requires tool_result blocks to
+ * answer tool_use blocks from the immediately preceding assistant message,
+ * and every tool_use must receive a result in the immediately following user
+ * message. Violating either rule rejects the whole request.
+ *
+ * Human text sharing the same message is preserved. If removing orphan tool
+ * blocks empties a message entirely, that message is dropped.
+ */
+export function repairToolHistory(messages: Anthropic.MessageParam[]): Anthropic.MessageParam[] {
+  const out: Anthropic.MessageParam[] = []
+
+  for (let i = 0; i < messages.length; i++) {
+    const message = messages[i]
+    if (!Array.isArray(message.content)) {
+      out.push(message)
+      continue
+    }
+
+    const previous = out[out.length - 1]
+    const previousUseIds = new Set(
+      previous?.role === 'assistant'
+        ? blocksOf(previous).filter(isToolUse).map((block) => block.id)
+        : []
+    )
+
+    let blocks = message.content.filter((block) => {
+      if (!isToolResult(block)) return true
+      return message.role === 'user' && previousUseIds.has(block.tool_use_id)
+    })
+
+    if (message.role === 'assistant') {
+      const next = messages[i + 1]
+      const nextResultIds = new Set(
+        next?.role === 'user'
+          ? blocksOf(next).filter(isToolResult).map((block) => block.tool_use_id)
+          : []
+      )
+      blocks = blocks.filter((block) => !isToolUse(block) || nextResultIds.has(block.id))
+    }
+
+    if (blocks.length === 0) continue
+    out.push(blocks.length === message.content.length ? message : ({ ...message, content: blocks } as Anthropic.MessageParam))
+  }
+
+  return out
+}
+
 /**
  * Compact tool results beyond the verbatim budget.
  *
@@ -62,11 +143,12 @@ export function compactHistory(
   messages: Anthropic.MessageParam[],
   budgetBytes: number = VERBATIM_TOOL_RESULT_BUDGET_BYTES
 ): Anthropic.MessageParam[] {
+  const repaired = repairToolHistory(messages)
   let remaining = budgetBytes
-  const out: Anthropic.MessageParam[] = new Array(messages.length)
+  const out: Anthropic.MessageParam[] = new Array(repaired.length)
 
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const message = messages[i]
+  for (let i = repaired.length - 1; i >= 0; i--) {
+    const message = repaired[i]
     if (typeof message.content === 'string' || !Array.isArray(message.content)) {
       out[i] = message
       continue
@@ -94,21 +176,6 @@ export function compactHistory(
   }
 
   return out
-}
-
-interface ToolResultBlock {
-  type: 'tool_result'
-  tool_use_id: string
-  content?: unknown
-  is_error?: boolean
-}
-
-function isToolResult(block: unknown): block is ToolResultBlock {
-  return (
-    typeof block === 'object' &&
-    block !== null &&
-    (block as { type?: unknown }).type === 'tool_result'
-  )
 }
 
 function contentSize(content: unknown): number {
