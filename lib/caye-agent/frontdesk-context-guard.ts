@@ -32,12 +32,18 @@ function sentencePromisesTransfer(sentence: string): boolean {
   return /\b(?:get|have)\b[^.!?]{0,80}\b(?:sent|forwarded|emailed|shared)\b/i.test(sentence) && TRANSFERABLE_ARTIFACT_RE.test(sentence)
 }
 
+function hasFutureActor(sentence: string): boolean {
+  // Do not limit this to first person. Production incident 2026-08-20:
+  // "Mrs. Max will be sending your invoice shortly" bypassed the old
+  // `(we|i) will` check even though it is the same unsupported promise.
+  return /\b(?:we|i|our\s+team|the\s+owner|mr\.?\s+[a-z][\w'-]*|mrs\.?\s+[a-z][\w'-]*|ms\.?\s+[a-z][\w'-]*)\s*(?:will|'ll)\b/i.test(sentence)
+}
+
 function followupKind(sentence: string): FollowupKind | null {
   if (NEGATION_RE.test(sentence)) return null
-  const futureActor = /\b(?:we|i)\s*(?:will|'ll)\b/i.test(sentence)
-  if (!futureActor) return null
+  if (!hasFutureActor(sentence)) return null
   if (sentencePromisesTransfer(sentence)) return 'send'
-  if (/\b(?:follow\s*up|circle\s+back|reach\s+out|contact)\b/i.test(sentence)) {
+  if (/\b(?:follow\s*up|circle\s+back|reach\s+out|contact|be\s+in\s+touch|get\s+back\s+to\s+you)\b/i.test(sentence)) {
     return 'follow_up'
   }
   return null
@@ -47,7 +53,7 @@ function groundingSupports(kind: FollowupKind, groundingText: string): boolean {
   return sentences(groundingText).some((sentence) => {
     if (NEGATION_RE.test(sentence)) return false
     if (kind === 'send') return sentencePromisesTransfer(sentence)
-    return /\b(?:follow\s*up|followed\s*up|circle\s+back|reach\s+out|contact)\b/i.test(sentence)
+    return /\b(?:follow\s*up|followed\s*up|circle\s+back|reach\s+out|contact|be\s+in\s+touch|get\s+back\s+to\s+you)\b/i.test(sentence)
   })
 }
 
