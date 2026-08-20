@@ -20,6 +20,7 @@ import {
   fetchScopedOwnerInstructionText,
   validateAuthoritativeBookingStatusClaims,
 } from '../../consequential-claim-grounding'
+import { validateFrontDeskContext } from '../../frontdesk-context-guard'
 
 interface SendCustomerReplyInput {
   conversation_id: string
@@ -28,14 +29,14 @@ interface SendCustomerReplyInput {
 
 /**
  * Customer-facing front-desk send boundary. The model may compose freely, but
- * no consequential claim leaves this function until identity, policy,
- * authority, evidence, booking state, and execution gates have passed.
+ * no consequential claim leaves this function until identity, current-channel
+ * context, policy, authority, evidence, booking state, and execution gates pass.
  */
 export const sendCustomerReply: Tool<SendCustomerReplyInput> = {
   name: 'send_customer_reply',
   description: `Send a reply to the customer on this conversation. HIGH-RISK — this is a real message to a real customer.
 
-Front-desk replies are evidence-gated rather than separately operator-gated. If the draft states a price, availability verdict, consequential partner/refund commitment, or existing-booking status that is not supported by authoritative state or scoped owner instruction, the send is held automatically. Call the relevant read tool first; do not retry the same unsupported claim reworded.`,
+Front-desk replies are evidence-gated rather than separately operator-gated. If the draft states a price, availability verdict, consequential partner/refund/future-action commitment, existing-booking status, or tells a customer to initiate the channel they are already using, the send is validated against authoritative state and scoped owner instruction before execution. Call the relevant read tool first; do not retry the same unsupported claim reworded.`,
   risk: 'high',
   roles: ['owner', 'staff', 'founder'],
   modes: ['front-desk'],
@@ -96,11 +97,7 @@ Front-desk replies are evidence-gated rather than separately operator-gated. If 
 
     const [businessFacts, businessSentThread, ownerInstructionText] = await Promise.all([
       fetchBusinessFacts(ctx.workspaceId),
-      // Payment-method corrections historically use customer-visible business
-      // messages as grounding. Preserve that established behavior.
       fetchAuthoritativeThread(supabase, args.conversation_id, 'business'),
-      // Consequential owner authority is narrower: autonomous Caye messages
-      // are excluded so a prior hallucination cannot self-authorize.
       fetchScopedOwnerInstructionText(supabase, args.conversation_id),
     ])
 
@@ -111,6 +108,25 @@ Front-desk replies are evidence-gated rather than separately operator-gated. If 
     const consequentialGrounding = [businessFactsText, ownerInstructionText]
       .filter(Boolean)
       .join('\n')
+
+    // CAY-110: channel state is a deterministic fact, not prose context for
+    // the model to maybe notice. The same boundary also prevents polite
+    // future-tense promises from assigning work that no tool/owner/policy has
+    // actually authorized.
+    const contextConflict = await validateFrontDeskContext({
+      db: supabase,
+      conversationId: args.conversation_id,
+      body,
+      groundingText: consequentialGrounding,
+    })
+    if (contextConflict) {
+      return {
+        ok: false,
+        status: 'CONFLICT',
+        error_code: contextConflict.code,
+        error: `Front-desk context guard: ${contextConflict.message}. Nothing was sent — rewrite using the channel already in progress or obtain authoritative support for the future action.`,
+      }
+    }
 
     const paymentFigure = detectUnverifiedPaymentFigure(body, factsGrounding)
     if (paymentFigure) {
@@ -132,8 +148,6 @@ Front-desk replies are evidence-gated rather than separately operator-gated. If 
       }
     }
 
-    // CAY-97: concept overlap is not agreement. Contradictory authoritative
-    // grounding blocks before the older presence-based commitment guards run.
     const polarityConflict = detectConsequentialPolarityConflict(
       body,
       consequentialGrounding
@@ -173,11 +187,6 @@ Front-desk replies are evidence-gated rather than separately operator-gated. If 
       }
     }
 
-    // CAY-97: existing-booking status is authoritative system state, not a
-    // language-model inference. Exact conversation-linked booking rows win;
-    // legacy rows fall back to verified customer identity. Missing,
-    // contradictory, or mismatched state holds unless the operator explicitly
-    // authorized that scoped status claim on this thread.
     const bookingStatusConflict = await validateAuthoritativeBookingStatusClaims(
       supabase,
       ctx.workspaceId,
