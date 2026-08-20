@@ -2,11 +2,11 @@ import 'server-only'
 import type { createServiceClient } from '@/lib/supabase-server'
 
 type Db = ReturnType<typeof createServiceClient>
-
 type FollowupKind = 'send' | 'follow_up'
 
 const EMAIL_RE = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi
 const NEGATION_RE = /\b(?:do not|don't|does not|doesn't|cannot|can't|never|won't|will not)\b/i
+const TRANSFERABLE_ARTIFACT_RE = /\b(?:photo|picture|image|file|document|details?|information|info|link|copy|receipt|invoice|attachment|confirmation|it|that)\b/i
 
 function sentences(text: string): string[] {
   return text
@@ -17,21 +17,26 @@ function sentences(text: string): string[] {
 
 function normalizeEmail(value: unknown): string | null {
   if (typeof value !== 'string') return null
-  const match = value.trim().match(/^[^\s@]+@[^\s@]+\.[^\s@]+$/)
-  return match ? value.trim().toLowerCase() : null
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim())
+    ? value.trim().toLowerCase()
+    : null
+}
+
+function sentencePromisesTransfer(sentence: string): boolean {
+  if (/\b(?:send|forward|email)\b/i.test(sentence)) return true
+  if (
+    /\bshare\b[^.!?]{0,80}\b(?:photo|picture|image|file|document|details?|information|info|link|copy|receipt|invoice|attachment|confirmation|it|that)\b/i.test(sentence)
+  ) {
+    return true
+  }
+  return /\b(?:get|have)\b[^.!?]{0,80}\b(?:sent|forwarded|emailed|shared)\b/i.test(sentence) && TRANSFERABLE_ARTIFACT_RE.test(sentence)
 }
 
 function followupKind(sentence: string): FollowupKind | null {
   if (NEGATION_RE.test(sentence)) return null
   const futureActor = /\b(?:we|i)\s*(?:will|'ll)\b/i.test(sentence)
   if (!futureActor) return null
-
-  if (
-    /\b(?:send|forward|share|email)\b/i.test(sentence) ||
-    /\b(?:get|have)\b[^.!?]{0,80}\b(?:sent|forwarded|shared|emailed)\b/i.test(sentence)
-  ) {
-    return 'send'
-  }
+  if (sentencePromisesTransfer(sentence)) return 'send'
   if (/\b(?:follow\s*up|circle\s+back|reach\s+out|contact)\b/i.test(sentence)) {
     return 'follow_up'
   }
@@ -41,18 +46,11 @@ function followupKind(sentence: string): FollowupKind | null {
 function groundingSupports(kind: FollowupKind, groundingText: string): boolean {
   return sentences(groundingText).some((sentence) => {
     if (NEGATION_RE.test(sentence)) return false
-    if (kind === 'send') {
-      return /\b(?:send|sent|forward|forwarded|share|shared|email|emailed)\b/i.test(sentence)
-    }
+    if (kind === 'send') return sentencePromisesTransfer(sentence)
     return /\b(?:follow\s*up|followed\s*up|circle\s+back|reach\s+out|contact)\b/i.test(sentence)
   })
 }
 
-/**
- * CAY-110: a customer already writing to the business on a channel must not
- * be told to initiate that same channel again. This is a pure decision layer
- * so the invariant can be regression-tested without a database.
- */
 export function detectRedundantCurrentChannelInstruction(args: {
   body: string
   channelType: string | null
@@ -85,15 +83,9 @@ export function detectRedundantCurrentChannelInstruction(args: {
       return 'customer is already communicating with the business on WhatsApp'
     }
   }
-
   return null
 }
 
-/**
- * Future work is a consequential claim. Polite phrasing does not create an
- * employee, task, or execution plan. Require authoritative grounding for the
- * action Caye says the business will perform later.
- */
 export function detectUnsupportedFutureActionCommitment(
   body: string,
   groundingText: string
@@ -167,10 +159,7 @@ export async function validateFrontDeskContext(args: {
     currentBusinessEmails: context.businessEmails,
   })
   if (redundant) {
-    return {
-      code: 'REDUNDANT_CURRENT_CHANNEL_INSTRUCTION',
-      message: redundant,
-    }
+    return { code: 'REDUNDANT_CURRENT_CHANNEL_INSTRUCTION', message: redundant }
   }
 
   const unsupportedFuture = detectUnsupportedFutureActionCommitment(
@@ -178,10 +167,7 @@ export async function validateFrontDeskContext(args: {
     args.groundingText
   )
   if (unsupportedFuture) {
-    return {
-      code: 'UNSUPPORTED_FUTURE_ACTION_COMMITMENT',
-      message: unsupportedFuture,
-    }
+    return { code: 'UNSUPPORTED_FUTURE_ACTION_COMMITMENT', message: unsupportedFuture }
   }
 
   return null
