@@ -7,13 +7,14 @@ describe('enforceActionGrounding — external draft claims (CAY-9)', () => {
     'Drafted into your inbox on Pam’s thread — subject "Re: Tour Booking".',
     'It’s filed in your email Drafts folder now.',
     'Done — it is in your Gmail Drafts on Pam’s thread now.',
-  ])('rejects a false external-draft completion claim: %s', (reply) => {
+  ])('rejects a false external-draft completion claim without leaking mailbox plumbing: %s', (reply) => {
     const { text, violations } = enforceActionGrounding(reply, [
       { name: 'draft_in_inbox', ok: true, pendingOnly: true },
     ])
 
     expect(violations.map((v) => v.category)).toContain('external-draft')
-    expect(text).toContain("I haven't filed that into your email Drafts yet")
+    expect(text).toContain("Here's the draft for your review:")
+    expect(text).not.toMatch(/haven't filed|email Drafts yet/i)
   })
 
   it('allows the claim after draft_in_inbox actually executed', () => {
