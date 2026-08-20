@@ -86,6 +86,33 @@ describe('CAY-110 future-action commitment grounding', () => {
     ).toMatch(/unsupported future follow-up/i)
   })
 
+  it('blocks the Charissa-style third-person promise that the owner will send an invoice', () => {
+    expect(
+      detectUnsupportedFutureActionCommitment(
+        'Mrs. Max will be sending your invoice to ckhn@hotmail.com shortly.',
+        'The invoice has not yet been sent. Booking total is $450.'
+      )
+    ).toMatch(/unsupported future send/i)
+  })
+
+  it('blocks the Jonathan-style promise to be in touch with details when no follow-up is grounded', () => {
+    expect(
+      detectUnsupportedFutureActionCommitment(
+        'We will take care of the coordination and be in touch shortly with the details.',
+        'Customer is interested in snorkeling and Snuba through a trusted partner.'
+      )
+    ).toMatch(/unsupported future follow-up/i)
+  })
+
+  it('allows a grounded be-in-touch commitment when a follow-up instruction exists', () => {
+    expect(
+      detectUnsupportedFutureActionCommitment(
+        'We will be in touch tomorrow with the details.',
+        'Owner instruction: follow up with Jonathan tomorrow after partner confirmation.'
+      )
+    ).toBeNull()
+  })
+
   it('does not block non-promissory courtesy language', () => {
     expect(
       detectUnsupportedFutureActionCommitment(
