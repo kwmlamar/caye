@@ -58,6 +58,14 @@ describe('findMissingMigrations', () => {
     expect(findMissingMigrations([legacy], [])).toEqual([])
   })
 
+  it.each([
+    '20260813d_add_payment_setup_needed_outbound_kind',
+    '20260813g_cron_run_history',
+  ])('suppresses the verified Aug 13 ledger mismatch %s', (name) => {
+    expect(LEGACY_RECONCILED.has(name)).toBe(true)
+    expect(findMissingMigrations([name], [])).toEqual([])
+  })
+
   it('does not let a legacy entry mask an unrelated missing migration', () => {
     const result = findMissingMigrations(['20260611_morning_briefing', '20260728_brand_new'], [])
     expect(result).toEqual(['20260728_brand_new'])
@@ -83,7 +91,7 @@ describe('findMissingMigrations', () => {
 
 describe('the repo manifest against a fully-reconciled ledger', () => {
   // Every repo migration matched either by name or via LEGACY_RECONCILED as
-  // of the 2026-07-28 audit. Simulating a ledger that contains each
+  // of the migration audits. Simulating a ledger that contains each
   // migration's slug proves the manifest and matcher agree.
   it('reports no drift when the ledger holds every slug', () => {
     const ledger = REPO_MIGRATIONS.map(slugOf)
