@@ -16,9 +16,40 @@ interface Candidate {
   status: string
 }
 
+interface ExistingFact {
+  id: string
+  fact: string
+  source: string
+  expires_at: string | null
+}
+
 let candidate: Candidate | null = null
+let activeFacts: ExistingFact[] = []
 let insertedFact: Record<string, unknown> | null = null
 let updatedCandidate: Record<string, unknown> | null = null
+let supersededFact: Record<string, unknown> | null = null
+let rpcError: { message: string } | null = null
+
+// findConflictingFact itself is unit tested (business-fact-conflict.test.ts)
+// against the real LLM-judge shape — mocked here so this file's tests control
+// the resolution directly instead of steering an LLM prompt into a verdict.
+let conflictResult: {
+  conflictId: string | null
+  resolution: 'supersede' | 'ambiguous' | null
+  checkFailed?: boolean
+} = {
+  conflictId: null,
+  resolution: null,
+}
+vi.mock('@/lib/business-fact-conflict', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/business-fact-conflict')>(
+    '@/lib/business-fact-conflict'
+  )
+  return {
+    ...actual,
+    findConflictingFact: async () => conflictResult,
+  }
+})
 
 vi.mock('@/lib/supabase-server', () => ({
   createServiceClient: () => ({
@@ -40,17 +71,37 @@ vi.mock('@/lib/supabase-server', () => ({
       }
       if (table === 'business_facts') {
         return {
-          insert: (row: Record<string, unknown>) => ({
-            select: () => ({
-              single: async () => {
-                insertedFact = row
-                return { data: { id: 'fact-1', created_at: '2026-08-07T00:00:00Z' }, error: null }
-              },
+          select: () => ({
+            eq: () => ({
+              is: async () => ({ data: activeFacts, error: null }),
             }),
           }),
         }
       }
       throw new Error(`unexpected table: ${table}`)
+    },
+    // Mirrors the atomic add_business_fact_with_supersession RPC
+    // (20260819_business_facts_supersede_rpc.sql) — see add-business-fact.test.ts
+    // for the same shape. On rpcError, neither insertedFact nor
+    // supersededFact is ever set.
+    rpc(fn: string, params: Record<string, unknown>) {
+      if (fn !== 'add_business_fact_with_supersession') throw new Error(`unexpected rpc: ${fn}`)
+      return {
+        single: async () => {
+          if (rpcError) return { data: null, error: rpcError }
+          insertedFact = {
+            workspace_id: params.p_workspace_id,
+            category: params.p_category,
+            fact: params.p_fact,
+            source: params.p_source,
+            created_by: params.p_created_by,
+          }
+          if (params.p_supersede_id) {
+            supersededFact = { superseded_by: 'fact-1', id: params.p_supersede_id }
+          }
+          return { data: { id: 'fact-1', created_at: '2026-08-07T00:00:00Z' }, error: null }
+        },
+      }
     },
   }),
 }))
@@ -67,8 +118,12 @@ beforeEach(() => {
     category_guess: 'logistics',
     status: 'proposed',
   }
+  activeFacts = []
+  conflictResult = { conflictId: null, resolution: null }
   insertedFact = null
   updatedCandidate = null
+  supersededFact = null
+  rpcError = null
 })
 
 describe('confirm_fact_candidate', () => {
@@ -148,5 +203,93 @@ describe('confirm_fact_candidate', () => {
     const res = await confirmFactCandidate.execute({ candidate_id: 'cand-1', fact: 'Hi' }, ctx)
     expect(res.ok).toBe(false)
     expect(insertedFact).toBeNull()
+  })
+
+  // CAY-14: an inferred (Caye-proposed, owner-approved) fact must never
+  // silently outrank an explicit owner-direct fact, even when the LLM judge
+  // says "supersede" — rule 3 (owner-direct corrections outrank inferred
+  // knowledge) is enforced here regardless of what the judge concludes.
+  describe('CAY-14 supersession', () => {
+    it('refuses to supersede an owner-direct fact even when the judge says supersede', async () => {
+      activeFacts = [{ id: 'fact-old', fact: 'Cash is not accepted.', source: 'owner-direct', expires_at: null }]
+      conflictResult = { conflictId: 'fact-old', resolution: 'supersede' }
+
+      const res = await confirmFactCandidate.execute(
+        { candidate_id: 'cand-1', fact: 'Cash is accepted.' },
+        ctx
+      )
+      expect(res.ok).toBe(false)
+      expect(insertedFact).toBeNull()
+      expect(supersededFact).toBeNull()
+    })
+
+    it('supersedes a lower-ranked candidate-confirmed fact when the judge says supersede', async () => {
+      activeFacts = [
+        { id: 'fact-old', fact: 'Parking is free at the north lot.', source: 'candidate-confirmed', expires_at: null },
+      ]
+      conflictResult = { conflictId: 'fact-old', resolution: 'supersede' }
+
+      const res = await confirmFactCandidate.execute(
+        { candidate_id: 'cand-1', fact: 'Parking now costs $10/day at the north lot.' },
+        ctx
+      )
+      expect(res.ok).toBe(true)
+      expect(insertedFact).toMatchObject({ source: 'candidate-confirmed' })
+      expect(supersededFact).toMatchObject({ superseded_by: 'fact-1' })
+    })
+
+    it('fails closed on an ambiguous conflict without saving or superseding anything', async () => {
+      activeFacts = [
+        { id: 'fact-old', fact: 'Tours run daily at 9am.', source: 'candidate-confirmed', expires_at: null },
+      ]
+      conflictResult = { conflictId: 'fact-old', resolution: 'ambiguous' }
+
+      const res = await confirmFactCandidate.execute(
+        { candidate_id: 'cand-1', fact: 'The heritage tour now starts at 10am.' },
+        ctx
+      )
+      expect(res.ok).toBe(false)
+      expect(insertedFact).toBeNull()
+      expect(supersededFact).toBeNull()
+    })
+
+    // CAY-14 reliability fix: a conflict check that couldn't run at all
+    // (judge/infra failure) must never be treated as "no conflict" — that's
+    // exactly how the original incident happened.
+    it('fails closed when the conflict check itself failed, without saving or superseding anything', async () => {
+      activeFacts = [
+        { id: 'fact-old', fact: 'Cash is not accepted.', source: 'candidate-confirmed', expires_at: null },
+      ]
+      conflictResult = { conflictId: null, resolution: null, checkFailed: true }
+
+      const res = await confirmFactCandidate.execute(
+        { candidate_id: 'cand-1', fact: 'Cash is accepted.' },
+        ctx
+      )
+      expect(res.ok).toBe(false)
+      expect(insertedFact).toBeNull()
+      expect(supersededFact).toBeNull()
+    })
+
+    // CAY-14 atomicity fix: the insert and the supersede update happen
+    // inside one transactional RPC call (add_business_fact_with_
+    // supersession) — a DB-level failure fails the whole write, never a
+    // saved fact with an un-superseded (or double-superseded) old row.
+    it('supersession DB failure never leaves a dual-active state', async () => {
+      activeFacts = [
+        { id: 'fact-old', fact: 'Parking is free at the north lot.', source: 'candidate-confirmed', expires_at: null },
+      ]
+      conflictResult = { conflictId: 'fact-old', resolution: 'supersede' }
+      rpcError = { message: 'business fact fact-old is already superseded' }
+
+      const res = await confirmFactCandidate.execute(
+        { candidate_id: 'cand-1', fact: 'Parking now costs $10/day at the north lot.' },
+        ctx
+      )
+      expect(res.ok).toBe(false)
+      expect((res as { error: string }).error).toContain('already superseded')
+      expect(insertedFact).toBeNull()
+      expect(supersededFact).toBeNull()
+    })
   })
 })

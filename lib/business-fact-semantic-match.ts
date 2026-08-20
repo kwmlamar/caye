@@ -39,7 +39,7 @@ const MAX_CANDIDATES = 25
  * job is trimming an unbounded existing-facts list down to plausible candidates
  * before asking the model to choose among them.
  */
-function sharesAnyWord(a: string, b: string): boolean {
+export function sharesAnyWord(a: string, b: string): boolean {
   const wordsA = new Set(normalizeSentence(a).split(' ').filter((w) => w.length > 3))
   if (wordsA.size === 0) return true // nothing to filter on — let the LLM see it
   return normalizeSentence(b)
