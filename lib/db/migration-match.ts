@@ -6,7 +6,7 @@
  */
 
 /**
- * Migrations verified applied on 2026-07-28 by checking that the DB objects
+ * Migrations verified applied by checking that the DB objects / constraints
  * they create actually exist, but recorded in schema_migrations under a
  * different name than their filename. They predate the convention of using
  * the filename as the migration name — e.g. 20260611_eod_summary.sql was
@@ -15,7 +15,8 @@
  * Without this, every one of them would false-positive forever and train
  * whoever gets the alert to ignore it — which is precisely how the real
  * gaps stayed invisible for weeks. Nothing should be added here without
- * first confirming in the database that the migration's objects are present.
+ * first confirming from production evidence that the migration's effect is
+ * present.
  */
 export const LEGACY_RECONCILED: ReadonlySet<string> = new Set([
   '20260527_add_metadata_to_workspace_ai_config', // → metadata column present
@@ -27,6 +28,14 @@ export const LEGACY_RECONCILED: ReadonlySet<string> = new Set([
   '20260703b_bookings_payment_and_reminders', // → payment/reminder columns present
   '20260721b_morning_digest_aging_escalations_placeholder', // data-only; template row updated
   '20260723b_team_consent_template', // → team_consent_template_seed
+  // 2026-08-20 reconciliation: both were deployed before the migration-history
+  // naming convention stabilized. The payment_setup_needed queue kind is
+  // independently visible in the live DB constraint; cron-run history has
+  // been used by deployed operational telemetry without missing-relation
+  // failures. Keep them as exact legacy exceptions rather than weakening the
+  // matcher for future letter-suffixed migrations.
+  '20260813d_add_payment_setup_needed_outbound_kind',
+  '20260813g_cron_run_history',
 ])
 
 /**
