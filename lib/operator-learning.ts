@@ -94,9 +94,13 @@ export async function fetchLearnedOperatingKnowledge(workspaceId: string): Promi
       for (const row of rows) row.supersedes = ((prior ?? []) as Array<{id:string;source_excerpt:string;superseded_by:string}>)
         .filter((p) => p.superseded_by === row.id).map(({ id, source_excerpt }) => ({ id, source_excerpt }))
     }
-    if (rows.length) void supabase.from('learned_operating_knowledge_audit').insert(rows.map((r) => ({
-      workspace_id: workspaceId, knowledge_id: r.id, event_type: 'retrieved', details: { surface: 'agent_context' },
-    })))
+    if (rows.length) void supabase.from('learned_operating_knowledge_audit').insert(rows.flatMap((r) => ([
+      { workspace_id: workspaceId, knowledge_id: r.id, event_type: 'retrieved', details: { surface: 'agent_context' } },
+      // "Applied" here means deterministically injected into the current
+      // model context, not that a send/action occurred. Execution evidence
+      // remains exclusively in the existing action ledgers and gates.
+      { workspace_id: workspaceId, knowledge_id: r.id, event_type: 'applied', details: { stage: 'agent_context_injection' } },
+    ])))
     return rows
   } catch (err) {
     console.warn('[operator-learning] retrieval unavailable:', err)
