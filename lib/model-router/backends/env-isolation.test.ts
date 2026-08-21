@@ -12,17 +12,23 @@ vi.mock('server-only', () => ({}))
  * service role key, WhatsApp tokens) plus generic KEY/SECRET/TOKEN-shaped
  * env vars. minimalEnv() isn't exported — this drives it indirectly via
  * checkHealth(), the cheapest real call that constructs and uses it, with
- * runSubprocess itself mocked so no real process is spawned.
+ * checkCliBinaryHealth (the shared checkHealth() body both backends call —
+ * see subprocess.ts) mocked so no real process is spawned. Captures the
+ * `env` argument directly rather than going through a mocked
+ * runSubprocess, since checkCliBinaryHealth's own internal call to
+ * runSubprocess is an intra-module reference invisible to a mock of this
+ * module from outside it.
  */
 const calls: { env: NodeJS.ProcessEnv }[] = []
 vi.mock('./subprocess', () => ({
-  runSubprocess: vi.fn(async (opts: { env: NodeJS.ProcessEnv }) => {
-    calls.push({ env: opts.env })
-    return { exitCode: 0, stdout: '', stderr: '', timedOut: false }
-  }),
+  runSubprocess: vi.fn(async () => ({ exitCode: 0, stdout: '', stderr: '', timedOut: false })),
   SubprocessSpawnError: class SubprocessSpawnError extends Error {
     code?: string
   },
+  checkCliBinaryHealth: vi.fn(async (_command: string, env: NodeJS.ProcessEnv) => {
+    calls.push({ env })
+    return { state: 'available', checkedAt: new Date().toISOString() }
+  }),
 }))
 
 const originalEnv = { ...process.env }

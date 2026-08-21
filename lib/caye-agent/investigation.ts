@@ -1,5 +1,8 @@
 import 'server-only'
+import { randomUUID } from 'crypto'
+import type Anthropic from '@anthropic-ai/sdk'
 import type { createServiceClient } from '@/lib/supabase-server'
+import { cayeAgent, type CayeAgentResult } from './index'
 
 type SupabaseClient = ReturnType<typeof createServiceClient>
 
@@ -250,4 +253,101 @@ export function buildContinuationPrompt(objective: string, digest: Investigation
       'can make, or have genuinely confirmed something is inaccessible after trying.'
   )
   return lines.join('\n')
+}
+
+/**
+ * The founder-facing message once MAX_INVESTIGATION_CONTINUATIONS is
+ * exhausted without a real synthesis — twin of buildContinuationPrompt
+ * above (same digest input, same investigation-state concern), grounded in
+ * what was actually found rather than a generic "try again?" placeholder.
+ */
+export function buildExhaustionSummary(digest: InvestigationDigest, passes: number): string {
+  return [
+    `This investigation ran ${digest.totalCalls} tool calls across ${passes} passes ` +
+      "and hit the amount I'll run on my own before checking back with you.",
+    digest.totalCalls > 0
+      ? `Here's what I actually confirmed before stopping:\n\n${digest.summaryText}`
+      : "I wasn't able to confirm anything before stopping.",
+    'Nothing here is invented — this is only what the tools actually returned. Want me to keep going from here, or write up the analysis from what I have so far?',
+  ].join('\n\n')
+}
+
+export interface RunInvestigationInput {
+  workspaceId: string
+  threadId: string
+  message: string
+  callerName: string
+  operatorId: number | null
+}
+
+/**
+ * Runs one founder-authorized investigation end to end: the initial
+ * cayeAgent() pass, bounded automatic continuation while runToolLoop keeps
+ * reporting ranOutOfIterations (see the module doc comment above), and —
+ * only once the continuation budget is exhausted — a real, ledger-grounded
+ * summary in place of the generic per-round degrade placeholder.
+ *
+ * `persistPassTurns` is supplied by the caller (founder-thread-turn.ts) so
+ * each pass's turns land in caye_operator_messages immediately rather than
+ * accumulating in memory across a possibly multi-pass investigation — see
+ * that caller's own comment on why that bounds crash-loss to one in-flight
+ * pass instead of the whole investigation.
+ */
+export async function runInvestigation(
+  supabase: SupabaseClient,
+  input: RunInvestigationInput,
+  persistPassTurns: (turns: Anthropic.MessageParam[], linkedThreadIds: string[]) => Promise<void>
+): Promise<CayeAgentResult> {
+  // Generated once, up front, and reused for every continuation of this
+  // same logical investigation — this is the key that
+  // caye_tool_calls.investigation_id groups on and that
+  // summarizeInvestigation() reads back. Never returned to the caller —
+  // nothing outside this function can address or resume a specific
+  // investigation, which is what makes "two workers racing the same
+  // investigation" structurally impossible today: there is no channel
+  // through which a second process could ever learn this id.
+  const investigationId = randomUUID()
+
+  let agentResult: CayeAgentResult = await cayeAgent({
+    mode: 'back-office',
+    workspaceId: input.workspaceId,
+    userMessage: input.message,
+    callerRole: 'founder',
+    callerName: input.callerName,
+    operatorId: input.operatorId,
+    threadId: input.threadId,
+    investigation: { id: investigationId, isContinuation: false, objective: input.message },
+  })
+  await persistPassTurns(agentResult.newTurns, agentResult.linkedThreadIds)
+
+  // A recoverable "ran out of room in one round" is never surfaced to the
+  // founder as a question — the founder already authorized this
+  // investigation by asking for it. Only when MAX_INVESTIGATION_CONTINUATIONS
+  // is exhausted does this return a real, ledger-grounded status instead of
+  // silently repeating the generic "taking longer" placeholder.
+  let continuations = 0
+  while (agentResult.ranOutOfIterations && continuations < MAX_INVESTIGATION_CONTINUATIONS) {
+    continuations++
+    agentResult = await cayeAgent({
+      mode: 'back-office',
+      workspaceId: input.workspaceId,
+      userMessage: input.message,
+      callerRole: 'founder',
+      callerName: input.callerName,
+      operatorId: input.operatorId,
+      threadId: input.threadId,
+      investigation: { id: investigationId, isContinuation: true, objective: input.message },
+    })
+    await persistPassTurns(agentResult.newTurns, agentResult.linkedThreadIds)
+  }
+
+  if (agentResult.ranOutOfIterations) {
+    const digest = await summarizeInvestigation(supabase, investigationId, input.workspaceId)
+    const groundedText = buildExhaustionSummary(digest, continuations + 1)
+    const finalTurn: Anthropic.MessageParam = { role: 'assistant', content: [{ type: 'text', text: groundedText }] }
+    await persistPassTurns([finalTurn], [])
+    agentResult = { ...agentResult, replyText: groundedText }
+  }
+
+  return agentResult
 }

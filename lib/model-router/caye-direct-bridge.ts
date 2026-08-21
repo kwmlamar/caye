@@ -115,7 +115,12 @@ export async function runCayeDirectRouterTurn(args: CayeDirectRouterTurnArgs): P
       `[model-router/caye-direct-bridge] turn served — thread=${args.threadId} requestedMode=${args.requestedMode} ` +
         `selected=${decision.selected ?? 'none'} fallbacks=${decision.fallbacksTried.map((f) => `${f.backend}:${f.reason}`).join(',') || 'none'}`
     )
-    buildInvocationLog({
+    // Structured line — see observability.ts's doc comment: this shape is
+    // deliberately flat/JSON so it can go straight to a Supabase table
+    // later without redesign. Until that table exists, this is the only
+    // place the redacted, fully-typed log record (cost/usage fields the
+    // line above doesn't carry) actually reaches anywhere.
+    console.log('[model-router/caye-direct-bridge] invocation_log', JSON.stringify(buildInvocationLog({
       requestedMode: args.requestedMode,
       selectedBackend: decision.selected,
       fallbackSequence: decision.fallbacksTried,
@@ -123,7 +128,7 @@ export async function runCayeDirectRouterTurn(args: CayeDirectRouterTurnArgs): P
       success: true,
       threadId: args.threadId,
       founderUserId: args.founderUserId,
-    })
+    })))
 
     return {
       replyText: result.replyText,
@@ -136,7 +141,7 @@ export async function runCayeDirectRouterTurn(args: CayeDirectRouterTurnArgs): P
     console.error(
       `[model-router/caye-direct-bridge] turn failed — thread=${args.threadId} requestedMode=${args.requestedMode} error=${failureSummary}`
     )
-    buildInvocationLog({
+    console.error('[model-router/caye-direct-bridge] invocation_log', JSON.stringify(buildInvocationLog({
       requestedMode: args.requestedMode,
       selectedBackend: decision?.selected,
       fallbackSequence: decision?.fallbacksTried ?? [],
@@ -145,7 +150,7 @@ export async function runCayeDirectRouterTurn(args: CayeDirectRouterTurnArgs): P
       failureSummary,
       threadId: args.threadId,
       founderUserId: args.founderUserId,
-    })
+    })))
     throw err
   }
 }

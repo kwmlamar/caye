@@ -1,5 +1,7 @@
 import 'server-only'
 import { spawn } from 'node:child_process'
+import type { BackendHealth } from '../types'
+import { isLocalBridgeEnvironment } from './local-bridge'
 
 /**
  * Shared subprocess runner for the two subscription CLI backends. Section
@@ -100,4 +102,38 @@ export function runSubprocess(opts: RunSubprocessOptions): Promise<SubprocessRes
     }
     child.stdin.end()
   })
+}
+
+/**
+ * Shared `checkHealth()` body for the two subscription CLI backends
+ * (claude-subscription.ts, openai-codex-subscription.ts) — identical
+ * local-bridge gate, `--version` probe, and unavailable-reason mapping for
+ * both, differing only in which binary is checked and its env. `--version`
+ * spends no model prompt (brief section 14) — it only proves the binary is
+ * on PATH; it cannot confirm the stored login is still valid, which
+ * surfaces at invoke() time and is classified as auth_required there.
+ */
+export async function checkCliBinaryHealth(command: string, env: NodeJS.ProcessEnv): Promise<BackendHealth> {
+  const checkedAt = new Date().toISOString()
+  if (!isLocalBridgeEnvironment()) {
+    return { state: 'unavailable', detail: 'Not running on the founder local bridge.', checkedAt }
+  }
+  try {
+    const result = await runSubprocess({
+      command,
+      args: ['--version'],
+      env,
+      timeoutMs: 5_000,
+      signal: AbortSignal.timeout(5_000),
+    })
+    if (result.exitCode !== 0) {
+      return { state: 'unavailable', detail: `${command} --version exited non-zero.`, checkedAt }
+    }
+    return { state: 'available', checkedAt }
+  } catch (err) {
+    if (err instanceof SubprocessSpawnError && err.code === 'ENOENT') {
+      return { state: 'unavailable', detail: `${command} CLI not found on PATH.`, checkedAt }
+    }
+    return { state: 'unavailable', detail: 'Health check failed.', checkedAt }
+  }
 }

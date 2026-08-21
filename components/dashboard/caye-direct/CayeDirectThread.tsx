@@ -492,21 +492,27 @@ export default function CayeDirectThread(props: Props) {
     setShowJump(false)
   }
 
-  // `opts.endpoint` lets a finalized VOICE utterance (CayeVoiceSession, via
-  // useVoiceSession's `sendTurn`) reuse this exact function — same
-  // optimistic bubble, same inFlightRuns registration, same post-turn
-  // refetch — instead of duplicating this round trip for a second input
-  // modality. Voice posts to /api/founder/caye-direct/voice/turn (which
-  // calls the identical runFounderThreadTurn() this thread's own endpoint
-  // calls) rather than /threads/:id; the request/response shape is the
-  // same on both. Returns the reply text so a voice caller can hand it to
-  // TTS; typed sends ignore the return value.
-  async function send(text: string, opts?: { endpoint?: string; sessionId?: string }): Promise<string | null> {
+  // Core round trip shared by the typed composer (`send`, below) and a
+  // finalized VOICE utterance (CayeVoiceSession, via useVoiceSession's
+  // `sendTurn`) — same optimistic bubble, same inFlightRuns registration,
+  // same post-turn refetch, instead of duplicating this for a second input
+  // modality. `opts.isTyped` is the ONE thing that distinguishes the two
+  // callers (composer-clearing, the model selector, and lastBackend/error
+  // UI are typed-only); everything else in this function is identical for
+  // both. Voice posts to /api/founder/caye-direct/voice/turn (which calls
+  // the identical runFounderThreadTurn() the typed endpoint calls) rather
+  // than /threads/:id — same request/response shape either way. Returns
+  // the reply text so a voice caller can hand it to TTS; typed sends
+  // ignore the return value.
+  async function runTurn(
+    text: string,
+    opts: { endpoint: string; sessionId?: string; isTyped: boolean }
+  ): Promise<string | null> {
     const trimmed = text.trim()
     if (!trimmed || sending || readOnly || mode !== 'thread') return null
 
     setSending(true)
-    if (!opts?.endpoint) setInput('')
+    if (opts.isTyped) setInput('')
     atBottomRef.current = true
 
     const optimistic: OperatorMessage = {
@@ -532,18 +538,17 @@ export default function CayeDirectThread(props: Props) {
       try {
         const { session } = await getSession()
         if (!session) return
-        const res = await fetch(opts?.endpoint ?? `/api/founder/caye-direct/threads/${threadId}`, {
+        const res = await fetch(opts.endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
           body: JSON.stringify({
             workspaceId,
             threadId,
             message: trimmed,
-            ...(opts?.sessionId ? { sessionId: opts.sessionId } : {}),
-            // Only the plain typed-text path (no custom endpoint) sends a
-            // model choice — voice posts to its own endpoint and always
-            // gets Auto server-side, unaffected by this selector.
-            ...(!opts?.endpoint ? { model: modelMode } : {}),
+            ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
+            // Only the typed path sends a model choice — voice posts to
+            // its own endpoint and always gets Auto server-side.
+            ...(opts.isTyped ? { model: modelMode } : {}),
           }),
         })
         const json = await res.json()
@@ -556,10 +561,10 @@ export default function CayeDirectThread(props: Props) {
             created_at: new Date().toISOString(),
           }])
         }
-        // Both of these are scoped to the plain typed path only — voice's
+        // Both of these are scoped to the typed path only — voice's
         // error/backend handling is untouched, exactly as before this
         // selector existed (see the comment on the `model` field above).
-        if (!opts?.endpoint) {
+        if (opts.isTyped) {
           setLastBackend(res.ok && typeof json.backend === 'string' ? json.backend : null)
           if (!res.ok) {
             setMessages((prev) => [...prev, {
@@ -575,9 +580,9 @@ export default function CayeDirectThread(props: Props) {
         // contacts as tool calls, and until now told only this thread
         // about it — the rest of the console kept showing pre-turn state
         // until a full page reload. Emitted inside the run promise rather
-        // than in send()'s finally so it fires once per turn no matter how
-        // many mounts are awaiting it, and still fires if this component
-        // unmounted mid-turn (the whole point of inFlightRuns).
+        // than in runTurn()'s finally so it fires once per turn no matter
+        // how many mounts are awaiting it, and still fires if this
+        // component unmounted mid-turn (the whole point of inFlightRuns).
         if (res.ok) {
           emitStale(workspaceId, ALL_TOPICS)
           // Title generation happens server-side after the first reply —
@@ -600,6 +605,11 @@ export default function CayeDirectThread(props: Props) {
       setSending(false)
     }
     return replyText
+  }
+
+  function send(text: string): Promise<string | null> {
+    if (mode !== 'thread') return Promise.resolve(null)
+    return runTurn(text, { endpoint: `/api/founder/caye-direct/threads/${props.threadId}`, isTyped: true })
   }
 
   // Fires the composer-supplied opener once history has settled — waiting
@@ -857,7 +867,7 @@ export default function CayeDirectThread(props: Props) {
             <div className="caye-direct-composer-shell">
               <CayeVoiceSession
                 workspaceId={workspaceId}
-                sendTurn={send}
+                sendTurn={(text, opts) => runTurn(text, { ...opts, isTyped: false })}
                 onClose={() => setVoiceActive(false)}
               />
             </div>

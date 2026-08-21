@@ -50,6 +50,17 @@ export interface ToolLoopArgs {
    * bypassed by falling back to the real registry entry of the same name.
    */
   tools?: Tool<never>[]
+  /**
+   * Structural write-exclusion (2026-08-17 Bimini revenue-audit fix). When
+   * true, the tool list shipped to Claude is filtered down to `risk: 'read'`
+   * tools only — used by investigation continuation passes
+   * (lib/caye-agent/investigation.ts) so a resumed multi-round investigation
+   * can keep reading but can never write on a pass the founder didn't
+   * directly see and respond to. Undefined/false on every ordinary turn,
+   * where the full mode-scoped registry (or `tools` override) applies as
+   * before.
+   */
+  readOnly?: boolean
 }
 
 export interface ToolLoopResult {
@@ -74,6 +85,15 @@ export interface ToolLoopResult {
    * every front-desk call that went through a tool normally.
    */
   usedOutputFallbackPath?: boolean
+  /**
+   * True only when the loop exhausted MAX_TOOL_ITERATIONS without Claude
+   * producing a text-only turn (2026-08-17 Bimini revenue-audit fix). The
+   * caller (lib/caye-agent/founder-thread-turn.ts) uses this to resume the
+   * investigation as a fresh continuation pass instead of surfacing the
+   * generic degrade message below as a final answer. Undefined/false on
+   * every turn that finished normally.
+   */
+  ranOutOfIterations?: boolean
 }
 
 /**
@@ -103,7 +123,9 @@ export async function runToolLoop(args: ToolLoopArgs): Promise<ToolLoopResult> {
   // The override registry (replay harness only — see ToolLoopArgs.tools) is
   // used as-is, already scoped by whoever built it. The default path is
   // byte-for-byte what ran before this field existed.
-  const toolRegistry: Tool<never>[] = args.tools ?? TOOL_REGISTRY.filter((t) => t.modes.includes(mode))
+  const toolRegistry: Tool<never>[] = (args.tools ?? TOOL_REGISTRY.filter((t) => t.modes.includes(mode))).filter(
+    (t) => !args.readOnly || t.risk === 'read'
+  )
   const tools = toolRegistry.map(asAnthropicTool)
   if (tools.length > 0) {
     const last = tools[tools.length - 1]
@@ -348,7 +370,7 @@ export async function runToolLoop(args: ToolLoopArgs): Promise<ToolLoopResult> {
       // there is no catch here any more. What reaches the model is a
       // classified outcome plus an instruction for how to report it, not a
       // raw error string it has to interpret for itself.
-      const { result } = await runToolWithRecovery(tool, block.input, args.ctx, { mode })
+      const { result } = await runToolWithRecovery(tool, block.input, args.ctx, { mode, toolUseId: block.id })
       const payload = stripForModel(result)
       const guidance = guidanceFor(result.status, result.deferred === true)
       if (guidance) payload.how_to_report_this = guidance
@@ -403,5 +425,6 @@ export async function runToolLoop(args: ToolLoopArgs): Promise<ToolLoopResult> {
   return {
     replyText: "Sorry, that one's taking longer than it should — give me a moment and try again.",
     newTurns,
+    ranOutOfIterations: true,
   }
 }

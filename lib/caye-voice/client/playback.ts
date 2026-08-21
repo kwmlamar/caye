@@ -105,9 +105,20 @@ export class TtsPlaybackController {
     this.sourceBuffer.addEventListener('updateend', () => this.drainAppendQueue())
 
     let startedPlayback = false
-    for (const sentence of sentences) {
+    const startFetch = (sentence: string) =>
+      this.fetchTts({ text: sentence, provider, workspaceId, sessionId }, this.abortController!.signal)
+
+    // Sentence N+1's fetch is kicked off as soon as sentence N's response
+    // headers arrive — before N's body is read/appended/played — so its
+    // network latency overlaps with N's streaming instead of adding on
+    // top of it. Sentences are still read and appended strictly in order,
+    // so this only closes the network-latency gap; it changes nothing
+    // about append/playback ordering.
+    let nextFetch: Promise<Response> | null = startFetch(sentences[0])
+    for (let i = 0; i < sentences.length; i++) {
       if (this.stopped) return
-      const res = await this.fetchTts({ text: sentence, provider, workspaceId, sessionId }, this.abortController.signal)
+      const res = await nextFetch!
+      nextFetch = i + 1 < sentences.length ? startFetch(sentences[i + 1]) : null
       if (this.stopped) return
       if (!res.ok || !res.body) throw new Error(`TTS fetch failed: ${res.status}`)
 

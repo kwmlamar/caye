@@ -4,14 +4,28 @@ import type Anthropic from '@anthropic-ai/sdk'
 vi.mock('server-only', () => ({}))
 
 const insertedRow = { id: 'inbound-row-1' }
+// Rows summarizeInvestigation() (the REAL implementation — see the
+// './investigation' mock below, which no longer overrides it) reads back
+// from 'caye_tool_calls' when a test needs runInvestigation's exhaustion
+// path to produce a real, non-empty digest. Reset per-test.
+let toolCallRows: Array<Record<string, unknown>> = []
 const supabaseStub = {
-  from: vi.fn(() => ({
-    insert: vi.fn(() => ({
-      select: vi.fn(() => ({
-        single: vi.fn(() => Promise.resolve({ data: insertedRow })),
+  from: vi.fn((table: string) => {
+    if (table === 'caye_tool_calls') {
+      const builder = {
+        eq: vi.fn(() => builder),
+        order: vi.fn(() => Promise.resolve({ data: toolCallRows, error: null })),
+      }
+      return { select: vi.fn(() => builder) }
+    }
+    return {
+      insert: vi.fn(() => ({
+        select: vi.fn(() => ({
+          single: vi.fn(() => Promise.resolve({ data: insertedRow })),
+        })),
       })),
-    })),
-  })),
+    }
+  }),
 }
 
 vi.mock('@/lib/supabase-server', () => ({
@@ -69,16 +83,10 @@ vi.mock('@/lib/model-router/caye-direct-bridge', () => ({
   runCayeDirectRouterTurn: (...args: unknown[]) => runCayeDirectRouterTurnMock(...args),
 }))
 
-const summarizeInvestigationMock = vi.fn((..._args: unknown[]) =>
-  Promise.resolve({ totalCalls: 0, summaryText: '' })
-)
-vi.mock('./investigation', async () => {
-  const actual = await vi.importActual<typeof import('./investigation')>('./investigation')
-  return {
-    ...actual,
-    summarizeInvestigation: (...args: unknown[]) => summarizeInvestigationMock(...args),
-  }
-})
+// './investigation' is NOT mocked: runInvestigation lives there and calls
+// its own sibling summarizeInvestigation directly (an intra-module call,
+// invisible to a partial vi.mock override from this file's perspective) —
+// so the real chain runs against supabaseStub's 'caye_tool_calls' rows above.
 
 import { runFounderThreadTurn } from './founder-thread-turn'
 import { MAX_INVESTIGATION_CONTINUATIONS } from './investigation'
@@ -89,7 +97,7 @@ describe('runFounderThreadTurn — the single path both typed and voice turns sh
     resolveFounderOperatorMock.mockResolvedValue({ id: 7, name: 'Lamar', role: 'founder' })
     persistAgentTurnsMock.mockResolvedValue([{ id: 'turn-1' }, { id: 'turn-2' }])
     cayeAgentMock.mockResolvedValue({ replyText: 'Here you go.', newTurns: [], linkedThreadIds: [] })
-    summarizeInvestigationMock.mockResolvedValue({ totalCalls: 0, summaryText: '' })
+    toolCallRows = []
   })
 
   it('throws "Thread not found" when the thread does not exist for this workspace', async () => {
@@ -198,7 +206,7 @@ describe('runFounderThreadTurn — bounded investigation continuation (2026-08-1
     vi.clearAllMocks()
     resolveFounderOperatorMock.mockResolvedValue({ id: 7, name: 'Lamar', role: 'founder' })
     persistAgentTurnsMock.mockResolvedValue([{ id: 'turn-1' }, { id: 'turn-2' }])
-    summarizeInvestigationMock.mockResolvedValue({ totalCalls: 0, summaryText: '' })
+    toolCallRows = []
     getThreadMock.mockResolvedValue({ id: 'thread-1', status: 'active' })
   })
 
@@ -283,10 +291,26 @@ describe('runFounderThreadTurn — bounded investigation continuation (2026-08-1
       linkedThreadIds: [],
       ranOutOfIterations: true,
     })
-    summarizeInvestigationMock.mockResolvedValue({
-      totalCalls: 63,
-      summaryText: '- get_customer_history: 60 succeeded, 3 failed',
-    })
+    // Seeds the real summarizeInvestigation() (see supabaseStub above) so it
+    // renders exactly "- get_customer_history: 60 succeeded, 3 failed" —
+    // same shape the old mocked digest asserted, now produced by the actual
+    // grouping logic instead of a canned string.
+    toolCallRows = [
+      ...Array.from({ length: 60 }, (_, i) => ({
+        tool_name: 'get_customer_history',
+        status: 'SUCCESS',
+        deferred: false,
+        args: { conversation_id: `conv-${i}` },
+        created_at: '2026-08-17T00:00:00Z',
+      })),
+      ...Array.from({ length: 3 }, (_, i) => ({
+        tool_name: 'get_customer_history',
+        status: 'FAILED',
+        deferred: false,
+        args: { conversation_id: `conv-failed-${i}` },
+        created_at: '2026-08-17T00:00:00Z',
+      })),
+    ]
 
     const result = await runFounderThreadTurn('ws-1', 'thread-1', 'Audit every customer in depth.')
 
@@ -308,7 +332,10 @@ describe('runFounderThreadTurn — bounded investigation continuation (2026-08-1
       backend: 'claude_subscription',
     })
     await runFounderThreadTurn('ws-1', 'thread-1', 'hello', { requestedMode: 'claude', founderUserId: 'f-1' })
-    expect(summarizeInvestigationMock).not.toHaveBeenCalled()
+    // cayeAgent is the only entry point into runInvestigation (and, in turn,
+    // into summarizeInvestigation's exhaustion path) — proving it was never
+    // called on the router path structurally proves the ledger was never
+    // touched either.
     expect(cayeAgentMock).not.toHaveBeenCalled()
   })
 

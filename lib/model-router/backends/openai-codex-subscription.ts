@@ -11,7 +11,7 @@ import {
   parseCodexStructuredToolResponse,
 } from '../tool-bridge/parse-codex-tool-response'
 import { isLocalBridgeEnvironment } from './local-bridge'
-import { runSubprocess, SubprocessSpawnError } from './subprocess'
+import { runSubprocess, SubprocessSpawnError, checkCliBinaryHealth } from './subprocess'
 import { withIsolatedCwd } from './isolated-cwd'
 
 /**
@@ -62,28 +62,7 @@ export class OpenAICodexSubscriptionBackend implements ModelBackend, ToolCapable
   readonly capabilities = ['general_reasoning', 'coding', 'structured_output', 'local_repo_access'] as const
 
   async checkHealth(): Promise<BackendHealth> {
-    const checkedAt = new Date().toISOString()
-    if (!isLocalBridgeEnvironment()) {
-      return { state: 'unavailable', detail: 'Not running on the founder local bridge.', checkedAt }
-    }
-    try {
-      const result = await runSubprocess({
-        command: 'codex',
-        args: ['--version'],
-        env: minimalEnv(),
-        timeoutMs: 5_000,
-        signal: AbortSignal.timeout(5_000),
-      })
-      if (result.exitCode !== 0) {
-        return { state: 'unavailable', detail: 'codex --version exited non-zero.', checkedAt }
-      }
-      return { state: 'available', checkedAt }
-    } catch (err) {
-      if (err instanceof SubprocessSpawnError && err.code === 'ENOENT') {
-        return { state: 'unavailable', detail: 'codex CLI not found on PATH.', checkedAt }
-      }
-      return { state: 'unavailable', detail: 'Health check failed.', checkedAt }
-    }
+    return checkCliBinaryHealth('codex', minimalEnv())
   }
 
   async invoke(req: ModelInvokeRequest, signal: AbortSignal): Promise<ModelInvokeResult> {

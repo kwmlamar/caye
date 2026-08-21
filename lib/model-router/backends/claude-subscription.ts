@@ -5,7 +5,7 @@ import { renderToolManifest } from '../tool-bridge/render-tool-manifest'
 import { renderTranscriptForCli } from '../tool-bridge/render-transcript'
 import { parseClaudeFencedToolResponse } from '../tool-bridge/parse-claude-tool-response'
 import { isLocalBridgeEnvironment } from './local-bridge'
-import { runSubprocess, SubprocessSpawnError } from './subprocess'
+import { runSubprocess, SubprocessSpawnError, checkCliBinaryHealth } from './subprocess'
 import { withIsolatedCwd } from './isolated-cwd'
 
 /**
@@ -53,32 +53,7 @@ export class ClaudeSubscriptionBackend implements ModelBackend, ToolCapableBacke
   readonly capabilities = ['general_reasoning', 'coding', 'long_context', 'structured_output', 'local_repo_access'] as const
 
   async checkHealth(): Promise<BackendHealth> {
-    const checkedAt = new Date().toISOString()
-    if (!isLocalBridgeEnvironment()) {
-      return { state: 'unavailable', detail: 'Not running on the founder local bridge.', checkedAt }
-    }
-    try {
-      // --version spends no model prompt (brief section 14) — it only
-      // proves the binary is on PATH. It cannot confirm the stored login
-      // is still valid; an expired login surfaces at invoke() time and is
-      // classified as auth_required there.
-      const result = await runSubprocess({
-        command: 'claude',
-        args: ['--version'],
-        env: minimalEnv(),
-        timeoutMs: 5_000,
-        signal: AbortSignal.timeout(5_000),
-      })
-      if (result.exitCode !== 0) {
-        return { state: 'unavailable', detail: 'claude --version exited non-zero.', checkedAt }
-      }
-      return { state: 'available', checkedAt }
-    } catch (err) {
-      if (err instanceof SubprocessSpawnError && err.code === 'ENOENT') {
-        return { state: 'unavailable', detail: 'claude CLI not found on PATH.', checkedAt }
-      }
-      return { state: 'unavailable', detail: 'Health check failed.', checkedAt }
-    }
+    return checkCliBinaryHealth('claude', minimalEnv())
   }
 
   async invoke(req: ModelInvokeRequest, signal: AbortSignal): Promise<ModelInvokeResult> {
