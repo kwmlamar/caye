@@ -34,6 +34,37 @@
  * touched — "I escalated this to you" contains none of these patterns.
  */
 
+/**
+ * Human-readable label for a CayeAutoReply EscalationCategory
+ * ('gap' | 'policy' | 'knowledge' | 'sensitive', defined in caye-reply.ts —
+ * not imported here since that module pulls in server-only/Anthropic deps
+ * this file is deliberately kept free of; the union is duplicated as a
+ * plain string type instead).
+ *
+ * WHY (Ruslan Prakapovich, 2026-08-17/CAY-12): applyAutosendGate's held-reply
+ * path used to write `(would have escalated: ${decision.category})` straight
+ * into the operator ping — "Ruslan Prakapovich came in — Thread is held for
+ * a human — Caye did not reply (would have escalated: sensitive)." That
+ * `sensitive` is the raw routing enum, not prose. The same category also
+ * used to land in human_agent_reason via lib/whatsapp/escalation.ts's
+ * "Escalation (category): " prefix (now dropped there entirely) — this is
+ * the one place a category is translated to something an owner reads.
+ */
+export function escalationCategoryLabel(
+  category: 'gap' | 'policy' | 'knowledge' | 'sensitive'
+): string {
+  switch (category) {
+    case 'gap':
+      return "something Caye doesn't have the tools to do"
+    case 'policy':
+      return 'a call only the owner can make'
+    case 'knowledge':
+      return 'something outside what Caye knows about the business'
+    case 'sensitive':
+      return 'a sensitive or commercial matter'
+  }
+}
+
 /** Tool markers emitted by summarizeTurnBody for the audit `body` column. */
 const TOOL_MARKER_PATTERN = /\s*\[tool_use:[^\]]*\]|\s*\[tool_result\]/g
 
@@ -71,6 +102,34 @@ const INTERNAL_PROSE_PATTERNS: { pattern: RegExp; label: string }[] = [
   // scan text that forgets to scrub fails a test instead of shipping the
   // token to a phone. It leaked once already, on 2026-08-08.
   { pattern: /\bNOTHING_TO_REPORT\b/, label: 'quiet-scan sentinel' },
+  // The exact evidence-gate reason codes from lib/caye-agent/evidence.ts's
+  // DispositionResult.reasons. ownerReasonLabelFor/ownerNoteFor translate
+  // these before they reach human_agent_reason or a drafted note — but
+  // "Pam Ott came in — availability_claim_unverified. Want me to take a
+  // first pass, or you got this one?" (2026-08-17) shipped straight from
+  // this exact machine code once already, via a caller that read
+  // evidenceVerdict.reasons[0] directly instead of going through the label
+  // function. Closed vocabulary, not a general snake_case scan — see
+  // founderBriefingLeak below for the broader dashboard-only version.
+  {
+    pattern:
+      /\b(?:availability_claim_unverified|quote_without_database_price|high_stakes_claim_without_verified_context|model_reported_uncertainty|owner_followup_requested)\b/,
+    label: 'evidence-gate reason code',
+  },
+  // applyAutosendGate's held-reply reason used to say "(would have
+  // escalated: sensitive)", then later "(would have escalated: a sensitive
+  // or commercial matter)" once the raw enum was translated to prose — both
+  // are routing-engine narration, not a business reason a human would say
+  // (Ruslan Prakapovich, CAY-12 follow-up). Root-fixed to drop the
+  // "would have escalated" framing entirely; this catches the whole shape,
+  // translated suffix or not, if it's ever reintroduced.
+  { pattern: /\bwould have escalated:/i, label: 'routing-engine narration' },
+  // The "Escalation (category): " prefix lib/whatsapp/escalation.ts used to
+  // write into human_agent_reason, read unstripped by lib/data/mobile.ts and
+  // app/api/caye/chat/route.ts. Root-fixed to stop writing it (CAY-12); kept
+  // here in case a future caller reintroduces the shape before it reaches
+  // one of those readers.
+  { pattern: /\bEscalation \([a-z_]+\):/i, label: 'raw escalation category prefix' },
 ]
 
 /**

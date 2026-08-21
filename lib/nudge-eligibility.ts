@@ -19,6 +19,8 @@
  * doc comment. Removed rather than left as an unused duplicate.
  */
 
+import { zonedInstantMs } from '@/lib/booking-time'
+
 export const REVIEW_REQUEST_MIN_HOURS_AFTER_BOOKING = 24
 export const GHOSTED_LEAD_MIN_DAYS_SILENCE = 3
 
@@ -114,6 +116,10 @@ export interface AutoCompleteCandidate {
   /** HH:MM 24-hour */
   booking_time: string
   duration_minutes: number | null
+  /** Workspace IANA timezone, e.g. "America/Nassau" — booking_date/booking_time
+   *  are timezone-naive columns representing the business's local wall clock;
+   *  this resolves them to a real UTC instant via lib/booking-time.ts. */
+  timezone: string
 }
 
 /**
@@ -124,9 +130,11 @@ export interface AutoCompleteCandidate {
  * late-starting late-running booking. 6h fudge is plenty given the
  * daily cadence.
  *
- * Timezone-agnostic: we treat booking_date+booking_time as UTC, add
- * duration_minutes, add the 6h buffer. Fuzzy across timezones by a few
- * hours, fine for the auto-complete purpose.
+ * Business-local (CAY-95): booking_date+booking_time are the workspace's
+ * local wall clock, not UTC. Resolved via `zonedInstantMs` (lib/booking-time.ts)
+ * — the same shared primitive the write-side cancellation gate and the
+ * read-side business-local classification already use — rather than a
+ * second, UTC-naive reimplementation.
  */
 export function shouldAutoCompleteBooking(
   candidate: AutoCompleteCandidate,
@@ -134,8 +142,7 @@ export function shouldAutoCompleteBooking(
 ): boolean {
   if (candidate.status !== 'confirmed' && candidate.status !== 'pending') return false
 
-  const [hh, mm] = candidate.booking_time.split(':').map(Number)
-  const startMs = Date.parse(`${candidate.booking_date}T${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:00Z`)
+  const startMs = zonedInstantMs(candidate.booking_date, candidate.booking_time, candidate.timezone)
   if (isNaN(startMs)) return false
 
   const duration = candidate.duration_minutes && candidate.duration_minutes > 0

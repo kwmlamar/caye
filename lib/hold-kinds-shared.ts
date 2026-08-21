@@ -69,13 +69,13 @@ export function conversationNeedsFounder(c: { human_agent_enabled: boolean; meta
 
 /**
  * human_agent_reason is built server-side (lib/whatsapp/escalation.ts) from
- * pingSummary/internal_context — already plain founder-readable prose. The
- * one thing worth trimming client- or server-side is the "Escalation
- * (category): " label prefix prepended for the row/hold reason
- * specifically — internal taxonomy, not worth the row width when the state
- * is already shown by a dot + label next to it. Was duplicated inline in
- * ConversationRow.tsx; centralized here once the People page needed the
- * exact same cleanup for the same field.
+ * pingSummary/internal_context — plain founder-readable prose. It no longer
+ * gets an "Escalation (category): " prefix written at the source (CAY-12 —
+ * that prefix put a raw routing enum like `sensitive` in front of every
+ * escalation reason, and this column is read unstripped by several surfaces,
+ * not just the two below). This strip stays as a backstop for rows written
+ * before that fix. Was duplicated inline in ConversationRow.tsx; centralized
+ * here once the People page needed the exact same cleanup for the same field.
  */
 export function cleanHoldReason(reason: string | null): string {
   if (!reason) return 'Needs your review'

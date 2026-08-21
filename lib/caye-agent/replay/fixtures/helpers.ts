@@ -27,6 +27,9 @@ export function buildSyntheticSituation(args: {
   relationship?: RelationshipContext | null
   workOpportunities?: WorkOpportunityContext[]
   operational?: Partial<OperationalContext>
+  /** Defaults to the same workspace-timezone fallback used across the
+   *  codebase (e.g. lib/caye-agent/index.ts) when a fixture doesn't care. */
+  timezone?: string
 }): CayeSituation {
   const history: Anthropic.MessageParam[] = args.turns.map((t) => ({ role: t.role, content: t.content }))
   const historyTimestamps: (string | null)[] = args.turns.map((t) => t.at)
@@ -35,6 +38,7 @@ export function buildSyntheticSituation(args: {
   return {
     channel: args.channel,
     workspaceId: args.workspaceId,
+    timezone: args.timezone ?? 'America/Nassau',
     now: args.now,
     history,
     historyTimestamps,

@@ -2,62 +2,27 @@ import 'server-only'
 import { createServiceClient } from '@/lib/supabase-server'
 import type { Tool, ToolContext, ToolResult } from '../types'
 import { findHighRiskTool } from '../high-risk-registry'
+import { verifyExternalDraftIntent } from '../external-draft-intent'
+import { assertConversationOwnedByWorkspace } from '../write-low/_guards'
 
 interface ConfirmPendingActionInput {
   pending_action_id: string
 }
 
 /**
- * Execute an action that was already staged, identified by ID.
- *
- * WHY THIS EXISTS (2026-08-08)
- * gateHighRisk confirms by re-derived args: the model must call the same
- * tool a second time with BYTE-IDENTICAL arguments. That assumption broke
- * live, twice.
- *
- *   03:35  agent stages send_reply(body = "Just checking in — did you get…")
- *   10:35  agent shows Lamar a DIFFERENT, freshly written draft in chat
- *   10:36  Lamar: "Yea send that"
- *          agent calls send_reply with the NEW body — never staged —
- *          so the confirmation became a first stage, then hit
- *          "already staged this turn"
- *
- * Result: two staged rows, different bodies, neither executed, and Caye
- * telling the operator "it's staged but not executing." An earlier instance
- * of the same loop had Karenda confirming one send five times in six minutes
- * (2026-08-01) with nothing going out.
- *
- * Byte-equality of model-regenerated text is not something to build a
- * confirmation protocol on. Confirming by ID removes the requirement
- * entirely: the operator approves a specific staged row, and THAT row's
- * stored args are what execute.
- *
- * THIS IS STRICTLY SAFER THAN THE ARGS PATH, not a loosening:
- *   - the args executed are the ones read back from the row whose summary
- *     was shown to the operator, so what was reviewed and what runs cannot
- *     drift apart — the property gateHighRisk's doc comment claims, now
- *     actually guaranteed rather than dependent on the model
- *   - the row is re-checked for expiry, execution, and cancellation here,
- *     so a stale or already-run action can't be replayed
- *   - the same different-request rule applies, so a model cannot stage and
- *     confirm inside one turn
- *   - the target must be in HIGH_RISK_TOOLS, so this can't be aimed at
- *     something that was never gated
- *   - the caller's role is checked against the TARGET tool's roles, not
- *     just this tool's, so confirming can't widen access
- *
- * Deliberately NOT wrapped in gateHighRisk in the registry — staging a
- * confirmation would need its own confirmation, forever.
+ * Execute the exact stored args for one previously staged high-risk action.
+ * Confirmation never re-derives customer-facing content. CAY-111 additionally
+ * revalidates conversation identity before the atomic claim so a stale thread
+ * id cannot be recorded as executed merely because the operator approved the
+ * draft that happened to carry it.
  */
 export const confirmPendingAction: Tool<ConfirmPendingActionInput> = {
   name: 'confirm_pending_action',
   description: `Execute an action you already staged, once the operator has approved it.
 
-Use this INSTEAD of re-calling the original tool. When you stage a high-risk action you get back a pending_action_id — hold onto it. As soon as the operator approves in a NEW message ("yes", "send it", "confirm", "go ahead"), call this with that id and the action runs exactly as it was shown to them.
+Use this INSTEAD of re-calling the original tool. When you stage a high-risk action you get back a pending_action_id. On a NEW operator message approving that exact staged action, call this id and the stored args execute exactly as reviewed.
 
-Do NOT re-call the original tool to confirm. Re-calling only matches if your arguments are byte-identical to what was staged, and any rewording — even fixing a comma — silently stages a SECOND action instead of running the first. That has stranded real sends.
-
-If the operator asked for changes instead of approving, call the original tool again with the corrected arguments (that stages a fresh draft), and confirm THAT id once they approve.`,
+If the operator asked for changes, stage the corrected action first and confirm the NEW id. Never confirm an older/superseded draft.`,
   risk: 'high',
   roles: ['owner', 'founder'],
   modes: ['back-office'],
@@ -80,36 +45,30 @@ If the operator asked for changes instead of approving, call the original tool a
       .select('id, tool_name, args, summary, created_in_request_id, expires_at, executed_at, cancelled_at, superseded_by')
       .eq('id', args.pending_action_id)
       .eq('workspace_id', ctx.workspaceId)
-    // Operator scoping mirrors gateHighRisk exactly, so two operators sharing
-    // a workspace's back-office channel can't confirm each other's actions.
-    query = ctx.operatorId != null
-      ? query.eq('operator_id', ctx.operatorId)
-      : query.is('operator_id', null)
+    query =
+      ctx.operatorId != null
+        ? query.eq('operator_id', ctx.operatorId)
+        : query.is('operator_id', null)
 
     const { data: row } = await query.maybeSingle()
-
     if (!row) {
       return {
         ok: false,
         error:
-          'No staged action with that id for this operator. It may have been staged by someone else — re-stage it and confirm the new id.',
+          'No staged action with that id for this operator. Re-stage it from current business state before confirming.',
       }
     }
     if (row.executed_at) {
       return {
         ok: false,
-        error: `Already executed at ${row.executed_at}. Do not run it again — tell the operator it already went through.`,
+        error: `Already executed at ${row.executed_at}. Do not run it again.`,
       }
     }
     if (row.cancelled_at) {
-      // Phase 3 (Part E): a superseded row was cancelled automatically by a
-      // newer refinement of the SAME target, not by the operator declining
-      // it — tell the model to go confirm the newer one instead of treating
-      // this as "nothing is staged anymore."
       return row.superseded_by
         ? {
             ok: false,
-            error: `That draft was superseded by a newer one (pending_action_id ${row.superseded_by}) — the operator's last message refined it. Confirm THAT id instead, not this one.`,
+            error: `That draft was superseded by a newer one (pending_action_id ${row.superseded_by}). Confirm the newer id instead.`,
           }
         : { ok: false, error: 'That action was cancelled. Stage a fresh one if it is still wanted.' }
     }
@@ -117,11 +76,9 @@ If the operator asked for changes instead of approving, call the original tool a
       return {
         ok: false,
         error:
-          'That staged action expired before it was confirmed. Nothing was sent or changed. Stage it again and ask the operator to confirm.',
+          'That staged action expired. Nothing was sent or changed. Re-read current state, stage it again, and ask for confirmation.',
       }
     }
-    // A scan-origin call can never supply the human half of a confirmation,
-    // and a model must not stage and confirm inside one turn.
     if (ctx.origin === 'scan') {
       return { ok: false, error: 'A scan cannot confirm a staged action. Only a real operator reply can.' }
     }
@@ -129,14 +86,51 @@ If the operator asked for changes instead of approving, call the original tool a
       return {
         ok: false,
         error:
-          'That action was staged in THIS turn. Relay the summary and stop — it can only be confirmed by a new message from the operator.',
+          'That action was staged in this turn. It can only be confirmed by a new operator message.',
+      }
+    }
+
+    if (row.tool_name === 'draft_in_inbox') {
+      const intentError = await verifyExternalDraftIntent(ctx)
+      if (intentError) return intentError
+    }
+
+    const storedArgs = (row.args ?? {}) as Record<string, unknown>
+
+    // CAY-111: a staged customer-facing action can outlive the conversation
+    // identity the model originally selected. Revalidate the exact id against
+    // CURRENT workspace ownership before claiming the row. We deliberately do
+    // not fuzzy-recover by customer name: wrong-recipient recovery is worse
+    // than asking Caye to re-fetch/restage the current thread.
+    if (row.tool_name === 'send_reply' || row.tool_name === 'draft_in_inbox') {
+      const conversationId =
+        typeof storedArgs.conversation_id === 'string' ? storedArgs.conversation_id : ''
+      if (!conversationId) {
+        return {
+          ok: false,
+          status: 'CONFLICT',
+          error_code: 'STALE_CONVERSATION_IDENTITY',
+          error:
+            'The staged customer action has no conversation identity. Nothing was executed; re-fetch the customer thread and stage a new action.',
+        }
+      }
+      const ownership = await assertConversationOwnedByWorkspace(
+        supabase,
+        conversationId,
+        ctx.workspaceId
+      )
+      if (!ownership.ok) {
+        return {
+          ok: false,
+          status: 'CONFLICT',
+          error_code: 'STALE_CONVERSATION_IDENTITY',
+          error: `The staged conversation is no longer a current thread in this workspace (${ownership.error ?? 'identity mismatch'}). Nothing was executed. Re-fetch the customer by authoritative identity and stage the reply again.`,
+        }
       }
     }
 
     const tool = findHighRiskTool(row.tool_name as string)
-    if (!tool) {
-      return { ok: false, error: `Unknown staged tool: ${row.tool_name}` }
-    }
+    if (!tool) return { ok: false, error: `Unknown staged tool: ${row.tool_name}` }
     if (!tool.roles.includes(ctx.callerRole)) {
       return {
         ok: false,
@@ -144,16 +138,7 @@ If the operator asked for changes instead of approving, call the original tool a
       }
     }
 
-    // CLAIM BEFORE EXECUTING. The checks above are a read; two confirmations
-    // arriving together would both pass them and both send. This conditional
-    // update is the actual mutual exclusion — only the caller whose write
-    // finds executed_at still null gets the row back, and only that caller
-    // runs the tool.
-    //
-    // The bias is deliberate: if execute() then throws, the row is left
-    // marked executed with a null result, which is inspectable and errs
-    // toward NOT re-sending. For an irreversible customer send, a missed
-    // retry is recoverable by hand; a duplicate send is not.
+    // Atomic claim: only one concurrent confirmation can cross this boundary.
     const { data: claimed } = await supabase
       .from('caye_pending_actions')
       .update({ executed_at: new Date().toISOString() })
@@ -165,20 +150,13 @@ If the operator asked for changes instead of approving, call the original tool a
     if (!claimed) {
       return {
         ok: false,
-        error: 'That action was already confirmed a moment ago. It has run once — do not run it again.',
+        error: 'That action was already confirmed a moment ago. Do not run it again.',
       }
     }
 
     const result = await tool.execute(row.args as never, ctx)
-
     await supabase.from('caye_pending_actions').update({ result }).eq('id', row.id)
 
-    // Tag which underlying tool actually ran, additively, so the action-
-    // grounding guard in execute.ts (lib/caye-agent/action-claim-guard.ts)
-    // can tell a real send that arrived via confirmation apart from one
-    // that never happened — without this the tool_use block visible to
-    // that guard just says "confirm_pending_action", never which action it
-    // confirmed.
     const data = result.data
     const taggedData =
       data && typeof data === 'object' && !Array.isArray(data)

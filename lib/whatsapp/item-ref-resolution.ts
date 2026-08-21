@@ -97,6 +97,30 @@ export function formatChoices(items: ResolvableItem[]): string {
 }
 
 /**
+ * True when a send/edit intent names a target that isn't part of the
+ * currently-held queue.
+ *
+ * WHY THIS EXISTS (CAY-90, 2026-08-18 — Christopher/GGT incident)
+ * The legacy dispatch path (send/edit/skip/handled) only ever knows the
+ * held queue — it has no access to the back-office agent's conversation
+ * memory or its search_threads/get_customer tools. When the operator names
+ * a customer already discussed earlier in the SAME conversation but not
+ * currently held (nothing pending on their thread right now), the legacy
+ * path can only fall back to "which one?" against an unrelated held list —
+ * which reads as Caye having lost context it actually still had, just not
+ * in a place this path can see. Distinct from `needs-choice` (no reference
+ * given at all): that case genuinely has nothing for anyone, agent
+ * included, to resolve from a bare ref, so it stays on the legacy ask.
+ */
+export function namesUnresolvedTarget<T extends ResolvableItem>(
+  items: T[],
+  ref: string | undefined
+): boolean {
+  if (!ref || !ref.trim()) return false
+  return resolveItemRefOutcome(items, ref).status === 'not-found'
+}
+
+/**
  * The operator-facing reply for every non-matched outcome, so `handled` and
  * `skip` phrase a miss identically.
  *

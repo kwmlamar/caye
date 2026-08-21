@@ -43,6 +43,7 @@ const ALLOWED = new Map<string, string>([
   // The indices are prompt scaffolding, never echoed to a human.
   ['app/api/caye/discovery/route.ts', 'prompt-internal numbering'],
   ['lib/business-fact-semantic-match.ts', 'prompt-internal candidate ids'],
+  ['lib/business-fact-conflict.ts', 'prompt-internal candidate ids'],
   // Placeholder for an unrenderable content-block type inside a CLI
   // subprocess prompt (Claude/Codex subscription backends) — never shown
   // to a human, only ever read by the reasoning backend itself.

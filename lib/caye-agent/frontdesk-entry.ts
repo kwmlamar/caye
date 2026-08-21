@@ -8,6 +8,7 @@ import { loadRelationshipContext, loadOperationalContext } from './situation'
 import { buildFrontDeskSituationSystemPrompt } from './modes/front-desk-situation'
 import { persistFrontDeskAgentTurns } from '@/lib/caye-frontdesk-agent-turns'
 import { enqueueHoldPing } from '@/lib/whatsapp/triggers'
+import { authorizeAutonomousOutbound } from '@/lib/authorize-autonomous-outbound'
 
 /**
  * frontdesk-entry.ts (2026-08-16, global Zoho cutover)
@@ -31,6 +32,11 @@ import { enqueueHoldPing } from '@/lib/whatsapp/triggers'
  * `unified_messages` row for a turn this function handled — the tool
  * already did both, or correctly did neither (held).
  */
+
+// Same fallback used by every other business-local read site (e.g.
+// lib/caye-agent/index.ts, lib/caye-agent/tools/read/*) for workspaces
+// with no `customers.timezone` set yet.
+const DEFAULT_WORKSPACE_TIMEZONE = 'America/Nassau'
 
 export interface ConvergedFrontDeskTurnInput {
   workspaceId: string
@@ -113,7 +119,40 @@ export async function runConvergedFrontDeskTurn(
   const supabase = createServiceClient()
 
   try {
-    const [{ history: historyForModel }, relationshipCtx, operational] = await Promise.all([
+    // Owner policy beats model judgment, always (#88). Resolve standing
+    // rules + the existing hold BEFORE the model gets a chance to run — an
+    // owner_only match or a held conversation must never reach the tool
+    // loop, let alone send_customer_reply.
+    const authz = await authorizeAutonomousOutbound({
+      workspaceId: input.workspaceId,
+      conversationId: input.conversationId,
+      inboundBody: input.inboundBody,
+    })
+    if (!authz.allowed) {
+      // blocked_by_existing_hold means the conversation was ALREADY held
+      // before this turn — nothing new happened that the owner doesn't
+      // already know about. Skip markHeld entirely: it would otherwise (a)
+      // overwrite the real original human_agent_reason with this generic
+      // placeholder, and (b) enqueue a fresh urgent_hold ping every single
+      // inbound turn a customer sends while the thread sits held, which
+      // reads to the owner as a new, distinct event each time. Both
+      // blocked_by_owner_policy and blocked_by_authority_check_error ARE
+      // new information this turn (a rule just fired, or we just lost the
+      // ability to tell) and still go through markHeld below.
+      if (authz.reason === 'blocked_by_existing_hold') {
+        const holdReason =
+          'Conversation is already held for the owner — Caye will not reply autonomously until it is released.'
+        return { outcome: 'held', toolsUsed: [], usedOutputFallbackPath: false, holdReason }
+      }
+      const holdReason =
+        authz.reason === 'blocked_by_owner_policy'
+          ? (authz.escalation?.internalContext ?? 'Owner-only standing rule matched — held for the owner.')
+          : 'Caye could not verify whether this conversation is safe to answer automatically (an owner-authority check failed) — held for the owner.'
+      await markHeld(supabase, input, holdReason)
+      return { outcome: 'held', toolsUsed: [], usedOutputFallbackPath: false, holdReason }
+    }
+
+    const [{ history: historyForModel }, relationshipCtx, operational, { data: customerRow }] = await Promise.all([
       // loadFrontDeskConversationContext's `history` field is ALREADY
       // relative-time-annotated + compacted (see context.ts's own doc
       // comment) — this is the form to feed the model directly, not a raw
@@ -121,7 +160,9 @@ export async function runConvergedFrontDeskTurn(
       loadFrontDeskConversationContext(input.conversationId),
       loadRelationshipContext(input.workspaceId, input.contactId ?? null),
       loadOperationalContext(input.workspaceId, 'front-desk'),
+      supabase.from('customers').select('timezone').eq('id', input.workspaceId).maybeSingle(),
     ])
+    const workspaceTimezone = (customerRow?.timezone as string | null) || DEFAULT_WORKSPACE_TIMEZONE
 
     // The customer's current message is already the last row of the
     // reloaded history — claimInboundMessage persisted it BEFORE this
@@ -133,6 +174,7 @@ export async function runConvergedFrontDeskTurn(
     const situation = {
       channel: 'front-desk' as const,
       workspaceId: input.workspaceId,
+      timezone: workspaceTimezone,
       now: new Date().toISOString(),
       history: historyForModel,
       historyTimestamps: historyForModel.map(() => null),

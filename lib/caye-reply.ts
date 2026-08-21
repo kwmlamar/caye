@@ -6,7 +6,11 @@ import { stripWrappingQuotes } from '@/lib/voice-profile'
 import type { ContactStyleProfile } from '@/types/database'
 import { createServiceClient } from './supabase-server'
 import { detectIdentityLeak } from './caye-identity-guard'
-import { detectUnverifiedPaymentFigure } from './policy-figure-guard'
+import {
+  detectUnverifiedPaymentFigure,
+  detectUnsupportedThirdPartyCommitment,
+  detectUnsupportedRefundCommitment,
+} from './policy-figure-guard'
 import { sanitizeDashes } from './sanitize-dashes'
 import { FRONT_DESK_RESPONSE_STYLE } from './front-desk-response-style'
 import { formatHistoryBlock } from './conversation-history'
@@ -2135,7 +2139,13 @@ async function generateCayeAutoReplyCore(
     if (!forced && !isSalesWorkspace) {
       const rules = await fetchStandingRules(inbound.workspaceId)
       const matched = findMatchingRule(rules, inbound.body)
-      if (matched) {
+      if (matched && matched.action === 'owner_only') {
+        // Hard rule (#88): never eligible for standdown, no matter how
+        // deterministically answerable the enquiry looks. Owner policy
+        // beats model judgment, always.
+        forced = buildStandingRuleEscalation(matched, inbound.body)
+        recordRuleFired(matched.id)
+      } else if (matched) {
         // The rule stands down only when the enquiry contains no question the
         // owner hasn't already answered in writing — exact catalog match,
         // stated date and party size, a clean verdict from her own
@@ -2267,6 +2277,10 @@ async function generateCayeAutoReplyCore(
     if (leak) return `Identity guard: ${leak}`
     const figure = detectUnverifiedPaymentFigure(content, factsGrounding)
     if (figure) return `Payment-figure guard: ${figure}`
+    const thirdParty = detectUnsupportedThirdPartyCommitment(content, factsGrounding)
+    if (thirdParty) return `Commitment guard: ${thirdParty}`
+    const refund = detectUnsupportedRefundCommitment(content, factsGrounding)
+    if (refund) return `Commitment guard: ${refund}`
     return null
   }
 

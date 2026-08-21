@@ -1,6 +1,9 @@
 import 'server-only'
 import { fetchBookingsInRange, type BookingLite } from '@/lib/calendar-availability'
 import type { Tool } from '../types'
+import { businessLocalDate, classifyBookingDate, bookingStatusConflict } from '@/lib/booking-time'
+
+const DEFAULT_WORKSPACE_TIMEZONE = 'America/Nassau'
 
 interface GetCalendarInput {
   date?: string
@@ -33,7 +36,9 @@ export const getCalendar: Tool<GetCalendarInput> = {
   },
 
   async execute(args, ctx) {
-    const today = new Date().toISOString().slice(0, 10)
+    // Business-local calendar date (CAY-91) — NOT the server's UTC date.
+    const timezone = ctx.workspaceTimezone || DEFAULT_WORKSPACE_TIMEZONE
+    const today = businessLocalDate(timezone)
     const start = args.date ?? today
     const end = args.end_date ?? start
 
@@ -45,14 +50,21 @@ export const getCalendar: Tool<GetCalendarInput> = {
       ok: true,
       data: {
         date_range: start === end ? start : { from: start, to: end },
-        bookings: rows.map((r) => ({
-          customer: r.customer_name,
-          date: r.booking_date,
-          time: r.booking_time?.slice(0, 5) ?? null,
-          guests: r.number_of_people,
-          service: r.service?.[0]?.name ?? null,
-          status: r.status,
-        })),
+        bookings: rows.map((r) => {
+          const relative = classifyBookingDate(r.booking_date, today)
+          return {
+            customer: r.customer_name,
+            date: r.booking_date,
+            time: r.booking_time?.slice(0, 5) ?? null,
+            guests: r.number_of_people,
+            service: r.service?.[0]?.name ?? null,
+            status: r.status,
+            // Deterministic, computed in the workspace's own timezone —
+            // never derive this yourself from the date (CAY-91).
+            relative_to_today: relative,
+            status_date_conflict: bookingStatusConflict(r.status, relative),
+          }
+        }),
         count: rows.length,
       },
     }

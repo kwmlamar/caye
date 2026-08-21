@@ -1,0 +1,14 @@
+name: Claude Code Review
+
+# Normal PRs are reviewed by the product/architecture owner first.
+# This workflow intentionally does not run automatically on every PR.
+# Use the separate Claude Deep Review workflow only when a risky change merits
+# spending Opus-class usage for a second independent judgment.
+on:
+  workflow_dispatch:
+
+jobs:
+  disabled-default-review:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Automatic Claude PR review is intentionally disabled. Use @claude-deep-review on a PR only after product/architecture review decides it is warranted."

@@ -36,7 +36,7 @@ import { loggedMessagesCreate } from '@/lib/llm-telemetry'
  */
 export async function actionEdit(
   ctx: ActionContext,
-  intent: { item_ref?: string; instruction: string },
+  intent: { item_ref?: string; instruction: string; verbatim?: boolean },
   pending: PendingHeldItem[]
 ): Promise<ActionResult> {
   const item = resolveItemRef(pending, intent.item_ref)
@@ -56,7 +56,17 @@ export async function actionEdit(
     }
   }
 
-  const revised = await composeRevisedReply(ctx.workspaceId, item, intent.instruction)
+  // CAY-90 (Laney incident, 2026-08-18): when the operator's message IS
+  // already the complete reply — not an instruction describing a change —
+  // that text is the authoritative draft and must reach the customer
+  // byte-for-byte. Routing it through composeRevisedReply instead asks a
+  // SECOND model to reinterpret it as a vague instruction with no strong
+  // grounding, which is what silently produced an unrelated generic
+  // complaint/apology reply in place of the owner's own words. Skip
+  // recomposition entirely and stage the operator's text as-is.
+  const revised = intent.verbatim
+    ? stripDraftMarker(intent.instruction)
+    : await composeRevisedReply(ctx.workspaceId, item, intent.instruction)
   if (!revised) {
     return {
       ackBody: `Couldn't compose the edit for ${item.contactName}. Open the dashboard.`,
@@ -78,6 +88,20 @@ export async function actionEdit(
       tag: { label: `edit ${item.contactName}`, status: 'failed' },
     }
   }
+}
+
+/**
+ * Strip a leading or trailing "(Draft)" annotation the operator used to flag
+ * their message as ready-to-send content rather than an instruction — that
+ * marker is bookkeeping for the classifier, not part of the reply itself.
+ * Exported for regression coverage.
+ */
+export function stripDraftMarker(text: string): string {
+  return text
+    .trim()
+    .replace(/^\(\s*draft\s*\)\s*/i, '')
+    .replace(/\s*\(\s*draft\s*\)$/i, '')
+    .trim()
 }
 
 /**

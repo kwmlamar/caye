@@ -36,6 +36,7 @@ import {
 } from '@/lib/whatsapp/active-owner-task'
 import { withSlowTurnHeartbeat } from '@/lib/whatsapp/slow-turn-heartbeat'
 import { corroborateItemRef } from '@/lib/whatsapp/item-ref-guard'
+import { namesUnresolvedTarget } from '@/lib/whatsapp/item-ref-resolution'
 import { getPendingHeldItems } from '@/lib/whatsapp/pending'
 import { resolveAcknowledgedAttentionItems, acknowledgeAttentionItems } from '@/lib/whatsapp/attention-acknowledgement'
 import { dispatchOperatorIntent } from '@/lib/whatsapp/actions'
@@ -1029,7 +1030,24 @@ async function handleOneInbound(
     }
   }
 
-  if (LEGACY_DISPATCH_KINDS.has(intent.kind) && ownership.owner === 'legacy') {
+  // A send/edit naming a target that isn't in the CURRENT held queue must
+  // not fall into the legacy path's "which one?" — that path only ever
+  // knows the held queue, never the customer the operator and Caye already
+  // discussed earlier in this same conversation (CAY-90, Christopher/GGT
+  // incident: legacy asked Mrs. Max to identify a thread the agent's own
+  // sliding-window memory already had). Defer to the back-office agent
+  // instead, which can search full history and ask a grounded question only
+  // if genuinely ambiguous.
+  const namedTargetRef =
+    intent.kind === 'send' || intent.kind === 'edit' ? intent.item_ref : undefined
+  const legacyTargetMissing = namesUnresolvedTarget(pending, namedTargetRef)
+  if (legacyTargetMissing) {
+    console.warn(
+      `[whatsapp-operator] ${workspaceId}: item_ref "${namedTargetRef}" not in held queue — deferring ${intent.kind} to back-office agent`
+    )
+  }
+
+  if (LEGACY_DISPATCH_KINDS.has(intent.kind) && ownership.owner === 'legacy' && !legacyTargetMissing) {
     const result = await dispatchOperatorIntent({ workspaceId }, intent, pending)
     if (result.ackBody && result.ackBody.trim()) {
       // Send ack synchronously instead of via the outbound queue. The

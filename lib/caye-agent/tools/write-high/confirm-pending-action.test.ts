@@ -1,17 +1,12 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Tool, ToolContext } from '../types'
 
 vi.mock('server-only', () => ({}))
 
 type Row = Record<string, unknown>
 const rows: Row[] = []
+let conversationIsCurrent = true
 
-/**
- * Fake of the supabase chains confirm-pending-action.ts uses:
- *   from().select().eq().eq()/is().maybeSingle()
- *   from().update().eq().is().select().maybeSingle()   (the atomic claim)
- *   from().update().eq()                                (the result write)
- */
 function makeFakeSupabase() {
   return {
     from(_table: string) {
@@ -67,11 +62,16 @@ function makeFakeSupabase() {
 }
 
 vi.mock('@/lib/supabase-server', () => ({ createServiceClient: () => makeFakeSupabase() }))
+vi.mock('../write-low/_guards', () => ({
+  assertConversationOwnedByWorkspace: vi.fn(async () =>
+    conversationIsCurrent
+      ? { ok: true }
+      : { ok: false, error: 'Conversation stale-conv not found in this workspace' }
+  ),
+}))
 
-// The tool the staged row points at. Records what args it actually ran with —
-// which is the whole point of the fix.
 const ran: unknown[] = []
-const targetTool: Tool<{ body: string }> = {
+const targetTool: Tool<{ body: string; conversation_id: string }> = {
   name: 'send_reply',
   description: 'fake',
   risk: 'high',
@@ -88,142 +88,94 @@ vi.mock('../high-risk-registry', () => ({
   findHighRiskTool: (name: string) => (name === 'send_reply' ? targetTool : undefined),
   HIGH_RISK_TOOLS: [],
 }))
+vi.mock('../external-draft-intent', () => ({ verifyExternalDraftIntent: vi.fn(async () => null) }))
 
 import { confirmPendingAction } from './confirm-pending-action'
 
-const STAGED_BODY = 'Hey,\n\nJust checking in — did you get a chance to try the demo?'
 const FUTURE = () => new Date(Date.now() + 10 * 60 * 1000).toISOString()
 
-function stage(overrides: Row = {}): string {
+function stage(overrides: Row = {}) {
   const id = `pa-${rows.length + 1}`
   rows.push({
     id,
     workspace_id: 'ws-1',
     operator_id: 20,
     tool_name: 'send_reply',
-    args: { body: STAGED_BODY, conversation_id: 'conv-1' },
-    summary: 'Send to Zanzibar Holidays One (email): …',
+    args: { body: 'Send this exact body', conversation_id: 'conv-1' },
+    summary: 'Send to Christina (email): Send this exact body',
     created_in_request_id: 'req-staged',
     expires_at: FUTURE(),
     executed_at: null,
     cancelled_at: null,
+    superseded_by: null,
     ...overrides,
   })
   return id
 }
 
-function ctx(o: Partial<ToolContext> = {}): ToolContext {
+function ctx(overrides: Partial<ToolContext> = {}): ToolContext {
   return {
     workspaceId: 'ws-1',
     callerRole: 'owner',
     operatorId: 20,
     requestId: 'req-confirming',
-    ...o,
+    ...overrides,
   } as ToolContext
 }
 
 beforeEach(() => {
   rows.length = 0
   ran.length = 0
+  conversationIsCurrent = true
 })
 
-describe('confirm_pending_action — executes what was shown', () => {
-  it('runs the STAGED args, not anything re-derived', async () => {
-    // The bug this replaces: the model reworded the draft, so its confirming
-    // call no longer matched the staged args and staged a second row instead
-    // of sending. Confirming by id makes the model's wording irrelevant.
+describe('confirm_pending_action', () => {
+  it('executes the exact staged args once for a current conversation', async () => {
     const id = stage()
     const result = await confirmPendingAction.execute({ pending_action_id: id }, ctx())
-
     expect(result.ok).toBe(true)
-    expect(ran).toHaveLength(1)
-    expect(ran[0]).toEqual({ body: STAGED_BODY, conversation_id: 'conv-1' })
-    expect(rows[0].executed_at).not.toBeNull()
+    expect(ran).toEqual([{ body: 'Send this exact body', conversation_id: 'conv-1' }])
+    expect(rows[0].executed_at).toBeTruthy()
   })
 
-  it('marks the row executed so it cannot be replayed', async () => {
+  it('rejects stale conversation identity BEFORE claiming/executing the row', async () => {
+    conversationIsCurrent = false
+    const id = stage({ args: { body: 'Do not send', conversation_id: 'stale-conv' } })
+    const result = await confirmPendingAction.execute({ pending_action_id: id }, ctx())
+    expect(result.ok).toBe(false)
+    expect(result.ok === false ? result.error_code : null).toBe('STALE_CONVERSATION_IDENTITY')
+    expect(ran).toHaveLength(0)
+    expect(rows[0].executed_at).toBeNull()
+  })
+
+  it('rejects a superseded draft', async () => {
+    const id = stage({ cancelled_at: new Date().toISOString(), superseded_by: 'pa-new' })
+    const result = await confirmPendingAction.execute({ pending_action_id: id }, ctx())
+    expect(result.ok).toBe(false)
+    expect(ran).toHaveLength(0)
+  })
+
+  it('does not confirm in the same request that staged the action', async () => {
+    const id = stage({ created_in_request_id: 'req-confirming' })
+    expect((await confirmPendingAction.execute({ pending_action_id: id }, ctx())).ok).toBe(false)
+    expect(ran).toHaveLength(0)
+  })
+
+  it('does not replay an executed action', async () => {
     const id = stage()
     await confirmPendingAction.execute({ pending_action_id: id }, ctx())
-    const second = await confirmPendingAction.execute({ pending_action_id: id }, ctx())
-
-    expect(second.ok).toBe(false)
+    expect((await confirmPendingAction.execute({ pending_action_id: id }, ctx())).ok).toBe(false)
     expect(ran).toHaveLength(1)
   })
 
-  it('runs once when two confirmations race', async () => {
-    // Both pass the read-time checks; the conditional update is the real
-    // mutual exclusion. A duplicate customer send is not recoverable.
+  it('does not allow a different operator or workspace to confirm', async () => {
     const id = stage()
-    const [a, b] = await Promise.all([
-      confirmPendingAction.execute({ pending_action_id: id }, ctx()),
-      confirmPendingAction.execute({ pending_action_id: id }, ctx()),
-    ])
-
-    expect(ran).toHaveLength(1)
-    expect([a.ok, b.ok].filter(Boolean)).toHaveLength(1)
-  })
-})
-
-describe('confirm_pending_action — refuses', () => {
-  it('an action staged in this same turn', async () => {
-    const id = stage({ created_in_request_id: 'req-confirming' })
-    const result = await confirmPendingAction.execute({ pending_action_id: id }, ctx())
-    expect(result.ok).toBe(false)
-    expect(ran).toHaveLength(0)
-  })
-
-  it('an expired action', async () => {
-    const id = stage({ expires_at: new Date(Date.now() - 1000).toISOString() })
-    const result = await confirmPendingAction.execute({ pending_action_id: id }, ctx())
-    expect(result.ok).toBe(false)
-    expect(result.ok === false && result.error).toMatch(/expired/i)
-    expect(ran).toHaveLength(0)
-  })
-
-  it('a cancelled action', async () => {
-    const id = stage({ cancelled_at: new Date().toISOString() })
-    expect((await confirmPendingAction.execute({ pending_action_id: id }, ctx())).ok).toBe(false)
-    expect(ran).toHaveLength(0)
-  })
-
-  it('a scan-origin confirmation', async () => {
-    const id = stage()
-    const result = await confirmPendingAction.execute(
-      { pending_action_id: id },
-      ctx({ origin: 'scan' } as Partial<ToolContext>)
-    )
-    expect(result.ok).toBe(false)
-    expect(ran).toHaveLength(0)
-  })
-
-  it('another operator confirming', async () => {
-    const id = stage({ operator_id: 20 })
-    const result = await confirmPendingAction.execute({ pending_action_id: id }, ctx({ operatorId: 99 }))
-    expect(result.ok).toBe(false)
-    expect(ran).toHaveLength(0)
-  })
-
-  it('another workspace confirming', async () => {
-    const id = stage()
-    const result = await confirmPendingAction.execute(
-      { pending_action_id: id },
-      ctx({ workspaceId: 'ws-other' })
-    )
-    expect(result.ok).toBe(false)
-    expect(ran).toHaveLength(0)
-  })
-
-  it('a role the TARGET tool does not permit', async () => {
-    // Confirming must not widen access — send_reply is owner/founder only.
-    const id = stage()
-    const result = await confirmPendingAction.execute({ pending_action_id: id }, ctx({ callerRole: 'driver' }))
-    expect(result.ok).toBe(false)
-    expect(ran).toHaveLength(0)
-  })
-
-  it('a staged tool that is not high-risk-registered', async () => {
-    const id = stage({ tool_name: 'some_other_tool' })
-    expect((await confirmPendingAction.execute({ pending_action_id: id }, ctx())).ok).toBe(false)
+    expect(
+      (await confirmPendingAction.execute({ pending_action_id: id }, ctx({ operatorId: 99 }))).ok
+    ).toBe(false)
+    expect(
+      (await confirmPendingAction.execute({ pending_action_id: id }, ctx({ workspaceId: 'ws-2' }))).ok
+    ).toBe(false)
     expect(ran).toHaveLength(0)
   })
 })

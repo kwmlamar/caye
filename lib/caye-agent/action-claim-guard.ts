@@ -78,11 +78,6 @@ const HEDGE_PATTERN =
 const RULES: readonly ClaimRule[] = [
   {
     category: 'send',
-    // The middle alternative deliberately allows adverbs ("already", "just",
-    // "earlier", "previously") between the subject and the verb — the
-    // 2026-08-16 stale-claim incident's exact sentence, "I already sent her
-    // that message 3 hours ago", slipped through the original tighter
-    // `i\s+sent\b` shape because "already" sat between them.
     claimPattern:
       /\b(?:here'?s|this is)\s+what\s+i(?:'ve| have)?\s+(?:just\s+)?sent\b|\bi(?:'m| am|'ve| have)?\s+(?:already\s+|just\s+|earlier\s+|previously\s+)*(?:sent|messaged|texted|emailed)\b/i,
     groundedBy: [
@@ -95,6 +90,17 @@ const RULES: readonly ClaimRule[] = [
     ],
     correction:
       "I have not actually sent anything — I don't have a tool that lets me message an operator directly on my own. Here's the draft, for you to send yourself or ask me to relay a different way:",
+  },
+  {
+    category: 'external-draft',
+    claimPattern:
+      /\b(?:draft(?:ed)?|it|that|reply)\b[\s\S]{0,45}\b(?:is|is now|['’]s|was|has been)\b[\s\S]{0,35}\b(?:in|into|filed|saved)\b[\s\S]{0,35}\b(?:gmail|e-?mail|mail|inbox|drafts? folder|drafts?)\b|\bi(?:'ve| have)?\s+(?:already\s+|just\s+)?(?:filed|saved|put|created|drafted)\b[\s\S]{0,45}\b(?:gmail|e-?mail|mail|inbox|drafts?)\b|\b(?:drafted|filed|saved|put)\b[\s\S]{0,30}\b(?:in|into)\b[\s\S]{0,30}\b(?:gmail|e-?mail|mail|inbox|drafts?)\b/i,
+    groundedBy: ['draft_in_inbox'],
+    // Keep the operator focused on the content. The old correction said
+    // "I haven't filed that into your email Drafts yet," which leaked an
+    // internal safety distinction into normal conversation and produced the
+    // exact confusing John Clark exchange seen in production on 2026-08-20.
+    correction: "Here's the draft for your review:",
   },
   {
     category: 'schedule',

@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { attestedFigures, detectUnverifiedPaymentFigure, detectUnverifiedPaymentMethodClaim } from './policy-figure-guard'
+import {
+  attestedFigures,
+  detectUnverifiedPaymentFigure,
+  detectUnverifiedPaymentMethodClaim,
+  detectUnsupportedThirdPartyCommitment,
+  detectUnsupportedRefundCommitment,
+} from './policy-figure-guard'
 
 // The cancellation policy Karenda actually dictated on 2026-08-07, as stored.
 const CANCELLATION_FACT =
@@ -126,6 +132,112 @@ describe('detectUnverifiedPaymentMethodClaim (2026-08-16, real Bimini cash-accep
 
   it('treats empty grounding as attesting no payment method', () => {
     expect(detectUnverifiedPaymentMethodClaim('We accept cash.', '')).toMatch(/cash/)
+  })
+})
+
+describe('detectUnsupportedThirdPartyCommitment (2026-08-19, CAY-92 Jonathan snorkeling/Snuba incident)', () => {
+  // ── Regression fixture 1: the actual incident ─────────────────────────
+  it('blocks promising to coordinate snorkeling/Snuba through a partner with no grounding', () => {
+    const draft =
+      "Thanks for asking, Jonathan! We can coordinate snorkeling and Snuba for you through one " +
+      "of our trusted partners."
+    expect(detectUnsupportedThirdPartyCommitment(draft, FACTS)).toMatch(/partner/)
+  })
+
+  // ── Regression fixture 3: never assert an arrangement already happened ─
+  it('blocks an already-arranged claim about a dive operator', () => {
+    const draft = "We have arranged your Snuba dive with our local operator for Thursday."
+    expect(detectUnsupportedThirdPartyCommitment(draft, FACTS)).toMatch(/operator/)
+  })
+
+  // ── Regression fixture 2: owner instruction in-thread authorises it ────
+  it('allows the same commitment once the owner said it in the grounding text', () => {
+    const ownerInstruction = 'We can coordinate through one of our trusted partners.'
+    const draft =
+      "Thanks for asking, Jonathan! We can coordinate snorkeling and Snuba for you through one " +
+      "of our trusted partners."
+    expect(detectUnsupportedThirdPartyCommitment(draft, ownerInstruction)).toBeNull()
+  })
+
+  it('allows a stored business fact that already documents the partner arrangement', () => {
+    const facts = `${FACTS}\nWe coordinate snorkeling and Snuba trips through our trusted partner, Bimini Undersea.`
+    const draft = 'We can coordinate that Snuba trip for you through our partner.'
+    expect(detectUnsupportedThirdPartyCommitment(draft, facts)).toBeNull()
+  })
+
+  // ── Regression: bare "I'll"/"I can" is NOT a hedge (review on #96) ─────
+  it('blocks "I\'ll arrange ... through our partner" — plain future tense, not a hedge', () => {
+    const draft = "I'll arrange snorkeling through our partner for you."
+    expect(detectUnsupportedThirdPartyCommitment(draft, FACTS)).toMatch(/partner/)
+  })
+
+  it('blocks "I can coordinate ... through our vendor" — plain capability, not a hedge', () => {
+    const draft = "I can coordinate that with our vendor for you."
+    expect(detectUnsupportedThirdPartyCommitment(draft, FACTS)).toMatch(/vendor/)
+  })
+
+  // ── Must not block honest uncertainty ──────────────────────────────────
+  it('does not block offering to check with a partner rather than promising', () => {
+    const draft = "Let me check with our partner on availability and get back to you."
+    expect(detectUnsupportedThirdPartyCommitment(draft, FACTS)).toBeNull()
+  })
+
+  it('does not block "I\'ll check with our partner" — genuine hedge', () => {
+    const draft = "I'll check with our partner and get back to you."
+    expect(detectUnsupportedThirdPartyCommitment(draft, FACTS)).toBeNull()
+  })
+
+  it('does not block a plain informational reply with no commitment', () => {
+    const draft = 'Snorkeling and Snuba are popular add-ons on this island.'
+    expect(detectUnsupportedThirdPartyCommitment(draft, FACTS)).toBeNull()
+  })
+
+  it('treats empty grounding as attesting no partner arrangement', () => {
+    const draft = 'We can arrange that for you through one of our trusted vendors.'
+    expect(detectUnsupportedThirdPartyCommitment(draft, '')).toMatch(/vendor/)
+  })
+})
+
+describe('detectUnsupportedRefundCommitment (2026-08-19, CAY-92)', () => {
+  it('blocks an invented full-refund promise', () => {
+    const draft = "Not a problem — we'll issue a full refund to your card within 5 business days."
+    expect(detectUnsupportedRefundCommitment(draft, INVOICE_FACT)).toMatch(/refund/)
+  })
+
+  it('blocks a cancel-and-refund promise with no grounding', () => {
+    const draft = "We'll cancel your booking and refund your deposit right away."
+    expect(detectUnsupportedRefundCommitment(draft, INVOICE_FACT)).toMatch(/refund/)
+  })
+
+  it('allows a refund claim the cancellation policy actually documents', () => {
+    const draft =
+      "Since this qualifies as a medical emergency, you're entitled to a full refund per our policy."
+    expect(detectUnsupportedRefundCommitment(draft, CANCELLATION_FACT)).toBeNull()
+  })
+
+  // ── Regression: bare "I'll"/"I can" is NOT a hedge (review on #96) ─────
+  it('blocks "I\'ll issue a full refund" — plain future tense, not a hedge', () => {
+    const draft = "I'll issue a full refund to your card right away."
+    expect(detectUnsupportedRefundCommitment(draft, INVOICE_FACT)).toMatch(/refund/)
+  })
+
+  it('blocks "I can refund your deposit" — plain capability, not a hedge', () => {
+    const draft = "I can refund your deposit today, no problem."
+    expect(detectUnsupportedRefundCommitment(draft, INVOICE_FACT)).toMatch(/refund/)
+  })
+
+  it('does not block offering to check on refund eligibility', () => {
+    const draft = "Let me check whether this qualifies for a refund and get back to you."
+    expect(detectUnsupportedRefundCommitment(draft, FACTS)).toBeNull()
+  })
+
+  it('does not block "I can check whether a refund applies" — genuine hedge', () => {
+    const draft = "I can check whether a refund applies and get back to you."
+    expect(detectUnsupportedRefundCommitment(draft, FACTS)).toBeNull()
+  })
+
+  it('treats empty grounding as attesting no refund policy', () => {
+    expect(detectUnsupportedRefundCommitment('We will refund your payment in full.', '')).toMatch(/refund/)
   })
 })
 

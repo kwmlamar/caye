@@ -13,6 +13,12 @@ describe('slugOf', () => {
     expect(slugOf('20260721e_caye_admin_pending_actions')).toBe('caye_admin_pending_actions')
   })
 
+  it('strips a full timestamp prefix', () => {
+    expect(slugOf('20260814163945_caye_authorizations_and_jobs')).toBe(
+      'caye_authorizations_and_jobs'
+    )
+  })
+
   it('leaves an already-bare slug alone', () => {
     expect(slugOf('caye_cron_runs')).toBe('caye_cron_runs')
   })
@@ -33,6 +39,15 @@ describe('findMissingMigrations', () => {
     expect(findMissingMigrations(['20260611_eod_summary'], ['eod_summary'])).toEqual([])
   })
 
+  it('matches timestamped filenames against bare ledger slugs', () => {
+    expect(
+      findMissingMigrations(
+        ['20260814163945_caye_authorizations_and_jobs'],
+        ['caye_authorizations_and_jobs']
+      )
+    ).toEqual([])
+  })
+
   it('reports a migration the ledger has never heard of', () => {
     expect(findMissingMigrations(['20260728_foo'], ['something_else'])).toEqual(['20260728_foo'])
   })
@@ -41,6 +56,14 @@ describe('findMissingMigrations', () => {
     const legacy = '20260611_morning_briefing'
     expect(LEGACY_RECONCILED.has(legacy)).toBe(true)
     expect(findMissingMigrations([legacy], [])).toEqual([])
+  })
+
+  it.each([
+    '20260813d_add_payment_setup_needed_outbound_kind',
+    '20260813g_cron_run_history',
+  ])('suppresses the verified Aug 13 ledger mismatch %s', (name) => {
+    expect(LEGACY_RECONCILED.has(name)).toBe(true)
+    expect(findMissingMigrations([name], [])).toEqual([])
   })
 
   it('does not let a legacy entry mask an unrelated missing migration', () => {
@@ -68,7 +91,7 @@ describe('findMissingMigrations', () => {
 
 describe('the repo manifest against a fully-reconciled ledger', () => {
   // Every repo migration matched either by name or via LEGACY_RECONCILED as
-  // of the 2026-07-28 audit. Simulating a ledger that contains each
+  // of the migration audits. Simulating a ledger that contains each
   // migration's slug proves the manifest and matcher agree.
   it('reports no drift when the ledger holds every slug', () => {
     const ledger = REPO_MIGRATIONS.map(slugOf)
