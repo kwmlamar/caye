@@ -1,3 +1,6 @@
+Warning: truncated output (original token count: 35128)
+Total output lines: 2983
+
 import 'server-only'
 import { randomUUID } from 'crypto'
 import Anthropic from '@anthropic-ai/sdk'
@@ -57,6 +60,11 @@ import {
   formatBusinessFactsBlock,
   type BusinessFactRow,
 } from './business-facts'
+import {
+  fetchLearnedOperatingKnowledge,
+  formatLearnedOperatingKnowledge,
+  type LearnedOperatingKnowledge,
+} from './operator-learning'
 import {
   fetchStandingRules,
   findMatchingRule,
@@ -743,7 +751,8 @@ function buildSystem(
   services: ServiceRow[],
   todayISO: string,
   serviceMatch: ServiceMatchResult | null,
-  businessFacts: BusinessFactRow[]
+  businessFacts: BusinessFactRow[],
+  learnedKnowledge: LearnedOperatingKnowledge[]
 ): { stable: string; dynamic: string } {
   // ── STABLE PREFIX ───────────────────────────────────────────────────────
   let stable = systemPrompt
@@ -1036,6 +1045,8 @@ function buildSystem(
   // would defeat the purpose.
   const bizFactsBlock = formatBusinessFactsBlock(businessFacts)
   if (bizFactsBlock) dynamic += '\n\n' + bizFactsBlock
+  const learnedBlock = formatLearnedOperatingKnowledge(learnedKnowledge)
+  if (learnedBlock) dynamic += '\n\n' + learnedBlock
 
   // Inbound-context tone modifier. Pure classifier picks a category from
   // the inbound body (or returns null when uncertain); toneHintFor maps
@@ -1055,543 +1066,7 @@ function buildSystem(
   dynamic += isEmail
     ? '\n\nWrite only the reply body — no headers, no markdown, no subject line. Plain prose.' +
       '\n\nSIGN-OFF: Use the exact sign-off block specified earlier in this system prompt — verbatim, ' +
-      'including name and business. If (and only if) a phone or email appears in the ' +
-      'BUSINESS CONTACT INFO block above, you may include it — otherwise leave contact details out of ' +
-      'the sign-off entirely rather than improvising. NEVER use a phone number or email address you saw ' +
-      'anywhere else in this conversation (the inbound message body, a webform submission, "Email:"/' +
-      '"Phone:" fields, conversation history) — those belong to the CUSTOMER, not the business, even ' +
-      'when they\'re the only phone/email visible. Do NOT invent your own signature. ' +
-      'Do NOT sign as "Caye" or any variant. Do NOT mention that you are an AI, assistant, ' +
-      'receptionist, or automated system anywhere in the body or the sign-off. From the recipient\'s ' +
-      'point of view, the email is from the business owner — write as them, not on their behalf.'
-    : isFirstMessage
-    ? `\n\nWrite only the reply body. Plain conversational prose — no markdown. Keep it brief — this is ${channel}, not email. Open with a warm, natural greeting. Never mention that you are an AI, assistant, or automated.`
-    : `\n\nWrite only the reply body. Plain conversational prose — no markdown. Keep it brief — this is ${channel}, not email. Do NOT open with a greeting or the customer's name — jump straight to the answer. Never mention that you are an AI, assistant, or automated.`
-
-  // First-message brevity rule (email). Counter the verbose-acknowledgement
-  // failure mode: a hot lead from an intake form should not get three
-  // paragraphs of preamble before the question. See Omayra Calzada
-  // 2026-05-31 — three full paragraphs of "thank you so much / we'd love /
-  // this is one of our specialty offerings / let me confirm a few details"
-  // before the actual qualifying question. Reads like a chatbot. Karenda
-  // would write three sentences total.
-  if (isEmail && isFirstMessage) {
-    dynamic +=
-      '\n\nBREVITY (FIRST-CONTACT EMAILS):\n' +
-      '- Maximum 2 short paragraphs in the body. One brief acknowledgement, one clear next step (the price, the question, the booking confirmation). Then sign off.\n' +
-      '- No more than 2 sentences per paragraph. No restating what the customer already told you.\n' +
-      '- Banned filler openers: "Thank you so much for reaching out", "We would absolutely love to", "I am thrilled / delighted / so excited". Use a single short warm line ("Thanks for reaching out, Jeff.") and move to the substance.\n' +
-      '- If you have a price to quote, quote it in the first paragraph. If you have a question, ask one (not three).\n' +
-      '- This is about respecting the customer\'s time. Karenda is direct and warm. Caye should be the same.'
-  }
-
-  dynamic += '\n\nYou MUST end every turn by calling either send_reply or hold_for_human.'
-
-  return { stable, dynamic }
-}
-
-interface AvailabilityRow {
-  service_id: string | null
-  booking_time: string
-  number_of_people: number
-  status: string
-  service: { name: string; duration_minutes: number; is_shared: boolean; max_capacity: number }[] | null
-}
-
-export interface AvailabilitySlot {
-  time: string
-  service: string | null
-  service_id: string | null
-  duration_minutes: number
-  is_shared: boolean
-  max_capacity: number | null
-  total_guests: number
-  capacity_remaining: number | null
-  parties: Array<{ name?: string; guests: number }>
-}
-
-export interface AvailabilityResult {
-  date: string
-  slots: AvailabilitySlot[]
-  /** True when the business is closed that date (blackout). */
-  closed?: boolean
-  /** Human-readable closure label, e.g. "Holiday closure". */
-  closed_label?: string
-  /** True when that weekday is handled personally by the owner, not Caye. */
-  owner_only?: boolean
-}
-
-/**
- * Exported (2026-08-16, Phase 2 of runtime convergence) so the front-desk
- * read-tool adapters in lib/caye-agent/tools/read/front-desk/*.ts can reuse
- * this canonical logic rather than duplicating it. No behavior change —
- * this function is otherwise untouched, and lib/caye-reply.ts's own
- * internal callers are unaffected by the export.
- */
-export async function checkAvailability(
-  workspaceId: string,
-  date: string
-): Promise<AvailabilityResult> {
-  const supabase = createServiceClient()
-
-  // Operating rules first: a closed or owner-only date short-circuits before
-  // we bother computing slot capacity. Caye must not quote/book on these.
-  const { data: cfg } = await supabase
-    .from('workspace_ai_config')
-    .select('blackout_dates, owner_only_weekdays')
-    .eq('workspace_id', workspaceId)
-    .maybeSingle()
-
-  if (cfg) {
-    const verdict = evaluateOperatingDate(date, {
-      blackout_dates: (cfg.blackout_dates as BlackoutRange[]) ?? [],
-      owner_only_weekdays: (cfg.owner_only_weekdays as number[]) ?? [],
-    })
-    if (verdict.status === 'closed') {
-      return { date, slots: [], closed: true, closed_label: verdict.label }
-    }
-    if (verdict.status === 'owner_only') {
-      return { date, slots: [], owner_only: true }
-    }
-  }
-
-  const { data, error } = await supabase
-    .from('bookings')
-    .select('service_id, customer_name, booking_time, number_of_people, status, service:booking_services(name, duration_minutes, is_shared, max_capacity)')
-    .eq('user_id', workspaceId)
-    .eq('booking_date', date)
-    .neq('status', 'cancelled')
-    .order('booking_time')
-
-  if (error) {
-    return { date, slots: [] }
-  }
-
-  // Group rows by (service_id, time) so shared slots aggregate
-  type Key = string
-  const groups = new Map<Key, { rows: (AvailabilityRow & { customer_name?: string })[]; svc?: AvailabilityRow['service'] }>()
-  const rows = (data ?? []) as unknown as (AvailabilityRow & { customer_name?: string })[]
-  for (const r of rows) {
-    const k = `${r.service_id ?? 'none'}|${r.booking_time}`
-    if (!groups.has(k)) groups.set(k, { rows: [], svc: r.service })
-    groups.get(k)!.rows.push(r)
-  }
-
-  const slots: AvailabilitySlot[] = []
-  for (const { rows, svc } of groups.values()) {
-    const total = rows.reduce((a, b) => a + b.number_of_people, 0)
-    const s = svc?.[0]
-    const isShared = s?.is_shared ?? false
-    const capacity = isShared ? s?.max_capacity ?? null : 1 // exclusive = 1 "slot"
-    slots.push({
-      time: rows[0].booking_time.slice(0, 5),
-      service: s?.name ?? null,
-      service_id: rows[0].service_id,
-      duration_minutes: s?.duration_minutes ?? 120,
-      is_shared: isShared,
-      max_capacity: capacity,
-      total_guests: total,
-      capacity_remaining: capacity != null ? Math.max(0, capacity - total) : null,
-      parties: rows.map(r => ({ name: r.customer_name, guests: r.number_of_people })),
-    })
-  }
-  return { date, slots }
-}
-
-export interface CreateBookingInput {
-  customer_name: string
-  customer_phone?: string
-  customer_email?: string
-  booking_date: string
-  booking_time: string
-  number_of_people?: number
-  duration_minutes?: number
-  service_id?: string
-  notes?: string
-  status?: 'confirmed' | 'pending'
-}
-
-/**
- * Fetch pricing tiers for a service and resolve the exact price for a group size.
- * Returns a structure Caye can quote verbatim, or a hold instruction.
- *
- * Deterministic — never paraphrases prices. The Stallings 2026-05-29 case
- * (see Clients/bimini-island-tours.md) traced to a human mis-typing pricing
- * by tier confusion; this function eliminates that class of error for Caye.
- *
- * Exported (2026-08-16, Phase 2 of runtime convergence) — see checkAvailability's
- * doc comment above for why.
- */
-export async function lookupPriceForCaye(
-  workspaceId: string,
-  serviceId: string,
-  groupSize: number,
-  variant?: string | null
-): Promise<
-  | { ok: true; price_label: string; total_label: string; total_amount: number; tier_name: string; variant?: string | null }
-  | { ok: false; hold: string; message: string; candidate_tiers?: { tier_name: string; variant: string | null }[] }
-> {
-  const supabase = createServiceClient()
-
-  // Verify the service belongs to this workspace before fetching tiers.
-  const { data: service } = await supabase
-    .from('booking_services')
-    .select('id, user_id, name')
-    .eq('id', serviceId)
-    .eq('user_id', workspaceId)
-    .maybeSingle()
-
-  if (!service) {
-    return {
-      ok: false,
-      hold: 'service_not_found',
-      message: `Service ${serviceId} not found in this workspace. Pick a service_id from AVAILABLE SERVICES.`,
-    }
-  }
-
-  const { data: tierRows, error } = await supabase
-    .from('service_pricing_tiers')
-    .select('id, tier_name, variant, group_size_min, group_size_max, price_amount, price_label, is_flat, is_ambiguous_above, display_order')
-    .eq('service_id', serviceId)
-    .eq('workspace_id', workspaceId)
-    .order('display_order', { ascending: true })
-
-  if (error) {
-    return { ok: false, hold: 'lookup_error', message: `Pricing lookup failed: ${error.message}` }
-  }
-
-  // price_amount comes back as string from postgres NUMERIC; coerce to number.
-  const tiers: PricingTier[] = (tierRows ?? []).map(r => ({
-    id: r.id,
-    tier_name: r.tier_name,
-    variant: r.variant ?? null,
-    group_size_min: r.group_size_min,
-    group_size_max: r.group_size_max,
-    price_amount: typeof r.price_amount === 'string' ? parseFloat(r.price_amount) : r.price_amount,
-    price_label: r.price_label,
-    is_flat: r.is_flat,
-    is_ambiguous_above: r.is_ambiguous_above,
-    display_order: r.display_order,
-  }))
-
-  const result = resolveTier(tiers, groupSize, variant)
-
-  if (result.ok) {
-    return {
-      ok: true,
-      price_label: result.priceLabel,
-      total_label: result.totalLabel,
-      total_amount: result.totalAmount,
-      tier_name: result.tier.tier_name,
-      variant: result.tier.variant ?? null,
-    }
-  }
-
-  return {
-    ok: false,
-    hold: result.hold,
-    message: result.message,
-    candidate_tiers: result.candidateTiers.map(t => ({ tier_name: t.tier_name, variant: t.variant ?? null })),
-  }
-}
-
-export async function createBookingFromCaye(
-  workspaceId: string,
-  conversationId: string | null,
-  input: CreateBookingInput,
-  fallbackEmail: string | null
-): Promise<{ success: boolean; booking_id?: string; error?: string }> {
-  const supabase = createServiceClient()
-
-  const timeWithSeconds = input.booking_time.length === 5 ? `${input.booking_time}:00` : input.booking_time
-
-  // Mark bookings created by Caye in the notes so the observability panel
-  // can distinguish them from owner-created bookings. Cancels/reschedules
-  // use the same pattern ([Caye cancel], [Caye reschedule]).
-  const createNote = '[Caye create]'
-  const trimmedInputNote = input.notes?.trim()
-  const notesWithMarker = trimmedInputNote
-    ? `${trimmedInputNote}\n\n${createNote}`
-    : createNote
-
-  const payload = {
-    user_id: workspaceId,
-    conversation_id: conversationId,
-    service_id: input.service_id || null,
-    customer_name: input.customer_name.trim(),
-    customer_phone: input.customer_phone?.trim() || null,
-    customer_email: input.customer_email?.trim() || fallbackEmail || null,
-    booking_date: input.booking_date,
-    booking_time: timeWithSeconds,
-    number_of_people: input.number_of_people && input.number_of_people > 0 ? input.number_of_people : 1,
-    duration_minutes:
-      input.duration_minutes && input.duration_minutes > 0 ? input.duration_minutes : null,
-    // Default to 'pending' (= tentative, customer hasn't confirmed details yet).
-    // Caye must explicitly pass status='confirmed' when the customer has agreed
-    // to a specific date/time AND availability has been verified. The Stallings
-    // 2026-05-29 case showed why the default matters: a confirmed-on-inquiry
-    // booking row created a phantom commitment before any customer agreement.
-    // See _Ops/Brain/decisions-log.md and Clients/bimini-island-tours.md.
-    status: input.status ?? 'pending',
-    notes: notesWithMarker,
-  }
-
-  // Don't book the same guest twice for the same day. Karin Roberts ended up
-  // on Karenda's November 6th calendar twice — same email, same thread, same
-  // party — because the guest came back with more detail two days later and
-  // this ran a bare insert with no check of any kind (2026-08-11). Two Zoho
-  // events for a party of 2 reads as 4 guests, which overbooks the tour on
-  // paper and makes a free day look full.
-  const { data: sameDay } = await supabase
-    .from('bookings')
-    .select('id, customer_name, customer_email, booking_date, booking_time, number_of_people, status')
-    .eq('user_id', workspaceId)
-    .eq('booking_date', input.booking_date)
-    .in('status', ['pending', 'confirmed'])
-
-  const dupe = findDuplicateBooking({
-    existing: sameDay ?? [],
-    candidate: {
-      customer_name: payload.customer_name,
-      customer_email: payload.customer_email,
-      booking_date: payload.booking_date,
-    },
-  })
-  if (dupe.duplicate) {
-    // Surfaced as an error so the model has to address it in its reply rather
-    // than treat the booking as done. It is not a failure of the insert — the
-    // guest already has what they asked for.
-    return { success: false, error: dupe.message }
-  }
-
-  const { data, error } = await supabase.from('bookings').insert(payload).select('id').single()
-  if (error || !data) {
-    return { success: false, error: error?.message ?? 'Insert failed' }
-  }
-  return { success: true, booking_id: data.id }
-}
-
-export interface CayeAutoReplyInput {
-  senderName: string
-  body: string
-  channel: 'whatsapp' | 'instagram' | 'messenger' | 'email'
-  subject?: string
-  isFirstMessage?: boolean
-  workspaceId: string
-  conversationId?: string | null
-  senderEmail?: string | null
-  /**
-   * channel_message_id of the inbound message we're replying to.
-   * Used to exclude the current message from the fetched history so we
-   * don't echo it back as prior context.
-   */
-  currentChannelMessageId?: string | null
-  /** Provider-observed inbound time. Sales relationship evidence must retain
-   * this source time rather than a webhook retry's wall-clock time. */
-  receivedAt?: string | null
-  /**
-   * Present only for the explicit Sales stale-hold recovery route. The
-   * database verifies this receipt is still claimed for this exact stored
-   * inbound before it may bypass the final human-hold autosend gate.
-   */
-  staleHoldRecoveryId?: string | null
-  staleHoldRecoveryOriginalMessageId?: string | null
-}
-
-// ── find_bookings + cancel_booking ──────────────────────────────────────────
-
-export interface FoundBooking {
-  booking_id: string
-  customer_name: string
-  service_name: string | null
-  booking_date: string
-  booking_time: string
-  number_of_people: number
-  status: string
-  duration_minutes: number | null
-}
-
-export interface FindBookingsResult {
-  match_count: number
-  bookings: FoundBooking[]
-  /** Set when we fell back to name-match because email returned zero. Tells
-   *  Caye to confirm with the customer before acting on a name-only hit. */
-  matched_by: 'email' | 'name' | 'none'
-}
-
-/**
- * Look up active (confirmed/pending), future-dated bookings for a customer.
- * Email-first; name fallback only when email returns zero. The fallback
- * marker (`matched_by: 'name'`) tells Caye to verify before acting.
- *
- * Exported (2026-08-16, Phase 2 of runtime convergence) — see
- * checkAvailability's doc comment above for why.
- */
-export async function findBookings(
-  workspaceId: string,
-  input: { customer_email?: string; customer_name?: string }
-): Promise<FindBookingsResult> {
-  const supabase = createServiceClient()
-  const today = new Date().toISOString().slice(0, 10)
-  const email = input.customer_email?.trim().toLowerCase()
-  const name = input.customer_name?.trim()
-
-  const selectCols =
-    'id, customer_name, booking_date, booking_time, number_of_people, status, duration_minutes, ' +
-    'service:booking_services(name)'
-
-  type Row = {
-    id: string
-    customer_name: string
-    booking_date: string
-    booking_time: string
-    number_of_people: number
-    status: string
-    duration_minutes: number | null
-    service: { name: string }[] | null
-  }
-
-  let rows: Row[] = []
-  let matched_by: 'email' | 'name' | 'none' = 'none'
-
-  if (email) {
-    const { data } = await supabase
-      .from('bookings')
-      .select(selectCols)
-      .eq('user_id', workspaceId)
-      .in('status', ['confirmed', 'pending'])
-      .gte('booking_date', today)
-      .ilike('customer_email', email)
-      .order('booking_date')
-      .order('booking_time')
-    rows = (data ?? []) as unknown as Row[]
-    if (rows.length) matched_by = 'email'
-  }
-
-  if (!rows.length && name) {
-    const { data } = await supabase
-      .from('bookings')
-      .select(selectCols)
-      .eq('user_id', workspaceId)
-      .in('status', ['confirmed', 'pending'])
-      .gte('booking_date', today)
-      .ilike('customer_name', name)
-      .order('booking_date')
-      .order('booking_time')
-    rows = (data ?? []) as unknown as Row[]
-    if (rows.length) matched_by = 'name'
-  }
-
-  const bookings: FoundBooking[] = rows.map(r => ({
-    booking_id: r.id,
-    customer_name: r.customer_name,
-    service_name: r.service?.[0]?.name ?? null,
-    booking_date: r.booking_date,
-    booking_time: r.booking_time.slice(0, 5),
-    number_of_people: r.number_of_people,
-    status: r.status,
-    duration_minutes: r.duration_minutes,
-  }))
-
-  return { match_count: bookings.length, bookings, matched_by }
-}
-
-type CancelResult =
-  | { ok: true; booking_id: string; hours_until_booking: number }
-  | { ok: false; reason: 'within_policy_window' | 'booking_in_past' | 'not_found' | 'already_cancelled' | 'db_error'; detail?: string }
-
-/**
- * Cancel an existing booking. Enforces the autonomy policy window
- * (defense in depth — the prompt also instructs Caye, but we don't trust
- * the prompt for irreversible operations). On success, syncs the Zoho
- * Calendar event delete in the background.
- */
-async function cancelBookingFromCaye(
-  workspaceId: string,
-  bookingId: string,
-  workspaceTimezone: string,
-  reason: string | undefined
-): Promise<CancelResult> {
-  const supabase = createServiceClient()
-
-  const { data: booking, error: readErr } = await supabase
-    .from('bookings')
-    .select('id, status, booking_date, booking_time, notes')
-    .eq('id', bookingId)
-    .eq('user_id', workspaceId)
-    .maybeSingle()
-
-  if (readErr || !booking) {
-    return { ok: false, reason: 'not_found' }
-  }
-  if (booking.status === 'cancelled') {
-    return { ok: false, reason: 'already_cancelled' }
-  }
-
-  const gate = checkBookingAutonomy({
-    bookingDate: booking.booking_date,
-    bookingTime: booking.booking_time.slice(0, 5),
-    timezone: workspaceTimezone,
-  })
-
-  if (!gate.ok) {
-    return { ok: false, reason: gate.reason, detail: `~${gate.hoursUntilBooking.toFixed(1)}h until booking` }
-  }
-
-  const cancellationNote = reason ? `[Caye cancel] ${reason}` : '[Caye cancel]'
-  const noteWithReason = booking.notes
-    ? `${booking.notes}\n\n${cancellationNote}`
-    : cancellationNote
-
-  const { error: updErr } = await supabase
-    .from('bookings')
-    .update({
-      status: 'cancelled',
-      cancelled_at: new Date().toISOString(),
-      notes: noteWithReason,
-    })
-    .eq('id', bookingId)
-
-  if (updErr) {
-    return { ok: false, reason: 'db_error', detail: updErr.message }
-  }
-
-  // Calendar delete fire-and-forget — booking is already cancelled in DB,
-  // calendar sync failure is recoverable manually.
-  syncBookingToCalendar(workspaceId, bookingId, 'delete').catch(err =>
-    console.error('[caye-reply] cancel calendar sync failed:', err)
-  )
-
-  return { ok: true, booking_id: bookingId, hours_until_booking: gate.hoursUntilBooking }
-}
-
-// ── end find_bookings + cancel_booking ──────────────────────────────────────
-
-// ── reschedule_booking ──────────────────────────────────────────────────────
-
-type RescheduleResult =
-  | {
-      ok: true
-      booking_id: string
-      new_date: string
-      new_time: string
-      time_was_preserved: boolean
-      hours_until_original_booking: number
-    }
-  | {
-      ok: false
-      reason:
-        | 'within_policy_window'
-        | 'booking_in_past'
-        | 'not_found'
-        | 'already_cancelled'
-        | 'slot_unavailable'
-        | 'db_error'
-      detail?: string
-    }
-
-/**
- * Move an existing booking to a new date/time of the SAME service.
+      'including …5128 tokens truncated…ice.
  *
  * Policy gate runs against the booking's CURRENT start (you can't sneak in
  * a reschedule on a booking that's 12h out). Availability check runs for
@@ -2262,7 +1737,10 @@ async function generateCayeAutoReplyCore(
   // Now that she answers prospects directly, anything Lamar teaches her
   // about how to sell has to reach her the same way it reaches any other
   // workspace.
-  const businessFacts = await fetchBusinessFacts(inbound.workspaceId)
+  const [businessFacts, learnedKnowledge] = await Promise.all([
+    fetchBusinessFacts(inbound.workspaceId),
+    fetchLearnedOperatingKnowledge(inbound.workspaceId),
+  ])
 
 
   // Grounding text for the payment-figure guard. Every business fact is
@@ -2350,7 +1828,8 @@ async function generateCayeAutoReplyCore(
         services,
         todayISO,
         serviceMatch,
-        businessFacts
+        businessFacts,
+        learnedKnowledge
       )
 
   // Appended to the DYNAMIC half deliberately: this verdict is specific to

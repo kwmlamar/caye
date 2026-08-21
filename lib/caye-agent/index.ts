@@ -14,6 +14,7 @@ import { loadAdminShellContext } from './admin-shell-context'
 import { runToolLoop } from './execute'
 import { summarizeInvestigation, buildContinuationPrompt } from './investigation'
 import type { Role } from './tools/types'
+import { fetchLearnedOperatingKnowledge, formatLearnedOperatingKnowledge } from '@/lib/operator-learning'
 import {
   loadAuthoritativeOwnerOperationalState,
   renderAuthoritativeOwnerOperationalState,
@@ -175,6 +176,9 @@ export async function buildBackOfficeTurnContext(input: CayeAgentInput): Promise
     )
   )
 
+  const learnedKnowledgeBlock = formatLearnedOperatingKnowledge(
+    await fetchLearnedOperatingKnowledge(input.workspaceId)
+  )
   const baseSystemPrompt = buildBackOfficeSystemPrompt({
     profile: {
       operatorName: (customer?.full_name as string | null) ?? null,
@@ -206,9 +210,8 @@ export async function buildBackOfficeTurnContext(input: CayeAgentInput): Promise
     threadContext: threadCtx?.promptBlock ?? null,
   })
 
-  const systemPrompt = ownerOperationalContext
-    ? `${baseSystemPrompt}\n\n${ownerOperationalContext}`
-    : baseSystemPrompt
+  const dynamicBlocks = [baseSystemPrompt, learnedKnowledgeBlock, ownerOperationalContext].filter(Boolean)
+  const systemPrompt = dynamicBlocks.join('\n\n')
 
   // Continuation of a multi-round investigation (2026-08-17 Bimini
   // revenue-audit fix): skip the normal history replay — which is exactly
