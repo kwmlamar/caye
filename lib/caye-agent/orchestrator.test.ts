@@ -173,6 +173,34 @@ describe('runToolWithRecovery — observability', () => {
   })
 })
 
+describe('runToolWithRecovery — investigation provenance (2026-08-17 Bimini audit fix)', () => {
+  it('records investigationId, toolUseId, and args on the caye_tool_calls row', async () => {
+    const tool = makeTool('read', async () => ({ ok: true, data: { found: true } }))
+    await runToolWithRecovery(
+      tool,
+      { conversation_id: 'conv-123' },
+      ctx({ investigationId: 'inv-abc' }),
+      { mode: 'back-office', toolUseId: 'toolu_999' }
+    )
+    await new Promise((r) => setTimeout(r, 0))
+
+    expect(inserted).toHaveLength(1)
+    expect(inserted[0]).toMatchObject({
+      investigation_id: 'inv-abc',
+      tool_use_id: 'toolu_999',
+      args: { conversation_id: 'conv-123' },
+    })
+  })
+
+  it('leaves investigation_id/tool_use_id null for an ordinary (non-investigation) call', async () => {
+    const tool = makeTool('read', async () => ({ ok: true }))
+    await runToolWithRecovery(tool, {}, ctx(), { mode: 'back-office' })
+    await new Promise((r) => setTimeout(r, 0))
+
+    expect(inserted[0]).toMatchObject({ investigation_id: null, tool_use_id: null })
+  })
+})
+
 describe('guidanceFor', () => {
   it('forbids handing the work back to the operator on a failed write', () => {
     // The whole point. Left to itself the model told Mrs. Max to write her

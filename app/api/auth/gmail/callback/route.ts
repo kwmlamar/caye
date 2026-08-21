@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase-server'
+import { gmailOAuthRedirectUri } from '@/lib/gmail-oauth'
 
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
 const GOOGLE_USERINFO_URL = 'https://www.googleapis.com/oauth2/v2/userinfo'
@@ -37,7 +38,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(fail('gmail_error=access_denied'))
   }
 
-  const redirectUri = `${appUrl}/api/auth/gmail/callback`
+  const redirectUri = gmailOAuthRedirectUri()
 
   // Exchange authorization code for tokens
   const tokenRes = await fetch(GOOGLE_TOKEN_URL, {

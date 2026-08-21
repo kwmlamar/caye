@@ -9,6 +9,7 @@ import { FormattedReplyText } from '@/components/ui/FormattedReplyText'
 import { Pill } from '@/components/dashboard/founder-home/console-ui'
 import { CayeComposerSurface } from '@/components/dashboard/founder-home/AskCayeComposer'
 import { emitStale, ALL_TOPICS } from '@/lib/founder-freshness'
+import CayeVoiceSession from './voice/CayeVoiceSession'
 
 const NEAR_BOTTOM_PX = 96
 const TEXTAREA_MAX_H = 220
@@ -143,6 +144,19 @@ function dayLabel(iso: string): string {
   if (sameDay(d, today)) return 'Today'
   if (sameDay(d, yesterday)) return 'Yesterday'
   return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+}
+
+// Friendly labels for the small "via X" indicator — never the raw BackendId
+// (e.g. 'claude_subscription'), which reads as an internal implementation
+// detail rather than something meant for the founder's eyes.
+function backendLabel(backend: string): string {
+  switch (backend) {
+    case 'claude_subscription': return 'Claude (subscription)'
+    case 'openai_codex_subscription': return 'Codex (subscription)'
+    case 'anthropic_api': return 'Claude (API)'
+    case 'openai_api': return 'OpenAI (API)'
+    default: return backend
+  }
 }
 
 function bubbleRadius(isCaye: boolean, pos: GroupPos): string {
@@ -329,6 +343,13 @@ export default function CayeDirectThread(props: Props) {
   const [hoveredKey, setHoveredKey] = useState<string | null>(null)
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
   const [composerFocused, setComposerFocused] = useState(false)
+  const [voiceActive, setVoiceActive] = useState(false)
+  // Caye Direct's model selector (2026-08-17) — Auto by default, per-tab
+  // state only (no persistence yet). ONLY read by send()'s plain typed-text
+  // path below, never by voice's sendTurn call — see send()'s comment on
+  // why `model` is omitted whenever opts.endpoint is set.
+  const [modelMode, setModelMode] = useState<'auto' | 'claude' | 'openai' | 'api'>('auto')
+  const [lastBackend, setLastBackend] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const atBottomRef = useRef(true)
@@ -471,12 +492,21 @@ export default function CayeDirectThread(props: Props) {
     setShowJump(false)
   }
 
-  async function send(text: string) {
+  // `opts.endpoint` lets a finalized VOICE utterance (CayeVoiceSession, via
+  // useVoiceSession's `sendTurn`) reuse this exact function — same
+  // optimistic bubble, same inFlightRuns registration, same post-turn
+  // refetch — instead of duplicating this round trip for a second input
+  // modality. Voice posts to /api/founder/caye-direct/voice/turn (which
+  // calls the identical runFounderThreadTurn() this thread's own endpoint
+  // calls) rather than /threads/:id; the request/response shape is the
+  // same on both. Returns the reply text so a voice caller can hand it to
+  // TTS; typed sends ignore the return value.
+  async function send(text: string, opts?: { endpoint?: string; sessionId?: string }): Promise<string | null> {
     const trimmed = text.trim()
-    if (!trimmed || sending || readOnly || mode !== 'thread') return
+    if (!trimmed || sending || readOnly || mode !== 'thread') return null
 
     setSending(true)
-    setInput('')
+    if (!opts?.endpoint) setInput('')
     atBottomRef.current = true
 
     const optimistic: OperatorMessage = {
@@ -497,23 +527,48 @@ export default function CayeDirectThread(props: Props) {
     // server-side, so a refetch recovers the thread regardless.
     const key = runKey
     const threadId = props.threadId
+    let replyText: string | null = null
     const run = (async () => {
       try {
         const { session } = await getSession()
         if (!session) return
-        const res = await fetch(`/api/founder/caye-direct/threads/${threadId}`, {
+        const res = await fetch(opts?.endpoint ?? `/api/founder/caye-direct/threads/${threadId}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
-          body: JSON.stringify({ workspaceId, message: trimmed }),
+          body: JSON.stringify({
+            workspaceId,
+            threadId,
+            message: trimmed,
+            ...(opts?.sessionId ? { sessionId: opts.sessionId } : {}),
+            // Only the plain typed-text path (no custom endpoint) sends a
+            // model choice — voice posts to its own endpoint and always
+            // gets Auto server-side, unaffected by this selector.
+            ...(!opts?.endpoint ? { model: modelMode } : {}),
+          }),
         })
         const json = await res.json()
         if (res.ok && json.replyText) {
+          replyText = json.replyText
           setMessages((prev) => [...prev, {
             id: `reply-${Date.now()}`,
             direction: 'outbound',
             body: json.replyText,
             created_at: new Date().toISOString(),
           }])
+        }
+        // Both of these are scoped to the plain typed path only — voice's
+        // error/backend handling is untouched, exactly as before this
+        // selector existed (see the comment on the `model` field above).
+        if (!opts?.endpoint) {
+          setLastBackend(res.ok && typeof json.backend === 'string' ? json.backend : null)
+          if (!res.ok) {
+            setMessages((prev) => [...prev, {
+              id: `error-${Date.now()}`,
+              direction: 'outbound',
+              body: "Couldn't get a reply just now — try again in a moment.",
+              created_at: new Date().toISOString(),
+            }])
+          }
         }
         // A settled turn is the console's single biggest source of
         // silently-stale panels: Caye writes leads, drafts, bookings and
@@ -544,6 +599,7 @@ export default function CayeDirectThread(props: Props) {
       inFlightRuns.delete(key)
       setSending(false)
     }
+    return replyText
   }
 
   // Fires the composer-supplied opener once history has settled — waiting
@@ -797,6 +853,43 @@ export default function CayeDirectThread(props: Props) {
         </div>
       ) : props.composerVisible !== false ? (
         <div style={{ padding: '12px clamp(18px, 4vw, 48px) 16px', background: 'transparent', position: 'relative' }}>
+          {voiceActive ? (
+            <div className="caye-direct-composer-shell">
+              <CayeVoiceSession
+                workspaceId={workspaceId}
+                sendTurn={send}
+                onClose={() => setVoiceActive(false)}
+              />
+            </div>
+          ) : (
+          <>
+          {mode === 'thread' && (
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              width: 'min(100%, 840px)', margin: '0 auto 6px', padding: '0 4px',
+            }}>
+              <select
+                value={modelMode}
+                onChange={(e) => setModelMode(e.target.value as typeof modelMode)}
+                title="Which model reasons for Caye on your next message"
+                style={{
+                  background: 'transparent', border: 'none', color: '#71717a',
+                  fontSize: 10.5, fontFamily: 'var(--font-mono)', letterSpacing: '0.02em',
+                  cursor: 'pointer', outline: 'none', padding: '2px 0', appearance: 'none',
+                }}
+              >
+                <option value="auto">Auto ▾</option>
+                <option value="claude">Claude ▾</option>
+                <option value="openai">Codex ▾</option>
+                <option value="api">API ▾</option>
+              </select>
+              {lastBackend && (
+                <span style={{ fontSize: 9.5, fontFamily: 'var(--font-mono)', color: '#52525b' }}>
+                  via {backendLabel(lastBackend)}
+                </span>
+              )}
+            </div>
+          )}
           <form className="caye-direct-composer-shell" onSubmit={(e) => { e.preventDefault(); send(input) }}>
             <CayeComposerSurface
               active={composerFocused}
@@ -835,6 +928,18 @@ export default function CayeDirectThread(props: Props) {
                 }}
               />
               <button
+                type="button"
+                onClick={() => setVoiceActive(true)}
+                disabled={sending}
+                title="Talk to Caye"
+                aria-label="Start voice conversation with Caye"
+                className="caye-direct-send"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(244,244,245,0.6)" strokeWidth="2.2" strokeLinecap="round">
+                  <rect x="9" y="2" width="6" height="12" rx="3" /><path d="M5 10a7 7 0 0 0 14 0M12 19v3" />
+                </svg>
+              </button>
+              <button
                 type="submit"
                 disabled={sending || !input.trim()}
                 title="Send"
@@ -849,6 +954,8 @@ export default function CayeDirectThread(props: Props) {
               </button>
             </CayeComposerSurface>
           </form>
+          </>
+          )}
         </div>
       ) : null}
     </div>

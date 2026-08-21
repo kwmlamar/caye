@@ -43,6 +43,14 @@ const ALLOWED = new Map<string, string>([
   // The indices are prompt scaffolding, never echoed to a human.
   ['app/api/caye/discovery/route.ts', 'prompt-internal numbering'],
   ['lib/business-fact-semantic-match.ts', 'prompt-internal candidate ids'],
+  // Placeholder for an unrenderable content-block type inside a CLI
+  // subprocess prompt (Claude/Codex subscription backends) — never shown
+  // to a human, only ever read by the reasoning backend itself.
+  ['lib/model-router/tool-bridge/render-transcript.ts', 'CLI prompt scaffolding, not owner-facing output'],
+  // Array-index path segment in a schema-validation error, fed back to the
+  // MODEL as a tool_result so it can correct its own malformed tool call —
+  // same category as orchestrator.ts's stableStringify entry above.
+  ['lib/model-router/tool-bridge/schema-validate.ts', 'validation error path returned to the model, not a human'],
 ])
 
 function sourceFiles(dir: string, out: string[] = []): string[] {

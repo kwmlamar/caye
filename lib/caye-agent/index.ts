@@ -11,6 +11,7 @@ import { buildDriverSystemPrompt } from './modes/driver'
 import { buildAdminShellSystemPrompt } from './modes/admin-shell'
 import { loadAdminShellContext } from './admin-shell-context'
 import { runToolLoop } from './execute'
+import { summarizeInvestigation, buildContinuationPrompt } from './investigation'
 import type { Role } from './tools/types'
 
 const MODEL = 'claude-sonnet-4-6'
@@ -93,6 +94,25 @@ export interface CayeAgentInput {
    * before. Back-office mode only; other modes ignore this field.
    */
   threadId?: string | null
+  /**
+   * Set by founder-thread-turn.ts's continuation loop (2026-08-17 Bimini
+   * revenue-audit fix — see investigation.ts) when this call is resuming a
+   * multi-round investigation that already ran past one runToolLoop
+   * invocation's iteration budget. When `isContinuation` is true,
+   * buildBackOfficeTurnContext skips the normal thread-history replay
+   * (loadDirectThreadContext/loadOperatorContext) entirely and starts from
+   * a deterministic digest of every tool call already made under this
+   * `id`, built from caye_tool_calls — not from the (possibly compacted)
+   * conversation transcript. `id` is stable across every continuation of
+   * one logical investigation; `objective` is the founder's original
+   * request, repeated verbatim so a continuation can't drift onto a
+   * different task. Undefined on every ordinary turn.
+   */
+  investigation?: {
+    id: string
+    isContinuation: boolean
+    objective: string
+  }
 }
 
 export interface CayeAgentResult {
@@ -116,6 +136,8 @@ export interface CayeAgentResult {
    * don't have row ids yet at the point the tool ran.
    */
   linkedThreadIds: string[]
+  /** See ToolLoopResult.ranOutOfIterations. Undefined/false on every ordinary turn. */
+  ranOutOfIterations?: boolean
 }
 
 /**
@@ -146,19 +168,21 @@ async function reconciledAttention(workspaceId: string) {
   return loadAttentionDelta({ workspaceId })
 }
 
-export async function cayeAgent(input: CayeAgentInput): Promise<CayeAgentResult> {
-  if (input.mode === 'driver') {
-    return runDriverAgent(input)
-  }
-  if (input.mode === 'admin-shell') {
-    return runAdminShellAgent(input)
-  }
-  if (input.mode !== 'back-office') {
-    throw new Error(
-      `[caye-agent] mode '${input.mode}' is not yet routed through the unified agent (see epic #35).`
-    )
-  }
+export interface BackOfficeTurnContext {
+  systemPrompt: string
+  initialMessages: Anthropic.MessageParam[]
+}
 
+/**
+ * Builds the system prompt + message history for a back-office turn —
+ * everything runToolLoop needs EXCEPT the model call itself. Extracted
+ * (2026-08-17) so lib/model-router/caye-direct-bridge.ts can build the
+ * IDENTICAL context for a subscription-backed founder turn without
+ * duplicating the customer/business_brief/voice-profile/thread-context
+ * assembly below — the model backend is the only thing that differs
+ * between the two callers, never what Caye knows going in.
+ */
+export async function buildBackOfficeTurnContext(input: CayeAgentInput): Promise<BackOfficeTurnContext> {
   const supabase = createServiceClient()
 
   // Base query — only columns confirmed present in the production schema
@@ -241,9 +265,16 @@ export async function cayeAgent(input: CayeAgentInput): Promise<CayeAgentResult>
 
   // Thread-scoped context replaces the operator sliding window only when
   // this is a founder Direct thread turn — see CayeAgentInput.threadId.
-  const threadCtx = input.threadId
-    ? await loadDirectThreadContext(input.workspaceId, input.threadId)
-    : null
+  //
+  // Skipped entirely on a continuation pass (2026-08-17 Bimini fix): this is
+  // the call that runs history-compaction.ts's elision, and a continuation
+  // must be provably independent of it, not just happen not to use its
+  // output. Nothing below reads threadCtx.history on that branch anyway —
+  // this also saves a wasted DB round trip on every continuation.
+  const threadCtx =
+    input.threadId && !input.investigation?.isContinuation
+      ? await loadDirectThreadContext(input.workspaceId, input.threadId)
+      : null
 
   const systemPrompt = buildBackOfficeSystemPrompt({
     profile: {
@@ -279,6 +310,21 @@ export async function cayeAgent(input: CayeAgentInput): Promise<CayeAgentResult>
     threadContext: threadCtx?.promptBlock ?? null,
   })
 
+  // Continuation of a multi-round investigation (2026-08-17 Bimini
+  // revenue-audit fix): skip the normal history replay — which is exactly
+  // what history-compaction.ts had to shrink down to a handful of the
+  // newest tool results in the original incident — and start instead from
+  // a deterministic digest of everything this investigation has already
+  // found, straight from caye_tool_calls. See investigation.ts.
+  if (input.investigation?.isContinuation) {
+    const digest = await summarizeInvestigation(supabase, input.investigation.id, input.workspaceId)
+    const continuationTurn: Anthropic.MessageParam = {
+      role: 'user',
+      content: buildContinuationPrompt(input.investigation.objective, digest),
+    }
+    return { systemPrompt, initialMessages: [continuationTurn] }
+  }
+
   const history = threadCtx
     ? threadCtx.history
     : await loadOperatorContext(input.workspaceId, input.operatorId)
@@ -288,10 +334,28 @@ export async function cayeAgent(input: CayeAgentInput): Promise<CayeAgentResult>
   }
   const initialMessages: Anthropic.MessageParam[] = [...history, currentUserTurn]
 
+  return { systemPrompt, initialMessages }
+}
+
+export async function cayeAgent(input: CayeAgentInput): Promise<CayeAgentResult> {
+  if (input.mode === 'driver') {
+    return runDriverAgent(input)
+  }
+  if (input.mode === 'admin-shell') {
+    return runAdminShellAgent(input)
+  }
+  if (input.mode !== 'back-office') {
+    throw new Error(
+      `[caye-agent] mode '${input.mode}' is not yet routed through the unified agent (see epic #35).`
+    )
+  }
+
+  const { systemPrompt, initialMessages } = await buildBackOfficeTurnContext(input)
+
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
   const directThreadLinks: string[] = []
-  const { replyText, newTurns } = await runToolLoop({
+  const { replyText, newTurns, ranOutOfIterations } = await runToolLoop({
     client,
     model: MODEL,
     maxTokens: MAX_OUTPUT_TOKENS,
@@ -304,11 +368,21 @@ export async function cayeAgent(input: CayeAgentInput): Promise<CayeAgentResult>
       requestId: randomUUID(),
       origin: input.origin,
       directThreadLinks,
+      investigationId: input.investigation?.id ?? null,
     },
     mode: 'back-office',
+    // Structural write-exclusion for continuation passes — see
+    // ToolLoopArgs.readOnly. Only the FIRST pass of an investigation (or an
+    // ordinary non-investigation turn) gets the full tool surface.
+    readOnly: input.investigation?.isContinuation === true,
   })
 
-  return { replyText, newTurns, linkedThreadIds: [...new Set(directThreadLinks)] }
+  return {
+    replyText,
+    newTurns,
+    linkedThreadIds: [...new Set(directThreadLinks)],
+    ranOutOfIterations,
+  }
 }
 
 /**

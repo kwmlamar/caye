@@ -22,9 +22,10 @@ export interface LoggedCallContext {
 export async function loggedMessagesCreate(
   client: Anthropic,
   params: Anthropic.MessageCreateParamsNonStreaming,
-  ctx: LoggedCallContext
+  ctx: LoggedCallContext,
+  options?: Anthropic.RequestOptions
 ): Promise<Anthropic.Message> {
-  const response = await client.messages.create(params)
+  const response = await client.messages.create(params, options)
   void logCallUsage(response, ctx).catch((err) => {
     console.error('[llm-telemetry] log write failed:', err)
   })

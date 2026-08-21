@@ -114,4 +114,6 @@ export const REPO_MIGRATIONS: readonly string[] = [
   '20260814b_sales_lifecycle_state',
   '20260816_caye_frontdesk_agent_turns',
   '20260816b_caye_pending_actions_supersession',
+  '20260816c_add_operator_message_outbound_kind',
+  '20260817_caye_investigation_ledger',
 ]

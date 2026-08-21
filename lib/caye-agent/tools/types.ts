@@ -182,6 +182,19 @@ export interface ToolContext {
    * tools never read or write it).
    */
   evidenceCollected?: EvidenceFact[]
+  /**
+   * Stable id for one logical multi-step investigation (2026-08-17 Bimini
+   * revenue-audit incident). Unlike `requestId` (fresh per runToolLoop
+   * invocation — one per inbound message), this stays the SAME across the
+   * internal continuation turns lib/caye-agent/investigation.ts drives when
+   * a founder-authorized investigation runs long enough to exceed
+   * MAX_TOOL_ITERATIONS in one call. Threaded into caye_tool_calls so every
+   * tool call made anywhere in the investigation can be found by this one
+   * key, independent of which runToolLoop call or which (possibly
+   * compacted) conversation turn it happened in. Undefined for ordinary
+   * turns — nothing about a normal single-shot tool call changes.
+   */
+  investigationId?: string | null
 }
 
 /**

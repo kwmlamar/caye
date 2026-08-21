@@ -87,6 +87,9 @@ importers:
       '@vitest/ui':
         specifier: ^4.1.7
         version: 4.1.7(vitest@4.1.7)
+      server-only:
+        specifier: 0.0.1
+        version: 0.0.1
       sharp:
         specifier: ^0.32.1
         version: 0.32.6
@@ -1174,6 +1177,9 @@ packages:
     resolution: {integrity: sha512-rkVq3IXh+4FDGch+KwzX3aV9W3kO54GyEgpvBzSyctDA6Xtd7RJQV1xmXbeQp5v7+VzLOfVqiutSE6GICgPFvg==}
     engines: {node: '>=10'}
     hasBin: true
+
+  server-only@0.0.1:
+    resolution: {integrity: sha512-qepMx2JxAa5jjfzxG79yPPq+8BuFToHd1hm7kI+Z4zAq1ftQiP7HcxMhDDItrbtwVeLg/cY2JnKnrcFkmiswNA==}
 
   sharp@0.32.6:
     resolution: {integrity: sha512-KyLTWwgcR9Oe4d9HwCwNM2l7+J0dUQwn/yf7S0EnTtb0eVS4RxO0eUSvxPtzT4F3SY+C4K6fqdv/DO27sJ/v/w==}
@@ -2372,6 +2378,8 @@ snapshots:
   scheduler@0.27.0: {}
 
   semver@7.8.1: {}
+
+  server-only@0.0.1: {}
 
   sharp@0.32.6:
     dependencies:

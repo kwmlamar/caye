@@ -22,9 +22,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase-server'
 import { requireFounder } from '@/lib/founder'
-import { cayeAgent } from '@/lib/caye-agent'
-import { persistAgentTurns, isInternalTurnBody, visibleBody, dedupeConsecutive } from '@/lib/caye-operator-messages'
-import { resolveFounderOperator } from '@/lib/operator-identity'
+import { isInternalTurnBody, visibleBody, dedupeConsecutive } from '@/lib/caye-operator-messages'
 import {
   getThread,
   getThreadEntities,
@@ -32,11 +30,11 @@ import {
   describeEntity,
   renameThread,
   setThreadStatus,
-  touchThread,
-  linkMessageToThread,
-  linkInsertedMessagesToThreads,
 } from '@/lib/caye-direct-threads'
-import { maybeGenerateThreadTitle, maybeRefreshThreadSummary } from '@/lib/caye-direct-threads-summarize'
+import { runFounderThreadTurn } from '@/lib/caye-agent/founder-thread-turn'
+import type { RequestedMode } from '@/lib/model-router/types'
+
+const VALID_REQUESTED_MODES: readonly RequestedMode[] = ['auto', 'claude', 'openai', 'api']
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const workspaceId = req.nextUrl.searchParams.get('workspaceId')
@@ -73,7 +71,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const body = await req.json().catch(() => null)
   if (!body) return NextResponse.json({ error: 'Invalid request body' }, { status: 400 })
 
-  const { workspaceId, message } = body as { workspaceId?: string; message?: string }
+  const { workspaceId, message, model } = body as { workspaceId?: string; message?: string; model?: string }
   if (!workspaceId || !message?.trim()) {
     return NextResponse.json({ error: 'workspaceId and message are required' }, { status: 400 })
   }
@@ -82,79 +80,25 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (!user) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
   const { id: threadId } = await params
-  const supabase = createServiceClient()
 
-  const thread = await getThread(supabase, workspaceId, threadId)
-  if (!thread) return NextResponse.json({ error: 'Thread not found' }, { status: 404 })
-
-  // Sending into an archived thread resumes it — archiving hides a thread
-  // from the default sidebar, it doesn't close the door on it. Without
-  // this, a founder who messages an archived thread would have their
-  // reply land somewhere the sidebar never shows again (listThreads
-  // defaults to status: 'active'), which reads as the message vanishing.
-  if (thread.status === 'archived') {
-    await setThreadStatus(supabase, workspaceId, threadId, 'active')
-  }
-
-  const operator = await resolveFounderOperator(supabase, workspaceId)
-  const callerName = operator?.name ?? 'Founder (dashboard)'
-
-  const { data: inboundRow } = await supabase
-    .from('caye_operator_messages')
-    .insert({
-      workspace_id: workspaceId,
-      direction: 'inbound',
-      wa_message_id: null,
-      body: message,
-      intent: null,
-      claude_format: { role: 'user', content: message },
-      operator_allowlist_id: operator?.id ?? null,
-      operator_name: operator?.name ?? null,
-      operator_role: operator?.role ?? 'founder',
-      origin: 'dashboard',
-    })
-    .select('id')
-    .single()
-  if (inboundRow?.id) await linkMessageToThread(supabase, threadId, inboundRow.id, 'founder')
+  // `model` is the Caye Direct model selector (2026-08-17) — omitted or
+  // unrecognized falls through to undefined, which keeps runFounderThreadTurn
+  // on its original cayeAgent()/execute.ts path exactly as before this
+  // feature existed. founderUserId comes from the verified session above,
+  // never from the request body — see runCayeDirectRouterTurn's doc comment.
+  const requestedMode = VALID_REQUESTED_MODES.find((m) => m === model)
 
   try {
-    const agentResult = await cayeAgent({
-      mode: 'back-office',
+    const result = await runFounderThreadTurn(
       workspaceId,
-      userMessage: message,
-      callerRole: 'founder',
-      callerName,
-      operatorId: operator?.id ?? null,
       threadId,
-    })
-
-    const inserted = await persistAgentTurns(
-      supabase,
-      workspaceId,
-      agentResult.newTurns,
-      operator,
-      undefined,
-      undefined,
-      'dashboard'
+      message,
+      requestedMode ? { requestedMode, founderUserId: user.id } : undefined
     )
-    const insertedIds = inserted.map((r) => r.id)
-    await Promise.all([
-      ...insertedIds.map((id) => linkMessageToThread(supabase, threadId, id, 'founder')),
-      linkInsertedMessagesToThreads(supabase, insertedIds, agentResult.linkedThreadIds),
-      touchThread(supabase, threadId),
-    ])
-
-    // Fire once, before responding, so a fresh thread's title is ready by
-    // the time the sidebar re-fetches — cheap/fast enough not to matter
-    // for latency, and only ever runs while thread.title is still null.
-    await maybeGenerateThreadTitle(workspaceId, threadId)
-    // Summary refresh is a long-thread-resume optimization, not something
-    // this reply depends on — don't make the founder wait on it.
-    void maybeRefreshThreadSummary(workspaceId, threadId).catch(() => {})
-
-    return NextResponse.json({ replyText: agentResult.replyText, threadId })
+    return NextResponse.json(result)
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Agent failed'
+    if (msg === 'Thread not found') return NextResponse.json({ error: msg }, { status: 404 })
     return NextResponse.json({ error: msg }, { status: 500 })
   }
 }

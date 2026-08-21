@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyConnectToken } from '@/lib/channels/connect-token'
+import { gmailOAuthRedirectUri } from '@/lib/gmail-oauth'
 
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
 // Scopes:
@@ -41,7 +42,7 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  const redirectUri = `${process.env.NEXT_PUBLIC_APP_URL}/api/auth/gmail/callback`
+  const redirectUri = gmailOAuthRedirectUri()
   const source = req.nextUrl.searchParams.get('source') || 'desktop'
 
   const params = new URLSearchParams({

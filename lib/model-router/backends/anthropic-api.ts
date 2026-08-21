@@ -1,0 +1,115 @@
+import 'server-only'
+import Anthropic from '@anthropic-ai/sdk'
+import { loggedMessagesCreate } from '@/lib/llm-telemetry'
+import { asAnthropicTool } from '@/lib/caye-agent/tools/types'
+import type { BackendHealth, ModelInvokeRequest, ModelInvokeResult } from '../types'
+import type { ToolCapableBackend, ToolTurnRequest, ToolTurnResult } from '../tool-bridge/types'
+
+/**
+ * The normal metered API path — same ANTHROPIC_API_KEY and the same
+ * loggedMessagesCreate telemetry wrapper every other call site in the repo
+ * uses, so spend still shows up in llm_call_log under one consistent
+ * source tag. Deliberately a NEW, isolated call site rather than a change
+ * to lib/caye-agent/execute.ts — that function is shared with live
+ * customer Zoho front-desk traffic (see the audit report, Q10), and this
+ * backend must not touch that blast radius.
+ */
+const MODEL = 'claude-sonnet-4-6'
+const MAX_TOKENS = 4096
+
+export class AnthropicApiBackend implements ToolCapableBackend {
+  readonly id = 'anthropic_api' as const
+  readonly provider = 'anthropic' as const
+  readonly authMode = 'api_key' as const
+  readonly capabilities = [
+    'general_reasoning',
+    'coding',
+    'tool_use',
+    'long_context',
+    'vision',
+    'structured_output',
+    'persisted_session',
+  ] as const
+
+  async checkHealth(): Promise<BackendHealth> {
+    const checkedAt = new Date().toISOString()
+    if (!process.env.ANTHROPIC_API_KEY) {
+      return { state: 'auth_required', detail: 'ANTHROPIC_API_KEY is not set.', checkedAt }
+    }
+    return { state: 'available', checkedAt }
+  }
+
+  async invoke(req: ModelInvokeRequest, signal: AbortSignal): Promise<ModelInvokeResult> {
+    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+    const start = Date.now()
+
+    const response = await loggedMessagesCreate(
+      client,
+      {
+        model: MODEL,
+        max_tokens: req.maxOutputTokens ?? MAX_TOKENS,
+        system: req.system,
+        messages: req.messages.map((m) => ({ role: m.role, content: m.text })),
+      },
+      { source: 'lib/model-router/backends/anthropic-api.ts:invoke', workspaceId: req.ctx.workspaceId },
+      { signal }
+    )
+
+    const latencyMs = Date.now() - start
+    const textBlock = response.content.find((b): b is Anthropic.TextBlock => b.type === 'text')
+
+    return {
+      backend: 'anthropic_api',
+      model: response.model,
+      text: textBlock?.text ?? '',
+      usage: {
+        inputTokens: response.usage.input_tokens,
+        outputTokens: response.usage.output_tokens,
+      },
+      latencyMs,
+    }
+  }
+
+  /**
+   * Native Anthropic tool-calling — zero translation. Same asAnthropicTool
+   * mapping and same cache_control-on-last-tool pattern runToolLoop uses
+   * (lib/caye-agent/execute.ts:106-113), reproduced here rather than
+   * imported since runToolLoop's version is inline in that function, not
+   * an exported helper — this is the one place duplicating a few lines of
+   * request-shaping was cheaper than exporting a new seam from the shared
+   * production file for a single caller.
+   */
+  async invokeTurn(req: ToolTurnRequest, signal: AbortSignal): Promise<ToolTurnResult> {
+    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+    const start = Date.now()
+
+    const tools = req.tools.map(asAnthropicTool)
+    if (tools.length > 0) {
+      tools[tools.length - 1] = {
+        ...tools[tools.length - 1],
+        cache_control: { type: 'ephemeral', ttl: '1h' },
+      } as Anthropic.Tool
+    }
+
+    const response = await loggedMessagesCreate(
+      client,
+      {
+        model: MODEL,
+        max_tokens: req.maxOutputTokens,
+        system: [{ type: 'text', text: req.system, cache_control: { type: 'ephemeral', ttl: '1h' } }],
+        messages: req.messages,
+        tools,
+      },
+      { source: 'lib/model-router/backends/anthropic-api.ts:invokeTurn', workspaceId: req.ctx.workspaceId },
+      { signal }
+    )
+
+    return {
+      content: response.content,
+      model: response.model,
+      usage: { inputTokens: response.usage.input_tokens, outputTokens: response.usage.output_tokens },
+      latencyMs: Date.now() - start,
+      toolCallsFromStructuredText: false,
+    }
+  }
+}

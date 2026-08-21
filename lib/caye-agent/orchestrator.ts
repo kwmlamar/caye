@@ -88,7 +88,7 @@ export async function runToolWithRecovery(
   tool: Tool<never>,
   args: unknown,
   ctx: ToolContext,
-  meta: { mode: ToolMode }
+  meta: { mode: ToolMode; toolUseId?: string }
 ): Promise<OrchestratedResult> {
   const startedAt = Date.now()
   const budget = MAX_ATTEMPTS[tool.risk] ?? 1
@@ -120,7 +120,7 @@ export async function runToolWithRecovery(
   }
 
   const durationMs = Date.now() - startedAt
-  void logToolCall({ tool, ctx: scopedCtx, meta, result: last, attempts, durationMs }).catch(
+  void logToolCall({ tool, args, ctx: scopedCtx, meta, result: last, attempts, durationMs }).catch(
     (err) => console.error('[orchestrator] tool-call log write failed:', err)
   )
 
@@ -141,8 +141,9 @@ function toScreamingSnake(name: string): string {
  */
 async function logToolCall(entry: {
   tool: Tool<never>
+  args: unknown
   ctx: ToolContext
-  meta: { mode: ToolMode }
+  meta: { mode: ToolMode; toolUseId?: string }
   result: ToolResult
   attempts: number
   durationMs: number
@@ -161,6 +162,9 @@ async function logToolCall(entry: {
     attempts: entry.attempts,
     deferred: entry.result.deferred === true,
     durationMs: entry.durationMs,
+    investigationId: entry.ctx.investigationId ?? null,
+    toolUseId: entry.meta.toolUseId ?? null,
+    args: entry.args,
   })
 }
 
@@ -178,6 +182,12 @@ export interface ToolCallRecord {
   attempts?: number
   deferred?: boolean
   durationMs?: number | null
+  /** See caye_tool_calls.investigation_id — groups calls across a multi-turn investigation. */
+  investigationId?: string | null
+  /** The tool_use block id — joins back to the raw tool_result in caye_operator_messages. */
+  toolUseId?: string | null
+  /** Tool call arguments, for identifying which record a finding is about. */
+  args?: unknown
 }
 
 /**
@@ -210,6 +220,9 @@ export async function recordToolCall(entry: ToolCallRecord): Promise<void> {
       attempts: entry.attempts ?? 1,
       deferred: entry.deferred === true,
       duration_ms: entry.durationMs ?? null,
+      investigation_id: entry.investigationId ?? null,
+      tool_use_id: entry.toolUseId ?? null,
+      args: entry.args === undefined ? null : entry.args,
     })
     if (error) console.error('[orchestrator] caye_tool_calls insert failed:', error.message)
   } catch (err) {

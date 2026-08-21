@@ -1,0 +1,23 @@
+{
+  "type": "object",
+  "properties": {
+    "tool_calls": {
+      "type": ["array", "null"],
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "input_json": {
+            "type": "string",
+            "description": "The tool's input arguments, serialized as a JSON string."
+          }
+        },
+        "required": ["name", "input_json"],
+        "additionalProperties": false
+      }
+    },
+    "final_text": { "type": ["string", "null"] }
+  },
+  "required": ["tool_calls", "final_text"],
+  "additionalProperties": false
+}
