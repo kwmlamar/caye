@@ -1,5 +1,6 @@
 import 'server-only'
 import { createServiceClient } from '@/lib/supabase-server'
+import { syncBookingToCalendar } from '@/lib/calendar-sync'
 import type { Tool } from '../types'
 import {
   findOwnedBooking,
@@ -79,6 +80,9 @@ export const rescheduleBooking: Tool<RescheduleBookingInput> = {
       .eq('id', args.booking_id)
     if (error) return { ok: false, error: error.message }
 
+    const calendar = await syncBookingToCalendar(ctx.workspaceId, args.booking_id, 'upsert')
+    const calendarDeferred = !calendar.synced && calendar.deferred === true
+
     const notify = await maybeNotifyCustomer({
       conversationId: lookup.booking.conversation_id,
       notify: args.notify_customer ?? true,
@@ -87,6 +91,10 @@ export const rescheduleBooking: Tool<RescheduleBookingInput> = {
 
     return {
       ok: true,
+      deferred: calendarDeferred,
+      operator_message: calendarDeferred
+        ? 'Booking rescheduled. Zoho Calendar will catch up shortly.'
+        : undefined,
       data: {
         booking_id: args.booking_id,
         new_date: args.new_date,
@@ -94,6 +102,10 @@ export const rescheduleBooking: Tool<RescheduleBookingInput> = {
         customer_notified: notify.sent,
         notification_channel: notify.channel ?? null,
         notification_error: notify.error ?? null,
+        calendar_synced: calendar.synced,
+        calendar_sync_status: calendar.synced ? 'synced' : calendarDeferred ? 'pending' : 'not_applicable',
+        calendar_event_id: calendar.synced ? calendar.event_id ?? null : null,
+        calendar_sync_error: calendar.synced ? null : calendar.reason,
       },
     }
   },

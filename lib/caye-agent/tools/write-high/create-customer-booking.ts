@@ -1,6 +1,7 @@
 import 'server-only'
 import { createServiceClient } from '@/lib/supabase-server'
 import { createBookingFromCaye, type CreateBookingInput } from '@/lib/caye-reply'
+import { syncBookingToCalendar } from '@/lib/calendar-sync'
 import type { Tool } from '../types'
 import { assertConversationOwnedByWorkspace } from '../write-low/_guards'
 import { HIGH_RISK_CONFIRMATION_PREAMBLE } from './_booking-helpers'
@@ -43,7 +44,7 @@ interface CreateCustomerBookingInput {
  */
 export const createCustomerBooking: Tool<CreateCustomerBookingInput> = {
   name: 'create_customer_booking',
-  description: `Create a pending booking for a customer directly from the operator conversation. Use this when the owner has supplied or approved the booking details — do the work yourself; never tell the owner to create the booking in the calendar. First use search_threads/get_customer_history/get_services (and availability data when relevant) to resolve the exact customer and service. It creates status='pending', never 'confirmed', and runs the canonical duplicate guard before inserting. ${HIGH_RISK_CONFIRMATION_PREAMBLE}`,
+  description: `Create a pending booking for a customer directly from the operator conversation. Use this when the owner has supplied or approved the booking details — do the work yourself; never tell the owner to create the booking in the calendar. First use search_threads/get_customer_history/get_services (and availability data when relevant) to resolve the exact customer and service. It creates status='pending', never 'confirmed', runs the canonical duplicate guard, and mirrors the booking to the connected Zoho calendar. ${HIGH_RISK_CONFIRMATION_PREAMBLE}`,
   risk: 'high',
   roles: ['owner', 'founder'],
   modes: ['back-office'],
@@ -88,6 +89,30 @@ export const createCustomerBooking: Tool<CreateCustomerBookingInput> = {
     if (!result.success) {
       return { ok: false, status: 'CONFLICT', error: result.error ?? 'Could not create booking.' }
     }
-    return { ok: true, data: { booking_id: result.booking_id, status: 'pending' } }
+    if (!result.booking_id) {
+      return { ok: false, status: 'FAILED_PERMANENT', error: 'Booking was saved but could not be identified for calendar sync.' }
+    }
+
+    // The database booking is the source of truth. syncBookingToCalendar
+    // writes it to Mrs. Max's connected Zoho Calendar now, or records a
+    // retryable operation so Caye can truthfully report the mirror state
+    // without asking her to add the event by hand.
+    const calendar = await syncBookingToCalendar(ctx.workspaceId, result.booking_id, 'upsert')
+    const calendarDeferred = !calendar.synced && calendar.deferred === true
+    return {
+      ok: true,
+      deferred: calendarDeferred,
+      operator_message: calendarDeferred
+        ? 'Booking created. Zoho Calendar will catch up shortly.'
+        : undefined,
+      data: {
+        booking_id: result.booking_id,
+        status: 'pending',
+        calendar_synced: calendar.synced,
+        calendar_sync_status: calendar.synced ? 'synced' : calendarDeferred ? 'pending' : 'not_applicable',
+        calendar_event_id: calendar.synced ? calendar.event_id ?? null : null,
+        calendar_sync_error: calendar.synced ? null : calendar.reason,
+      },
+    }
   },
 }
