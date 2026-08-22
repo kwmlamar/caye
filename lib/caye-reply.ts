@@ -94,6 +94,7 @@ import {
   capabilityUncertainReplyFor,
   TRANSPORT_CAPABILITY_OWNER_NOTE,
 } from './capability-uncertain-reply'
+import { partialAccessibilityReplyFor } from './partial-accessibility-reply'
 
 export type EscalationCategory = 'gap' | 'policy' | 'knowledge' | 'sensitive'
 export type EscalationRouteTo = 'owner' | 'founder' | 'both'
@@ -347,7 +348,11 @@ const TOOLS: Anthropic.Tool[] = [
             'escalate after" path. In practice: you should almost never have a financial/policy ' +
             'claim at medium/low confidence in the first place — if you don\'t have the fact from ' +
             'query_business_knowledge, don\'t state a number at all (see PAYMENT COPY above); this ' +
-            'flag is the backstop for when you do anyway.',
+            'flag is the backstop for when you do anyway. A customer ASKING a safety/accessibility ' +
+            'question does not itself make your reply high-stakes: state any directly documented ' +
+            'accommodation fact at high confidence, then say you are confirming only the unknown ' +
+            'vehicle-fit/ramp/transfer detail. Never let one unverified detail erase the useful ' +
+            'answer you do have.',
         },
       },
       required: ['content', 'confidence'],
@@ -2563,25 +2568,59 @@ async function generateCayeAutoReplyCore(
             }
           }
         } else if (input.high_stakes_claim && input.confidence && input.confidence !== 'high') {
-          // Safety/accessibility-adjacent claim + non-high confidence: unlike the
-          // normal "ship now, escalate after" path below, don't send an unverified
-          // guess about someone's physical safety or accessibility needs. Hold for
-          // the owner instead — a short acknowledgement goes out so the customer
-          // isn't left hanging while the real answer waits on the owner.
-          terminal = {
-            action: 'hold',
-            reason: `High-stakes claim at ${input.confidence} confidence`,
-            note:
-              `Caye drafted a reply making a safety/accessibility-adjacent claim she ` +
-              `rated ${input.confidence} confidence, so it was held instead of sent ` +
-              `automatically. Review and send (edited if needed).` +
-              (input.owner_note?.trim()
-                ? `\n\nCaye's note: ${input.owner_note.trim()}`
-                : ''),
-            proposedReply: sanitizeDashes(input.content),
-            customerAcknowledgement:
-              "Thanks for the detail — let me confirm the specifics with our team so I can give you an accurate answer, and we'll follow up shortly.",
-            urgency: 'urgent',
+          const accessibilityPartial = partialAccessibilityReplyFor(
+            inbound.body,
+            inbound.subject,
+            businessFacts
+          )
+          if (accessibilityPartial) {
+            // The customer asked a safety-sensitive question, but the owner has
+            // documented a real accommodation baseline. Send that narrow answer
+            // now, flag only the unverified vehicle-fit/ramp/transfer detail,
+            // and never let Caye turn it into a promise about a specific scooter.
+            terminal = {
+              action: 'reply',
+              content: sanitizeDashes(accessibilityPartial),
+              needsOwnerFollowup: true,
+              ownerNote:
+                'Confirm the vehicle can safely accommodate this guest’s mobility equipment and whether a transfer is required before confirming the booking.',
+            }
+            if (inbound.conversationId) {
+              try {
+                await createServiceClient()
+                  .from('unified_conversations')
+                  .update({
+                    human_agent_enabled: true,
+                    human_agent_reason:
+                      'Confirm vehicle fit and transfer requirements for accessibility inquiry.',
+                    human_agent_marked_at: new Date().toISOString(),
+                  })
+                  .eq('id', inbound.conversationId)
+              } catch (err) {
+                console.error('[caye-reply] Failed to flag accessibility follow-up:', err)
+              }
+            }
+          } else {
+            // Safety/accessibility-adjacent claim + non-high confidence: unlike the
+            // normal "ship now, escalate after" path below, don't send an unverified
+            // guess about someone's physical safety or accessibility needs. Hold for
+            // the owner instead — a short acknowledgement goes out so the customer
+            // isn't left hanging while the real answer waits on the owner.
+            terminal = {
+              action: 'hold',
+              reason: `High-stakes claim at ${input.confidence} confidence`,
+              note:
+                `Caye drafted a reply making a safety/accessibility-adjacent claim she ` +
+                `rated ${input.confidence} confidence, so it was held instead of sent ` +
+                `automatically. Review and send (edited if needed).` +
+                (input.owner_note?.trim()
+                  ? `\n\nCaye's note: ${input.owner_note.trim()}`
+                  : ''),
+              proposedReply: sanitizeDashes(input.content),
+              customerAcknowledgement:
+                "Thanks for the detail — let me confirm the specifics with our team so I can give you an accurate answer, and we'll follow up shortly.",
+              urgency: 'urgent',
+            }
           }
         } else if (
           evidenceVerdict.disposition === 'send_and_flag' &&
