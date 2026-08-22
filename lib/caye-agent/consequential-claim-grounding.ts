@@ -202,7 +202,14 @@ export async function validateAuthoritativeBookingStatusClaims(
       statuses = (res.data ?? []).map((r) => String(r.status ?? '')).filter(Boolean)
     }
     if (statuses.length === 0 && name) {
-      const res = await db.from('bookings').select('status').eq('user_id', workspaceId).ilike('customer_name', name)
+      // Manual calendar/import bookings commonly keep useful qualifiers in
+      // customer_name (for example, "Name (2) Private"). Treat the thread
+      // name as a conservative substring fallback, matching findBookings.
+      const res = await db
+        .from('bookings')
+        .select('status')
+        .eq('user_id', workspaceId)
+        .ilike('customer_name', `%${name}%`)
       statuses = (res.data ?? []).map((r) => String(r.status ?? '')).filter(Boolean)
     }
   }

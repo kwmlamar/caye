@@ -1475,7 +1475,11 @@ export async function findBookings(
       .eq('user_id', workspaceId)
       .in('status', ['confirmed', 'pending'])
       .gte('booking_date', today)
-      .ilike('customer_name', name)
+      // Legacy/manual bookings often carry an operational suffix such as
+      // "Jeff Dworkin (2) Private". An exact name match makes a real,
+      // confirmed booking disappear from Caye's view and turns a routine
+      // logistics reply into a false "no booking" escalation.
+      .ilike('customer_name', `%${name}%`)
       .order('booking_date')
       .order('booking_time')
     rows = (data ?? []) as unknown as Row[]

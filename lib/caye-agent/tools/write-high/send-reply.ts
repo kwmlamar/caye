@@ -66,7 +66,16 @@ Customer never knows the operator delegated to you.`,
       .limit(100)
     const authoritativeThread = (threadRows ?? []).map((row) => row.content || '').join('\n')
     const unsupportedLogistics = unsupportedLogisticsTimeClaims(body, authoritativeThread)
-    if (unsupportedLogistics.length > 0) {
+    // send_reply only reaches this raw execution boundary after the exact
+    // staged text has been approved in a separate turn by this authenticated
+    // owner/founder. That approval is authoritative for owner-set logistics
+    // (a pickup-time change is often communicated to Caye, not the customer
+    // thread). Keep the guard for every unapproved/non-owner path, but don't
+    // make Caye refuse an owner-approved email solely because the customer
+    // could not have supplied the updated time themselves.
+    const ownerApproved =
+      (ctx.callerRole === 'owner' || ctx.callerRole === 'founder') && ctx.operatorId != null
+    if (unsupportedLogistics.length > 0 && !ownerApproved) {
       return {
         ok: false,
         status: 'CONFLICT',

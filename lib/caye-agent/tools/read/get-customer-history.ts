@@ -30,6 +30,16 @@ interface BookingRow {
   service: ServiceJoin[] | null
 }
 
+function intakeEmail(metadata: unknown): string | null {
+  if (!metadata || typeof metadata !== 'object') return null
+  const meta = metadata as Record<string, unknown>
+  if (typeof meta.from === 'string' && meta.from.includes('@')) return meta.from.trim()
+  const formFields = meta.form_fields
+  if (!formFields || typeof formFields !== 'object') return null
+  const direct = (formFields as Record<string, unknown>).customerEmail
+  return typeof direct === 'string' && direct.includes('@') ? direct.trim() : null
+}
+
 interface MessageRow {
   content: string | null
   sender_type: string | null
@@ -88,7 +98,7 @@ export const getCustomerHistory: Tool<GetCustomerHistoryInput> = {
       const accountIds = (accounts ?? []).map((a: { id: string }) => a.id)
       const { data: conv } = await supabase
         .from('unified_conversations')
-        .select('id, contact_id, customer_name, customer_id, channel_type, last_message_at')
+        .select('id, contact_id, customer_name, customer_id, channel_type, last_message_at, metadata')
         .eq('id', args.conversation_id)
         .in('connected_account_id', accountIds)
         .maybeSingle()
@@ -105,6 +115,9 @@ export const getCustomerHistory: Tool<GetCustomerHistoryInput> = {
           conv.last_message_at as string | null
         )
       )
+
+      const email = intakeEmail(conv.metadata)
+      if (email) identities.push(identityFromField('email', email, 'claimed'))
     }
 
     let contact: {
@@ -183,6 +196,48 @@ export const getCustomerHistory: Tool<GetCustomerHistoryInput> = {
         .order('booking_date', { ascending: false })
         .limit(10)
       bookingRows = (bookings ?? []) as unknown as BookingRow[]
+    } else if (args.conversation_id) {
+      // Older imports and manual calendar entries frequently predate
+      // contact_id/conversation_id linkage. Resolve the exact thread first,
+      // then the customer email, then the customer name as a bounded fallback
+      // so an owner is never told a paid/confirmed booking is missing merely
+      // because the record was imported in a different shape.
+      const bookingSelect = `booking_date, booking_time, status, number_of_people, ${BOOKING_WITH_SERVICE_PRICE_SELECT}`
+      const direct = await supabase
+        .from('bookings')
+        .select(bookingSelect)
+        .eq('user_id', ctx.workspaceId)
+        .eq('conversation_id', args.conversation_id)
+        .order('booking_date', { ascending: false })
+        .limit(10)
+      bookingRows = (direct.data ?? []) as unknown as BookingRow[]
+
+      if (bookingRows.length === 0) {
+        const email = identities
+          .find((identity): identity is Identity => identity?.channel === 'email')
+          ?.address
+        if (email) {
+          const byEmail = await supabase
+            .from('bookings')
+            .select(bookingSelect)
+            .eq('user_id', ctx.workspaceId)
+            .ilike('customer_email', email)
+            .order('booking_date', { ascending: false })
+            .limit(10)
+          bookingRows = (byEmail.data ?? []) as unknown as BookingRow[]
+        }
+      }
+
+      if (bookingRows.length === 0 && conversationCustomerName) {
+        const byName = await supabase
+          .from('bookings')
+          .select(bookingSelect)
+          .eq('user_id', ctx.workspaceId)
+          .ilike('customer_name', `%${conversationCustomerName}%`)
+          .order('booking_date', { ascending: false })
+          .limit(10)
+        bookingRows = (byName.data ?? []) as unknown as BookingRow[]
+      }
     }
 
     let messages: MessageRow[] = []
