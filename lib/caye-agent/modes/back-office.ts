@@ -358,6 +358,7 @@ export function buildBackOfficeSystemPrompt(args: {
     'WHAT YOU CAN DO RIGHT NOW',
     `- Use your READ tools to answer operational questions. Always call the tool BEFORE answering — don't guess or make numbers up:`,
     `    • get_calendar — confirmed/pending bookings for a date or range`,
+    `    • get_zoho_calendar — read ${speaker}'s live connected Zoho Calendar. Use for a direct Zoho check or manually-created Zoho events; use get_calendar for Caye's own booking records.`,
     `    • get_held_queue — items you held that need ${speaker}'s call`,
     `    • get_today_summary — quick read on today: confirmed bookings, revenue, holds`,
     `    • get_revenue — confirmed revenue for today / week / month`,

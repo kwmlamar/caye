@@ -8,6 +8,7 @@ import {
 } from './external-draft-intent'
 import { confirmPendingAction } from './write-high/confirm-pending-action'
 import { getCalendar } from './read/get-calendar'
+import { getZohoCalendar } from './read/get-zoho-calendar'
 import { getHeldQueue } from './read/get-held-queue'
 import { getTodaySummary } from './read/get-today-summary'
 import { getRevenue } from './read/get-revenue'
@@ -170,6 +171,7 @@ function registeredHighRiskTool(tool: AnyTool): AnyTool {
 export const TOOL_REGISTRY: AnyTool[] = [
   // Read
   getCalendar as AnyTool,
+  getZohoCalendar as AnyTool,
   getHeldQueue as AnyTool,
   getTodaySummary as AnyTool,
   getRevenue as AnyTool,
