@@ -70,7 +70,6 @@ import { checkAvailabilityTool } from './read/front-desk/check-availability'
 import { lookupPriceTool } from './read/front-desk/lookup-price'
 import { findBookingsTool } from './read/front-desk/find-bookings'
 import { sendCustomerReply } from './write-high/send-customer-reply'
-import { createCustomerBooking } from './write-high/create-customer-booking'
 
 /**
  * All tools available to the back-office agent.
@@ -257,12 +256,6 @@ export const TOOL_REGISTRY: AnyTool[] = [
   // lib/caye-reply.ts already gates production sends today. Still inert
   // for production: nothing wires 'front-desk' mode into a live webhook.
   sendCustomerReply as AnyTool,
-  // create_customer_booking (2026-08-16, Phase 3): same non-gateHighRisk
-  // reasoning as sendCustomerReply above. Gated instead by evaluateAction's
-  // existing 'create_booking' evidence requirement list — see the tool's
-  // own doc comment. Cancel/reschedule/payment actions deliberately not
-  // ported this phase.
-  createCustomerBooking as AnyTool,
   // Admin Shell (2026-07-21) — founder-only dev/ops console, workspace-less.
   // trigger_cron is gated via gateAdminHighRisk (a separate confirmation
   // mechanism from gateHighRisk above, backed by caye_admin_pending_actions

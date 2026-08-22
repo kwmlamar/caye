@@ -26,9 +26,10 @@
  * send_reply/send_payment_confirmation. Nothing about this file is specific
  * to Mrs. Max or Bimini — groundedBy names tools, not people or workspaces.
  *
- * Deliberately scoped to the categories with real incident evidence (send,
- * schedule). Extend RULES for a new completion-claim category; the
- * mechanism itself does not change.
+ * The same pass also catches a distinct operator-handoff failure: Caye must
+ * not ask the owner to create a booking or send an email themselves when
+ * Caye has the tools to perform and report that work. This is not a claim
+ * grounding problem, so its rule has no successful-tool exception.
  *
  * 2026-08-16 STALE-CLAIM FOLLOW-UP. This function only ever sees CURRENT-
  * TURN evidence (the `executed` array is built live, per call, by
@@ -63,7 +64,7 @@ interface ClaimRule {
   /** Matches an affirmative, first-person, past-tense completion claim. */
   claimPattern: RegExp
   /** Tool names whose successful, non-pending execution this turn grounds the claim. */
-  groundedBy: readonly string[]
+  groundedBy?: readonly string[]
   correction: string
 }
 
@@ -109,6 +110,19 @@ const RULES: readonly ClaimRule[] = [
     groundedBy: ['schedule_reminder'],
     correction: 'I was not able to actually schedule that reminder — nothing was saved.',
   },
+  {
+    // 2026-08-21 Mrs. Max incident: when a malformed legacy booking made
+    // Caye think Jeff had no booking, it told her to create one herself or
+    // email him directly. That reverses the product's value proposition.
+    // Match both the underlying "system won't send" refusal and the direct
+    // delegation wording so a stale version of either message cannot reach
+    // the operator transcript.
+    category: 'booking-handoff',
+    claimPattern:
+      /\b(?:i\s+can'?t\s+route around that block|the system\s+won'?t\s+(?:send|route)[^.!?\n]*\bwithout\s+(?:a|the)\s+booking(?:\s+on\s+file)?|(?:you|please|don'?t forget to)\s+(?:(?:need to|can|should|will)\s+)?(?:create|make|add|put)\s+(?:(?:his|her|the|a)\s+)?booking\b|you\s+(?:(?:can|should)\s+)?(?:email|send)\s+(?:him|her|them|the customer)\s+(?:directly|yourself)\b)/i,
+    correction:
+      'I’ll reconcile or create the booking here first, then I’ll report back. I’ll ask only if a required booking detail is genuinely missing.',
+  },
 ]
 
 /** Splits on sentence boundaries while keeping the original separators (including blank lines) so reconstruction is lossless. */
@@ -117,7 +131,7 @@ function splitKeepingSeparators(text: string): string[] {
 }
 
 function isGrounded(rule: ClaimRule, executed: readonly ExecutedToolOutcome[]): boolean {
-  return executed.some((t) => rule.groundedBy.includes(t.name) && t.ok && !t.pendingOnly)
+  return !!rule.groundedBy?.some((name) => executed.some((t) => t.name === name && t.ok && !t.pendingOnly))
 }
 
 /**
@@ -140,9 +154,12 @@ export function enforceActionGrounding(
     if (!chunk) continue
     const trailingWs = /\s*$/.exec(chunk)?.[0] ?? ''
     const core = chunk.slice(0, chunk.length - trailingWs.length)
-    if (HEDGE_PATTERN.test(core)) continue
 
     for (const rule of RULES) {
+      // Future-tense language is harmless for completed-action claims but
+      // cannot excuse delegating work back to the operator ("Please create
+      // her booking, then I'll send the email").
+      if (rule.groundedBy && HEDGE_PATTERN.test(core)) continue
       if (!rule.claimPattern.test(core)) continue
       if (isGrounded(rule, executed)) continue
       violations.push({ category: rule.category, sentence: core.trim() })

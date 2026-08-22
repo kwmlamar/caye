@@ -104,6 +104,30 @@ describe('enforceActionGrounding — schedule claims', () => {
   })
 })
 
+describe('enforceActionGrounding — booking handoffs', () => {
+  it('removes the Mrs. Max booking/email handoff even when no booking tool ran', () => {
+    const replyText =
+      "I can't route around that block — the system won't send pickup instructions without a booking on file, and Jeff has none. You create the booking for Jeff, or you email him directly from your inbox. Don't forget to create his booking when you get a chance."
+
+    const { text, violations } = enforceActionGrounding(replyText, [])
+
+    expect(violations).toHaveLength(3)
+    expect(violations.every((violation) => violation.category === 'booking-handoff')).toBe(true)
+    expect(text).toContain('I’ll reconcile or create the booking here first')
+    expect(text).not.toMatch(/route around that block|you create the booking|email him directly|don'?t forget to create/i)
+  })
+
+  it('never permits a booking handoff just because a different action succeeded', () => {
+    const { text, violations } = enforceActionGrounding(
+      "Please create her booking, then I'll send the email.",
+      [{ name: 'send_reply', ok: true }]
+    )
+
+    expect(violations).toHaveLength(1)
+    expect(text).not.toContain('Please create her booking')
+  })
+})
+
 describe('enforceActionGrounding — general behavior', () => {
   it('passes claim-free text through completely untouched', () => {
     const replyText = 'Rayna is one reply away from booking. Want me to draft a nudge?'

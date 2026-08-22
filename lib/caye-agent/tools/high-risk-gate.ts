@@ -95,6 +95,8 @@ async function describePendingAction(
       return `Reschedule booking ${args.booking_id} to ${args.new_date}${args.new_time ? ` ${args.new_time}` : ''}`
     case 'confirm_booking':
       return `Confirm booking ${args.booking_id}`
+    case 'create_customer_booking':
+      return `Create pending booking for ${args.customer_name ?? 'customer'}: ${args.booking_date ?? 'date'} at ${args.booking_time ?? 'time'} for ${args.number_of_people ?? '?'} guest(s)`
     case 'remove_service':
       return `Remove service "${args.service_name}"`
     case 'remove_blackout_date':

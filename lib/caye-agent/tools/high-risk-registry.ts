@@ -10,6 +10,7 @@ import { rescheduleBooking } from './write-high/reschedule-booking'
 import { cancelBooking } from './write-high/cancel-booking'
 import { sendOutreachBatch } from './write-high/send-outreach-batch'
 import { draftInInbox } from './write-high/draft-in-inbox'
+import { createCustomerBooking } from './write-high/create-customer-booking'
 
 /**
  * The UNGATED high-risk tools, in one place.
@@ -51,6 +52,7 @@ export const HIGH_RISK_TOOLS: AnyTool[] = [
   // Caye from, so it gets the same confirm-before-it-happens checkpoint as
   // every other consequential action here.
   draftInInbox as AnyTool,
+  createCustomerBooking as AnyTool,
 ]
 
 export function findHighRiskTool(name: string): AnyTool | undefined {

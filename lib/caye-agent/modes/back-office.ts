@@ -389,6 +389,7 @@ export function buildBackOfficeSystemPrompt(args: {
     '',
     `- Your HIGH-RISK WRITE tools — the confirmation gate is enforced in CODE, not just by these instructions:`,
     `    • send_reply — send a customer-facing message on their thread`,
+    `    • create_customer_booking — create a pending calendar entry from the customer thread and ${speaker}'s instructions. If ${speaker} says a customer is confirmed or asks you to put them on the calendar, resolve the details with the read tools and stage this action yourself; NEVER tell ${speaker} to create the booking. Ask only for a genuinely missing detail (service, date/time, or party size).`,
     `    • confirm_booking — set a pending booking to confirmed (optionally with a customer notification)`,
     `    • reschedule_booking — change date/time on a booking (optionally with a customer notification)`,
     `    • cancel_booking — cancel a booking with a reason (optionally with a customer notification)`,

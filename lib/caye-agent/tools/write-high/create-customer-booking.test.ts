@@ -51,29 +51,13 @@ const fullArgs = {
   number_of_people: 2,
 }
 
-const ALL_EVIDENCE = [
-  'customer_identified',
-  'service_identified',
-  'date_identified',
-  'party_size_identified',
-  'availability_verified',
-] as const
-
 describe('createCustomerBooking', () => {
   beforeEach(() => {
     createBookingFromCayeMock.mockClear()
   })
 
-  it('refuses to create a booking when evidence is missing — canonical function is never called', async () => {
-    const result = await createCustomerBooking.execute(fullArgs, ctx({ evidenceCollected: ['service_identified'] }))
-    expect(result.ok).toBe(false)
-    expect(result.status).toBe('NEEDS_HUMAN')
-    expect(result.error_code).toBe('INSUFFICIENT_EVIDENCE')
-    expect(createBookingFromCayeMock).not.toHaveBeenCalled()
-  })
-
-  it('creates the booking as status=pending once every required fact is evidenced', async () => {
-    const result = await createCustomerBooking.execute(fullArgs, ctx({ evidenceCollected: [...ALL_EVIDENCE] }))
+  it('creates the owner-approved booking as status=pending', async () => {
+    const result = await createCustomerBooking.execute(fullArgs, ctx())
     expect(result.ok).toBe(true)
     expect(createBookingFromCayeMock).toHaveBeenCalledWith(
       'ws1',
@@ -85,13 +69,14 @@ describe('createCustomerBooking', () => {
 
   it('surfaces a duplicate-booking rejection from the canonical function as a CONFLICT, not a crash', async () => {
     createBookingFromCayeMock.mockResolvedValueOnce({ success: false, error: 'Already booked for this date.' })
-    const result = await createCustomerBooking.execute(fullArgs, ctx({ evidenceCollected: [...ALL_EVIDENCE] }))
+    const result = await createCustomerBooking.execute(fullArgs, ctx())
     expect(result.ok).toBe(false)
     expect(result.status).toBe('CONFLICT')
   })
 
-  it('is tagged high-risk and front-desk only', () => {
+  it('is tagged high-risk and available to the operator workflow', () => {
     expect(createCustomerBooking.risk).toBe('high')
-    expect(createCustomerBooking.modes).toEqual(['front-desk'])
+    expect(createCustomerBooking.modes).toEqual(['back-office'])
+    expect(createCustomerBooking.roles).toEqual(['owner', 'founder'])
   })
 })

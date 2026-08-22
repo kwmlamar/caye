@@ -62,6 +62,16 @@ describe('draft_in_inbox — registration (2026-08-17 Pam Ott incident, write-lo
   })
 })
 
+describe('create_customer_booking — operator ownership', () => {
+  it('is gated, confirmable, and only exposed to owners/founders in back-office', () => {
+    const tool = findTool('create_customer_booking')
+    expect(tool?.risk).toBe('high')
+    expect(tool?.modes).toEqual(['back-office'])
+    expect(tool?.roles).toEqual(['owner', 'founder'])
+    expect(findHighRiskTool('create_customer_booking')?.name).toBe('create_customer_booking')
+  })
+})
+
 describe('production tool registry — unrelated classifications unchanged by the move', () => {
   // A handful of tools whose risk tier is load-bearing elsewhere (evidence
   // gate, autonomy prose, other regression tests) — pinned here so a future
