@@ -1,6 +1,6 @@
 import 'server-only'
 import { createServiceClient } from './supabase-server'
-import { OUTREACH_DAILY_SEND_CAP } from './outreach-send-limits'
+import { OUTREACH_DAILY_FIRST_TOUCH_CAP } from './outreach-send-limits'
 import { isValidOutreachEmail } from './outreach-email'
 import { hasSalesCapability } from './sales/capability'
 
@@ -12,7 +12,7 @@ export interface OutreachOperationalStatus {
   schedule: { sourcing: string; autosend: string; nextRunAt: string | null }
   lastScan: { ranAt: string | null; succeeded: boolean | null; summary: Record<string, unknown> | null; error: string | null }
   lastSourcing: { ranAt: string | null; succeeded: boolean | null; summary: Record<string, unknown> | null; error: string | null }
-  sendsToday: { sent: number; dailyLimit: number; remaining: number }
+  sendsToday: { sent: number; dailyLimit: number; remaining: number; firstTouch: number; followups: number; firstTouchTarget: number; firstTouchRemaining: number }
   sendsThisMonth: { firstTouch: number; followups: number; total: number }
   queue: { pendingDrafts: number; stalled: number; sourcingJobs: number }
   sourcing: { availableCandidates: number; cooldownCandidates: number; lastFound: number | null; lastQualified: number | null; lastRejected: number | null; lastDuplicates: number | null }
@@ -86,7 +86,12 @@ export async function getOutreachOperationalStatus(workspaceId: string): Promise
     schedule: { sourcing: 'daily at 09:00 UTC', autosend: 'hourly at :00 UTC', nextRunAt: nextHourlyRun() },
     lastScan: { ranAt: scan.data?.last_started_at ?? null, succeeded: scan.data ? scan.data.last_status === 'ok' : null, summary: (scan.data?.last_summary as Record<string, unknown>) ?? null, error: scan.data?.last_error ?? null },
     lastSourcing: { ranAt: sourcingRun.data?.last_started_at ?? null, succeeded: sourcingRun.data ? sourcingRun.data.last_status === 'ok' : null, summary: sourcingSummary, error: sourcingRun.data?.last_error ?? null },
-    sendsToday: { sent, dailyLimit: OUTREACH_DAILY_SEND_CAP, remaining: Math.max(0, OUTREACH_DAILY_SEND_CAP - sent) },
+    sendsToday: {
+      sent, dailyLimit: OUTREACH_DAILY_FIRST_TOUCH_CAP, remaining: Math.max(0, OUTREACH_DAILY_FIRST_TOUCH_CAP - (first.count ?? 0)),
+      firstTouch: first.count ?? 0, followups: follow.count ?? 0,
+      firstTouchTarget: OUTREACH_DAILY_FIRST_TOUCH_CAP,
+      firstTouchRemaining: Math.max(0, OUTREACH_DAILY_FIRST_TOUCH_CAP - (first.count ?? 0)),
+    },
     sendsThisMonth: { firstTouch: monthFirstTouch, followups: monthFollowups, total: monthFirstTouch + monthFollowups },
     queue: { pendingDrafts: pending, stalled: stalled.count ?? 0, sourcingJobs: sourcingJobs.count ?? 0 },
     sourcing: { availableCandidates, cooldownCandidates: cooldown.count ?? 0, lastFound, lastQualified, lastRejected: numeric(sourcingSummary?.total_rejected_no_email) ?? (lastFound !== null && lastQualified !== null ? lastFound - lastQualified : null), lastDuplicates: numeric(sourcingSummary?.total_duplicates) ?? (lastQualified !== null && lastInserted !== null ? lastQualified - lastInserted : null) },

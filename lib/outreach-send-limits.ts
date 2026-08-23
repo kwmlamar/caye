@@ -9,7 +9,10 @@ import { createServiceClient } from './supabase-server'
  * log 2026-08-12: "the two aren't redundant: cap prevents the spike, kill
  * switch catches whatever gets through anyway."
  */
-export const OUTREACH_DAILY_SEND_CAP = 50
+/** New-prospect acquisition target. Follow-ups never consume this capacity. */
+export const OUTREACH_DAILY_FIRST_TOUCH_CAP = 50
+/** @deprecated Use OUTREACH_DAILY_FIRST_TOUCH_CAP for acquisition policy. */
+export const OUTREACH_DAILY_SEND_CAP = OUTREACH_DAILY_FIRST_TOUCH_CAP
 
 /**
  * Number of outreach touches (first-touch opens + follow-up nudges) this
@@ -24,6 +27,12 @@ export const OUTREACH_DAILY_SEND_CAP = 50
  * blow past the cap within its own run.
  */
 export async function countSentToday(workspaceId: string): Promise<number> {
+  const { firstTouch, followups } = await countOutreachSendsToday(workspaceId)
+  return firstTouch + followups
+}
+
+/** First touches and follow-ups are reported separately; they serve different goals. */
+export async function countOutreachSendsToday(workspaceId: string): Promise<{ firstTouch: number; followups: number }> {
   const supabase = createServiceClient()
   const startOfDayUtc = new Date()
   startOfDayUtc.setUTCHours(0, 0, 0, 0)
@@ -42,10 +51,10 @@ export async function countSentToday(workspaceId: string): Promise<number> {
       .gte('last_nudge_at', cutoff),
   ])
 
-  return (firstTouchToday.count ?? 0) + (followupToday.count ?? 0)
+  return { firstTouch: firstTouchToday.count ?? 0, followups: followupToday.count ?? 0 }
 }
 
 /** True if the workspace has sent fewer than OUTREACH_DAILY_SEND_CAP touches today. Simple boolean for callers (e.g. the sourcing cron) that don't need a live running budget. */
 export async function underDailyCap(workspaceId: string): Promise<boolean> {
-  return (await countSentToday(workspaceId)) < OUTREACH_DAILY_SEND_CAP
+  return (await countOutreachSendsToday(workspaceId)).firstTouch < OUTREACH_DAILY_FIRST_TOUCH_CAP
 }

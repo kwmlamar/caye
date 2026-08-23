@@ -23,7 +23,7 @@ const state: AuthoritativeOwnerOperationalState = {
     schedule: { sourcing: '', autosend: '', nextRunAt: null },
     lastScan: { ranAt: '2026-08-19T14:00:00.000Z', succeeded: true, summary: {}, error: null },
     lastSourcing: { ranAt: '2026-08-19T13:00:00.000Z', succeeded: true, summary: {}, error: null },
-    sendsToday: { sent: 0, dailyLimit: 50, remaining: 50 },
+    sendsToday: { sent: 0, dailyLimit: 50, remaining: 50, firstTouch: 0, followups: 0, firstTouchTarget: 50, firstTouchRemaining: 50 },
     sendsThisMonth: { firstTouch: 100, followups: 12, total: 112 },
     queue: { pendingDrafts: 86, stalled: 0, sourcingJobs: 0 },
     sourcing: { availableCandidates: 0, cooldownCandidates: 152, lastFound: 20, lastQualified: 9, lastRejected: 11, lastDuplicates: 0 },

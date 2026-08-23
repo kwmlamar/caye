@@ -11,6 +11,7 @@ import { cancelBooking } from './write-high/cancel-booking'
 import { sendOutreachBatch } from './write-high/send-outreach-batch'
 import { draftInInbox } from './write-high/draft-in-inbox'
 import { createCustomerBooking } from './write-high/create-customer-booking'
+import { expandOutreachTarget } from './write-high/expand-outreach-target'
 
 /**
  * The UNGATED high-risk tools, in one place.
@@ -53,6 +54,7 @@ export const HIGH_RISK_TOOLS: AnyTool[] = [
   // every other consequential action here.
   draftInInbox as AnyTool,
   createCustomerBooking as AnyTool,
+  expandOutreachTarget as AnyTool,
 ]
 
 export function findHighRiskTool(name: string): AnyTool | undefined {
