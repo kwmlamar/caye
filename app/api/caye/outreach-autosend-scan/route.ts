@@ -45,6 +45,7 @@ import type { SalesStage } from '@/lib/sales/funnel'
 import { selectOutreachBatch } from '@/lib/outreach-batch'
 import { isValidOutreachEmail } from '@/lib/outreach-email'
 import { isProductionSalesWorkspace } from '@/lib/sales/workspace-eligibility'
+import { getRevalidatableParkedDraft } from '@/lib/outreach-parked-draft'
 
 /** Leads examined per tick. Bounds runtime; the next tick picks up the rest. */
 const LEAD_BATCH_SIZE = 40
@@ -213,11 +214,6 @@ async function processWorkspace(
       return false
     }
     const conversation = conversationsByEmail.get(lead.lead_email.toLowerCase())
-    const meta = (conversation?.metadata ?? {}) as Record<string, unknown>
-    if (conversation?.human_agent_enabled === true && typeof meta.proposed_reply === 'string' && conversation.last_sender_type !== 'customer') {
-      countReason(summary, 'parked_draft')
-      return false
-    }
     const action = decideSalesOutreachWorkflow({
       stage: lead.stage, firstTouchSentAt: lead.first_touch_sent_at, touchesSent: lead.touches_sent,
       lastTouchSentAt: lead.last_touch_sent_at, optedOutAt: lead.opted_out_at,
@@ -262,7 +258,7 @@ async function processWorkspace(
 }
 
 /** @returns how much send budget this lead consumed (0 or 1). */
-async function processLead(args: {
+export async function processLead(args: {
   lead: LeadRow
   workspaceId: string
   accountId: string
@@ -284,19 +280,10 @@ async function processLead(args: {
 
   const hasUnansweredReply = lead.last_inbound_kind === 'human_reply' && conversation?.last_sender_type === 'customer'
 
-  // A draft already parked on this thread means someone (the hand-fed
-  // create_outreach_leads path, or an earlier held run) has an unsent
-  // message waiting. Writing a second one and sending it would contact the
-  // prospect twice with different copy. Leave it alone: it is either
-  // waiting for Lamar deliberately, or it will be sent from the queue.
+  // A queued outreach draft is not a generic owner hold. Re-use it only
+  // after the entire current deterministic send policy has been evaluated;
+  // do not generate alternate copy or bulk-release old queue items.
   const meta = (conversation?.metadata ?? {}) as Record<string, unknown>
-  const hasParkedDraft =
-    conversation?.human_agent_enabled === true && typeof meta.proposed_reply === 'string'
-  if (hasParkedDraft && !hasUnansweredReply) {
-    summary.no_action++
-    countReason(summary, 'parked_draft')
-    return 0
-  }
 
   const action = decideSalesOutreachWorkflow({
     stage: lead.stage,
@@ -347,8 +334,22 @@ async function processLead(args: {
   const businessName = lead.business_name || lead.lead_email
   let subject: string
   let body: string
+  const parkedDraft = (action.kind === 'send_first_touch' || action.kind === 'send_followup')
+    ? getRevalidatableParkedDraft({
+        humanAgentEnabled: conversation?.human_agent_enabled,
+        metadata: conversation?.metadata,
+        hasUnansweredReply,
+        action: action.kind,
+      })
+    : null
 
-  if (action.kind === 'send_first_touch') {
+  if (parkedDraft) {
+    // A legacy queue item gets the same content/claim guards and authority
+    // verdict as a fresh draft below. It is never released just because a
+    // deployment changed; a failed revalidation remains held.
+    subject = parkedDraft.subject ?? (action.kind === 'send_first_touch' ? 'Quick question' : deriveFollowupSubject(conversation?.metadata))
+    body = parkedDraft.body
+  } else if (action.kind === 'send_first_touch') {
     const drafted = await generateOutreachFirstTouchDraft({
       workspaceVoice, leadName, businessName, demoToken: lead.demo_token,
     })
@@ -411,6 +412,13 @@ async function processLead(args: {
 
   // ── ACT ────────────────────────────────────────────────────────────────
   if (verdict.tier !== 'auto') {
+    if (parkedDraft) {
+      // This was already staged. Do not create a fresh owner ping on every
+      // cron tick; observability records the present blocker instead.
+      summary.no_action++
+      countReason(summary, verdict.reasons[0] ?? 'parked_draft_not_authorized')
+      return 0
+    }
     const note = founderNoteFor(
       verdict,
       guardFailure
@@ -434,7 +442,12 @@ async function processLead(args: {
   }
 
   await supabase.from('unified_conversations').update({ metadata }).eq('id', conversationId)
-  await dispatchOperatorReply(conversationId, body + buildComplianceFooter(lead.demo_token), 'caye-dashboard')
+  await dispatchOperatorReply(
+    conversationId,
+    body + buildComplianceFooter(lead.demo_token),
+    'caye-dashboard',
+    `outreach:${action.kind}:${lead.id}`
+  )
 
   // dispatchOperatorReply records the successful persisted outbound message
   // through the lifecycle seam, including manual and automatic sends.
