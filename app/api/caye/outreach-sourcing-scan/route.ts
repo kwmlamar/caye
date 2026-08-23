@@ -27,6 +27,17 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    const result = await runOutreachSourcingScan()
+    if (result.status !== 'accepted') return NextResponse.json(result)
+    after(drainPendingOperationsSafely(1))
+    return NextResponse.json(result, { status: 202 })
+  } catch (err) {
+    return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+  }
+}
+
+/** Shared deterministic enqueue boundary for the scheduler and founder-triggered runs. */
+export async function runOutreachSourcingScan(): Promise<Record<string, unknown>> {
     const supabase = createServiceClient()
     const { data: workspace, error: wsErr } = await supabase
       .from('customers')
@@ -34,13 +45,9 @@ export async function GET(request: NextRequest) {
       .eq('workspace_kind', 'internal_sales')
       .maybeSingle()
     if (wsErr) throw new Error(wsErr.message)
-    if (!workspace || !isProductionSalesWorkspace(workspace)) return NextResponse.json({ status: 'skip', detail: 'no production internal_sales workspace found' })
+    if (!workspace || !isProductionSalesWorkspace(workspace)) return { status: 'skip', detail: 'no production internal_sales workspace found' }
     const businessDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'UTC' }).format(new Date())
     const queued = await enqueueOperation({ workspaceId: workspace.id, operation: 'outreach_sourcing', payload: { business_date: businessDate }, idempotencyKey: `outreach-sourcing:${workspace.id}:${businessDate}`, delayMs: 0 })
-    if (!queued.queued) return NextResponse.json({ error: queued.reason ?? 'could not enqueue sourcing' }, { status: 500 })
-    after(drainPendingOperationsSafely(1))
-    return NextResponse.json({ status: 'accepted', already_queued: queued.alreadyQueued, workspace_id: workspace.id }, { status: 202 })
-  } catch (err) {
-    return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
-  }
+    if (!queued.queued) throw new Error(queued.reason ?? 'could not enqueue sourcing')
+    return { status: 'accepted', already_queued: queued.alreadyQueued, workspace_id: workspace.id }
 }

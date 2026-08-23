@@ -36,7 +36,7 @@ import { generateOutreachFollowupDraft } from '@/lib/outreach-nudge'
 import { findOutreachDraftIssues, describeDraftIssues } from '@/lib/outreach-draft-guard'
 import { findClaimIssues, describeClaimIssues } from '@/lib/sales/claims'
 import { buildComplianceFooter } from '@/lib/outreach-compliance'
-import { countSentToday, OUTREACH_DAILY_SEND_CAP } from '@/lib/outreach-send-limits'
+import { countOutreachSendsToday, OUTREACH_DAILY_FIRST_TOUCH_CAP } from '@/lib/outreach-send-limits'
 import { type SalesAction } from '@/lib/sales/next-action'
 import { decideSalesOutreachWorkflow } from '@/lib/sales/outreach-workflow'
 import { decideAuthority, founderNoteFor, type SalesActionKind } from '@/lib/sales/authority'
@@ -186,8 +186,8 @@ async function processWorkspace(
 
   // Budget observed once, then tracked locally across the run. Re-reading
   // per send would only ever reflect state from before the tick started.
-  const sentToday = await countSentToday(workspaceId)
-  let remaining = Math.max(0, OUTREACH_DAILY_SEND_CAP - sentToday)
+  const sentToday = await countOutreachSendsToday(workspaceId)
+  let remaining = Math.max(0, OUTREACH_DAILY_FIRST_TOUCH_CAP - sentToday.firstTouch)
 
   const { data: leads } = await supabase
     .from('outreach_leads')
@@ -395,7 +395,7 @@ export async function processLead(args: {
     action: actionKind,
     draftFailedGuards: Boolean(guardFailure),
     outreachPaused,
-    atDailyCap: remaining <= 0,
+    atDailyCap: action.kind === 'send_first_touch' && remaining <= 0,
   })
 
   const conversationId = conversation?.id ?? (await createLeadConversation({
@@ -451,9 +451,14 @@ export async function processLead(args: {
 
   // dispatchOperatorReply records the successful persisted outbound message
   // through the lifecycle seam, including manual and automatic sends.
-  if (action.kind === 'send_first_touch') summary.first_touch_sent++
-  else summary.followups_sent++
-  return 1
+  if (action.kind === 'send_first_touch') {
+    summary.first_touch_sent++
+    return 1
+  }
+  summary.followups_sent++
+  // Follow-ups are tracked separately and cannot consume or satisfy the
+  // first-touch acquisition target.
+  return 0
 }
 
 function countReason(summary: ScanSummary, reason: string): void {

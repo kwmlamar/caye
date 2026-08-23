@@ -25,7 +25,9 @@ export const triggerCron: Tool<TriggerCronInput> = {
     'force does NOT bypass a workspace\'s muted/quiet-hours setting — those are the owner\'s own do-not-disturb preference and stay enforced even when forcing.',
   risk: 'high',
   roles: ['founder'],
-  modes: ['admin-shell'],
+  // Founder-confirmed operational control is available from the normal
+  // back-office conversation too; it still calls only CRON_JOBS above.
+  modes: ['admin-shell', 'back-office'],
   inputSchema: {
     type: 'object',
     properties: {
