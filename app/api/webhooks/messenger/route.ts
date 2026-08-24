@@ -328,7 +328,12 @@ async function processInboundMessenger(payload: Record<string, unknown>): Promis
         message_type: 'text',
         sent_at: new Date().toISOString(),
         status: 'sent',
-        metadata: { is_automated: true, generated_by: 'caye', page_id: recipientId },
+        metadata: {
+          is_automated: true,
+          generated_by: 'caye',
+          page_id: recipientId,
+          ...(decision.autonomyAudit ? { autonomy: decision.autonomyAudit } : {}),
+        },
       })
 
       if (outboundErr) {

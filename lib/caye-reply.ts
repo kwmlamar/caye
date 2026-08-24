@@ -95,6 +95,14 @@ import {
   TRANSPORT_CAPABILITY_OWNER_NOTE,
 } from './capability-uncertain-reply'
 import { partialAccessibilityReplyFor } from './partial-accessibility-reply'
+import {
+  decideFrontDeskCommunicationAutonomy,
+  frontDeskAutonomyAudit,
+  hasFrontDeskMutationClaim,
+  isAutonomousCommunication,
+  type FrontDeskAutonomyAudit,
+} from './frontdesk-autonomy'
+import { validateBookingStatusClaimsAgainstEvidence } from './caye-agent/consequential-claim-grounding'
 
 export type EscalationCategory = 'gap' | 'policy' | 'knowledge' | 'sensitive'
 export type EscalationRouteTo = 'owner' | 'founder' | 'both'
@@ -102,7 +110,7 @@ export type EscalationRouteTo = 'owner' | 'founder' | 'both'
 export type CayeAutoReply =
   // Sales email routes consume `ignore` before dispatch. Its optional
   // fields keep existing non-sales channel narrowing source-compatible.
-  | { action: 'ignore'; reason: string; content: ''; bookingId?: undefined; needsOwnerFollowup?: undefined; ownerNote?: undefined; proposedReply?: undefined; note?: undefined; customerAcknowledgement?: undefined; urgency?: undefined }
+  | { action: 'ignore'; reason: string; content: ''; bookingId?: undefined; autonomyAudit?: undefined; needsOwnerFollowup?: undefined; ownerNote?: undefined; proposedReply?: undefined; note?: undefined; customerAcknowledgement?: undefined; urgency?: undefined }
   | {
       action: 'escalate'
       /** Customer-facing reply Caye sends immediately. Vague by default ("Let
@@ -142,11 +150,14 @@ export type CayeAutoReply =
       holdConversation?: boolean
       /** A reply was sent and only needs a lightweight owner review. */
       reviewOnly?: boolean
+      autonomyAudit?: undefined
     }
   | {
       action: 'reply'
       content: string
       bookingId?: string
+      /** Structured execution-policy evidence; never contains customer text. */
+      autonomyAudit?: FrontDeskAutonomyAudit
       /**
        * Acknowledge-and-defer mode (2B): Caye sent the customer a reply, but
        * the request still needs an owner decision (off-menu service, custom
@@ -185,7 +196,42 @@ export type CayeAutoReply =
        * from lib/whatsapp/urgency.ts.
        */
       urgency?: 'urgent' | 'routine'
+      autonomyAudit?: undefined
     }
+
+/**
+ * Live send_reply policy seam for a grounded reply whose only remaining
+ * signal is model uncertainty. Kept here (rather than in a generic adapter)
+ * so tests exercise the same decision shape used by generateCayeAutoReply.
+ */
+export function resolveGroundedUncertainFrontDeskReply(
+  content: string,
+  bookingId?: string,
+): Extract<CayeAutoReply, { action: 'reply' | 'hold' }> {
+  const mutationClaim = hasFrontDeskMutationClaim(content)
+  const autonomy = decideFrontDeskCommunicationAutonomy({
+    evidenceSufficient: true,
+    modelUncertain: true,
+    bookingOrCommitmentImpact: mutationClaim,
+  })
+  if (isAutonomousCommunication(autonomy)) {
+    return {
+      action: 'reply',
+      content: sanitizeDashes(content),
+      bookingId,
+      autonomyAudit: frontDeskAutonomyAudit(autonomy, true),
+    }
+  }
+  return {
+    action: 'hold',
+    reason: 'Needs your review',
+    note: 'A policy check requires review before this customer reply can be sent.',
+    proposedReply: sanitizeDashes(content),
+    customerAcknowledgement:
+      "Thanks for the detail — let me confirm the specifics with our team so I can give you an accurate answer, and we'll follow up shortly.",
+    urgency: 'routine',
+  }
+}
 
 interface ServiceRow {
   id: string
@@ -2387,6 +2433,8 @@ async function generateCayeAutoReplyCore(
   const messages: Anthropic.MessageParam[] = [{ role: 'user', content: userContent }]
 
   let createdBookingId: string | undefined
+  let performedBookingMutation = false
+  const verifiedBookingStatuses: string[] = []
 
   // Correlates every tool call made while handling this one inbound message,
   // so "what did Caye do on this message" is a single query — the same role
@@ -2424,13 +2472,21 @@ async function generateCayeAutoReplyCore(
       const textBlock = response.content.find(b => b.type === 'text')
       if (textBlock && textBlock.type === 'text' && textBlock.text.trim()) {
         const blocked = guardDraft(textBlock.text)
-        if (blocked) {
-          console.warn(`[caye-reply] Guard blocked freeform reply: ${blocked}`)
+        const mutationClaim = hasFrontDeskMutationClaim(textBlock.text)
+        const bookingStatusIssue = validateBookingStatusClaimsAgainstEvidence(textBlock.text, {
+          statuses: verifiedBookingStatuses,
+        })
+        if (blocked || mutationClaim || bookingStatusIssue) {
+          const reason = blocked ??
+            (mutationClaim
+              ? 'Commitment guard: reply claims a booking, cancellation, refund, discount, or change without an executed mutation'
+              : `Booking-status guard: ${bookingStatusIssue}`)
+          console.warn(`[caye-reply] Guard blocked freeform reply: ${reason}`)
           return {
             action: 'hold',
-            reason: blocked,
+            reason,
             note:
-              `Caye drafted a reply (no tool call) but a pre-send guard blocked it (${blocked}). ` +
+              `Caye drafted a reply (no tool call) but a pre-send guard blocked it (${reason}). ` +
               `Review the draft below and send manually if appropriate.\n\n---\n\n${textBlock.text}`,
           }
         }
@@ -2460,6 +2516,10 @@ async function generateCayeAutoReplyCore(
           high_stakes_claim?: boolean
         }
         const blocked = guardDraft(input.content)
+        const mutationClaim = hasFrontDeskMutationClaim(input.content)
+        const bookingStatusIssue = validateBookingStatusClaimsAgainstEvidence(input.content, {
+          statuses: verifiedBookingStatuses,
+        })
 
         // Evidence-based disposition (2026-08-11). Computed from what
         // deterministic code established this turn plus a grounding check on
@@ -2486,15 +2546,19 @@ async function generateCayeAutoReplyCore(
           requestsOwnerFollowup: !!input.flag_for_owner_followup,
         })
 
-        if (blocked) {
+        if (blocked || (mutationClaim && !performedBookingMutation) || bookingStatusIssue) {
           // A pre-send guard tripped — don't ship the reply. Hand to the owner
           // with the draft attached so they can decide.
-          console.warn(`[caye-reply] Guard blocked reply: ${blocked}`)
+          const reason = blocked ??
+            (bookingStatusIssue
+              ? `Booking-status guard: ${bookingStatusIssue}`
+              : 'Commitment guard: reply claims a booking, cancellation, refund, discount, or change without an executed mutation')
+          console.warn(`[caye-reply] Guard blocked reply: ${reason}`)
           terminal = {
             action: 'hold',
-            reason: blocked,
+            reason,
             note:
-              `Caye drafted a reply but a pre-send guard blocked it (${blocked}). ` +
+              `Caye drafted a reply but a pre-send guard blocked it (${reason}). ` +
               `Review the draft below and send manually if appropriate.\n\n---\n\n${input.content}`,
           }
         } else if (evidenceVerdict.disposition === 'hold') {
@@ -2624,31 +2688,30 @@ async function generateCayeAutoReplyCore(
           }
         } else if (
           evidenceVerdict.disposition === 'send_and_flag' &&
-          evidenceVerdict.reasons.includes('model_reported_uncertainty')
+          evidenceVerdict.reasons.includes('model_reported_uncertainty') &&
+          !input.flag_for_owner_followup
         ) {
-          // The evidence checks all passed, and the only outstanding signal is
-          // the model saying it wasn't sure. That is worth telling the owner
-          // about, but it is not grounds to hold: the customer already has a
-          // grounded answer and isn't blocked on anything.
-          //
-          // holdConversation: false (2026-08-07) — it used to enter the held
-          // queue, which left already-resolved threads sitting in "needs
-          // review" for a ~6 day average.
-          terminal = {
-            action: 'escalate',
-            content: sanitizeDashes(input.content),
-            category: 'knowledge',
-            routeTo: 'owner',
-            holdConversation: false,
-            reviewOnly: true,
-            // Composed by ownerNoteFor, written for the owner reading it on
-            // her phone. This previously shipped as "Caye self-rated
-            // confidence=medium on her reply. She sent it (per the Layer 2
-            // spec, drafts ship even at medium/low)..." and reached Mrs. Max
-            // exactly like that (2026-08-11). "Layer 2 spec" is an issue
-            // number. Everything she needs is: I replied, I wasn't certain,
-            // check me.
-            internalContext: ownerNoteFor(evidenceVerdict, input.owner_note),
+          // Evidence has already authorised the claims in this reply. Model
+          // uncertainty is diagnostic context for the shared envelope, not a
+          // reason to interrupt the owner after sending a bounded answer.
+          // Communication migration only: booking/payment mutations retain
+          // their existing dedicated gates above and are not authorised here.
+          if (createdBookingId) {
+            // This PR does not migrate booking mutation authority. Preserve
+            // the existing owner-review path for a reply that confirms a
+            // newly-created booking rather than labelling it routine factual
+            // communication after the fact.
+            terminal = {
+              action: 'escalate',
+              content: sanitizeDashes(input.content),
+              category: 'knowledge',
+              routeTo: 'owner',
+              holdConversation: false,
+              reviewOnly: true,
+              internalContext: ownerNoteFor(evidenceVerdict, input.owner_note),
+            }
+          } else {
+            terminal = resolveGroundedUncertainFrontDeskReply(input.content)
           }
         } else {
           const needsFollowup = !!input.flag_for_owner_followup
@@ -2830,6 +2893,8 @@ async function generateCayeAutoReplyCore(
         )
         if (result.success && result.booking_id) {
           createdBookingId = result.booking_id
+          performedBookingMutation = true
+          verifiedBookingStatuses.splice(0, verifiedBookingStatuses.length, 'pending')
           evidence.add('booking_exists')
         }
         toolResults.push({
@@ -2846,6 +2911,7 @@ async function generateCayeAutoReplyCore(
         // the customer being identified.
         if (result.match_count > 0) {
           evidence.add('booking_exists')
+          verifiedBookingStatuses.push(...result.bookings.map((booking) => booking.status))
           if (result.matched_by === 'email') evidence.add('customer_identified')
         }
         retrievedCorpus.push(JSON.stringify(result))
@@ -2862,6 +2928,10 @@ async function generateCayeAutoReplyCore(
           workspaceTimezone,
           input.reason
         )
+        if (result.ok) {
+          performedBookingMutation = true
+          verifiedBookingStatuses.splice(0, verifiedBookingStatuses.length, 'cancelled')
+        }
         toolResults.push({
           type: 'tool_result',
           tool_use_id: tool.id,
@@ -2883,6 +2953,7 @@ async function generateCayeAutoReplyCore(
           input.duration_minutes,
           workspaceTimezone
         )
+        if (result.ok) performedBookingMutation = true
         toolResults.push({
           type: 'tool_result',
           tool_use_id: tool.id,

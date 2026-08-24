@@ -392,7 +392,12 @@ async function processInboundWhatsApp(payload: Record<string, unknown>): Promise
       message_type: 'text',
       sent_at: new Date().toISOString(),
       status: 'sent',
-      metadata: { is_automated: true, generated_by: 'caye', phone_number_id },
+      metadata: {
+        is_automated: true,
+        generated_by: 'caye',
+        phone_number_id,
+        ...(decision.autonomyAudit ? { autonomy: decision.autonomyAudit } : {}),
+      },
     })
 
     if (outboundErr) {

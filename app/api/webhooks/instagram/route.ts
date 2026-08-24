@@ -329,6 +329,7 @@ async function processInboundInstagram(payload: Record<string, unknown>): Promis
           is_automated: true,
           generated_by: 'caye',
           recipient_id: recipientId,
+          ...(decision.autonomyAudit ? { autonomy: decision.autonomyAudit } : {}),
           ...(demoMode ? { demo_mode: true } : {}),
         },
       })
