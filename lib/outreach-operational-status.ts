@@ -3,12 +3,14 @@ import { createServiceClient } from './supabase-server'
 import { OUTREACH_DAILY_FIRST_TOUCH_CAP } from './outreach-send-limits'
 import { isValidOutreachEmail } from './outreach-email'
 import { hasSalesCapability } from './sales/capability'
+import { classifyOutreachPause, type OutreachPauseState } from './outreach-pause-control'
 
 export interface OutreachOperationalStatus {
   workspaceId: string
   timezone: string
   enabled: boolean
   paused: boolean
+  pause: OutreachPauseState
   schedule: { sourcing: string; autosend: string; nextRunAt: string | null }
   lastScan: { ranAt: string | null; succeeded: boolean | null; summary: Record<string, unknown> | null; error: string | null }
   lastSourcing: { ranAt: string | null; succeeded: boolean | null; summary: Record<string, unknown> | null; error: string | null }
@@ -24,7 +26,11 @@ export interface OutreachOperationalStatus {
 
 export function explainNoOutreach(s: Omit<OutreachOperationalStatus, 'reasonNoOutreach'>): string | null {
   if (s.sendsToday.sent > 0) return null
-  if (s.paused) return 'Outreach is intentionally paused.'
+  if (s.paused) {
+    if (s.pause.disposition === 'safety_locked') return `Outreach is paused by the bounce safety stop${s.pause.reason ? `: ${s.pause.reason}` : '.'}`
+    if (s.pause.disposition === 'unknown_blocked') return 'Outreach is paused and its original reason was not recorded.'
+    return 'Outreach is intentionally paused by the owner.'
+  }
   if (!s.provider.connected) return 'No active outbound email account is connected.'
   if (!s.provider.healthy) return `The outbound email provider is unhealthy${s.provider.lastError ? `: ${s.provider.lastError}` : '.'}`
   if (s.lastScan.succeeded === false) return `The outreach scan failed${s.lastScan.error ? `: ${s.lastScan.error}` : '.'}`
@@ -42,7 +48,7 @@ export async function getOutreachOperationalStatus(workspaceId: string): Promise
   const db = createServiceClient()
   const [customer, config, account, scan, sourcingRun, sourced, cooldown, stalled, sourcingJobs, history] = await Promise.all([
     db.from('customers').select('workspace_kind,autosend_enabled,timezone').eq('id', workspaceId).maybeSingle(),
-    db.from('workspace_ai_config').select('outreach_autosend_paused').eq('workspace_id', workspaceId).maybeSingle(),
+    db.from('workspace_ai_config').select('outreach_autosend_paused,outreach_pause_source,outreach_pause_reason,outreach_paused_at').eq('workspace_id', workspaceId).maybeSingle(),
     db.from('connected_accounts').select('id,channel_type,is_active,token_expires_at,refresh_token,updated_at').eq('user_id', workspaceId).eq('channel_type', 'email').eq('is_active', true).maybeSingle(),
     db.from('caye_cron_runs').select('last_started_at,last_status,last_summary,last_error').eq('cron_name', 'outreach-autosend-scan').maybeSingle(),
     db.from('caye_cron_runs').select('last_started_at,last_status,last_summary,last_error').eq('cron_name', 'outreach-sourcing-scan').maybeSingle(),
@@ -79,10 +85,17 @@ export async function getOutreachOperationalStatus(workspaceId: string): Promise
   const lastInserted = numeric(sourcingSummary?.total_inserted)
   const availableCandidates = (sourced.data ?? []).filter((row) => isValidOutreachEmail(row.lead_email)).length
   const tokenUsable = Boolean(account.data && (account.data.refresh_token || (account.data.token_expires_at && Date.parse(account.data.token_expires_at) > Date.now())))
+  const pause = classifyOutreachPause({
+    paused: config.data?.outreach_autosend_paused ?? true,
+    source: config.data?.outreach_pause_source,
+    reason: config.data?.outreach_pause_reason,
+    pausedAt: config.data?.outreach_paused_at,
+  })
   const base: Omit<OutreachOperationalStatus, 'reasonNoOutreach'> = {
     workspaceId, timezone,
     enabled: hasSalesCapability(customer.data) && customer.data?.autosend_enabled === true,
-    paused: config.data?.outreach_autosend_paused ?? true,
+    paused: pause.paused,
+    pause,
     schedule: { sourcing: 'daily at 09:00 UTC', autosend: 'hourly at :00 UTC', nextRunAt: nextHourlyRun() },
     lastScan: { ranAt: scan.data?.last_started_at ?? null, succeeded: scan.data ? scan.data.last_status === 'ok' : null, summary: (scan.data?.last_summary as Record<string, unknown>) ?? null, error: scan.data?.last_error ?? null },
     lastSourcing: { ranAt: sourcingRun.data?.last_started_at ?? null, succeeded: sourcingRun.data ? sourcingRun.data.last_status === 'ok' : null, summary: sourcingSummary, error: sourcingRun.data?.last_error ?? null },

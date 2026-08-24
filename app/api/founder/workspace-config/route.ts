@@ -25,6 +25,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient, createServerClient } from '@/lib/supabase-server'
 import { isFounderUserId } from '@/lib/founder'
 import type { VoiceProfile } from '@/lib/voice-profile'
+import { pauseOutreachForOwner, resumeOwnerPausedOutreach } from '@/lib/outreach-pause-control'
 
 interface WorkspaceConfigPatch {
   system_prompt?: string | null
@@ -128,10 +129,11 @@ export async function PATCH(req: NextRequest) {
     // on a bounce spike. Meaningful only for internal_sales, but not
     // rejected for other workspace_kinds — it simply does nothing there
     // since no autosend-scan cron reads it for a non-internal_sales row.
-    aiConfigPatch.outreach_autosend_paused = body.outreach_autosend_paused
+    // Saved through the provenance-aware control below. A generic config
+    // patch must not erase a bounce safety stop's recorded source.
   }
 
-  if (Object.keys(aiConfigPatch).length === 0 && Object.keys(customerPatch).length === 0) {
+  if (Object.keys(aiConfigPatch).length === 0 && Object.keys(customerPatch).length === 0 && body.outreach_autosend_paused === undefined) {
     return NextResponse.json({ error: 'No recognized fields in patch body' }, { status: 400 })
   }
 
@@ -143,6 +145,24 @@ export async function PATCH(req: NextRequest) {
       .from('workspace_ai_config')
       .upsert({ workspace_id: workspaceId, ...aiConfigPatch }, { onConflict: 'workspace_id' })
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+
+  if (body.outreach_autosend_paused === true) {
+    try {
+      await pauseOutreachForOwner(workspaceId, 'Paused by founder in workspace settings', 'founder')
+    } catch (err) {
+      return NextResponse.json({ error: err instanceof Error ? err.message : 'Could not pause outreach' }, { status: 500 })
+    }
+  }
+  if (body.outreach_autosend_paused === false) {
+    try {
+      const result = await resumeOwnerPausedOutreach(workspaceId, 'founder')
+      if (result.disposition !== 'running') {
+        return NextResponse.json({ error: 'Outreach remains paused because its safety provenance cannot be overridden here.' }, { status: 409 })
+      }
+    } catch (err) {
+      return NextResponse.json({ error: err instanceof Error ? err.message : 'Could not resume outreach' }, { status: 500 })
+    }
   }
 
   if (Object.keys(customerPatch).length > 0) {
