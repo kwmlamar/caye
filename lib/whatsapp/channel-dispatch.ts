@@ -35,7 +35,7 @@ export interface DispatchResult {
  * produced by any production call path — see
  * lib/caye-agent/tools/write-high/send-customer-reply.ts.
  */
-export type OperatorReplySender = 'caye-operator-wa' | 'caye-dashboard' | 'caye-frontdesk-agent'
+export type OperatorReplySender = 'caye-operator-wa' | 'caye-dashboard' | 'caye-frontdesk-agent' | 'caye-outreach-autonomous'
 
 export async function dispatchOperatorReply(
   conversationId: string,
@@ -180,12 +180,16 @@ export async function dispatchOperatorReply(
     // audit can tell HOW the operator initiated the send. generated_by='caye'
     // signals "Caye composed the body" — voice-learning correctly excludes
     // these so Caye doesn't learn from her own output.
-    // operator_approved=true distinguishes "operator authorized Caye to send"
-    // from "Caye auto-replied on her own"; UI can surface a "via operator" tag.
+    // Autonomous outreach is separately identified. Routine campaign sends
+    // are policy-authorized, not falsely presented as per-message owner
+    // approvals.
     metadata: {
       sent_by: senderLabel,
       generated_by: 'caye',
-      operator_approved: true,
+      operator_approved: senderLabel !== 'caye-outreach-autonomous',
+      ...(senderLabel === 'caye-outreach-autonomous' && meta.autonomy && typeof meta.autonomy === 'object'
+        ? { autonomy: meta.autonomy }
+        : {}),
       ...(zohoMessageId ? { zoho_message_id: zohoMessageId } : {}),
       ...(idempotencyKey
         ? { idempotency_key: idempotencyKey, idempotency_channel: conv.channel_type }

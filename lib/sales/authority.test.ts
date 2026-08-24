@@ -51,7 +51,10 @@ describe('decideAuthority', () => {
   })
 
   it('treats model uncertainty as downgrade-only, never an upgrade', () => {
-    expect(decideAuthority(input({ modelUncertain: true })).tier).toBe('approval')
+    // Uncertainty prompts investigation/evidence gathering upstream; it is
+    // not itself a reason to consume owner attention once the bounded action
+    // has deterministic evidence and passes policy.
+    expect(decideAuthority(input({ modelUncertain: true })).tier).toBe('auto')
     // Certainty cannot buy its way past an escalation category.
     expect(
       decideAuthority(input({ modelUncertain: false, triggers: ['press_or_media'] })).tier

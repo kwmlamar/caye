@@ -46,6 +46,7 @@ import { selectOutreachBatch } from '@/lib/outreach-batch'
 import { isValidOutreachEmail } from '@/lib/outreach-email'
 import { isProductionSalesWorkspace } from '@/lib/sales/workspace-eligibility'
 import { getRevalidatableParkedDraft } from '@/lib/outreach-parked-draft'
+import { reserveFirstTouchCapacity } from '@/lib/outreach-first-touch-capacity'
 
 /** Leads examined per tick. Bounds runtime; the next tick picks up the rest. */
 const LEAD_BATCH_SIZE = 40
@@ -408,13 +409,33 @@ export async function processLead(args: {
     lead_id: lead.id,
   }
   const holdKind = action.kind === 'send_first_touch' ? 'outreach_first_touch' : 'outreach_followup'
-  const metadata = { ...baseMetadata, hold_kind: holdKind, subject, proposed_reply: body }
+  // Audit only structured decision data, never the generated body. Each send
+  // is an atomic one-recipient action; `remaining_first_touch_capacity`
+  // captures the campaign envelope that limits repeated safe actions.
+  const autonomy = {
+    decision: verdict.decision,
+    reasons: verdict.reasons,
+    action: action.kind,
+    atomic_recipients: 1,
+    evidence_sufficient: !guardFailure,
+    campaign: {
+      first_touch_cap: OUTREACH_DAILY_FIRST_TOUCH_CAP,
+      remaining_first_touch_capacity: Math.max(0, remaining),
+      outreach_paused: outreachPaused,
+    },
+  }
+  const metadata = { ...baseMetadata, hold_kind: holdKind, subject, proposed_reply: body, autonomy }
 
   // ── ACT ────────────────────────────────────────────────────────────────
   if (verdict.tier !== 'auto') {
     if (parkedDraft) {
       // This was already staged. Do not create a fresh owner ping on every
-      // cron tick; observability records the present blocker instead.
+      // cron tick; persist the current structured blocker so it is clear this
+      // is a real policy stop, not a legacy approval artefact.
+      await supabase
+        .from('unified_conversations')
+        .update({ metadata: { ...metadata, outreach_park: { decision: verdict.decision, reason: verdict.reasons[0] ?? 'policy_stop', action: action.kind } } })
+        .eq('id', conversationId)
       summary.no_action++
       countReason(summary, verdict.reasons[0] ?? 'parked_draft_not_authorized')
       return 0
@@ -427,7 +448,7 @@ export async function processLead(args: {
     )
     await supabase
       .from('unified_conversations')
-      .update({ human_agent_enabled: true, human_agent_reason: note, metadata })
+    .update({ human_agent_enabled: true, human_agent_reason: note, metadata: { ...metadata, outreach_park: { decision: verdict.decision, reason: verdict.reasons[0] ?? 'approval_required', action: action.kind } } })
       .eq('id', conversationId)
     await recordSalesLifecycleEvent({ workspaceId, leadId: lead.id, event: 'escalated', eventKey: `held:${conversationId}:${holdKind}`, reason: guardFailure ?? verdict.reasons[0] ?? null })
     await enqueueHoldPing({
@@ -441,13 +462,48 @@ export async function processLead(args: {
     return 0
   }
 
-  await supabase.from('unified_conversations').update({ metadata }).eq('id', conversationId)
-  await dispatchOperatorReply(
+  // A local `remaining` value keeps this scan efficient, but only this
+  // database reservation is authoritative across overlapping workers.
+  if (action.kind === 'send_first_touch') {
+    const reserved = await reserveFirstTouchCapacity(workspaceId, lead.id, now)
+    if (!reserved) {
+      await supabase.from('unified_conversations').update({
+        metadata: { ...metadata, outreach_park: { decision: 'require_approval', reason: 'daily_cap_reached', action: action.kind } },
+      }).eq('id', conversationId)
+      summary.no_action++
+      countReason(summary, 'daily_cap_reached')
+      return 0
+    }
+  }
+
+  await supabase.from('unified_conversations').update({ metadata: { ...metadata, outreach_park: null } }).eq('id', conversationId)
+  const idempotencyKey = action.kind === 'send_first_touch'
+    ? `outreach:first_touch:${lead.id}`
+    : `outreach:followup:${lead.id}:touch:${action.touchNumber}`
+  const dispatch = await dispatchOperatorReply(
     conversationId,
     body + buildComplianceFooter(lead.demo_token),
-    'caye-dashboard',
-    `outreach:${action.kind}:${lead.id}`
+    'caye-outreach-autonomous',
+    idempotencyKey
   )
+
+  // The channel dispatch only returns after provider success and persisted
+  // execution evidence. Its idempotency key makes a retry return the same
+  // receipt instead of issuing another external send.
+  if (!dispatch.success) return 0
+
+  // If a prior attempt persisted the outbound message but died before its
+  // lifecycle write, dispatch returns the same receipt without re-sending.
+  // Complete that missing transition here; the lifecycle receipt makes this
+  // harmless when the original attempt did finish it.
+  if (dispatch.deduped && dispatch.messageId) {
+    await recordSalesLifecycleEvent({
+      workspaceId,
+      leadId: lead.id,
+      event: action.kind === 'send_first_touch' ? 'first_touch_sent' : 'followup_sent',
+      eventKey: `outbound:${dispatch.messageId}`,
+    })
+  }
 
   // dispatchOperatorReply records the successful persisted outbound message
   // through the lifecycle seam, including manual and automatic sends.
