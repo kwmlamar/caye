@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { dispatch, update, firstTouch, followup } = vi.hoisted(() => ({
+const { dispatch, update, firstTouch, followup, lifecycle } = vi.hoisted(() => ({
   dispatch: vi.fn(async () => ({ success: true, channelType: 'email' })),
   update: vi.fn(() => ({ eq: vi.fn(async () => ({ error: null })) })),
   firstTouch: vi.fn(),
   followup: vi.fn(),
+  lifecycle: vi.fn(),
 }))
 
 vi.mock('server-only', () => ({}))
@@ -18,7 +19,8 @@ vi.mock('@/lib/outreach-first-touch', () => ({
 vi.mock('@/lib/outreach-nudge', () => ({ generateOutreachFollowupDraft: (...args: unknown[]) => followup(...args) }))
 vi.mock('@/lib/cron-run-log', () => ({ recordCronRun: (_name: string, fn: () => unknown) => fn() }))
 vi.mock('@/lib/whatsapp/triggers', () => ({ enqueueHoldPing: vi.fn() }))
-vi.mock('@/lib/sales/lifecycle', () => ({ recordSalesLifecycleEvent: vi.fn() }))
+vi.mock('@/lib/sales/lifecycle', () => ({ recordSalesLifecycleEvent: lifecycle }))
+vi.mock('@/lib/outreach-first-touch-capacity', () => ({ reserveFirstTouchCapacity: vi.fn(async () => true) }))
 
 import { processLead } from './route'
 
@@ -28,6 +30,7 @@ describe('outreach autosend parked-draft recovery', () => {
     update.mockClear()
     firstTouch.mockReset()
     followup.mockReset()
+    lifecycle.mockReset()
   })
 
   it('revalidates and sends an eligible queued first touch without owner approval', async () => {
@@ -58,7 +61,7 @@ describe('outreach autosend parked-draft recovery', () => {
       'conversation-1',
       expect.stringContaining('Hi Ari,'),
       'caye-outreach-autonomous',
-      'outreach:send_first_touch:lead-1'
+      'outreach:first_touch:lead-1'
     )
     expect(update).toHaveBeenCalledWith(expect.objectContaining({
       metadata: expect.objectContaining({ autonomy: expect.objectContaining({ decision: 'act_and_audit', atomic_recipients: 1 }) }),
@@ -74,7 +77,7 @@ describe('outreach autosend parked-draft recovery', () => {
       prefetchedConversation: conversation(),
     })
     expect(consumed).toBe(1)
-    expect(dispatch).toHaveBeenCalledWith('conversation-1', expect.stringContaining('Hi Ari,'), 'caye-outreach-autonomous', 'outreach:send_first_touch:lead-1')
+    expect(dispatch).toHaveBeenCalledWith('conversation-1', expect.stringContaining('Hi Ari,'), 'caye-outreach-autonomous', 'outreach:first_touch:lead-1')
     expect(summary.held_for_review).toBe(0)
   })
 
@@ -88,7 +91,25 @@ describe('outreach autosend parked-draft recovery', () => {
     })
     expect(consumed).toBe(0)
     expect(summary.followups_sent).toBe(1)
-    expect(dispatch).toHaveBeenCalledWith('conversation-1', expect.stringContaining('following up'), 'caye-outreach-autonomous', 'outreach:send_followup:lead-1')
+    expect(dispatch).toHaveBeenCalledWith('conversation-1', expect.stringContaining('following up'), 'caye-outreach-autonomous', 'outreach:followup:lead-1:touch:2')
+  })
+
+  it('uses a distinct durable idempotency key for cadence touch 3', async () => {
+    followup.mockResolvedValue({ ok: true, content: 'Hi Ari, last follow-up.' })
+    const summary = emptySummary()
+    await processLead({
+      lead: { ...sourcedLead(), stage: 'contacted', first_touch_sent_at: '2026-08-10T12:00:00Z', touches_sent: 2, last_touch_sent_at: '2026-08-16T12:00:00Z' },
+      workspaceId: 'workspace-1', accountId: 'account-1', workspaceVoice: '', outreachPaused: false,
+      remaining: 0, now: new Date('2026-08-23T12:00:00Z'), summary, prefetchedConversation: conversation(),
+    })
+    expect(dispatch).toHaveBeenCalledWith('conversation-1', expect.stringContaining('last follow-up'), 'caye-outreach-autonomous', 'outreach:followup:lead-1:touch:3')
+  })
+
+  it('repairs lifecycle after an idempotent retry without issuing another send', async () => {
+    firstTouch.mockResolvedValue({ ok: true, subject: 'Quick question', body: 'Hi Ari,' })
+    dispatch.mockResolvedValueOnce({ success: true, channelType: 'email', messageId: 'message-1', deduped: true })
+    await processLead({ lead: sourcedLead(), workspaceId: 'workspace-1', accountId: 'account-1', workspaceVoice: '', outreachPaused: false, remaining: 1, now: new Date('2026-08-23T12:00:00Z'), summary: emptySummary(), prefetchedConversation: conversation() })
+    expect(lifecycle).toHaveBeenCalledWith(expect.objectContaining({ event: 'first_touch_sent', eventKey: 'outbound:message-1' }))
   })
 
   it('keeps a legitimately paused parked draft stopped and records its structured park reason', async () => {

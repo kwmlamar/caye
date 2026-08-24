@@ -116,4 +116,8 @@ export const REPO_MIGRATIONS: readonly string[] = [
   '20260816b_caye_pending_actions_supersession',
   '20260816c_add_operator_message_outbound_kind',
   '20260817_caye_investigation_ledger',
+  '20260818_business_facts_supersession',
+  '20260818_caye_standing_rules_owner_only',
+  '20260819_business_facts_supersede_rpc',
+  '20260824_outreach_first_touch_capacity',
 ]

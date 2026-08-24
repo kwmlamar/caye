@@ -46,6 +46,7 @@ import { selectOutreachBatch } from '@/lib/outreach-batch'
 import { isValidOutreachEmail } from '@/lib/outreach-email'
 import { isProductionSalesWorkspace } from '@/lib/sales/workspace-eligibility'
 import { getRevalidatableParkedDraft } from '@/lib/outreach-parked-draft'
+import { reserveFirstTouchCapacity } from '@/lib/outreach-first-touch-capacity'
 
 /** Leads examined per tick. Bounds runtime; the next tick picks up the rest. */
 const LEAD_BATCH_SIZE = 40
@@ -461,18 +462,48 @@ export async function processLead(args: {
     return 0
   }
 
+  // A local `remaining` value keeps this scan efficient, but only this
+  // database reservation is authoritative across overlapping workers.
+  if (action.kind === 'send_first_touch') {
+    const reserved = await reserveFirstTouchCapacity(workspaceId, lead.id, now)
+    if (!reserved) {
+      await supabase.from('unified_conversations').update({
+        metadata: { ...metadata, outreach_park: { decision: 'require_approval', reason: 'daily_cap_reached', action: action.kind } },
+      }).eq('id', conversationId)
+      summary.no_action++
+      countReason(summary, 'daily_cap_reached')
+      return 0
+    }
+  }
+
   await supabase.from('unified_conversations').update({ metadata: { ...metadata, outreach_park: null } }).eq('id', conversationId)
+  const idempotencyKey = action.kind === 'send_first_touch'
+    ? `outreach:first_touch:${lead.id}`
+    : `outreach:followup:${lead.id}:touch:${action.touchNumber}`
   const dispatch = await dispatchOperatorReply(
     conversationId,
     body + buildComplianceFooter(lead.demo_token),
     'caye-outreach-autonomous',
-    `outreach:${action.kind}:${lead.id}`
+    idempotencyKey
   )
 
   // The channel dispatch only returns after provider success and persisted
   // execution evidence. Its idempotency key makes a retry return the same
   // receipt instead of issuing another external send.
   if (!dispatch.success) return 0
+
+  // If a prior attempt persisted the outbound message but died before its
+  // lifecycle write, dispatch returns the same receipt without re-sending.
+  // Complete that missing transition here; the lifecycle receipt makes this
+  // harmless when the original attempt did finish it.
+  if (dispatch.deduped && dispatch.messageId) {
+    await recordSalesLifecycleEvent({
+      workspaceId,
+      leadId: lead.id,
+      event: action.kind === 'send_first_touch' ? 'first_touch_sent' : 'followup_sent',
+      eventKey: `outbound:${dispatch.messageId}`,
+    })
+  }
 
   // dispatchOperatorReply records the successful persisted outbound message
   // through the lifecycle seam, including manual and automatic sends.
