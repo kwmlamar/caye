@@ -1586,7 +1586,12 @@ async function processMessage(
     message_type: 'text',
     sent_at: replySentAt,
     status: 'sent',
-    metadata: { subject: replySubject, is_automated: true, generated_by: 'caye' },
+    metadata: {
+      subject: replySubject,
+      is_automated: true,
+      generated_by: 'caye',
+      ...(decision.autonomyAudit ? { autonomy: decision.autonomyAudit } : {}),
+    },
   })
 
   if (!outboundErr) {

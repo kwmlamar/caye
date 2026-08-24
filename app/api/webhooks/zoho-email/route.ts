@@ -612,6 +612,7 @@ export async function processInboundEmail(payload: Record<string, unknown>): Pro
       subject: replySubject,
       is_automated: true,
       generated_by: 'caye',
+      ...(decision.autonomyAudit ? { autonomy: decision.autonomyAudit } : {}),
     },
   })
 

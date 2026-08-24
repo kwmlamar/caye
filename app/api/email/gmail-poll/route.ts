@@ -453,6 +453,7 @@ async function processGmailMessage(
           gmail_message_id: sent.gmailMessageId,
           gmail_thread_id: sent.threadId,
           source: 'gmail',
+          ...(decision.autonomyAudit ? { autonomy: decision.autonomyAudit } : {}),
           is_automated: true,
         },
       })

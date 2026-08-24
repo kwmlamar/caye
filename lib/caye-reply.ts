@@ -95,6 +95,12 @@ import {
   TRANSPORT_CAPABILITY_OWNER_NOTE,
 } from './capability-uncertain-reply'
 import { partialAccessibilityReplyFor } from './partial-accessibility-reply'
+import {
+  decideFrontDeskCommunicationAutonomy,
+  frontDeskAutonomyAudit,
+  isAutonomousCommunication,
+  type FrontDeskAutonomyAudit,
+} from './frontdesk-autonomy'
 
 export type EscalationCategory = 'gap' | 'policy' | 'knowledge' | 'sensitive'
 export type EscalationRouteTo = 'owner' | 'founder' | 'both'
@@ -102,7 +108,7 @@ export type EscalationRouteTo = 'owner' | 'founder' | 'both'
 export type CayeAutoReply =
   // Sales email routes consume `ignore` before dispatch. Its optional
   // fields keep existing non-sales channel narrowing source-compatible.
-  | { action: 'ignore'; reason: string; content: ''; bookingId?: undefined; needsOwnerFollowup?: undefined; ownerNote?: undefined; proposedReply?: undefined; note?: undefined; customerAcknowledgement?: undefined; urgency?: undefined }
+  | { action: 'ignore'; reason: string; content: ''; bookingId?: undefined; autonomyAudit?: undefined; needsOwnerFollowup?: undefined; ownerNote?: undefined; proposedReply?: undefined; note?: undefined; customerAcknowledgement?: undefined; urgency?: undefined }
   | {
       action: 'escalate'
       /** Customer-facing reply Caye sends immediately. Vague by default ("Let
@@ -142,11 +148,14 @@ export type CayeAutoReply =
       holdConversation?: boolean
       /** A reply was sent and only needs a lightweight owner review. */
       reviewOnly?: boolean
+      autonomyAudit?: undefined
     }
   | {
       action: 'reply'
       content: string
       bookingId?: string
+      /** Structured execution-policy evidence; never contains customer text. */
+      autonomyAudit?: FrontDeskAutonomyAudit
       /**
        * Acknowledge-and-defer mode (2B): Caye sent the customer a reply, but
        * the request still needs an owner decision (off-menu service, custom
@@ -185,7 +194,40 @@ export type CayeAutoReply =
        * from lib/whatsapp/urgency.ts.
        */
       urgency?: 'urgent' | 'routine'
+      autonomyAudit?: undefined
     }
+
+/**
+ * Live send_reply policy seam for a grounded reply whose only remaining
+ * signal is model uncertainty. Kept here (rather than in a generic adapter)
+ * so tests exercise the same decision shape used by generateCayeAutoReply.
+ */
+export function resolveGroundedUncertainFrontDeskReply(
+  content: string,
+  bookingId?: string,
+): Extract<CayeAutoReply, { action: 'reply' | 'hold' }> {
+  const autonomy = decideFrontDeskCommunicationAutonomy({
+    evidenceSufficient: true,
+    modelUncertain: true,
+  })
+  if (isAutonomousCommunication(autonomy)) {
+    return {
+      action: 'reply',
+      content: sanitizeDashes(content),
+      bookingId,
+      autonomyAudit: frontDeskAutonomyAudit(autonomy, true),
+    }
+  }
+  return {
+    action: 'hold',
+    reason: 'Needs your review',
+    note: 'A policy check requires review before this customer reply can be sent.',
+    proposedReply: sanitizeDashes(content),
+    customerAcknowledgement:
+      "Thanks for the detail — let me confirm the specifics with our team so I can give you an accurate answer, and we'll follow up shortly.",
+    urgency: 'routine',
+  }
+}
 
 interface ServiceRow {
   id: string
@@ -2624,31 +2666,30 @@ async function generateCayeAutoReplyCore(
           }
         } else if (
           evidenceVerdict.disposition === 'send_and_flag' &&
-          evidenceVerdict.reasons.includes('model_reported_uncertainty')
+          evidenceVerdict.reasons.includes('model_reported_uncertainty') &&
+          !input.flag_for_owner_followup
         ) {
-          // The evidence checks all passed, and the only outstanding signal is
-          // the model saying it wasn't sure. That is worth telling the owner
-          // about, but it is not grounds to hold: the customer already has a
-          // grounded answer and isn't blocked on anything.
-          //
-          // holdConversation: false (2026-08-07) — it used to enter the held
-          // queue, which left already-resolved threads sitting in "needs
-          // review" for a ~6 day average.
-          terminal = {
-            action: 'escalate',
-            content: sanitizeDashes(input.content),
-            category: 'knowledge',
-            routeTo: 'owner',
-            holdConversation: false,
-            reviewOnly: true,
-            // Composed by ownerNoteFor, written for the owner reading it on
-            // her phone. This previously shipped as "Caye self-rated
-            // confidence=medium on her reply. She sent it (per the Layer 2
-            // spec, drafts ship even at medium/low)..." and reached Mrs. Max
-            // exactly like that (2026-08-11). "Layer 2 spec" is an issue
-            // number. Everything she needs is: I replied, I wasn't certain,
-            // check me.
-            internalContext: ownerNoteFor(evidenceVerdict, input.owner_note),
+          // Evidence has already authorised the claims in this reply. Model
+          // uncertainty is diagnostic context for the shared envelope, not a
+          // reason to interrupt the owner after sending a bounded answer.
+          // Communication migration only: booking/payment mutations retain
+          // their existing dedicated gates above and are not authorised here.
+          if (createdBookingId) {
+            // This PR does not migrate booking mutation authority. Preserve
+            // the existing owner-review path for a reply that confirms a
+            // newly-created booking rather than labelling it routine factual
+            // communication after the fact.
+            terminal = {
+              action: 'escalate',
+              content: sanitizeDashes(input.content),
+              category: 'knowledge',
+              routeTo: 'owner',
+              holdConversation: false,
+              reviewOnly: true,
+              internalContext: ownerNoteFor(evidenceVerdict, input.owner_note),
+            }
+          } else {
+            terminal = resolveGroundedUncertainFrontDeskReply(input.content)
           }
         } else {
           const needsFollowup = !!input.flag_for_owner_followup

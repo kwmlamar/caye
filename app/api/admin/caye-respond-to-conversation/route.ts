@@ -289,6 +289,7 @@ export async function POST(request: NextRequest) {
       generated_by: 'caye',
       sent_by: 'caye',
       triggered_by: 'admin/caye-respond-to-conversation',
+      ...(decision.autonomyAudit ? { autonomy: decision.autonomyAudit } : {}),
     },
   })
 
