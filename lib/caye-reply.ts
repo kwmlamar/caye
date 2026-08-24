@@ -58,6 +58,11 @@ import {
   type BusinessFactRow,
 } from './business-facts'
 import {
+  fetchLearnedOperatingKnowledge,
+  formatLearnedOperatingKnowledge,
+  type LearnedOperatingKnowledge,
+} from './operator-learning'
+import {
   fetchStandingRules,
   findMatchingRule,
   buildStandingRuleEscalation,
@@ -748,7 +753,8 @@ function buildSystem(
   services: ServiceRow[],
   todayISO: string,
   serviceMatch: ServiceMatchResult | null,
-  businessFacts: BusinessFactRow[]
+  businessFacts: BusinessFactRow[],
+  learnedKnowledge: LearnedOperatingKnowledge[]
 ): { stable: string; dynamic: string } {
   // ── STABLE PREFIX ───────────────────────────────────────────────────────
   let stable = systemPrompt
@@ -1041,6 +1047,8 @@ function buildSystem(
   // would defeat the purpose.
   const bizFactsBlock = formatBusinessFactsBlock(businessFacts)
   if (bizFactsBlock) dynamic += '\n\n' + bizFactsBlock
+  const learnedBlock = formatLearnedOperatingKnowledge(learnedKnowledge)
+  if (learnedBlock) dynamic += '\n\n' + learnedBlock
 
   // Inbound-context tone modifier. Pure classifier picks a category from
   // the inbound body (or returns null when uncertain); toneHintFor maps
@@ -2271,7 +2279,10 @@ async function generateCayeAutoReplyCore(
   // Now that she answers prospects directly, anything Lamar teaches her
   // about how to sell has to reach her the same way it reaches any other
   // workspace.
-  const businessFacts = await fetchBusinessFacts(inbound.workspaceId)
+  const [businessFacts, learnedKnowledge] = await Promise.all([
+    fetchBusinessFacts(inbound.workspaceId),
+    fetchLearnedOperatingKnowledge(inbound.workspaceId),
+  ])
 
 
   // Grounding text for the payment-figure guard. Every business fact is
@@ -2359,7 +2370,8 @@ async function generateCayeAutoReplyCore(
         services,
         todayISO,
         serviceMatch,
-        businessFacts
+        businessFacts,
+        learnedKnowledge
       )
 
   // Appended to the DYNAMIC half deliberately: this verdict is specific to

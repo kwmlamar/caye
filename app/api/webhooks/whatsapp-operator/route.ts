@@ -62,6 +62,7 @@ import { shouldSyncOnboardingOperatorName } from '@/lib/onboarding-operator-name
 import { FIRST_DISCOVERY_QUESTION } from '@/lib/onboarding'
 import { mediaPlaceholder } from '@/lib/operator-text-guard'
 import { fetchBusinessFacts, formatBusinessFactsBlock } from '@/lib/business-facts'
+import { learnFromAuthorizedOperatorCorrection } from '@/lib/operator-learning'
 import {
   getActiveDemoSession,
   startDemoSession,
@@ -932,7 +933,7 @@ async function handleOneInbound(
   // claude_format is what the back-office agent's sliding-window loader
   // consumes; we populate it for every inbound regardless of routing path
   // so the agent has full history when it does run.
-  await supabase.from('caye_operator_messages').insert({
+  const { data: learnedSourceMessage } = await supabase.from('caye_operator_messages').insert({
     workspace_id: workspaceId,
     direction: 'inbound',
     wa_message_id: message.id,
@@ -942,6 +943,19 @@ async function handleOneInbound(
     operator_allowlist_id: operator.id,
     operator_name: operator.name,
     operator_role: operator.role,
+  }).select('id').single()
+
+  // Issue #121: extract reusable operating knowledge only from this verified
+  // operator boundary. Customers/external mail never call this path. Learning
+  // changes context for future work; it cannot execute or authorize anything.
+  await learnFromAuthorizedOperatorCorrection({
+    workspaceId,
+    operatorId: operator.id,
+    operatorRole: operator.role,
+    operatorText: body,
+    previousCayeText: lastOutboundBody,
+    sourceMessageId: learnedSourceMessage?.id ?? null,
+    sourceConversationId: `operator:${operator.id}`,
   })
 
   // If the workspace flag is off we don't act on intents — but we still logged
