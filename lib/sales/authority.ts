@@ -15,10 +15,9 @@
  *   Ask when it is prepared and reasonable but consequential.
  *   Escalate when the judgment genuinely belongs to the founder.
  *
- * Same ordering discipline as lib/caye-agent/evidence.ts: every downgrade
- * below is triggered by a deterministic FACT, and the model's own opinion
- * is consulted last and can only ever make Caye more careful. A confident
- * model cannot talk its way up a tier.
+ * Every escalation below is triggered by a deterministic fact. Model
+ * uncertainty is retained as audit context, not a generic owner-attention
+ * trigger: bounded work continues after deterministic evidence is present.
  *
  * The three tiers map onto plumbing that already exists, which is why this
  * file returns a verdict rather than doing anything:
@@ -30,6 +29,7 @@
  */
 
 import type { EscalationCategory } from './escalation-triggers'
+import { decideActionAutonomy, type AutonomyDecision } from '@/lib/action-autonomy'
 
 export type SalesActionKind =
   | 'send_first_touch'
@@ -52,12 +52,14 @@ export interface AuthorityInput {
   outreachPaused?: boolean
   /** Today's send cap is spent. */
   atDailyCap?: boolean
-  /** The model said it was unsure. Advisory, downgrade-only. */
+  /** The model said it was unsure. Advisory/audit-only. */
   modelUncertain?: boolean
 }
 
 export interface AuthorityVerdict {
   tier: AuthorityTier
+  /** Shared deterministic envelope decision retained for audit/observability. */
+  decision: AutonomyDecision
   /** Machine-readable, for logs and tests. Never shown to a prospect. */
   reasons: string[]
   /** Present when tier === 'escalate'. */
@@ -91,15 +93,24 @@ const AUTONOMOUS_ACTIONS: readonly SalesActionKind[] = [
  */
 const APPROVAL_ACTIONS: readonly SalesActionKind[] = ['propose_new_segment']
 
-export function decideAuthority(input: AuthorityInput): AuthorityVerdict {
-  const reasons: string[] = []
+const SALES_AUTONOMY_POLICY = {
+  allowedActions: AUTONOMOUS_ACTIONS,
+  // The scan executes one lead at a time. Larger sends must remain an
+  // explicitly-reviewed batch until a domain policy deliberately expands it.
+  maxExternalRecipients: 1,
+  maxRecordsAffected: 1,
+  maxFinancialImpactCents: 0,
+  auditExternalActions: true,
+} as const
 
+export function decideAuthority(input: AuthorityInput): AuthorityVerdict {
   // 1. Escalation categories win over everything. If the prospect raised a
   //    contract, a refund, or the press, no amount of routine-ness makes an
   //    autonomous reply appropriate.
   if (input.triggers?.length) {
     return {
       tier: 'escalate',
+      decision: 'require_approval',
       reasons: ['escalation_category_matched'],
       escalationCategory: input.triggers[0],
     }
@@ -108,7 +119,7 @@ export function decideAuthority(input: AuthorityInput): AuthorityVerdict {
   // 2. A draft that failed the truthfulness or style guards never sends,
   //    regardless of tier. It becomes something Lamar looks at.
   if (input.draftFailedGuards) {
-    return { tier: 'approval', reasons: ['draft_failed_guards'] }
+    return { tier: 'approval', decision: 'require_approval', reasons: ['draft_failed_guards'] }
   }
 
   // 3. Hard stops on outbound. These do not make the action wrong, only
@@ -116,29 +127,31 @@ export function decideAuthority(input: AuthorityInput): AuthorityVerdict {
   const isOutbound =
     input.action === 'send_first_touch' || input.action === 'send_followup'
   if (isOutbound && input.outreachPaused) {
-    return { tier: 'approval', reasons: ['outreach_paused'] }
+    return { tier: 'approval', decision: 'require_approval', reasons: ['outreach_paused'] }
   }
   if (isOutbound && input.atDailyCap) {
-    return { tier: 'approval', reasons: ['daily_cap_reached'] }
+    return { tier: 'approval', decision: 'require_approval', reasons: ['daily_cap_reached'] }
   }
 
-  if (APPROVAL_ACTIONS.includes(input.action)) {
-    return { tier: 'approval', reasons: ['action_requires_approval'] }
-  }
+  const actionKnown = AUTONOMOUS_ACTIONS.includes(input.action)
+  const envelope = decideActionAutonomy({
+    action: input.action,
+    reversibility: actionKnown ? 'recoverable' : 'difficult_to_recover',
+    evidenceSufficient: actionKnown,
+    affectedPeople: input.action === 'send_first_touch' || input.action === 'send_followup' || input.action === 'reply_to_prospect' ? 1 : 0,
+    affectedRecords: 1,
+    externalCommunication: input.action === 'send_first_touch' || input.action === 'send_followup' || input.action === 'reply_to_prospect',
+    ownerRule: APPROVAL_ACTIONS.includes(input.action) ? 'require_approval' : undefined,
+    modelUncertain: input.modelUncertain,
+  }, SALES_AUTONOMY_POLICY)
 
-  if (!AUTONOMOUS_ACTIONS.includes(input.action)) {
-    // Unknown action kinds fail closed. If someone adds an action and
-    // forgets to classify it, it asks rather than acts.
-    return { tier: 'approval', reasons: ['unclassified_action'] }
+  // Model uncertainty is intentionally passed only as audit context. It is
+  // not an authority signal: bounded, evidenced work remains autonomous.
+  return {
+    tier: envelope.decision === 'act' || envelope.decision === 'act_and_audit' || envelope.decision === 'act_within_budget' ? 'auto' : 'approval',
+    decision: envelope.decision,
+    reasons: actionKnown ? envelope.reasons : ['unclassified_action', ...envelope.reasons],
   }
-
-  // 4. Evidence is satisfied. Only now is the model's opinion heard, and
-  //    only downward.
-  if (input.modelUncertain) {
-    return { tier: 'approval', reasons: ['model_reported_uncertainty'] }
-  }
-
-  return { tier: 'auto', reasons }
 }
 
 /**
