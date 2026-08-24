@@ -81,7 +81,11 @@ describe('Sales inbound boundary', () => {
   it('handles “remove me” as an autonomous compliance action, without a draft or owner hold', async () => {
     const result = await handleSalesInbound({ ...inbound, subject: 'Re:', body: 'remove me.' })
     expect(result).toMatchObject({ disposition: 'ignore', reason: 'opt_out' })
-    expect(state.lifecycle).toHaveBeenCalledWith(expect.objectContaining({ event: 'opted_out' }))
+    expect(state.lifecycle).toHaveBeenCalledWith(expect.objectContaining({
+      event: 'opted_out', eventKey: 'inbound:message-1:opted_out',
+      // The lifecycle RPC atomically writes the suppression timestamp,
+      // terminal stage, cadence stop, signal, and replay receipt.
+    }))
     expect(state.context).not.toHaveBeenCalled()
     expect(state.bridge).not.toHaveBeenCalled()
   })
