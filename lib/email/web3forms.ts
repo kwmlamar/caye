@@ -102,6 +102,46 @@ export function parseWeb3FormsFields(body: string): Web3FormsParsed | null {
     }
   }
 
+  // Layout D: Zoho's webhook can flatten a Web3Forms HTML table into one
+  // uninterrupted sequence of lines. The older parser treated that entire
+  // sequence as one "label\nvalue" block, so it lost Name/Email and fell
+  // back to notify+<form-id>@web3forms.com as the customer. Parse the
+  // sequence as adjacent label/value pairs instead. This is intentionally a
+  // fallback: the original blank-line layouts retain their exact behavior.
+  const hasIdentity = (aliases: string[]) =>
+    fields.some((field) => aliases.includes(field.label.toLowerCase()))
+  if (!hasIdentity(NAME_ALIASES) || !hasIdentity(EMAIL_ALIASES)) {
+    const lines = fieldsBlock.split('\n').map((line) => line.trim()).filter(Boolean)
+    const sequential: typeof fields = []
+    for (let index = 0; index < lines.length; ) {
+      const line = lines[index]
+      // Web3Forms' introductory prose is not a customer field.
+      if (/^(?:form submission data from your website|form details below\.?|new form submission)/i.test(line)) {
+        index += 1
+        continue
+      }
+      const inline = line.match(/^([^:]{1,60}):\s*(.+)$/)
+      if (inline) {
+        const value = inline[2].trim()
+        if (value && value.toLowerCase() !== 'none') {
+          sequential.push({ label: inline[1].trim(), value })
+        }
+        index += 1
+        continue
+      }
+      const value = lines[index + 1]?.trim()
+      if (line.length <= 60 && value && value.toLowerCase() !== 'none') {
+        sequential.push({ label: line, value })
+        index += 2
+      } else {
+        index += 1
+      }
+    }
+    if (sequential.length > 0) {
+      fields.splice(0, fields.length, ...sequential)
+    }
+  }
+
   if (fields.length === 0) return null
 
   // Extract identity fields by alias (only Name + Email are semantically needed)
