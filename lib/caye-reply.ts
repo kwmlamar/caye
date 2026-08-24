@@ -98,9 +98,11 @@ import { partialAccessibilityReplyFor } from './partial-accessibility-reply'
 import {
   decideFrontDeskCommunicationAutonomy,
   frontDeskAutonomyAudit,
+  hasFrontDeskMutationClaim,
   isAutonomousCommunication,
   type FrontDeskAutonomyAudit,
 } from './frontdesk-autonomy'
+import { validateBookingStatusClaimsAgainstEvidence } from './caye-agent/consequential-claim-grounding'
 
 export type EscalationCategory = 'gap' | 'policy' | 'knowledge' | 'sensitive'
 export type EscalationRouteTo = 'owner' | 'founder' | 'both'
@@ -206,9 +208,11 @@ export function resolveGroundedUncertainFrontDeskReply(
   content: string,
   bookingId?: string,
 ): Extract<CayeAutoReply, { action: 'reply' | 'hold' }> {
+  const mutationClaim = hasFrontDeskMutationClaim(content)
   const autonomy = decideFrontDeskCommunicationAutonomy({
     evidenceSufficient: true,
     modelUncertain: true,
+    bookingOrCommitmentImpact: mutationClaim,
   })
   if (isAutonomousCommunication(autonomy)) {
     return {
@@ -2429,6 +2433,8 @@ async function generateCayeAutoReplyCore(
   const messages: Anthropic.MessageParam[] = [{ role: 'user', content: userContent }]
 
   let createdBookingId: string | undefined
+  let performedBookingMutation = false
+  const verifiedBookingStatuses: string[] = []
 
   // Correlates every tool call made while handling this one inbound message,
   // so "what did Caye do on this message" is a single query — the same role
@@ -2466,13 +2472,21 @@ async function generateCayeAutoReplyCore(
       const textBlock = response.content.find(b => b.type === 'text')
       if (textBlock && textBlock.type === 'text' && textBlock.text.trim()) {
         const blocked = guardDraft(textBlock.text)
-        if (blocked) {
-          console.warn(`[caye-reply] Guard blocked freeform reply: ${blocked}`)
+        const mutationClaim = hasFrontDeskMutationClaim(textBlock.text)
+        const bookingStatusIssue = validateBookingStatusClaimsAgainstEvidence(textBlock.text, {
+          statuses: verifiedBookingStatuses,
+        })
+        if (blocked || mutationClaim || bookingStatusIssue) {
+          const reason = blocked ??
+            (mutationClaim
+              ? 'Commitment guard: reply claims a booking, cancellation, refund, discount, or change without an executed mutation'
+              : `Booking-status guard: ${bookingStatusIssue}`)
+          console.warn(`[caye-reply] Guard blocked freeform reply: ${reason}`)
           return {
             action: 'hold',
-            reason: blocked,
+            reason,
             note:
-              `Caye drafted a reply (no tool call) but a pre-send guard blocked it (${blocked}). ` +
+              `Caye drafted a reply (no tool call) but a pre-send guard blocked it (${reason}). ` +
               `Review the draft below and send manually if appropriate.\n\n---\n\n${textBlock.text}`,
           }
         }
@@ -2502,6 +2516,10 @@ async function generateCayeAutoReplyCore(
           high_stakes_claim?: boolean
         }
         const blocked = guardDraft(input.content)
+        const mutationClaim = hasFrontDeskMutationClaim(input.content)
+        const bookingStatusIssue = validateBookingStatusClaimsAgainstEvidence(input.content, {
+          statuses: verifiedBookingStatuses,
+        })
 
         // Evidence-based disposition (2026-08-11). Computed from what
         // deterministic code established this turn plus a grounding check on
@@ -2528,15 +2546,19 @@ async function generateCayeAutoReplyCore(
           requestsOwnerFollowup: !!input.flag_for_owner_followup,
         })
 
-        if (blocked) {
+        if (blocked || (mutationClaim && !performedBookingMutation) || bookingStatusIssue) {
           // A pre-send guard tripped — don't ship the reply. Hand to the owner
           // with the draft attached so they can decide.
-          console.warn(`[caye-reply] Guard blocked reply: ${blocked}`)
+          const reason = blocked ??
+            (bookingStatusIssue
+              ? `Booking-status guard: ${bookingStatusIssue}`
+              : 'Commitment guard: reply claims a booking, cancellation, refund, discount, or change without an executed mutation')
+          console.warn(`[caye-reply] Guard blocked reply: ${reason}`)
           terminal = {
             action: 'hold',
-            reason: blocked,
+            reason,
             note:
-              `Caye drafted a reply but a pre-send guard blocked it (${blocked}). ` +
+              `Caye drafted a reply but a pre-send guard blocked it (${reason}). ` +
               `Review the draft below and send manually if appropriate.\n\n---\n\n${input.content}`,
           }
         } else if (evidenceVerdict.disposition === 'hold') {
@@ -2871,6 +2893,8 @@ async function generateCayeAutoReplyCore(
         )
         if (result.success && result.booking_id) {
           createdBookingId = result.booking_id
+          performedBookingMutation = true
+          verifiedBookingStatuses.splice(0, verifiedBookingStatuses.length, 'pending')
           evidence.add('booking_exists')
         }
         toolResults.push({
@@ -2887,6 +2911,7 @@ async function generateCayeAutoReplyCore(
         // the customer being identified.
         if (result.match_count > 0) {
           evidence.add('booking_exists')
+          verifiedBookingStatuses.push(...result.bookings.map((booking) => booking.status))
           if (result.matched_by === 'email') evidence.add('customer_identified')
         }
         retrievedCorpus.push(JSON.stringify(result))
@@ -2903,6 +2928,10 @@ async function generateCayeAutoReplyCore(
           workspaceTimezone,
           input.reason
         )
+        if (result.ok) {
+          performedBookingMutation = true
+          verifiedBookingStatuses.splice(0, verifiedBookingStatuses.length, 'cancelled')
+        }
         toolResults.push({
           type: 'tool_result',
           tool_use_id: tool.id,
@@ -2924,6 +2953,7 @@ async function generateCayeAutoReplyCore(
           input.duration_minutes,
           workspaceTimezone
         )
+        if (result.ok) performedBookingMutation = true
         toolResults.push({
           type: 'tool_result',
           tool_use_id: tool.id,

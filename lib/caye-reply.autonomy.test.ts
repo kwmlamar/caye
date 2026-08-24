@@ -24,4 +24,14 @@ describe('live caye-reply autonomy seam', () => {
     if (decision.action !== 'reply') throw new Error('expected autonomous reply')
     expect(JSON.stringify(decision.autonomyAudit)).not.toContain('2 PM slot')
   })
+
+  it.each([
+    'I booked you for 2 PM.',
+    'I cancelled your reservation.',
+    'I refunded you.',
+    'I applied a discount to your booking.',
+    'I moved your booking to Friday.',
+  ])('does not route an unexecuted mutation claim through communication autonomy: %s', (content) => {
+    expect(resolveGroundedUncertainFrontDeskReply(content)).toMatchObject({ action: 'hold' })
+  })
 })

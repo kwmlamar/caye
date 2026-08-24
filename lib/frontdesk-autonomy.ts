@@ -36,6 +36,20 @@ export interface FrontDeskAutonomyAudit {
   records_affected: 1
 }
 
+/**
+ * Statements that assert the business already changed customer state. These
+ * are intentionally narrower than booking-status reporting: "2 PM is
+ * available" and "your booking is confirmed" are not mutations, while "I
+ * booked you" and "we refunded you" are. The latter must never enter the
+ * communication-only envelope without the mutation path recording success.
+ */
+const MUTATION_CLAIM =
+  /\b(?:i|we)\s+(?:have\s+)?(?:booked|reserved|scheduled|confirmed|cancelled|canceled|refunded|reimbursed|applied|gave|moved|rescheduled|changed)\b(?=[\s\S]{0,40}\b(?:you|your|booking|reservation|refund|discount|appointment|time|date|slot)\b)/i
+
+export function hasFrontDeskMutationClaim(content: string): boolean {
+  return MUTATION_CLAIM.test(content)
+}
+
 const POLICY = {
   allowedActions: ['grounded_customer_reply'],
   maxExternalRecipients: 1,
