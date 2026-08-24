@@ -84,6 +84,7 @@ describe('production tool registry — unrelated classifications unchanged by th
     ['get_held_queue', 'read'],
     ['remove_pricing_tier', 'high'],
     ['send_outreach_batch', 'high'],
+    ['run_outreach', 'low'],
   ]
 
   it.each(expected)('%s stays risk=%s', (name, risk) => {
