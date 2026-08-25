@@ -91,7 +91,7 @@ const { FABRICATED_TRANSCRIPT_RUN_1, FABRICATED_TRANSCRIPT_RUN_2 } = await impor
   './fixtures/fabricated-tool-transcripts'
 )
 
-// Real founder UUID from lib/founder.ts's allowlist (classicalsineus@gmail.com) —
+// Real founder UUID from lib/founder.ts's allowlist —
 // assertFounderRouterAccess checks against the real allowlist, not a stub.
 const FOUNDER_CTX: FounderRouterContext = { founderUserId: '29227a12-ca82-4796-a9c4-30ec0c6fa0e4', threadId: 'thread-1' }
 
