@@ -7,13 +7,16 @@ alter table public.workspace_ai_config
 
 alter table public.workspace_ai_config
   add constraint workspace_ai_config_outreach_pause_source_check
-  check (outreach_pause_source is null or outreach_pause_source in ('owner_manual', 'bounce_kill_switch'));
+  check (outreach_pause_source is null or outreach_pause_source in ('owner_manual', 'bounce_safety', 'provider_safety', 'compliance', 'system_recoverable'));
+
+comment on column public.workspace_ai_config.outreach_pause_source is
+  'Why the current cold-outreach pause was set: owner_manual, bounce_safety, provider_safety, compliance, or system_recoverable. Null on legacy rows is unknown and fails closed.';
 
 create table if not exists public.caye_outreach_pause_events (
   id uuid primary key default gen_random_uuid(),
   workspace_id uuid not null references public.customers(id) on delete cascade,
   action text not null check (action in ('paused', 'resumed')),
-  source text not null check (source in ('owner_manual', 'bounce_kill_switch')),
+  source text not null check (source in ('owner_manual', 'bounce_safety', 'provider_safety', 'compliance', 'system_recoverable')),
   reason text,
   actor_role text not null check (actor_role in ('owner', 'founder', 'system')),
   created_at timestamptz not null default now()

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('server-only', () => ({}))
 
 const status = vi.fn()
@@ -15,13 +15,23 @@ const ctx = { workspaceId: 'ws-a', callerRole: 'founder' } as never
 const base = (disposition: string) => ({ enabled: true, pause: { disposition }, sendsToday: { firstTouchRemaining: 50 } })
 
 describe('recover_outreach_operations', () => {
+  beforeEach(() => vi.clearAllMocks())
+
   it('does not resume or run work while a bounce safety stop is active', async () => {
-    status.mockResolvedValue(base('safety_locked'))
+    status.mockResolvedValue(base('safety_active'))
     const result = await recoverOutreachOperations.execute({}, ctx)
-    expect(result.data).toMatchObject({ recovered: false, blocker: 'safety_locked' })
+    expect(result.data).toMatchObject({ recovered: false, blocker: 'safety_active' })
     expect(resume).not.toHaveBeenCalled()
     expect(source).not.toHaveBeenCalled()
     expect(autosend).not.toHaveBeenCalled()
+  })
+
+  it('keeps a historical safety pause held when no deterministic recovery proof exists', async () => {
+    status.mockResolvedValue(base('safety_recovery_not_supported'))
+    const result = await recoverOutreachOperations.execute({}, ctx)
+    expect(result.data).toMatchObject({ recovered: false, blocker: 'safety_recovery_not_supported' })
+    expect(resume).not.toHaveBeenCalled()
+    expect(source).not.toHaveBeenCalled()
   })
 
   it('resumes only an owner pause, then uses the existing sourcing and autosend paths', async () => {

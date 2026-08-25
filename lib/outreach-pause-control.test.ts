@@ -9,7 +9,11 @@ describe('outreach pause provenance', () => {
   })
 
   it('never lets owner recovery override the bounce safety stop', () => {
-    expect(classifyOutreachPause({ paused: true, source: 'bounce_kill_switch' }).disposition).toBe('safety_locked')
+    expect(classifyOutreachPause({ paused: true, source: 'bounce_safety', activeSafetyCondition: 'bounce_threshold' }).disposition).toBe('safety_active')
+  })
+
+  it('does not turn a historical safety stop into an owner override after the immediate threshold clears', () => {
+    expect(classifyOutreachPause({ paused: true, source: 'bounce_safety' }).disposition).toBe('safety_recovery_not_supported')
   })
 
   it('keeps legacy pauses blocked when their source is not provable', () => {

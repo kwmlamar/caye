@@ -67,7 +67,7 @@ import { requiresBusinessGrounding } from './business-grounding-classifier'
  * "needs data."
  */
 const MAX_TOOL_ITERATIONS = 5
-const DEGRADE_MESSAGE = "Sorry, that one's taking longer than it should — give me a moment and try again."
+const DEGRADE_MESSAGE = 'I could not complete that request within this turn. No unfinished operation is running in the background.'
 const UNGROUNDED_DEGRADE_MESSAGE =
   "I wasn't able to verify this against real data, so I'm not going to guess. Try again, or tell me specifically what to look up."
 
@@ -295,7 +295,7 @@ export async function runFounderToolLoop(args: FounderToolLoopArgs): Promise<Fou
     console.error(
       `[model-router/founder-tool-loop] reply named an internal tool ("${leaked}") — workspace=${args.toolCtx.workspaceId} — falling back`
     )
-    return "Give me a second — let me get you a cleaner answer on that."
+    return 'I could not safely complete that request in this turn. No operational action was taken.'
   }
 
   for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {

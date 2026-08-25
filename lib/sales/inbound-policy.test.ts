@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { decideSalesInboundPolicy } from './inbound-policy'
+import { bouncedRecipientFromNotification, decideSalesInboundPolicy } from './inbound-policy'
 
 describe('Sales inbound policy', () => {
   it('keeps a genuine prospect reply distinct from automation', () => {
@@ -10,6 +10,12 @@ describe('Sales inbound policy', () => {
   it('recognizes opt-outs and delivery failures before a model can reply', () => {
     expect(decideSalesInboundPolicy('Re: hello', 'Please remove me from this list.').kind).toBe('opt_out')
     expect(decideSalesInboundPolicy('Undeliverable mail', 'Mailbox unavailable').kind).toBe('bounce_or_delivery_failure')
+  })
+
+  it('extracts only an explicit failed recipient from a delivery notification', () => {
+    expect(bouncedRecipientFromNotification('Final-Recipient: rfc822; Prospect@Example.test')).toBe('prospect@example.test')
+    expect(bouncedRecipientFromNotification('X-Failed-Recipients: prospect@example.test')).toBe('prospect@example.test')
+    expect(bouncedRecipientFromNotification('Mailbox unavailable for somebody')).toBeNull()
   })
 
   it('does not turn owner or synthetic traffic into Sales evidence', () => {

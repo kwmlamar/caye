@@ -12,7 +12,7 @@ export const recoverOutreachOperations: Tool<Record<string, never>> = {
   async execute(_args, ctx) {
     const before = await getOutreachOperationalStatus(ctx.workspaceId)
     if (!before.enabled) return { ok: true, data: { recovered: false, blocker: 'outreach_disabled', status: before } }
-    if (before.pause.disposition === 'safety_locked' || before.pause.disposition === 'unknown_blocked') {
+    if (before.pause.disposition === 'safety_active' || before.pause.disposition === 'safety_recovery_not_supported' || before.pause.disposition === 'unknown_blocked') {
       return { ok: true, data: { recovered: false, blocker: before.pause.disposition, pause: before.pause, status: before } }
     }
     if (before.pause.disposition === 'owner_resumable') {

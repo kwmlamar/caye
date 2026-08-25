@@ -27,7 +27,8 @@ export interface OutreachOperationalStatus {
 export function explainNoOutreach(s: Omit<OutreachOperationalStatus, 'reasonNoOutreach'>): string | null {
   if (s.sendsToday.sent > 0) return null
   if (s.paused) {
-    if (s.pause.disposition === 'safety_locked') return `Outreach is paused by the bounce safety stop${s.pause.reason ? `: ${s.pause.reason}` : '.'}`
+    if (s.pause.activeSafetyCondition) return `Outreach is paused by the active ${s.pause.activeSafetyCondition.replaceAll('_', ' ')} safety stop${s.pause.reason ? `: ${s.pause.reason}` : '.'}`
+    if (s.pause.disposition === 'safety_recovery_not_supported') return 'Outreach remains paused after a safety stop because no deterministic recovery proof is supported yet.'
     if (s.pause.disposition === 'unknown_blocked') return 'Outreach is paused and its original reason was not recorded.'
     return 'Outreach is intentionally paused by the owner.'
   }
@@ -48,7 +49,7 @@ export async function getOutreachOperationalStatus(workspaceId: string): Promise
   const db = createServiceClient()
   const [customer, config, account, scan, sourcingRun, sourced, cooldown, stalled, sourcingJobs, history] = await Promise.all([
     db.from('customers').select('workspace_kind,autosend_enabled,timezone').eq('id', workspaceId).maybeSingle(),
-    db.from('workspace_ai_config').select('outreach_autosend_paused,outreach_pause_source,outreach_pause_reason,outreach_paused_at').eq('workspace_id', workspaceId).maybeSingle(),
+    db.from('workspace_ai_config').select('outreach_autosend_paused,outreach_pause_source,outreach_pause_reason,outreach_paused_at,outreach_bounce_threshold,outreach_bounce_window_hours').eq('workspace_id', workspaceId).maybeSingle(),
     db.from('connected_accounts').select('id,channel_type,is_active,token_expires_at,refresh_token,updated_at').eq('user_id', workspaceId).eq('channel_type', 'email').eq('is_active', true).maybeSingle(),
     db.from('caye_cron_runs').select('last_started_at,last_status,last_summary,last_error').eq('cron_name', 'outreach-autosend-scan').maybeSingle(),
     db.from('caye_cron_runs').select('last_started_at,last_status,last_summary,last_error').eq('cron_name', 'outreach-sourcing-scan').maybeSingle(),
@@ -65,11 +66,14 @@ export async function getOutreachOperationalStatus(workspaceId: string): Promise
   const now = new Date()
   const start = startOfBusinessDay(now, timezone)
   const monthStart = startOfBusinessMonth(now, timezone)
-  const [first, follow, monthFirst, monthFollow] = await Promise.all([
+  const [first, follow, monthFirst, monthFollow, bounceCount] = await Promise.all([
     db.from('outreach_leads').select('id', { count: 'exact', head: true }).eq('workspace_id', workspaceId).gte('first_touch_sent_at', start),
     db.from('outreach_leads').select('id', { count: 'exact', head: true }).eq('workspace_id', workspaceId).gte('last_nudge_at', start),
     db.from('outreach_leads').select('id', { count: 'exact', head: true }).eq('workspace_id', workspaceId).gte('first_touch_sent_at', monthStart),
     db.from('outreach_leads').select('id', { count: 'exact', head: true }).eq('workspace_id', workspaceId).gte('last_nudge_at', monthStart),
+    db.from('caye_outreach_bounces').select('id', { count: 'exact', head: true }).eq('workspace_id', workspaceId).gte('created_at',
+      new Date(Date.now() - (config.data?.outreach_bounce_window_hours ?? 24) * 60 * 60 * 1000).toISOString()
+    ),
   ])
   const sent = (first.count ?? 0) + (follow.count ?? 0)
   const monthFirstTouch = monthFirst.count ?? 0
@@ -85,11 +89,15 @@ export async function getOutreachOperationalStatus(workspaceId: string): Promise
   const lastInserted = numeric(sourcingSummary?.total_inserted)
   const availableCandidates = (sourced.data ?? []).filter((row) => isValidOutreachEmail(row.lead_email)).length
   const tokenUsable = Boolean(account.data && (account.data.refresh_token || (account.data.token_expires_at && Date.parse(account.data.token_expires_at) > Date.now())))
+  const activeSafetyCondition = (bounceCount.count ?? 0) >= (config.data?.outreach_bounce_threshold ?? 5)
+    ? 'bounce_threshold'
+    : !tokenUsable ? 'provider_unhealthy' : null
   const pause = classifyOutreachPause({
     paused: config.data?.outreach_autosend_paused ?? true,
     source: config.data?.outreach_pause_source,
     reason: config.data?.outreach_pause_reason,
     pausedAt: config.data?.outreach_paused_at,
+    activeSafetyCondition,
   })
   const base: Omit<OutreachOperationalStatus, 'reasonNoOutreach'> = {
     workspaceId, timezone,

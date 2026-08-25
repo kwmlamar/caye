@@ -117,6 +117,7 @@ export function renderAuthoritativeOwnerOperationalState(
       `- outreach_pause_provenance: ${o.pause.source}`,
       `- outreach_pause_disposition: ${o.pause.disposition}`,
       `- outreach_pause_reason: ${o.pause.reason ?? 'not recorded'}`,
+      `- outreach_active_safety_condition: ${o.pause.activeSafetyCondition ?? 'none detected'}`,
       `- outreach_running_now: ${running}`,
       `- sends_today_total: ${o.sendsToday.sent}`,
       `- first_touches_sent_today: ${o.sendsToday.firstTouch}`,
@@ -140,7 +141,7 @@ export function renderAuthoritativeOwnerOperationalState(
       '- If total_sends_this_month > 0, you MUST NOT say or imply that zero emails have been sent this month, that nothing has been sent this month, or that the funnel has never moved.',
       '- The daily acquisition goal is first touches only. Follow-ups are useful but MUST NOT be described as satisfying or consuming the first-touch target.',
       '- outreach_paused=false means you MUST NOT call outreach "paused". outreach_running_now is the exact combined enabled+pause state.',
-      '- A bounce safety stop or an unknown pause is not owner-overridable. Only outreach_pause_disposition=owner_resumable may be resumed by recover_outreach_operations.',
+      '- An active safety stop or an unknown pause is not owner-overridable. A historical safety pause without a supported deterministic recovery proof also remains held. Only outreach_pause_disposition=owner_resumable may be resumed by recover_outreach_operations today.',
       '- Pending drafts are a queue fact, not proof that the entire funnel is blocked. If month sends are nonzero, you MUST NOT infer "zero sent" or "nothing is flowing" solely from draft count.',
       '- If telemetry_complete=false, do not invent a single root cause. State what is known and what is not established.'
     )

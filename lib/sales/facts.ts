@@ -94,6 +94,6 @@ export function renderFactsBlock(f: SalesFacts = SALES_FACTS): string {
     `- Channels that genuinely work today: ${f.supportedChannels.join(', ')}.`,
     `- Does NOT exist yet, say so plainly if asked: ${f.notBuilt.join('; ')}.`,
     `- Approved product positioning: ${f.approvedPositioning.join(' ')}`,
-    '- If asked something not covered here, say you will check and get back to them. Never fill the gap yourself.',
+    '- If asked something not covered here, say the detail is not established and do not fill the gap yourself or promise a later reply unless a durable handoff exists.',
   ].join('\n')
 }

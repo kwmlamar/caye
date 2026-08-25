@@ -264,7 +264,7 @@ export async function runToolLoop(args: ToolLoopArgs): Promise<ToolLoopResult> {
             `[caye-agent/execute] front-desk turn ended without a tool call and failed the output-safety check (${reason}) — refusing to surface it. workspace=${args.ctx.workspaceId}`
           )
           return {
-            replyText: "Let me double check a detail before I get back to you on that — following up shortly.",
+            replyText: 'I need a team member to verify a detail before I can answer that.',
             newTurns,
             usedOutputFallbackPath: true,
           }
