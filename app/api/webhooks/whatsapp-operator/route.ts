@@ -1495,7 +1495,7 @@ async function tryHandleDemoProspect(
     decision.action === 'hold'
       ? decision.customerAcknowledgement ??
         decision.proposedReply ??
-        "Let me check on that and get right back to you!"
+        'I need a team member to check that detail before I can answer.'
       : decision.content
 
   const sendResult = await sendFreeFormWhatsApp(`+${normalizedPhone}`, replyText, `demo-${message.id}`)

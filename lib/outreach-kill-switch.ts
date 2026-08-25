@@ -1,6 +1,7 @@
 import 'server-only'
 import { createServiceClient } from './supabase-server'
 import { sendFreeFormWhatsApp } from './whatsapp/outbound'
+import { recordBounceKillSwitchPause } from './outreach-pause-control'
 
 /**
  * Reactive deliverability protection for autonomous cold outreach
@@ -57,10 +58,10 @@ export async function recordBounceAndMaybeTrip(workspaceId: string): Promise<voi
 
   if (!shouldTripKillSwitch(count ?? 0, threshold)) return
 
-  await supabase
-    .from('workspace_ai_config')
-    .update({ outreach_autosend_paused: true })
-    .eq('workspace_id', workspaceId)
+  await recordBounceKillSwitchPause(
+    workspaceId,
+    `${count} bounces in the trailing ${windowHours} hours crossed the safety threshold of ${threshold}.`
+  )
 
   console.warn(
     `[outreach-kill-switch] tripped for workspace ${workspaceId}: ${count} bounces in the trailing ${windowHours}h (threshold ${threshold})`

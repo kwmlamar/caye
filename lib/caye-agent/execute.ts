@@ -164,7 +164,7 @@ export async function runToolLoop(args: ToolLoopArgs): Promise<ToolLoopResult> {
     console.error(
       `[caye-agent/execute] reply named an internal tool ("${leaked}") — workspace=${args.ctx.workspaceId} — falling back`
     )
-    return "Give me a second — let me get you a cleaner answer on that."
+    return 'I could not safely complete that request in this turn. No operational action was taken.'
   }
 
   // PHASE 3B — structural final-output safety for front-desk (2026-08-16).
@@ -264,7 +264,7 @@ export async function runToolLoop(args: ToolLoopArgs): Promise<ToolLoopResult> {
             `[caye-agent/execute] front-desk turn ended without a tool call and failed the output-safety check (${reason}) — refusing to surface it. workspace=${args.ctx.workspaceId}`
           )
           return {
-            replyText: "Let me double check a detail before I get back to you on that — following up shortly.",
+            replyText: 'I need a team member to verify a detail before I can answer that.',
             newTurns,
             usedOutputFallbackPath: true,
           }
@@ -423,7 +423,7 @@ export async function runToolLoop(args: ToolLoopArgs): Promise<ToolLoopResult> {
     `[caye-agent/execute] tool loop exceeded ${MAX_TOOL_ITERATIONS} iterations for workspace ${args.ctx.workspaceId}`
   )
   return {
-    replyText: "Sorry, that one's taking longer than it should — give me a moment and try again.",
+    replyText: 'I could not complete that request within this turn. No unfinished operation is running in the background.',
     newTurns,
     ranOutOfIterations: true,
   }

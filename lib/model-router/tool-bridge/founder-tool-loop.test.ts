@@ -91,7 +91,7 @@ const { FABRICATED_TRANSCRIPT_RUN_1, FABRICATED_TRANSCRIPT_RUN_2 } = await impor
   './fixtures/fabricated-tool-transcripts'
 )
 
-// Real founder UUID from lib/founder.ts's allowlist (classicalsineus@gmail.com) —
+// Real founder UUID from lib/founder.ts's allowlist —
 // assertFounderRouterAccess checks against the real allowlist, not a stub.
 const FOUNDER_CTX: FounderRouterContext = { founderUserId: '29227a12-ca82-4796-a9c4-30ec0c6fa0e4', threadId: 'thread-1' }
 
@@ -476,7 +476,7 @@ describe('runFounderToolLoop — iteration bound', () => {
       initialMessages: [],
       signal: new AbortController().signal,
     })
-    expect(res.replyText).toMatch(/taking longer than it should/)
+    expect(res.replyText).toContain('No unfinished operation is running in the background')
   })
 })
 
@@ -901,7 +901,7 @@ describe('runFounderToolLoop — business-grounding invariant (CORE INVARIANT #2
       initialMessages: [], // no user text -> requiresBusinessGrounding('') is false
       signal: new AbortController().signal,
     })
-    expect(res.replyText).toBe("Sorry, that one's taking longer than it should — give me a moment and try again.")
+    expect(res.replyText).toBe('I could not complete that request within this turn. No unfinished operation is running in the background.')
   })
 
   it('grounding forcing does not pin the backend chain (unlike a real write attempt) — Auto may still fall back across forced rounds', async () => {

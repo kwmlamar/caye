@@ -824,6 +824,7 @@ describe('runToolLoop — internal tool names never reach the operator (2026-08-
     )
     expect(result.replyText).not.toContain('send_reply')
     expect(result.replyText).not.toBe('')
+    expect(result.replyText).toContain('No operational action was taken')
   })
 
   it('leaves ordinary text alone when no tool name is mentioned', async () => {

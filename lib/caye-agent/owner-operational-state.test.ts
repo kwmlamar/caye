@@ -20,6 +20,7 @@ const state: AuthoritativeOwnerOperationalState = {
     timezone: 'America/Nassau',
     enabled: true,
     paused: false,
+    pause: { paused: false, source: 'unknown', reason: null, pausedAt: null, activeSafetyCondition: null, disposition: 'running' },
     schedule: { sourcing: '', autosend: '', nextRunAt: null },
     lastScan: { ranAt: '2026-08-19T14:00:00.000Z', succeeded: true, summary: {}, error: null },
     lastSourcing: { ranAt: '2026-08-19T13:00:00.000Z', succeeded: true, summary: {}, error: null },

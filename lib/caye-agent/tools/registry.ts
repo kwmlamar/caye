@@ -50,6 +50,7 @@ import { addVoiceSample } from './write-low/add-voice-sample'
 import { addTeamMember } from './write-low/add-team-member'
 import { createOutreachLeads } from './write-low/create-outreach-leads'
 import { runOutreach } from './write-low/run-outreach'
+import { recoverOutreachOperations } from './write-low/recover-outreach-operations'
 import { updateTeamMemberPermissions } from './write-low/update-team-member-permissions'
 import { updateTeamMemberName } from './write-low/update-team-member-name'
 import { switchWorkspace } from './write-low/switch-workspace'
@@ -226,6 +227,7 @@ export const TOOL_REGISTRY: AnyTool[] = [
   notifyDriver as AnyTool,
   createOutreachLeads as AnyTool,
   runOutreach as AnyTool,
+  recoverOutreachOperations as AnyTool,
   relateToDirectThread as AnyTool,
   // High-risk write — confirmation flow enforced in code (gateHighRisk,
   // #64), not just the prompt. See lib/caye-agent/tools/high-risk-gate.ts.

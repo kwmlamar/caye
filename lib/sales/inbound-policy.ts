@@ -14,6 +14,20 @@ export type SalesInboundPolicy =
   | { kind: 'unknown'; reason: string }
 
 const OPT_OUT_RE = /\b(?:unsubscribe|remove me|take me off|do not contact|don't contact|stop emailing|stop contacting)\b/i
+const EMAIL_RE = /^[^\s@<>;,]+@[^\s@<>;,]+\.[^\s@<>;,]+$/
+
+/**
+ * NDRs arrive from a mailer-daemon, not from the prospect address, so the
+ * normal sender-to-lead lookup cannot suppress the failed recipient. These
+ * are standard DSN fields; return null rather than guessing from prose.
+ */
+export function bouncedRecipientFromNotification(body: string | null | undefined): string | null {
+  if (!body) return null
+  const match = body.match(/(?:final-recipient|original-recipient)\s*:\s*rfc822\s*;\s*([^\s<>;,]+)/i) ??
+    body.match(/x-failed-recipients?\s*:\s*([^\s<>;,]+)/i)
+  const email = match?.[1]?.trim().toLowerCase() ?? ''
+  return EMAIL_RE.test(email) ? email : null
+}
 
 /** Pure, cheap and deliberately conservative. Model dispatch is only for a human reply. */
 export function decideSalesInboundPolicy(

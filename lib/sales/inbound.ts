@@ -1,6 +1,6 @@
 import 'server-only'
 import { createServiceClient } from '@/lib/supabase-server'
-import { decideSalesInboundPolicy, type SalesInboundPolicy } from './inbound-policy'
+import { bouncedRecipientFromNotification, decideSalesInboundPolicy, type SalesInboundPolicy } from './inbound-policy'
 import { recordSalesLifecycleEvent, type SalesLifecycleEvent } from './lifecycle'
 import { buildSalesLeadContext, type SalesLeadContext } from './context'
 import { bridgeSalesInboundToWork } from './opportunity-bridge'
@@ -37,13 +37,20 @@ export async function handleSalesInbound(input: {
     synthetic: /^caye_|^manual_|^op-wa-/.test(input.currentChannelMessageId ?? ''),
   })
   const supabase = createServiceClient()
+  const bouncedRecipient = policy.kind === 'bounce_or_delivery_failure'
+    ? bouncedRecipientFromNotification(input.body)
+    : null
   const { data: leadByEmail } = await supabase.from('outreach_leads')
     .select('id').eq('workspace_id', input.workspaceId).eq('lead_email', input.senderEmail ?? '').maybeSingle()
+  const { data: leadByBouncedRecipient } = bouncedRecipient
+    ? await supabase.from('outreach_leads').select('id').eq('workspace_id', input.workspaceId).eq('lead_email', bouncedRecipient).maybeSingle()
+    : { data: null }
   const { data: conversation } = input.conversationId
     ? await supabase.from('unified_conversations').select('metadata, last_sender_type, contact_id').eq('id', input.conversationId).maybeSingle()
     : { data: null }
   const linkedLeadId = (conversation?.metadata as Record<string, unknown> | null)?.lead_id
-  const leadId = (leadByEmail as { id: string } | null)?.id ??
+  const leadId = (leadByBouncedRecipient as { id: string } | null)?.id ??
+    (leadByEmail as { id: string } | null)?.id ??
     (policy.kind === 'bounce_or_delivery_failure' && typeof linkedLeadId === 'string' ? linkedLeadId : null)
   const event = lifecycleEventFor(policy)
   const eventRoot = input.currentChannelMessageId ?? `${input.conversationId}:${policy.kind}`

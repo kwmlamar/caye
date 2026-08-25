@@ -6,6 +6,7 @@ const state = vi.hoisted(() => ({
   lifecycle: vi.fn(),
   context: vi.fn(),
   bridge: vi.fn(),
+  leadLookupEmails: [] as string[],
 }))
 
 vi.mock('@/lib/supabase-server', () => ({
@@ -13,7 +14,10 @@ vi.mock('@/lib/supabase-server', () => ({
     from: (table: string) => {
       const query = {
         select: () => query,
-        eq: () => query,
+        eq: (column: string, value: unknown) => {
+          if (table === 'outreach_leads' && column === 'lead_email' && typeof value === 'string') state.leadLookupEmails.push(value)
+          return query
+        },
         maybeSingle: async () => ({ data: table === 'outreach_leads' ? state.lead : state.conversation }),
       }
       return query
@@ -36,6 +40,7 @@ describe('Sales inbound boundary', () => {
     state.lifecycle.mockReset()
     state.context.mockReset().mockResolvedValue({ id: 'lead-1' })
     state.bridge.mockReset().mockResolvedValue({ relationshipId: 'relationship-1', opportunityId: null })
+    state.leadLookupEmails = []
   })
 
   it.each([
@@ -88,5 +93,18 @@ describe('Sales inbound boundary', () => {
     }))
     expect(state.context).not.toHaveBeenCalled()
     expect(state.bridge).not.toHaveBeenCalled()
+  })
+
+  it('suppresses the recipient named by a bounce notification, not the mailer-daemon sender', async () => {
+    await handleSalesInbound({
+      ...inbound,
+      senderEmail: 'mailer-daemon@example.test',
+      subject: 'Undeliverable mail',
+      body: 'Final-Recipient: rfc822; prospect@example.test',
+    })
+    expect(state.leadLookupEmails).toContain('prospect@example.test')
+    expect(state.lifecycle).toHaveBeenCalledWith(expect.objectContaining({
+      leadId: 'lead-1', event: 'bounce_or_delivery_failure',
+    }))
   })
 })

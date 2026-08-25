@@ -5,6 +5,7 @@ import { explainNoOutreach, startOfBusinessDay, startOfBusinessMonth, type Outre
 function state(patch: Partial<OutreachOperationalStatus> = {}): Omit<OutreachOperationalStatus, 'reasonNoOutreach'> {
   const base: OutreachOperationalStatus = {
     workspaceId: 'ws-a', timezone: 'America/Nassau', enabled: true, paused: false,
+    pause: { paused: false, source: 'unknown', reason: null, pausedAt: null, activeSafetyCondition: null, disposition: 'running' },
     schedule: { sourcing: '', autosend: '', nextRunAt: null },
     lastScan: { ranAt: '2026-08-13T10:00:00Z', succeeded: true, summary: {}, error: null },
     sendsToday: { sent: 0, dailyLimit: 50, remaining: 50, firstTouch: 0, followups: 0, firstTouchTarget: 50, firstTouchRemaining: 50 },
@@ -20,6 +21,7 @@ function state(patch: Partial<OutreachOperationalStatus> = {}): Omit<OutreachOpe
 
 describe('authoritative outreach explanation', () => {
   it('reports pause', () => expect(explainNoOutreach(state({ paused: true }))).toMatch(/paused/))
+  it('reports an active bounce safety pause as the concrete blocker', () => expect(explainNoOutreach(state({ paused: true, pause: { paused: true, source: 'bounce_safety', reason: '5 bounces', pausedAt: null, activeSafetyCondition: 'bounce_threshold', disposition: 'safety_active' } }))).toMatch(/bounce threshold safety stop/))
   it('reports cap', () => expect(explainNoOutreach(state({ sendsToday: { sent: 0, dailyLimit: 50, remaining: 0, firstTouch: 50, followups: 0, firstTouchTarget: 50, firstTouchRemaining: 0 } }))).toMatch(/limit/))
   it('reports zero leads', () => expect(explainNoOutreach(state({ sourcing: { availableCandidates: 0, cooldownCandidates: 14, lastFound: 20, lastQualified: 14, lastRejected: 6, lastDuplicates: 2 } }))).toMatch(/no currently sendable/))
   it('reports recorded all-failed qualification reason', () => expect(explainNoOutreach(state({ lastScan: { ranAt: '', succeeded: true, summary: { primary_zero_send_reason: 'all_failed_qualification' }, error: null } }))).toMatch(/all failed qualification/))
