@@ -39,14 +39,60 @@ export function isQueueHold(holdKind: unknown): boolean {
 }
 
 /**
- * True when this held thread means a person is actually waiting on the
- * operator. Anything without a queue hold_kind counts as real — the default
- * is deliberately conservative, so a hold path that forgets to set hold_kind
- * surfaces as an attention item rather than vanishing into a queue nobody
- * checks.
+ * Hold kinds for inbound Caye confidently classified as business noise —
+ * newsletters, mass-mailer blasts, automated notifications. No customer
+ * question was actually asked, so there is no decision for the owner to
+ * make. Held (so Caye doesn't reply into it and it stays visible/auditable
+ * in the inbox) but never an attention item.
+ *
+ * 2026-08-26 (owner-attention audit): before this existed, every one of
+ * these holds set the same `human_agent_enabled` flag a real hold does,
+ * which is what put Kelsey Tonner's newsletter blast simultaneously in the
+ * inbox as "held automatically" and in the owner's Needs You queue as
+ * "waiting for you" — the flag meant two different things and nothing
+ * distinguished them at read time. This is a companion to QUEUE_HOLD_KINDS
+ * (a different reason the same flag doesn't mean "a person is waiting"),
+ * not a replacement for it — see isAttentionHold below.
+ */
+export const NON_ACTIONABLE_HOLD_KINDS = new Set(['newsletter'])
+
+export function isNonActionableHold(holdKind: unknown): boolean {
+  return typeof holdKind === 'string' && NON_ACTIONABLE_HOLD_KINDS.has(holdKind)
+}
+
+/**
+ * Hold kinds for an escalation Caye routed to the founder only
+ * (`caye_escalations.route_to === 'founder'` — a tooling/product gap the
+ * *workspace owner* has no way to act on, per escalate_to_team's own
+ * category contract: "gap ... The operator can't fix this."). The founder
+ * still gets pinged and sees it in their own dashboard via
+ * `caye_escalations.route_to` directly; this only keeps it out of the
+ * workspace owner's Needs You surface, which is the thing that was
+ * misleading them.
+ */
+export const FOUNDER_ONLY_HOLD_KINDS = new Set(['founder_gap'])
+
+export function isFounderOnlyHold(holdKind: unknown): boolean {
+  return typeof holdKind === 'string' && FOUNDER_ONLY_HOLD_KINDS.has(holdKind)
+}
+
+/**
+ * True when this held thread means the WORKSPACE OWNER is actually waiting
+ * on / owed something. Anything without a recognized non-attention hold_kind
+ * counts as real — the default is deliberately conservative, so a hold path
+ * that forgets to set hold_kind surfaces as an attention item rather than
+ * vanishing into a queue nobody checks.
+ *
+ * Three different reasons a hold might NOT be an attention item, kept as
+ * separate named sets rather than one grab-bag: a queue hold is drafted
+ * outbound nobody is waiting on either way; a non-actionable hold is
+ * confidently-classified noise with no question attached; a founder-only
+ * hold has a real open question, just not one this owner can answer. Same
+ * treatment here, different reasons — worth keeping legible for whoever
+ * reads this next.
  */
 export function isAttentionHold(holdKind: unknown): boolean {
-  return !isQueueHold(holdKind)
+  return !isQueueHold(holdKind) && !isNonActionableHold(holdKind) && !isFounderOnlyHold(holdKind)
 }
 
 /** Reads hold_kind out of a conversation's metadata blob. */

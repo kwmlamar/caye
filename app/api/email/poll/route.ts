@@ -18,6 +18,7 @@ import { enqueueHoldPing, enqueueBookingCreated } from '@/lib/whatsapp/triggers'
 import { syncBookingToCalendar } from '@/lib/calendar-sync'
 import { claimInboundMessage } from '@/lib/inbound-claim'
 import { applyEscalation } from '@/lib/whatsapp/escalation'
+import { mergeHoldKind } from '@/lib/hold-kinds'
 import { extractHoldTargetDate } from '@/lib/whatsapp/urgency'
 import { resolveOpenEscalations } from '@/lib/caye-agent/tools/write-low/resolve-open-escalations'
 import { htmlToPlainText } from '@/lib/email-text'
@@ -391,24 +392,37 @@ type Supabase = ReturnType<typeof createServiceClient>
 type Account = Record<string, unknown>
 
 /**
- * True if this sender has already tripped the newsletter/cold-sales filter
- * on this account before (any thread — blast senders reuse the same address
- * across many distinct Zoho threads, so per-thread state doesn't catch the
- * repeat). First occurrence still gets held for the owner to see once;
- * every occurrence after that auto-archives silently instead of re-flagging
- * — otherwise a weekly drip sender re-triggers "held for review" forever.
+ * True if this sender has already tripped THIS SAME filter (newsletter or
+ * cold-sales — kept separate so a sender flagged as one doesn't silently
+ * suppress the other) on this account before (any thread — blast senders
+ * reuse the same address across many distinct Zoho threads, so per-thread
+ * state doesn't catch the repeat). Cold-sales' first occurrence still gets
+ * held for the owner to see once; every occurrence after that auto-archives
+ * silently instead of re-flagging — otherwise a weekly drip sender
+ * re-triggers "held for review" forever. Newsletter no longer needs the
+ * repeat check to stay out of Needs You (hold_kind alone does that now, see
+ * mergeHoldKind in lib/hold-kinds.ts) but still uses it to decide when to
+ * stop cluttering the inbox with a fresh held-but-filed row per blast.
+ *
+ * Queries metadata->>hold_kind (not hold_reason) — hold_reason was only
+ * ever written onto the unified_messages internal note, never onto the
+ * conversation this function actually reads, which is why repeat-sender
+ * detection silently never fired before 2026-08-26: every Kelsey Tonner
+ * newsletter got a fresh "held automatically" row forever instead of the
+ * second-occurrence auto-archive the code already claimed to do.
  */
 async function hasPriorBlastHold(
   supabase: Supabase,
   connectedAccountId: string,
-  fromEmail: string
+  fromEmail: string,
+  holdKind: 'newsletter' | 'cold_sales_triage'
 ): Promise<boolean> {
   const { count } = await supabase
     .from('unified_conversations')
     .select('id', { count: 'exact', head: true })
     .eq('connected_account_id', connectedAccountId)
     .filter('metadata->>from', 'ilike', `%${fromEmail}%`)
-    .not('metadata->>hold_reason', 'is', null)
+    .filter('metadata->>hold_kind', 'eq', holdKind)
   return (count ?? 0) > 0
 }
 
@@ -1283,16 +1297,29 @@ async function processMessage(
   // ── Newsletter / marketing-blast filter ───────────────────────────────────
   // Skip the AI loop for mailing-list content but keep it visible in the inbox
   // with an internal note so the owner can audit and unsubscribe if they want.
+  //
+  // hold_kind='newsletter' (2026-08-26, owner-attention audit) is what keeps
+  // this OUT of the owner's Needs You queue on every sighting, not just
+  // repeats — a confidently-classified blast has no question attached to it,
+  // so there is no owner decision to wait on. Before this, `held automatically`
+  // and `waiting for you — needs a decision` fired for the exact same row,
+  // because human_agent_enabled alone can't distinguish "filed for audit"
+  // from "a person owes the next move." See lib/hold-kinds-shared.ts.
   if (!web3FormsFields) {
     const newsletterReason = detectNewsletter(body, subject, fromEmail)
     if (newsletterReason) {
-      const repeatSender = await hasPriorBlastHold(supabase, String(account.id), fromEmail)
+      const repeatSender = await hasPriorBlastHold(supabase, String(account.id), fromEmail, 'newsletter')
+      const mergedMetadata = await mergeHoldKind(supabase, conversation.id, 'newsletter')
       await supabase
         .from('unified_conversations')
         .update(
           repeatSender
-            ? { human_agent_enabled: false, human_agent_reason: null, is_archived: true }
-            : { human_agent_enabled: true, human_agent_reason: 'Newsletter / marketing blast — held automatically' }
+            ? { human_agent_enabled: false, human_agent_reason: null, is_archived: true, metadata: mergedMetadata }
+            : {
+                human_agent_enabled: true,
+                human_agent_reason: 'Newsletter / marketing blast — filed automatically, no reply needed',
+                metadata: mergedMetadata,
+              }
         )
         .eq('id', conversation.id)
       await supabase.from('unified_messages').insert({
@@ -1316,20 +1343,25 @@ async function processMessage(
   }
 
   // ── Cold sales pitch filter ───────────────────────────────────────────────
-  // 1:1 cold outreach (not mass blasts). Same skip semantics as newsletter:
-  // saved, visible, held for Karenda to triage, no auto-reply. Flagged with
-  // metadata.cold_sales_suspected=true so we can audit false-positive rate
-  // over the next 30 days and decide whether to escalate to auto-archive.
+  // 1:1 cold outreach (not mass blasts). Unlike newsletter, this classifier
+  // is deliberately kept as an attention item on first sighting — the team
+  // is still auditing its false-positive rate (metadata.cold_sales_suspected),
+  // so whether an unsolicited pitch is noise or a real partnership lead is a
+  // genuine judgment call, not something Caye is confident enough to file
+  // silently. hold_kind='cold_sales_triage' (distinct from 'newsletter', not
+  // in NON_ACTIONABLE_HOLD_KINDS) exists so repeat-sender detection can key
+  // off the same field without changing that first-sighting behavior.
   if (!web3FormsFields) {
     const coldSalesReason = detectColdSales(body, subject, fromEmail)
     if (coldSalesReason) {
-      const repeatSender = await hasPriorBlastHold(supabase, String(account.id), fromEmail)
+      const repeatSender = await hasPriorBlastHold(supabase, String(account.id), fromEmail, 'cold_sales_triage')
+      const mergedMetadata = await mergeHoldKind(supabase, conversation.id, 'cold_sales_triage')
       await supabase
         .from('unified_conversations')
         .update(
           repeatSender
-            ? { human_agent_enabled: false, human_agent_reason: null, is_archived: true }
-            : { human_agent_enabled: true, human_agent_reason: 'Cold sales pitch suspected — held for triage' }
+            ? { human_agent_enabled: false, human_agent_reason: null, is_archived: true, metadata: mergedMetadata }
+            : { human_agent_enabled: true, human_agent_reason: 'Cold sales pitch suspected — held for triage', metadata: mergedMetadata }
         )
         .eq('id', conversation.id)
       await supabase.from('unified_messages').insert({

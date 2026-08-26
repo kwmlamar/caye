@@ -2,8 +2,15 @@ import { describe, it, expect, vi } from 'vitest'
 
 vi.mock('server-only', () => ({}))
 
-const { isQueueHold, isAttentionHold, holdKindOf, QUEUE_HOLD_KINDS, getAttentionHolds, getAttentionHoldCount } =
-  await import('./hold-kinds')
+const {
+  isQueueHold,
+  isAttentionHold,
+  holdKindOf,
+  QUEUE_HOLD_KINDS,
+  getAttentionHolds,
+  getAttentionHoldCount,
+  mergeHoldKind,
+} = await import('./hold-kinds')
 
 describe('isQueueHold', () => {
   it('recognises both batchable outreach kinds', () => {
@@ -109,6 +116,11 @@ function fakeSupabase(tables: Record<string, Row[]>) {
           limitN = n
           return builder
         },
+        maybeSingle<T>(resolve?: (v: { data: Row | null; error: null }) => T) {
+          const result = rows.filter((r) => filters.every((f) => f(r)))
+          const single = { data: result[0] ?? null, error: null }
+          return resolve ? Promise.resolve(resolve(single)) : Promise.resolve(single)
+        },
         then<T>(resolve: (v: { data: Row[]; error: null }) => T) {
           let result = rows.filter((r) => filters.every((f) => f(r)))
           if (orderCol) {
@@ -138,7 +150,7 @@ describe('getAttentionHolds', () => {
   const WORKSPACE_ID = 'ws-1'
   const account = { id: 'acct-1', user_id: WORKSPACE_ID }
 
-  it('excludes queue holds and orders oldest-held-first', async () => {
+  it('excludes queue holds, non-actionable holds, and founder-only holds, and orders oldest-held-first', async () => {
     const supabase = fakeSupabase({
       connected_accounts: [account],
       unified_conversations: [
@@ -192,6 +204,48 @@ describe('getAttentionHolds', () => {
           last_business_sender_kind: null,
           target_date: null,
           metadata: null,
+        },
+        {
+          // Kelsey Tonner regression: a confidently-classified newsletter
+          // hold must not appear in the owner's attention holds, on first
+          // sighting — same as the queue-hold exclusion above, different
+          // reason (2026-08-26 owner-attention audit).
+          id: 'conv-newsletter',
+          connected_account_id: 'acct-1',
+          is_archived: false,
+          human_agent_enabled: true,
+          human_agent_marked_at: '2026-07-22T00:00:00Z',
+          customer_name: 'Kelsey Tonner',
+          customer_id: null,
+          channel_type: 'email',
+          human_agent_reason: 'Newsletter / marketing blast — filed automatically, no reply needed',
+          last_message_preview: null,
+          last_message_at: null,
+          last_sender_type: null,
+          last_business_sender_kind: null,
+          target_date: null,
+          metadata: { hold_kind: 'newsletter' },
+        },
+        {
+          // Jonathan-adjacent regression: a founder-only escalation gap
+          // must not appear in the WORKSPACE OWNER's attention holds — the
+          // founder is pinged separately and sees it via
+          // caye_escalations.route_to.
+          id: 'conv-founder-gap',
+          connected_account_id: 'acct-1',
+          is_archived: false,
+          human_agent_enabled: true,
+          human_agent_marked_at: '2026-07-23T00:00:00Z',
+          customer_name: 'Jonathan Garcia',
+          customer_id: null,
+          channel_type: 'email',
+          human_agent_reason: 'Something Caye could not do herself',
+          last_message_preview: null,
+          last_message_at: null,
+          last_sender_type: null,
+          last_business_sender_kind: null,
+          target_date: null,
+          metadata: { hold_kind: 'founder_gap' },
         },
         {
           id: 'conv-not-held',
@@ -249,5 +303,40 @@ describe('getAttentionHoldCount', () => {
       ],
     })
     expect(await getAttentionHoldCount(asClient(supabase), 'ws-1')).toBe(1)
+  })
+})
+
+// Minimal fake, scoped to exactly the chain mergeHoldKind issues:
+// select/eq/maybeSingle on one table.
+function fakeMetadataClient(existingMetadata: Row | null) {
+  return {
+    from() {
+      const builder = {
+        select: () => builder,
+        eq: () => builder,
+        maybeSingle: () => Promise.resolve({ data: existingMetadata ? { metadata: existingMetadata } : null, error: null }),
+      }
+      return builder
+    },
+  }
+}
+
+describe('mergeHoldKind', () => {
+  it('adds hold_kind without clobbering existing metadata keys', async () => {
+    const supabase = fakeMetadataClient({ subject: 'Weekly Digest', from: 'kelsey@example.com' })
+    const merged = await mergeHoldKind(asClient(supabase), 'conv-1', 'newsletter')
+    expect(merged).toEqual({ subject: 'Weekly Digest', from: 'kelsey@example.com', hold_kind: 'newsletter' })
+  })
+
+  it('overwrites a stale hold_kind rather than stacking it', async () => {
+    const supabase = fakeMetadataClient({ hold_kind: 'cold_sales_triage', from: 'a@b.com' })
+    const merged = await mergeHoldKind(asClient(supabase), 'conv-1', 'newsletter')
+    expect(merged).toEqual({ hold_kind: 'newsletter', from: 'a@b.com' })
+  })
+
+  it('starts from an empty object when the conversation has no metadata yet', async () => {
+    const supabase = fakeMetadataClient(null)
+    const merged = await mergeHoldKind(asClient(supabase), 'conv-1', 'founder_gap')
+    expect(merged).toEqual({ hold_kind: 'founder_gap' })
   })
 })

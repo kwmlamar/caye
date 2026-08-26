@@ -25,6 +25,7 @@ import { ensureTagline } from '@/lib/voice-profile'
 import { enqueueHoldPing, enqueueBookingCreated } from '@/lib/whatsapp/triggers'
 import { syncBookingToCalendar } from '@/lib/calendar-sync'
 import { applyEscalation } from '@/lib/whatsapp/escalation'
+import { mergeHoldKind } from '@/lib/hold-kinds'
 import { extractHoldTargetDate } from '@/lib/whatsapp/urgency'
 import { htmlToPlainText } from '@/lib/email-text'
 import { sendGmailReply } from '@/lib/gmail-send'
@@ -333,14 +334,20 @@ async function processGmailMessage(
     })
     .eq('id', conversationId)
 
-  // Newsletter guard: save, but don't run Caye on it. Flag for human review.
+  // Newsletter guard: save, but don't run Caye on it. hold_kind='newsletter'
+  // (2026-08-26, owner-attention audit — mirrors the Zoho poll fix) keeps a
+  // confidently-classified blast out of the owner's Needs You queue: there
+  // is no question attached to it, so there is no owner decision to wait
+  // on. See lib/hold-kinds-shared.ts.
   const newsletterReason = detectNewsletter(body, subject, fromEmail)
   if (newsletterReason) {
+    const mergedMetadata = await mergeHoldKind(supabase, conversationId, 'newsletter')
     await supabase
       .from('unified_conversations')
       .update({
         human_agent_enabled: true,
-        human_agent_reason: `newsletter/blast detected: ${newsletterReason}`,
+        human_agent_reason: 'Newsletter / marketing blast — filed automatically, no reply needed',
+        metadata: mergedMetadata,
       })
       .eq('id', conversationId)
     console.log(`[gmail-poll] held as newsletter (${newsletterReason}) — ${fromEmail} / ${subject}`)

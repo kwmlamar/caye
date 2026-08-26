@@ -53,7 +53,7 @@ import { buildSalesResponseSystem, salesTools } from './sales/response'
 import { findClaimIssues } from './sales/claims'
 import type { SalesLeadContext } from './sales/context'
 import { requiresAutonomousSalesReply, type SalesReplyClassification } from './sales/reply-intent'
-import { holdKindOf, isQueueHold } from './hold-kinds'
+import { holdKindOf, isAttentionHold } from './hold-kinds'
 import {
   fetchBusinessFacts,
   formatBusinessFactsBlock,
@@ -3087,10 +3087,17 @@ export async function generateCayeAutoReply(
   // as the raw flag it produces a trap: a parked cold draft would silently
   // block Caye from answering that same prospect when they write in, which
   // is the worst possible moment to go quiet.
+  //
+  // Widened to isAttentionHold (2026-08-26, owner-attention audit): a
+  // non-actionable hold (newsletter) or a founder-only escalation gap is the
+  // same trap for the same reason — nobody actually took the conversation
+  // over, so a later, different message on that thread must be evaluated
+  // normally rather than silently swallowed by a stale flag from an
+  // unrelated earlier turn.
   const heldKind = holdKindOf(conversationRow?.metadata)
   const isRecoveryAuthorized = recoveryAuthorization.data === true
   const isHumanHeld =
-    conversationRow?.human_agent_enabled === true && !isQueueHold(heldKind) && !isRecoveryAuthorized
+    conversationRow?.human_agent_enabled === true && isAttentionHold(heldKind) && !isRecoveryAuthorized
 
   const autosendEnabled = (workspaceRow?.autosend_enabled ?? true) && !isMuted && !isHumanHeld
   const holdReason = isHumanHeld
