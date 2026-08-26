@@ -35,7 +35,9 @@ import { extractErrorCode } from '@/lib/whatsapp/delivery-errors'
 import { resyncTemplatesAfterParamMismatch } from '@/lib/whatsapp/template-sync'
 import { detectInternalLeak } from '@/lib/operator-text-guard'
 import { drainPendingOperationsSafely } from '@/lib/pending-operations-worker'
-import { markAttentionNotified, SUBJECT_CONVERSATION } from '@/lib/owner-attention'
+import { markAttentionNotified, fingerprint, SUBJECT_CONVERSATION } from '@/lib/owner-attention'
+import { decideOperatorNotification } from '@/lib/whatsapp/operator-notification-gate'
+import { bookingStateLabel } from '@/lib/whatsapp/triggers'
 
 // Kinds that represent Caye proactively messaging an operator about
 // something (as opposed to system plumbing like otp/welcome/ack) — these
@@ -117,7 +119,7 @@ export const EMAIL_FALLBACK_KINDS = new Set(['urgent_hold', 'booking_created', '
 // Kinds that bypass the operator mute.
 const MUTE_BYPASS_KINDS = new Set(['auth_failure'])
 
-interface QueueRow {
+export interface QueueRow {
   id: string
   workspace_id: string
   kind: string
@@ -508,9 +510,125 @@ async function processRow(row: QueueRow): Promise<RowOutcome> {
     }
   }
 
+  // Re-check booking_created rows at actual dispatch time, not just enqueue
+  // time (2026-08-26, Autumn McNeill incident). enqueueBookingCreated
+  // already checks operator awareness once, but quiet-hours deferral can
+  // put hours between that decision and this dispatch — a stale-worker
+  // race the enqueue-time check alone can't see. Same structural evidence,
+  // asked again right before the send actually goes out. Applies equally
+  // to a row enqueued for a LATER material state (PR #135 review) — the
+  // check re-fetches the booking fresh and re-derives conversationId from
+  // it, so it's not tied to which "generation" of queue row this is.
+  if (row.kind === 'booking_created') {
+    const cancelReason = await bookingCreatedDispatchCancelReason(row)
+    if (cancelReason) return cancel(row, cancelReason)
+  }
+
   // Build & send.
   const { result: sendOutcome, phone } = await dispatch(row, config)
   return handleResult(row, config, sendOutcome, phone)
+}
+
+/**
+ * What, if anything, should cancel a booking_created row right before it
+ * dispatches — the booking having since been cancelled, its payload text
+ * having gone stale (the booking's real state moved on since this row was
+ * queued), or the operator having since handled the linked conversation
+ * directly. Returns the cancel() reason string, or null to proceed with
+ * the send. Pulled out of processRow as its own function so it's
+ * independently testable without mocking every other precondition
+ * processRow checks first.
+ */
+export async function bookingCreatedDispatchCancelReason(row: QueueRow): Promise<string | null> {
+  const bookingId = typeof row.payload.bookingId === 'string' ? row.payload.bookingId : null
+  if (!bookingId) return null
+
+  const supabase = createServiceClient()
+  const { data: booking } = await supabase
+    .from('bookings')
+    .select(
+      'customer_name, status, payment_confirmed_at, payment_link_sent_at, cancelled_at, booking_date, booking_time, number_of_people, conversation_id'
+    )
+    .eq('id', bookingId)
+    .maybeSingle()
+  if (!booking || booking.status === 'cancelled') {
+    return 'booking cancelled before send'
+  }
+
+  // Same fields enqueueBookingCreated fingerprints — kept identical so the
+  // two hashes are directly comparable.
+  const fingerprintParts = [
+    booking.status,
+    booking.payment_confirmed_at,
+    booking.payment_link_sent_at,
+    booking.cancelled_at,
+    booking.booking_date,
+    booking.booking_time,
+    booking.number_of_people,
+  ]
+  const currentFp = fingerprint(fingerprintParts)
+  const queuedFp = typeof row.payload.stateFingerprint === 'string' ? (row.payload.stateFingerprint as string) : null
+
+  // A row whose payload no longer matches the booking's CURRENT state is
+  // stale (PR #135 review, third finding + adversarial question): its
+  // guest/summary/stateLabel text describes a state that has since moved
+  // on — e.g. queued while pending, confirmed-and-paid before the
+  // quiet-hours-deferred send actually fired. The worker must never send
+  // text describing an older state than what's now authoritative. Cancel
+  // outright rather than silently rewriting the row in place — a fresh
+  // notification for the NEW state, if one is ever warranted, is a fresh
+  // enqueueBookingCreated call's job (it will get its own fresh
+  // idempotency key), not something this dispatch-time safety check
+  // should try to produce itself. Rows enqueued before payload carried
+  // stateFingerprint (queuedFp === null) skip this check rather than being
+  // treated as unconditionally stale.
+  if (queuedFp !== null && queuedFp !== currentFp) {
+    return 'booking state changed before send'
+  }
+
+  const conversationId = booking.conversation_id ?? row.conversation_id
+
+  // Re-runs the SAME owner-attention gate enqueueBookingCreated used
+  // (PR #135 review, third and fourth findings) — not just the operator-
+  // participation check, and not treated as authoritative only when it
+  // says SUPPRESS_OPERATOR_AWARE. At dispatch time the gate is the single
+  // authority on whether this notification is STILL warranted at all: the
+  // enqueue-time decision can go stale exactly like the payload text can
+  // (another producer may have told the operator about this same state in
+  // the meantime, the attention item may have been resolved, a cooldown
+  // may now apply) — every one of those is a fresh SUPPRESS_*/
+  // RESOLVED_NO_NOTIFICATION outcome the worker must respect, not just the
+  // operator-awareness case. Only the gate has access to
+  // caye_owner_attention.first_state_fingerprint to pick the correct
+  // participation-evidence mode, so re-deriving any of this from raw
+  // booking fields here would duplicate logic that can drift out of sync.
+  const decision = await decideOperatorNotification({
+    workspaceId: row.workspace_id,
+    subjectType: 'booking',
+    subjectId: bookingId,
+    conversationId,
+    title: `${booking.customer_name ?? 'A guest'} — ${bookingStateLabel(booking.status, booking.payment_confirmed_at)}`,
+    priority: 'awareness',
+    fingerprintParts,
+    blockedOnOperator: false,
+    resolvableAutonomously: false,
+    ...(conversationId ? { operatorParticipationCheck: { conversationId } } : {}),
+  })
+
+  switch (decision.outcome) {
+    case 'SEND_NEW':
+    case 'SEND_REMINDER':
+    case 'SEND_CRITICAL_ESCALATION':
+      return null
+    case 'SUPPRESS_OPERATOR_AWARE':
+      return 'operator handled directly'
+    case 'SUPPRESS_NO_CHANGE':
+      return 'operator already informed / no material change'
+    case 'SUPPRESS_RECENTLY_NOTIFIED':
+      return 'notification no longer warranted'
+    case 'RESOLVED_NO_NOTIFICATION':
+      return 'attention item resolved'
+  }
 }
 
 async function dispatch(row: QueueRow, config: WorkspaceConfig): Promise<{ result: SendResult; phone: string }> {
@@ -641,7 +759,13 @@ function fallbackPingLogBody(kind: string, payload: Record<string, unknown>): st
       return `Still sitting on this one — ${who} has been waiting a while now: ${summary}. Say the word and I'll send a holding reply, or let me know you've got it.`
     }
     case 'booking_created':
-      return `Just booked — ${str('guest', 'A guest')}, ${str('summary', 'details in the dashboard')}.`
+      // stateLabel is grounded in the booking's real status/payment fields
+      // (lib/whatsapp/triggers.ts's bookingStateLabel) — never "Just
+      // booked" for a booking nobody has paid for yet. A pending booking is
+      // a lead, not a completed sale; a genuinely confirmed/paid one says
+      // so honestly. 'New pending booking' is the fallback for queue rows
+      // enqueued before this field existed.
+      return `${str('stateLabel', 'New pending booking')} — ${str('guest', 'A guest')}, ${str('summary', 'details in the dashboard')}.`
     case 'morning_digest': {
       // Same as 'escalation' above — the narrative body is mirrored by
       // operatorPingLogBody, guarded. This branch is only the count-based
@@ -987,10 +1111,13 @@ async function templateForKind(
         placeholders: [str('service', 'a connected service'), str('reconnectUrl', '')],
       }
     case 'booking_created':
-      // No dedicated template in v1 — reuse urgent_hold's two-placeholder shape.
+      // No dedicated template in v1 — reuse urgent_hold's two-placeholder
+      // shape. stateLabel carries the real status (see fallbackPingLogBody's
+      // matching comment) — the default here is 'new booking', not 'just
+      // booked', for the same reason.
       return {
         name: 'caye_urgent_hold',
-        placeholders: [str('guest', 'A guest'), str('summary', 'just booked')],
+        placeholders: [str('guest', 'A guest'), `${str('stateLabel', 'New booking')} — ${str('summary', 'details in the dashboard')}`],
       }
     case 'escalation': {
       // Reuse the urgent_hold template — only reached when the window's

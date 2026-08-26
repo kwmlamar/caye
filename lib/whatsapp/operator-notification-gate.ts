@@ -3,9 +3,11 @@ import { createServiceClient } from '@/lib/supabase-server'
 import {
   observeAttentionItem,
   markAttentionNotified,
+  recordOperatorAwareness,
   setAttentionStatus,
   type AttentionPriority,
 } from '@/lib/owner-attention'
+import { hasOperatorParticipatedInConversation, type ParticipationEvidenceMode } from './operator-participation'
 
 /**
  * Shared gate every autonomous producer (escalations, opportunity-scan,
@@ -29,6 +31,10 @@ export type NotificationOutcome =
   | 'RESOLVED_NO_NOTIFICATION'
   | 'SUPPRESS_NO_CHANGE'
   | 'SUPPRESS_RECENTLY_NOTIFIED'
+  /** The operator already demonstrated awareness of this EXACT current
+   *  state themselves (structural evidence, not inference) — Caye never
+   *  said anything and doesn't need to. See operatorParticipationCheck. */
+  | 'SUPPRESS_OPERATOR_AWARE'
 
 export interface NotificationDecision {
   outcome: NotificationOutcome
@@ -63,6 +69,38 @@ export interface DecideNotificationInput {
    *  low-priority cooldown below — only proactive, self-initiated findings
    *  (scans, insights) are subject to it. Default false. */
   bypassCooldown?: boolean
+  /** Opt-in structural awareness check: does live evidence show the
+   *  operator already personally participated in this exact conversation,
+   *  within the evidence window the CURRENT state's own history in the
+   *  ledger supports? When a match is found, the gate suppresses as
+   *  SUPPRESS_OPERATOR_AWARE instead of sending — Caye already has proof
+   *  the operator knows, independent of whether she ever told them.
+   *
+   *  Deliberately just a conversationId, not a caller-supplied timestamp
+   *  (PR #135 review, second finding). The evidence window itself — how
+   *  far back of what moment participation still counts — is derived here
+   *  from caye_owner_attention.first_state_fingerprint vs the live
+   *  state_fingerprint (see participationEvidenceMode below), never from a
+   *  timestamp a caller guesses at. A caller-supplied "since" timestamp
+   *  can't tell "this state is the subject's original one" (a small
+   *  pre-state window is legitimate — the operator's action may have
+   *  CAUSED it) from "this state is a transition from a different prior
+   *  one" (no pre-state window is ever legitimate — the operator cannot
+   *  know a fact that didn't exist yet when they acted) — a fixed-size
+   *  lookback window generous enough to cover the first case structurally
+   *  also covers the second, which is exactly how the original version of
+   *  this check could suppress a genuinely new payment-confirmed
+   *  notification using stale awareness of an earlier pending state.
+   *
+   *  Opt-in, not automatic for every caller with a conversationId — this is
+   *  a real behavior change (a subject can now go straight from "never
+   *  observed" to "suppressed" with zero notifications), and existing
+   *  callers (escalations, opportunity-scan) keep their current behavior
+   *  unchanged unless they explicitly ask for this. Never applied to
+   *  'critical' priority — a customer-blocking item stays conservative even
+   *  against strong participation evidence (design constraint: false
+   *  suppression is worse than one redundant critical ping). */
+  operatorParticipationCheck?: { conversationId: string }
 }
 
 // Reminder cadence — a human pace, not a monitoring system's. The goal is
@@ -135,6 +173,42 @@ export async function decideOperatorNotification(
 
   if (item.status === 'resolved' || item.status === 'dismissed') {
     return { outcome: 'RESOLVED_NO_NOTIFICATION', attentionItemId: item.id, isMaterialChange: false }
+  }
+
+  // Structural operator-awareness check — evaluated fresh every call (not
+  // cached), so a re-check after a material change correctly asks "did the
+  // operator participate around THIS state" rather than trusting a stale
+  // answer. Skipped for 'critical': a customer-blocking item stays on the
+  // conservative path even against strong participation evidence.
+  if (input.operatorParticipationCheck && input.priority !== 'critical') {
+    // 'initial' iff the CURRENT state is still this subject's original one
+    // (first_state_fingerprint hasn't diverged from state_fingerprint) — a
+    // small pre-state evidence window is legitimate. Any divergence means a
+    // real transition has happened since the subject was first observed,
+    // and evidence must be at-or-after THIS observation's own
+    // last_changed_at (the moment the ledger recorded the new state) — see
+    // ParticipationEvidenceMode's doc comment for why this can't be a
+    // caller-supplied timestamp or a fixed window instead.
+    const mode: ParticipationEvidenceMode =
+      item.firstStateFingerprint !== null && item.firstStateFingerprint === item.stateFingerprint
+        ? 'initial'
+        : 'post-transition'
+    const participated = await hasOperatorParticipatedInConversation(
+      input.operatorParticipationCheck.conversationId,
+      item.lastChangedAt,
+      mode
+    )
+    if (participated) {
+      if (item.operatorAwareFingerprint !== item.stateFingerprint) {
+        await recordOperatorAwareness({
+          workspaceId: input.workspaceId,
+          subjectType: input.subjectType,
+          subjectId: input.subjectId,
+          evidence: 'Operator sent a customer-facing reply in this conversation themselves.',
+        })
+      }
+      return { outcome: 'SUPPRESS_OPERATOR_AWARE', attentionItemId: item.id, isMaterialChange: false }
+    }
   }
 
   const changed = item.stateFingerprint !== item.notifiedFingerprint

@@ -26,6 +26,17 @@ let ATTENTION_INSERTS: Row[] = []
 let ATTENTION_UPDATES: Row[] = []
 let RESOLVE_CALLS: Row[] = []
 
+// hasOperatorParticipatedInConversation's own evidence-window arithmetic
+// (lookback buffer vs strict cutoff, upper-bound behavior) is unit-tested
+// directly in operator-participation.test.ts. Mocked here so the
+// SUPPRESS_OPERATOR_AWARE tests below can assert what the GATE decides to
+// ask for (which mode, anchored to which timestamp) without depending on
+// the real wall clock.
+const { hasOperatorParticipatedInConversation } = vi.hoisted(() => ({
+  hasOperatorParticipatedInConversation: vi.fn(),
+}))
+vi.mock('./operator-participation', () => ({ hasOperatorParticipatedInConversation }))
+
 function attentionRow(over: Partial<Row> = {}): Row {
   return {
     id: 'a1',
@@ -94,6 +105,14 @@ function makeClient() {
           },
           update(patch: Row) {
             ATTENTION_UPDATES.push(patch)
+            // Mutates ATTENTION[0] in place — decideOperatorNotification now
+            // does a read-modify-write-then-separately-re-read sequence
+            // within ONE call (observeAttentionItem's own update, then
+            // recordOperatorAwareness's independent select+update), and a
+            // snapshot-only mock would let the second read see stale data a
+            // real DB never would. Single-row scenario, matching every
+            // existing test's seed shape.
+            if (ATTENTION[0]) Object.assign(ATTENTION[0], patch)
             const after: Record<string, unknown> = {}
             Object.assign(after, {
               eq: () => after,
@@ -141,6 +160,7 @@ beforeEach(() => {
   ATTENTION_INSERTS = []
   ATTENTION_UPDATES = []
   RESOLVE_CALLS = []
+  hasOperatorParticipatedInConversation.mockReset()
 })
 
 const karinInput = {
@@ -368,5 +388,204 @@ describe('workspace scoping', () => {
     await decideOperatorNotification({ ...karinInput, workspaceId: 'ws-other' })
     expect(ATTENTION_INSERTS).toHaveLength(1)
     expect(ATTENTION_INSERTS[0].workspace_id).toBe('ws-other')
+  })
+})
+
+// The Autumn McNeill scenario (2026-08-26 Bimini incident): Mrs. Max pulled
+// Autumn's thread, drafted/edited/sent the reply herself, and told Caye
+// directly she'd handled it. booking_created still pinged her ~9.5h later.
+// operatorParticipationCheck is the fix — see lib/whatsapp/triggers.ts and
+// lib/whatsapp/operator-participation.ts.
+describe('SUPPRESS_OPERATOR_AWARE — structural operator-participation evidence (Autumn McNeill, 2026-08-26)', () => {
+  // hasOperatorParticipatedInConversation itself (the evidence-window
+  // arithmetic — lookback buffer, no-buffer, upper bound) is exhaustively
+  // unit-tested in operator-participation.test.ts. This file mocks it
+  // directly so these tests can assert what the GATE decides to ask for —
+  // which mode, anchored to which timestamp — without depending on the
+  // real wall clock (last_changed_at on a freshly-observed row is always
+  // "now", which a fixed historical fixture can't reliably straddle).
+  const autumnInput = {
+    workspaceId: 'ws-bimini',
+    subjectType: 'booking',
+    subjectId: 'booking-autumn',
+    conversationId: 'conv-autumn',
+    title: 'Autumn McNeill — New pending booking',
+    priority: 'awareness' as const,
+    fingerprintParts: ['pending', null, null, null, '2026-09-05', '09:00:00', 2],
+    blockedOnOperator: false,
+    resolvableAutonomously: false,
+    operatorParticipationCheck: { conversationId: 'conv-autumn' },
+  }
+  const FP_AUTUMN = fingerprint(autumnInput.fingerprintParts)
+  const FP_CONFIRMED_PAID = fingerprint(['confirmed', '2026-08-27T10:00:00Z', null, null, '2026-09-05', '09:00:00', 2])
+  const FP_NEW_TIME = fingerprint(['pending', null, null, null, '2026-09-05', '11:00:00', 2])
+
+  it('1 — Autumn original: a brand-new booking never sends when the operator already handled that exact conversation ("initial" mode)', async () => {
+    ATTENTION = []
+    hasOperatorParticipatedInConversation.mockResolvedValue(true)
+    const decision = await decideOperatorNotification(autumnInput)
+    expect(decision.outcome).toBe('SUPPRESS_OPERATOR_AWARE')
+    // Brand new subject: first_state_fingerprint === state_fingerprint (both
+    // just set to FP_AUTUMN on insert) => 'initial' mode.
+    expect(hasOperatorParticipatedInConversation).toHaveBeenCalledWith('conv-autumn', expect.any(String), 'initial')
+  })
+
+  it('stamps operator_aware_fingerprint to the current state so the awareness is auditable and re-comparable later', async () => {
+    ATTENTION = [
+      attentionRow({
+        subject_type: 'booking',
+        subject_id: 'booking-autumn',
+        conversation_id: 'conv-autumn',
+        state_fingerprint: FP_AUTUMN,
+        first_state_fingerprint: FP_AUTUMN,
+        notify_count: 0,
+        notified_fingerprint: null,
+        operator_aware_fingerprint: null,
+        operator_aware_at: null,
+      }),
+    ]
+    hasOperatorParticipatedInConversation.mockResolvedValue(true)
+    const decision = await decideOperatorNotification(autumnInput)
+    expect(decision.outcome).toBe('SUPPRESS_OPERATOR_AWARE')
+    const stamp = ATTENTION_UPDATES.find((u) => u.operator_aware_fingerprint)
+    expect(stamp?.operator_aware_fingerprint).toBe(FP_AUTUMN)
+  })
+
+  it('2 — operator handled the pending booking 20 minutes ago; payment confirms NOW => that old participation must NOT suppress the new state', async () => {
+    // A real transition: the ledger already has a DIFFERENT prior
+    // fingerprint (the pending state) — first_state_fingerprint stays
+    // pinned to that original pending value while state_fingerprint moves
+    // to the confirmed+paid one, so first !== state => 'post-transition'.
+    // hasOperatorParticipatedInConversation is mocked to return exactly
+    // what a real strict-cutoff query would for 20-minutes-stale evidence:
+    // false — proving the OLD participation cannot cover the NEW state.
+    ATTENTION = [
+      attentionRow({
+        subject_type: 'booking',
+        subject_id: 'booking-autumn',
+        conversation_id: 'conv-autumn',
+        state_fingerprint: FP_AUTUMN,
+        first_state_fingerprint: FP_AUTUMN,
+        notify_count: 0,
+        notified_fingerprint: null,
+      }),
+    ]
+    hasOperatorParticipatedInConversation.mockResolvedValue(false)
+    const decision = await decideOperatorNotification({
+      ...autumnInput,
+      fingerprintParts: ['confirmed', '2026-08-27T10:00:00Z', null, null, '2026-09-05', '09:00:00', 2],
+    })
+    expect(decision.outcome).toBe('SEND_NEW')
+    expect(hasOperatorParticipatedInConversation).toHaveBeenCalledWith('conv-autumn', expect.any(String), 'post-transition')
+  })
+
+  it('3 — operator handles the conversation AFTER payment confirmation => the confirmed/paid state may be marked operator-aware', async () => {
+    ATTENTION = [
+      attentionRow({
+        subject_type: 'booking',
+        subject_id: 'booking-autumn',
+        conversation_id: 'conv-autumn',
+        state_fingerprint: FP_AUTUMN,
+        first_state_fingerprint: FP_AUTUMN,
+        notify_count: 0,
+        notified_fingerprint: null,
+      }),
+    ]
+    hasOperatorParticipatedInConversation.mockResolvedValue(true) // evidence AT/AFTER the transition
+    const decision = await decideOperatorNotification({
+      ...autumnInput,
+      fingerprintParts: ['confirmed', '2026-08-27T10:00:00Z', null, null, '2026-09-05', '09:00:00', 2],
+    })
+    expect(decision.outcome).toBe('SUPPRESS_OPERATOR_AWARE')
+    expect(ATTENTION_UPDATES.find((u) => u.operator_aware_fingerprint)?.operator_aware_fingerprint).toBe(FP_CONFIRMED_PAID)
+  })
+
+  it('4 — operator handles the pending state, then booking TIME changes later => earlier pending-state participation does not cover the new time', async () => {
+    ATTENTION = [
+      attentionRow({
+        subject_type: 'booking',
+        subject_id: 'booking-autumn',
+        conversation_id: 'conv-autumn',
+        state_fingerprint: FP_AUTUMN,
+        first_state_fingerprint: FP_AUTUMN,
+        notify_count: 0,
+        notified_fingerprint: null,
+      }),
+    ]
+    hasOperatorParticipatedInConversation.mockResolvedValue(false) // nothing fresh since the time changed
+    const decision = await decideOperatorNotification({
+      ...autumnInput,
+      fingerprintParts: ['pending', null, null, null, '2026-09-05', '11:00:00', 2], // time moved 09:00 -> 11:00, still pending
+    })
+    expect(decision.outcome).toBe('SEND_NEW')
+    expect(hasOperatorParticipatedInConversation).toHaveBeenCalledWith('conv-autumn', expect.any(String), 'post-transition')
+    void FP_NEW_TIME // documents the fingerprint this scenario actually produces
+  })
+
+  it('5 — never applies to critical priority, however strong the participation evidence', async () => {
+    ATTENTION = []
+    hasOperatorParticipatedInConversation.mockResolvedValue(true)
+    const decision = await decideOperatorNotification({ ...autumnInput, priority: 'critical' })
+    expect(decision.outcome).toBe('SEND_CRITICAL_ESCALATION')
+    expect(hasOperatorParticipatedInConversation).not.toHaveBeenCalled()
+  })
+
+  it('falls through to a real send when no participation evidence is found', async () => {
+    ATTENTION = []
+    hasOperatorParticipatedInConversation.mockResolvedValue(false)
+    const decision = await decideOperatorNotification(autumnInput)
+    expect(decision.outcome).toBe('SEND_NEW')
+  })
+
+  it('is opt-in — a caller that never passes operatorParticipationCheck keeps sending exactly as before', async () => {
+    ATTENTION = []
+    hasOperatorParticipatedInConversation.mockResolvedValue(true)
+    const { operatorParticipationCheck: _drop, ...withoutCheck } = autumnInput
+    const decision = await decideOperatorNotification(withoutCheck)
+    expect(decision.outcome).toBe('SEND_NEW')
+    expect(hasOperatorParticipatedInConversation).not.toHaveBeenCalled()
+  })
+
+  it("anchors the check to the ledger's own last_changed_at, not a caller-supplied timestamp — the mode, not the anchor, is what changed", async () => {
+    const seededLastChanged = '2026-08-20T00:00:00Z'
+    ATTENTION = [
+      attentionRow({
+        subject_type: 'booking',
+        subject_id: 'booking-autumn',
+        conversation_id: 'conv-autumn',
+        state_fingerprint: FP_AUTUMN,
+        first_state_fingerprint: FP_AUTUMN,
+        notify_count: 0,
+        notified_fingerprint: null,
+        last_changed_at: seededLastChanged,
+      }),
+    ]
+    hasOperatorParticipatedInConversation.mockResolvedValue(false)
+    await decideOperatorNotification(autumnInput)
+    expect(hasOperatorParticipatedInConversation).toHaveBeenCalledWith('conv-autumn', seededLastChanged, 'initial')
+  })
+
+  it('6 — a legacy row (first_state_fingerprint NULL — predates the migration) always uses strict post-transition semantics, including at a dispatch-time recheck, however stale its evidence looks', async () => {
+    // bookingCreatedDispatchCancelReason re-runs this exact gate for its
+    // dispatch-time recheck (app/api/caye/outbound-worker/route.ts) — this
+    // is the property that keeps that recheck conservative for a row whose
+    // attention item predates 20260826f: first_state_fingerprint stays
+    // NULL forever for such a row (lib/owner-attention.ts's
+    // observeAttentionItem update path never writes it), so it can never
+    // read as 'initial' no matter how many times it's re-observed.
+    ATTENTION = [
+      attentionRow({
+        subject_type: 'booking',
+        subject_id: 'booking-autumn',
+        conversation_id: 'conv-autumn',
+        state_fingerprint: FP_AUTUMN, // unchanged from whatever it always was
+        first_state_fingerprint: null, // legacy — genuinely unknown origin
+        notify_count: 0,
+        notified_fingerprint: null,
+      }),
+    ]
+    hasOperatorParticipatedInConversation.mockResolvedValue(false)
+    await decideOperatorNotification(autumnInput)
+    expect(hasOperatorParticipatedInConversation).toHaveBeenCalledWith('conv-autumn', expect.any(String), 'post-transition')
   })
 })

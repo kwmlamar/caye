@@ -185,6 +185,45 @@ describe('operatorPingLogBody — no internal identifiers reach the operator', (
     })
   })
 
+  describe('booking_created — honest state language (2026-08-26 Autumn McNeill incident, fixture C)', () => {
+    // "Just booked — Autumn McNeill, North Bimini Heritage Tour on
+    // Saturday, September 5 at 09:00, 2 guests." was sent for a booking
+    // whose real status was pending, no payment link sent, no payment
+    // confirmed. A booking ROW existing is not the same as the customer
+    // being booked. stateLabel (lib/whatsapp/triggers.ts's
+    // bookingStateLabel) now carries the real status through the payload.
+    it('never says "Just booked" for a pending booking', () => {
+      const body = operatorPingLogBody('booking_created', {
+        guest: 'Autumn McNeill',
+        summary: 'North Bimini Heritage Tour on Saturday, September 5 at 09:00, 2 guests',
+        stateLabel: 'New pending booking',
+      })
+      expect(body).not.toMatch(/just booked/i)
+      expect(body).toMatch(/New pending booking/)
+      expect(body).toContain('Autumn McNeill')
+    })
+
+    it('says "Booking confirmed & paid" honestly when that is actually true', () => {
+      const body = operatorPingLogBody('booking_created', {
+        guest: 'Sonja',
+        summary: 'Full Bimini Experience on Wednesday, August 26',
+        stateLabel: 'Booking confirmed & paid',
+      })
+      expect(body).toMatch(/Booking confirmed & paid/)
+      expect(body).not.toMatch(/just booked/i)
+    })
+
+    it('degrades to a neutral, still-honest label for a legacy queue row with no stateLabel', () => {
+      // Rows enqueued before this field existed have no payload.stateLabel.
+      const body = operatorPingLogBody('booking_created', {
+        guest: 'A guest',
+        summary: 'a tour',
+      })
+      expect(body).not.toMatch(/just booked/i)
+      expect(detectInternalLeak(body)).toBeNull()
+    })
+  })
+
   it('produces clean text for every loggable kind, with and without a payload', () => {
     // The generalisation: no kind that can be logged may produce machinery,
     // whichever branch it takes.

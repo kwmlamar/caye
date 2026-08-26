@@ -241,15 +241,35 @@ async function processWorkspace(
   if (
     decision.outcome === 'SUPPRESS_NO_CHANGE' ||
     decision.outcome === 'SUPPRESS_RECENTLY_NOTIFIED' ||
-    decision.outcome === 'RESOLVED_NO_NOTIFICATION'
+    decision.outcome === 'RESOLVED_NO_NOTIFICATION' ||
+    decision.outcome === 'SUPPRESS_OPERATOR_AWARE'
   ) {
+    // finalTurnVisibility: 'internal' — a suppressed decision means Caye's
+    // own concluding text ("already resolved" / "nothing new") is never
+    // meant to reach the operator. Without this it still landed as an
+    // ordinary chat bubble in Caye Direct with wa_delivery_status:
+    // 'not_sent' — nothing distinguished that from real content merely
+    // waiting on a closed window, so the "we correctly decided not to
+    // notify" transcript rendered as a notification anyway (2026-08-26
+    // Autumn McNeill incident, "already on your radar... needs nothing
+    // further"). The tool-loop turns are still persisted in full for audit/
+    // history-replay (claude_format is untouched); only the human-facing
+    // body of the final turn is swapped for the internal marker.
     const inserted = await persistAgentTurns(
       supabase,
       row.workspace_id,
       agentResult.newTurns,
       operator,
       undefined,
-      `Not sent — ${decision.outcome === 'RESOLVED_NO_NOTIFICATION' ? 'already resolved' : 'operator already told, nothing new'}`
+      `Not sent — ${
+        decision.outcome === 'RESOLVED_NO_NOTIFICATION'
+          ? 'already resolved'
+          : decision.outcome === 'SUPPRESS_OPERATOR_AWARE'
+            ? 'operator already handled this directly'
+            : 'operator already told, nothing new'
+      }`,
+      'whatsapp',
+      'internal'
     )
     await linkInsertedMessagesToThreads(supabase, inserted.map((r) => r.id), agentResult.linkedThreadIds)
     return { status: 'ok', detail: `suppressed: ${decision.outcome}` }

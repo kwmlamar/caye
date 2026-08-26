@@ -172,6 +172,51 @@ describe('attention delta — news vs repetition', () => {
   })
 })
 
+describe('attention delta — operator-demonstrated awareness (2026-08-26 Autumn McNeill incident)', () => {
+  it('buckets a never-notified item as alreadyKnownToOperator, not unreported, when the operator showed they already know', async () => {
+    TABLE = [
+      row({
+        operator_aware_fingerprint: 'fp-1',
+        operator_aware_at: '2026-08-26T01:39:06Z',
+        operator_aware_summary: 'Operator sent a customer-facing reply in this conversation themselves.',
+      }),
+    ]
+    const delta = await loadAttentionDelta({ workspaceId: 'ws' })
+    expect(delta.unreported).toHaveLength(0)
+    expect(delta.alreadyKnownToOperator.map((i: AttentionItem) => i.subjectId)).toEqual(['esc-1'])
+    // Still not clear — the item is open, just not worth interrupting about.
+    expect(delta.allClear).toBe(false)
+  })
+
+  it('falls back to unreported when the operator-aware fingerprint is stale (state moved on since)', async () => {
+    TABLE = [
+      row({
+        state_fingerprint: 'fp-2', // moved since the operator last showed awareness
+        operator_aware_fingerprint: 'fp-1',
+        operator_aware_at: '2026-08-26T01:39:06Z',
+      }),
+    ]
+    const delta = await loadAttentionDelta({ workspaceId: 'ws' })
+    expect(delta.alreadyKnownToOperator).toHaveLength(0)
+    expect(delta.unreported.map((i: AttentionItem) => i.subjectId)).toEqual(['esc-1'])
+  })
+
+  it('an already-notified item is unaffected by operator awareness — notified/changed bucketing still wins', async () => {
+    TABLE = [
+      row({
+        last_notified_at: '2026-08-12T09:00:00Z',
+        notify_count: 1,
+        notified_fingerprint: 'fp-1',
+        operator_aware_fingerprint: 'fp-1',
+        operator_aware_at: '2026-08-26T01:39:06Z',
+      }),
+    ]
+    const delta = await loadAttentionDelta({ workspaceId: 'ws' })
+    expect(delta.alreadyKnownToOperator).toHaveLength(0)
+    expect(delta.unchanged.map((i: AttentionItem) => i.subjectId)).toEqual(['esc-1'])
+  })
+})
+
 describe('renderAttentionContext — what the composer is told', () => {
   it('states plainly that the owner is clear when nothing is open', async () => {
     TABLE = []
@@ -212,6 +257,23 @@ describe('renderAttentionContext — what the composer is told', () => {
     const text = renderAttentionContext(await loadAttentionDelta({ workspaceId: 'ws' }))
     expect(text).toMatch(/RESOLVED since last time/)
     expect(text).toMatch(/never present as outstanding/)
+  })
+
+  it('instructs the composer to say NOTHING about an operator-already-known item — not even "on your radar"', async () => {
+    // The second Autumn McNeill message: "Sonja's booking confirmed and
+    // Autumn's new pending are already on your radar; the resolved
+    // escalation needs nothing further." Announcing that nothing needs
+    // attention IS itself the interruption this instruction rules out.
+    TABLE = [
+      row({
+        operator_aware_fingerprint: 'fp-1',
+        operator_aware_at: '2026-08-26T01:39:06Z',
+      }),
+    ]
+    const text = renderAttentionContext(await loadAttentionDelta({ workspaceId: 'ws' }))
+    expect(text).toMatch(/ALREADY KNOWN TO THE OPERATOR/)
+    expect(text).toMatch(/Do NOT name these/)
+    expect(text).toMatch(/mentioning a non-event IS the interruption/)
   })
 })
 
@@ -304,5 +366,97 @@ describe('observeAttentionItem', () => {
       fingerprintParts: parts,
     })
     expect(UPDATES[0].status).toBe('resolved')
+  })
+
+  describe('first_state_fingerprint — legacy-row policy (PR #135 review, third finding)', () => {
+    it('a brand-new row gets first_state_fingerprint stamped to its own initial fingerprint', async () => {
+      TABLE = []
+      await observeAttentionItem({
+        workspaceId: 'ws',
+        subjectType: 'booking',
+        subjectId: 'booking-1',
+        title: 'Autumn — New pending booking',
+        priority: 'awareness',
+        fingerprintParts: ['pending', null, null, null, '2026-09-05', '09:00:00', 2],
+      })
+      expect(INSERTS[0].first_state_fingerprint).toBe(INSERTS[0].state_fingerprint)
+      expect(INSERTS[0].first_state_fingerprint).toBeTruthy()
+    })
+
+    it('3 — a legacy row (first_state_fingerprint already NULL) re-observed with an UNCHANGED state stays NULL, not silently backfilled', async () => {
+      const parts = ['pending', null, null, null, '2026-09-05', '09:00:00', 2]
+      TABLE = [row({ state_fingerprint: fingerprint(parts), first_state_fingerprint: null })]
+      await observeAttentionItem({
+        workspaceId: 'ws',
+        subjectType: 'booking',
+        subjectId: 'booking-1',
+        title: 'Autumn — New pending booking',
+        priority: 'awareness',
+        fingerprintParts: parts, // unchanged
+      })
+      expect(UPDATES[0]).not.toHaveProperty('first_state_fingerprint')
+    })
+
+    it('4 — a legacy row transitioning pending -> confirmed also leaves first_state_fingerprint untouched, not set to either state', async () => {
+      const pendingParts = ['pending', null, null, null, '2026-09-05', '09:00:00', 2]
+      const confirmedParts = ['confirmed', '2026-08-27T10:00:00Z', null, null, '2026-09-05', '09:00:00', 2]
+      TABLE = [row({ state_fingerprint: fingerprint(pendingParts), first_state_fingerprint: null })]
+      await observeAttentionItem({
+        workspaceId: 'ws',
+        subjectType: 'booking',
+        subjectId: 'booking-1',
+        title: 'Autumn — Booking confirmed & paid',
+        priority: 'awareness',
+        fingerprintParts: confirmedParts, // real transition
+      })
+      // The bug this guards against: writing EITHER the old (pending) or
+      // new (confirmed) fingerprint here would convert "unknown history"
+      // into a false "provably initial" — first_state_fingerprint must
+      // simply never be written by the update path, full stop.
+      expect(UPDATES[0]).not.toHaveProperty('first_state_fingerprint')
+      expect(UPDATES[0].state_fingerprint).toBe(fingerprint(confirmedParts)) // the real state still updates normally
+    })
+
+    it('5 — re-observing a legacy row THREE times (unchanged, then a real transition, then unchanged again) never converts it into a "known initial" row', async () => {
+      const pendingParts = ['pending', null, null, null, '2026-09-05', '09:00:00', 2]
+      const confirmedParts = ['confirmed', '2026-08-27T10:00:00Z', null, null, '2026-09-05', '09:00:00', 2]
+
+      // Round 1: unchanged re-observation.
+      TABLE = [row({ state_fingerprint: fingerprint(pendingParts), first_state_fingerprint: null })]
+      await observeAttentionItem({
+        workspaceId: 'ws',
+        subjectType: 'booking',
+        subjectId: 'booking-1',
+        title: 'x',
+        priority: 'awareness',
+        fingerprintParts: pendingParts,
+      })
+      expect(UPDATES[0]).not.toHaveProperty('first_state_fingerprint')
+
+      // Round 2: a real transition.
+      UPDATES = []
+      await observeAttentionItem({
+        workspaceId: 'ws',
+        subjectType: 'booking',
+        subjectId: 'booking-1',
+        title: 'x',
+        priority: 'awareness',
+        fingerprintParts: confirmedParts,
+      })
+      expect(UPDATES[0]).not.toHaveProperty('first_state_fingerprint')
+
+      // Round 3: unchanged re-observation of the NEW state — still no write.
+      UPDATES = []
+      TABLE = [row({ state_fingerprint: fingerprint(confirmedParts), first_state_fingerprint: null })]
+      await observeAttentionItem({
+        workspaceId: 'ws',
+        subjectType: 'booking',
+        subjectId: 'booking-1',
+        title: 'x',
+        priority: 'awareness',
+        fingerprintParts: confirmedParts,
+      })
+      expect(UPDATES[0]).not.toHaveProperty('first_state_fingerprint')
+    })
   })
 })
