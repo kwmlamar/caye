@@ -43,8 +43,16 @@ export interface BookingRow {
  * thread. Returns a ToolResult-compatible shape if the send fails,
  * or null on success. Skips entirely when notify_customer is false
  * or no body is provided.
+ *
+ * Acquires the shared conversation execution claim immediately before
+ * dispatch: this notification is staged/confirmed like any other
+ * high-risk tool, but the underlying customer send is just as
+ * consequential as send_reply — a stale or superseded claim must fail
+ * closed here too, not just on the reply tool.
  */
 export async function maybeNotifyCustomer(args: {
+  workspaceId: string
+  bookingId: string
   conversationId: string | null
   notify: boolean | undefined
   body: string | undefined
@@ -54,7 +62,30 @@ export async function maybeNotifyCustomer(args: {
   if (!args.conversationId) {
     return { sent: false, error: 'Booking has no linked conversation thread' }
   }
+  let claimId: string | null = null
+  // Set the instant dispatchOperatorReply returns successfully — guards the
+  // catch below so a failure completing the coordinator record afterward is
+  // never mistaken for "nothing was sent."
+  let dispatched = false
   try {
+    const { claimConversationExecution, completeConversationExecution, resolveConversationExecutionAfterFailure, validateConversationExecution } = await import(
+      '@/lib/conversation-execution'
+    )
+    const execution = await claimConversationExecution({
+      workspaceId: args.workspaceId,
+      conversationId: args.conversationId,
+      holder: 'operator_caye',
+      idempotencyKey: `booking-notify:${args.bookingId}`,
+      reason: 'booking notification',
+    })
+    if (!execution.ok) {
+      return { sent: false, error: `Customer conversation is currently owned by ${execution.blockedBy}; notification was not sent.` }
+    }
+    claimId = execution.claim.id
+    const validated = await validateConversationExecution({ claimId: execution.claim.id })
+    if (!validated.ok) {
+      return { sent: false, error: `Customer conversation changed before this notification could be sent (${validated.reason}).` }
+    }
     const { dispatchOperatorReply } = await import(
       '@/lib/whatsapp/channel-dispatch'
     )
@@ -63,8 +94,16 @@ export async function maybeNotifyCustomer(args: {
       args.body.trim(),
       'caye-dashboard'
     )
+    dispatched = true
+    await completeConversationExecution(claimId).catch((completeErr) => {
+      console.error('[_booking-helpers] dispatch succeeded but completing the execution claim failed (safe — left unresolved rather than freed for retry):', completeErr)
+    })
     return { sent: true, channel: result.channelType }
   } catch (err) {
+    if (claimId && !dispatched) {
+      const { resolveConversationExecutionAfterFailure } = await import('@/lib/conversation-execution')
+      await resolveConversationExecutionAfterFailure(claimId, err)
+    }
     const msg = err instanceof Error ? err.message : String(err)
     return { sent: false, error: msg }
   }

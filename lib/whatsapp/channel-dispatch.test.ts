@@ -12,14 +12,20 @@ vi.mock('@/lib/whatsapp', () => ({
 vi.mock('@/lib/meta-reply', () => ({ sendMetaMessage: vi.fn() }))
 vi.mock('@/lib/email-ai', () => ({ sendZohoReply: vi.fn(), sendZohoEmail: vi.fn() }))
 vi.mock('@/lib/voice-profile', () => ({ ensureTagline: (text: string) => text }))
+const resolveOpenEscalationsMock = vi.fn(async (_supabase: unknown, _conversationId: string) => undefined)
 vi.mock('@/lib/caye-agent/tools/write-low/resolve-open-escalations', () => ({
-  resolveOpenEscalations: vi.fn(async () => undefined),
+  resolveOpenEscalations: (supabase: unknown, conversationId: string) =>
+    resolveOpenEscalationsMock(supabase, conversationId),
 }))
-vi.mock('@/lib/sales/lifecycle', () => ({ recordSalesLifecycleEvent: vi.fn(async () => undefined) }))
+const recordSalesLifecycleEventMock = vi.fn(async (_input: Record<string, unknown>) => undefined)
+vi.mock('@/lib/sales/lifecycle', () => ({
+  recordSalesLifecycleEvent: (input: Record<string, unknown>) => recordSalesLifecycleEventMock(input),
+}))
 
 type Row = Record<string, unknown>
 const insertedMessages: Row[] = []
 const existingByKey = new Map<string, Row>()
+let conversationMetadata: Record<string, unknown> = {}
 
 vi.mock('@/lib/supabase-server', () => ({
   createServiceClient: () => ({
@@ -63,7 +69,7 @@ vi.mock('@/lib/supabase-server', () => ({
                   channel_type: 'whatsapp',
                   customer_id: '15551234567',
                   channel_conversation_id: null,
-                  metadata: {},
+                  metadata: conversationMetadata,
                   connected_account: {
                     id: 'acct1',
                     user_id: 'ws1',
@@ -92,6 +98,9 @@ describe('dispatchOperatorReply idempotency (2026-08-16, final pre-canary closur
     sendWhatsAppMessageMock.mockClear()
     insertedMessages.length = 0
     existingByKey.clear()
+    resolveOpenEscalationsMock.mockReset().mockResolvedValue(undefined)
+    recordSalesLifecycleEventMock.mockReset().mockResolvedValue(undefined)
+    conversationMetadata = {}
   })
 
   it('sends for real on the first call with an idempotencyKey, and stores it', async () => {
@@ -132,5 +141,37 @@ describe('dispatchOperatorReply idempotency (2026-08-16, final pre-canary closur
     expect(sendWhatsAppMessageMock).toHaveBeenCalledTimes(2)
     expect(insertedMessages).toHaveLength(2)
     expect((insertedMessages[0].metadata as Record<string, unknown>).idempotency_key).toBeUndefined()
+  })
+
+  describe('post-send bookkeeping failures never look like a dispatch failure', () => {
+    it('resolves successfully even when resolveOpenEscalations throws AFTER the send already persisted', async () => {
+      resolveOpenEscalationsMock.mockRejectedValue(new Error('caye_escalations update timed out'))
+
+      const result = await dispatchOperatorReply('conv1', 'Hello!', 'caye-operator-wa')
+
+      // The provider call and the core receipt already succeeded — a
+      // best-effort follow-up failing must never surface as
+      // dispatchOperatorReply throwing (every caller treats a thrown,
+      // unclassified Error here as "definitely did not send" and would
+      // incorrectly free the claim/reservation for a retry).
+      expect(result.success).toBe(true)
+      expect(sendWhatsAppMessageMock).toHaveBeenCalledTimes(1)
+      expect(insertedMessages).toHaveLength(1)
+    })
+
+    it('resolves successfully even when recordSalesLifecycleEvent throws on an outreach send AFTER the email already sent', async () => {
+      conversationMetadata = { source: 'outreach_leads', lead_id: 'lead-1', hold_kind: 'outreach_first_touch' }
+      recordSalesLifecycleEventMock.mockRejectedValue(new Error('sales lifecycle first_touch_sent was not recorded: conflict'))
+
+      const result = await dispatchOperatorReply(
+        'conv1',
+        'Hello!',
+        'caye-outreach-autonomous'
+      )
+
+      expect(result.success).toBe(true)
+      expect(sendWhatsAppMessageMock).toHaveBeenCalledTimes(1)
+      expect(recordSalesLifecycleEventMock).toHaveBeenCalledTimes(1)
+    })
   })
 })

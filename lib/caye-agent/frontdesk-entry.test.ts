@@ -102,6 +102,11 @@ vi.mock('@/lib/whatsapp/triggers', () => ({
   },
 }))
 
+vi.mock('@/lib/conversation-execution', () => ({
+  claimConversationExecution: async () => ({ ok: true, claim: { id: 'claim1', generation: 1 } }),
+  releaseConversationExecution: async () => undefined,
+}))
+
 import { runConvergedFrontDeskTurn } from './frontdesk-entry'
 
 const BASE_INPUT = {

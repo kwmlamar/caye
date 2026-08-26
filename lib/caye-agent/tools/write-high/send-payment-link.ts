@@ -4,6 +4,7 @@ import type { Tool } from '../types'
 import { HIGH_RISK_CONFIRMATION_PREAMBLE } from './_booking-helpers'
 import { bookingRevenue, BOOKING_WITH_SERVICE_PRICE_SELECT, type ServiceJoin } from '../_revenue'
 import { createPaymentLink, ChargeAnywhereNotConfiguredError } from '@/lib/payments/chargeanywhere'
+import { claimConversationExecution, completeConversationExecution, resolveConversationExecutionAfterFailure, validateConversationExecution } from '@/lib/conversation-execution'
 
 interface SendPaymentLinkInput {
   booking_id: string
@@ -127,9 +128,30 @@ Use amount_override to send a deposit (e.g. Bimini's 50%-due-7-days-out policy) 
       `Here's your payment link for ${service?.name ?? 'your tour'} on ${booking.booking_date}: ${link.url}\n\n` +
       `Once it clears we'll send your confirmation and logistics.`
 
+    let claimId: string | null = null
+    // Set the instant dispatchOperatorReply returns successfully — guards
+    // the catch below so a LATER failure (the booking update, completing
+    // the coordinator record) is never mistaken for "nothing was sent."
+    let dispatched = false
     try {
+      const execution = await claimConversationExecution({
+        workspaceId: ctx.workspaceId,
+        conversationId: booking.conversation_id,
+        holder: 'operator_caye',
+        idempotencyKey: `payment-link:${booking.id}`,
+        reason: 'payment link',
+      })
+      if (!execution.ok) return { ok: false, status: 'CONFLICT', error: `Customer conversation is being handled by ${execution.blockedBy}; payment link was not sent.` }
+      claimId = execution.claim.id
+      const validated = await validateConversationExecution({ claimId: execution.claim.id })
+      if (!validated.ok) return { ok: false, status: 'CONFLICT', error: `Customer conversation changed before payment link could be sent (${validated.reason}). Nothing was sent.` }
+
       const { dispatchOperatorReply } = await import('@/lib/whatsapp/channel-dispatch')
       const result = await dispatchOperatorReply(booking.conversation_id, body, 'caye-dashboard')
+      dispatched = true
+      await completeConversationExecution(claimId).catch((completeErr) => {
+        console.error('[send-payment-link] dispatch succeeded but completing the execution claim failed (safe — left unresolved rather than freed for retry):', completeErr)
+      })
 
       const now = new Date().toISOString()
       await supabase
@@ -153,6 +175,7 @@ Use amount_override to send a deposit (e.g. Bimini's 50%-due-7-days-out policy) 
         },
       }
     } catch (err) {
+      if (claimId && !dispatched) await resolveConversationExecutionAfterFailure(claimId, err)
       const msg = err instanceof Error ? err.message : String(err)
       return { ok: false, error: `Link created but send failed: ${msg}` }
     }

@@ -28,9 +28,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase-server'
 import { dispatchOperatorReply } from '@/lib/whatsapp/channel-dispatch'
 import { BOOKING_WITH_SERVICE_PRICE_SELECT, type ServiceJoin } from '@/lib/caye-agent/tools/_revenue'
+import { claimConversationExecution, completeConversationExecution, releaseConversationExecution, resolveConversationExecutionAfterFailure, validateConversationExecution } from '@/lib/conversation-execution'
 
 interface BookingRow {
   id: string
+  user_id: string
   customer_name: string | null
   booking_date: string
   booking_time: string | null
@@ -74,7 +76,10 @@ export async function GET(request: NextRequest) {
   return NextResponse.json(summary)
 }
 
-async function processBatch(args: {
+// Exported for regression coverage of the validate-failure and
+// provider-dispatch-failure claim-resolution paths (see
+// route.test.ts) — not used elsewhere.
+export async function processBatch(args: {
   dateStr: string
   column: 'day_before_reminder_sent_at' | 'day_of_reminder_sent_at'
   framing: 'tomorrow' | 'today'
@@ -86,7 +91,7 @@ async function processBatch(args: {
   const { data, error } = await supabase
     .from('bookings')
     .select(
-      `id, customer_name, booking_date, booking_time, conversation_id, ${BOOKING_WITH_SERVICE_PRICE_SELECT}`
+      `id, user_id, customer_name, booking_date, booking_time, conversation_id, ${BOOKING_WITH_SERVICE_PRICE_SELECT}`
     )
     .eq('status', 'confirmed')
     .eq('booking_date', args.dateStr)
@@ -114,7 +119,35 @@ async function processBatch(args: {
       `Reply here if anything's changed on your end.`
 
     try {
-      await dispatchOperatorReply(row.conversation_id, body, 'caye-dashboard')
+      const execution = await claimConversationExecution({
+        workspaceId: row.user_id,
+        conversationId: row.conversation_id,
+        holder: 'scheduled_system',
+        idempotencyKey: `tour-reminder:${args.column}:${row.id}`,
+        reason: 'tour reminder',
+      })
+      if (!execution.ok) {
+        args.onSkipped()
+        continue
+      }
+      const validated = await validateConversationExecution({ claimId: execution.claim.id })
+      if (!validated.ok) {
+        await releaseConversationExecution(execution.claim.id).catch(() => undefined)
+        args.onSkipped()
+        continue
+      }
+      try {
+        await dispatchOperatorReply(row.conversation_id, body, 'caye-dashboard')
+      } catch (dispatchErr) {
+        await resolveConversationExecutionAfterFailure(execution.claim.id, dispatchErr)
+        throw dispatchErr
+      }
+      // Dispatch is CONFIRMED at this point — complete before the booking
+      // marker update, and never let a completion hiccup fall through to
+      // the outer catch (which does not know dispatch already succeeded).
+      await completeConversationExecution(execution.claim.id).catch((completeErr) => {
+        console.error(`[tour-reminder] dispatch succeeded but completing the execution claim failed for booking ${row.id} (safe — left unresolved rather than freed for retry):`, completeErr)
+      })
       await supabase
         .from('bookings')
         .update({ [args.column]: new Date().toISOString() })

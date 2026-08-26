@@ -112,6 +112,9 @@ export interface ToolContext {
    * Undefined/null everywhere else.
    */
   triggeringMessageId?: string | null
+  /** Durable conversation execution owner. Customer-facing tools must prove
+   * this claim remains current immediately before provider dispatch. */
+  executionClaimId?: string | null
   /**
    * Unique id for this top-level cayeAgent()/runToolLoop invocation —
    * one per inbound WhatsApp message (or briefing/EOD cron run). Load-
