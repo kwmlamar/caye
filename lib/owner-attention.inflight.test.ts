@@ -213,6 +213,32 @@ describe('notification lifecycle: not notified → in flight → notified', () =
     expect(delta.unreported.map((i) => i.subjectId)).toEqual(['conv-karin'])
   })
 
+  it('PR #135 review, fourth finding: a booking_created row cancelled at dispatch-time by a fresh gate outcome (not just mute/precondition failure) self-heals the same way — no duplicate cleanup needed', async () => {
+    // bookingCreatedDispatchCancelReason (outbound-worker route.ts) now
+    // cancels a queued booking_created row on ANY non-SEND gate outcome
+    // (SUPPRESS_NO_CHANGE, SUPPRESS_RECENTLY_NOTIFIED, RESOLVED_NO_
+    // NOTIFICATION, SUPPRESS_OPERATOR_AWARE) via the SAME cancel() helper
+    // every other kind already uses, which sets caye_outbound_queue.status
+    // = 'cancelled'. Proving that's enough: this test's fixture is
+    // identical in shape to the generic "self-heals a stale pending
+    // pointer" case above — the mechanism doesn't know or care WHY a row
+    // was cancelled, only that its status is no longer 'pending'.
+    OUTBOUND_QUEUE = [{ id: 'q-booking-1', status: 'cancelled' }]
+    ATTENTION = [
+      attentionRow({
+        subject_type: 'booking',
+        subject_id: 'booking-autumn',
+        conversation_id: 'conv-autumn',
+        title: 'Autumn McNeill — New pending booking',
+        pending_notification_queue_id: 'q-booking-1',
+      }),
+    ]
+
+    const delta = await loadAttentionDelta({ workspaceId: 'ws-bimini' })
+    expect(delta.inFlight).toHaveLength(0) // not stuck "in flight" forever
+    expect(delta.unreported.map((i) => i.subjectId)).toEqual(['booking-autumn'])
+  })
+
   it('markAttentionPending completes without throwing and the item is queryable afterward', async () => {
     // Real per-filter row targeting (workspace/subject scoping) is a
     // Supabase query-filter property, not something this lightweight

@@ -176,13 +176,19 @@ async function processWorkspace(
     decision.outcome === 'SUPPRESS_RECENTLY_NOTIFIED' ||
     decision.outcome === 'RESOLVED_NO_NOTIFICATION'
   ) {
+    // finalTurnVisibility: 'internal' — see the matching comment in
+    // opportunity-scan/cron/route.ts. A suppressed decision's own
+    // concluding text must not render as a chat bubble in Caye Direct;
+    // only the audit trail (claude_format) keeps it.
     await persistAgentTurns(
       supabase,
       row.workspace_id,
       agentResult.newTurns,
       operator,
       undefined,
-      'Not sent — operator already told, nothing new'
+      'Not sent — operator already told, nothing new',
+      'whatsapp',
+      'internal'
     )
     await supabase
       .from('workspace_ai_config')
