@@ -3,6 +3,7 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { dispatchOperatorReply } from '@/lib/whatsapp/channel-dispatch'
 import type { Tool } from '../types'
 import { bookingRevenue, BOOKING_WITH_SERVICE_PRICE_SELECT, type ServiceJoin } from '../_revenue'
+import { claimConversationExecution, completeConversationExecution, validateConversationExecution } from '@/lib/conversation-execution'
 
 interface SendPaymentConfirmationInput {
   customer_name: string
@@ -94,7 +95,7 @@ export const sendPaymentConfirmation: Tool<SendPaymentConfirmationInput> = {
       }
     }
 
-    const booking = candidates[0]
+    let booking = candidates[0]
     if (!booking.conversation_id) {
       return {
         ok: false,
@@ -107,6 +108,22 @@ export const sendPaymentConfirmation: Tool<SendPaymentConfirmationInput> = {
         error: `${booking.customer_name}'s payment was already confirmed on ${booking.payment_confirmed_at.slice(0, 10)}. Not sending a duplicate — tell the operator if this is a different payment.`,
       }
     }
+
+    // The customer-facing text below includes date/time/payment state. A
+    // booking can change between the name lookup and dispatch (the Sonja
+    // incident), so reload the authoritative row immediately before text is
+    // constructed rather than letting a stale read survive to the provider.
+    const { data: currentBooking, error: refreshError } = await supabase
+      .from('bookings')
+      .select(`id, customer_name, booking_date, booking_time, number_of_people, conversation_id, status, payment_confirmed_at, ${BOOKING_WITH_SERVICE_PRICE_SELECT}`)
+      .eq('id', booking.id)
+      .eq('user_id', ctx.workspaceId)
+      .maybeSingle()
+    if (refreshError || !currentBooking) return { ok: false, error: 'Booking changed or could not be revalidated. Nothing was sent; retry from current booking state.' }
+    booking = currentBooking as unknown as CandidateBooking
+    if (booking.payment_confirmed_at) return { ok: false, error: 'Payment confirmation was already sent while this action was preparing. Nothing was sent.' }
+    const conversationId = booking.conversation_id
+    if (!conversationId) return { ok: false, error: 'Booking no longer has a linked customer conversation. Nothing was sent.' }
 
     const service = booking.service?.[0] ?? null
     const price = bookingRevenue({
@@ -129,7 +146,17 @@ export const sendPaymentConfirmation: Tool<SendPaymentConfirmationInput> = {
       `Looking forward to it!`
 
     try {
-      const result = await dispatchOperatorReply(booking.conversation_id, body, 'caye-dashboard')
+      const execution = await claimConversationExecution({
+        workspaceId: ctx.workspaceId,
+        conversationId,
+        holder: 'scheduled_system',
+        idempotencyKey: `payment-confirmation:${booking.id}`,
+        reason: 'payment confirmation',
+      })
+      if (!execution.ok) return { ok: false, status: 'CONFLICT', error: `Customer conversation is being handled by ${execution.blockedBy}; payment confirmation was not sent.` }
+      const validated = await validateConversationExecution({ claimId: execution.claim.id })
+      if (!validated.ok) return { ok: false, status: 'CONFLICT', error: `Customer conversation changed before payment confirmation (${validated.reason}). Nothing was sent.` }
+      const result = await dispatchOperatorReply(conversationId, body, 'caye-dashboard')
 
       const now = new Date().toISOString()
       await supabase
@@ -139,6 +166,7 @@ export const sendPaymentConfirmation: Tool<SendPaymentConfirmationInput> = {
           status: booking.status === 'pending' ? 'confirmed' : booking.status,
         })
         .eq('id', booking.id)
+      await completeConversationExecution(execution.claim.id)
 
       return {
         ok: true,

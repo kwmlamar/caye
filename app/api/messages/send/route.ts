@@ -19,6 +19,7 @@ import { maybeRefreshOwnerVoiceProfile } from '@/lib/owner-voice-learning'
 import { maybeSuggestBusinessFacts } from '@/lib/business-fact-suggestions'
 import { recordSalesLifecycleEvent } from '@/lib/sales/lifecycle'
 import { classifyOutboundAuthorship } from '@/lib/message-authorship'
+import { claimConversationExecution, completeConversationExecution, releaseConversationExecution, validateConversationExecution } from '@/lib/conversation-execution'
 
 export async function POST(request: NextRequest) {
   // ── Auth ────────────────────────────────────────────────────────────────────
@@ -96,6 +97,22 @@ export async function POST(request: NextRequest) {
 
   const text = content.trim()
   const now = new Date().toISOString()
+  const execution = await claimConversationExecution({
+    workspaceId: account.user_id,
+    conversationId: conversation_id,
+    holder: 'human_manual',
+    idempotencyKey: `manual:${user.id}:${conversation_id}:${now}`,
+    reason: 'owner dashboard send',
+    leaseSeconds: 120,
+  })
+  if (!execution.ok) {
+    return NextResponse.json({ error: `This conversation is currently being handled by ${execution.blockedBy}. Reload it before sending.` }, { status: 409 })
+  }
+  const executionValid = await validateConversationExecution({ claimId: execution.claim.id })
+  if (!executionValid.ok) {
+    await releaseConversationExecution(execution.claim.id)
+    return NextResponse.json({ error: `Conversation changed before dispatch (${executionValid.reason}). Reload before sending.` }, { status: 409 })
+  }
   // Read before dispatch: the send path below can clear or rewrite thread
   // metadata, and authorship has to be judged against the draft as it stood
   // when this request arrived.
@@ -161,6 +178,7 @@ export async function POST(request: NextRequest) {
         )
     }
   } catch (err) {
+    await releaseConversationExecution(execution.claim.id).catch(() => undefined)
     const msg = err instanceof Error ? err.message : String(err)
     console.error(`[messages/send] Channel send failed (${conv.channel_type}):`, msg)
     return NextResponse.json({ error: `Failed to deliver message: ${msg}` }, { status: 502 })
@@ -196,9 +214,15 @@ export async function POST(request: NextRequest) {
 
   if (insertErr) {
     console.error('[messages/send] Message insert failed:', insertErr)
+    // Delivery succeeded even though the inbox ledger failed. Preserve the
+    // completed execution state so another live worker cannot treat this as
+    // an unanswered turn while the receipt is repaired.
+    await completeConversationExecution(execution.claim.id).catch(() => undefined)
     // Delivery already succeeded — return partial success so UI doesn't show "failed"
     return NextResponse.json({ success: true, message: null })
   }
+
+  await completeConversationExecution(execution.claim.id, message.id)
 
   // Update conversation preview. Also clear the human_agent_enabled hold
   // flag — the owner is responding, so Caye should resume monitoring on

@@ -21,6 +21,7 @@ import {
   validateAuthoritativeBookingStatusClaims,
 } from '../../consequential-claim-grounding'
 import { validateFrontDeskContext } from '../../frontdesk-context-guard'
+import { completeConversationExecution, validateConversationExecution } from '@/lib/conversation-execution'
 
 interface SendCustomerReplyInput {
   conversation_id: string
@@ -219,12 +220,23 @@ Front-desk replies are evidence-gated rather than separately operator-gated. If 
     }
 
     try {
+      if (ctx.executionClaimId) {
+        const execution = await validateConversationExecution({
+          claimId: ctx.executionClaimId,
+          triggeringMessageId: ctx.triggeringMessageId,
+        })
+        if (!execution.ok) {
+          return { ok: false, status: 'CONFLICT', error_code: 'STALE_CONVERSATION_EXECUTION', error: `Conversation changed while this reply was being prepared (${execution.reason}). Nothing was sent; reload the current thread.` }
+        }
+      }
       const result = await dispatchOperatorReply(
         args.conversation_id,
         body,
         'caye-frontdesk-agent',
         ctx.triggeringMessageId ?? undefined
       )
+
+      if (ctx.executionClaimId) await completeConversationExecution(ctx.executionClaimId)
 
       if (disposition.disposition === 'send_and_flag') {
         await supabase

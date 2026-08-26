@@ -27,6 +27,12 @@ vi.mock('@/lib/whatsapp/channel-dispatch', () => ({
     dispatchOperatorReplyMock(conversationId, text, sender),
 }))
 
+// Channel-context behavior is covered by frontdesk-context-guard.test.ts;
+// this boundary suite isolates evidence and dispatch behavior.
+vi.mock('../../frontdesk-context-guard', () => ({
+  validateFrontDeskContext: vi.fn(async () => null),
+}))
+
 const conversationUpdateCalls: unknown[] = []
 let threadRowsMock: Array<{ content: string; sender_type?: string }> = []
 vi.mock('@/lib/supabase-server', () => ({

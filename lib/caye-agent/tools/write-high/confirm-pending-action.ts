@@ -42,7 +42,7 @@ If the operator asked for changes, stage the corrected action first and confirm 
 
     let query = supabase
       .from('caye_pending_actions')
-      .select('id, tool_name, args, summary, created_in_request_id, expires_at, executed_at, cancelled_at, superseded_by')
+      .select('id, tool_name, args, summary, created_in_request_id, expires_at, executed_at, cancelled_at, superseded_by, execution_claim_id')
       .eq('id', args.pending_action_id)
       .eq('workspace_id', ctx.workspaceId)
     query =
@@ -137,6 +137,11 @@ If the operator asked for changes, stage the corrected action first and confirm 
         error: `Tool '${tool.name}' is not available to role '${ctx.callerRole}'. Permitted roles: ${tool.roles.join(', ')}.`,
       }
     }
+
+    // The claim acquired while staging is the operator's ownership token.
+    // Pass it to the actual send boundary only after all confirmation checks
+    // have succeeded; a stale/expired claim fails closed there.
+    if (row.execution_claim_id) ctx.executionClaimId = row.execution_claim_id as string
 
     // Atomic claim: only one concurrent confirmation can cross this boundary.
     const { data: claimed } = await supabase

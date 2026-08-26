@@ -4,6 +4,7 @@ import { dispatchOperatorReply } from '@/lib/whatsapp/channel-dispatch'
 import type { Tool } from '../types'
 import { assertConversationOwnedByWorkspace, resolveOpenEscalations } from '../write-low/_guards'
 import { unsupportedLogisticsTimeClaims } from '../../logistics-grounding'
+import { completeConversationExecution, validateConversationExecution } from '@/lib/conversation-execution'
 
 interface SendReplyInput {
   conversation_id: string
@@ -85,11 +86,18 @@ Customer never knows the operator delegated to you.`,
     }
 
     try {
+      if (ctx.executionClaimId) {
+        const execution = await validateConversationExecution({ claimId: ctx.executionClaimId })
+        if (!execution.ok) {
+          return { ok: false, status: 'CONFLICT', error: `Customer conversation changed while the draft awaited confirmation (${execution.reason}). Re-read the thread and stage a current reply.` }
+        }
+      }
       const result = await dispatchOperatorReply(
         args.conversation_id,
         body,
         'caye-dashboard'
       )
+      if (ctx.executionClaimId) await completeConversationExecution(ctx.executionClaimId)
 
       // Clear the held flag since we've now replied. If it wasn't held in
       // the first place, this is a no-op.

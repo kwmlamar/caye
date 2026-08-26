@@ -9,6 +9,7 @@ import { buildFrontDeskSituationSystemPrompt } from './modes/front-desk-situatio
 import { persistFrontDeskAgentTurns } from '@/lib/caye-frontdesk-agent-turns'
 import { enqueueHoldPing } from '@/lib/whatsapp/triggers'
 import { authorizeAutonomousOutbound } from '@/lib/authorize-autonomous-outbound'
+import { claimConversationExecution, releaseConversationExecution } from '@/lib/conversation-execution'
 
 /**
  * frontdesk-entry.ts (2026-08-16, global Zoho cutover)
@@ -152,6 +153,21 @@ export async function runConvergedFrontDeskTurn(
       return { outcome: 'held', toolsUsed: [], usedOutputFallbackPath: false, holdReason }
     }
 
+    const execution = await claimConversationExecution({
+      workspaceId: input.workspaceId,
+      conversationId: input.conversationId,
+      holder: 'autonomous_frontdesk',
+      idempotencyKey: `frontdesk:${input.triggeringMessageId}`,
+      triggeringMessageId: input.triggeringMessageId,
+      reason: 'autonomous front-desk reply',
+    })
+    if (!execution.ok) {
+      return {
+        outcome: 'held', toolsUsed: [], usedOutputFallbackPath: false,
+        holdReason: `Another customer-facing execution (${execution.blockedBy}) owns this conversation; autonomous Caye yielded.`,
+      }
+    }
+
     const [{ history: historyForModel }, relationshipCtx, operational, { data: customerRow }] = await Promise.all([
       // loadFrontDeskConversationContext's `history` field is ALREADY
       // relative-time-annotated + compacted (see context.ts's own doc
@@ -203,6 +219,7 @@ export async function runConvergedFrontDeskTurn(
       requestId: randomUUID(),
       conversationId: input.conversationId,
       triggeringMessageId: input.triggeringMessageId,
+      executionClaimId: execution.claim.id,
       evidenceCollected: [],
     }
 
@@ -258,6 +275,7 @@ export async function runConvergedFrontDeskTurn(
     // so Mrs. Max isn't left unaware a customer message went unanswered.
     const holdReason = 'Caye (converged) could not answer with enough confidence — held for review.'
     await markHeld(supabase, input, holdReason)
+    await releaseConversationExecution(execution.claim.id)
     return { outcome: 'held', toolsUsed, usedOutputFallbackPath: !!loopResult.usedOutputFallbackPath, holdReason }
   } catch (err) {
     // Part 22: a crash must fail closed, not fall through to the legacy

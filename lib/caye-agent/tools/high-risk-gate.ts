@@ -2,6 +2,7 @@ import 'server-only'
 import { randomUUID } from 'node:crypto'
 import { createServiceClient } from '@/lib/supabase-server'
 import type { Tool, ToolContext, ToolResult } from './types'
+import { claimConversationExecution } from '@/lib/conversation-execution'
 
 const PENDING_TTL_MINUTES = 15
 
@@ -256,6 +257,27 @@ export function gateHighRisk<T>(tool: Tool<T>, ttlMinutes: number = PENDING_TTL_
       // takes it as its only argument).
       const pendingActionId = randomUUID()
 
+      // Staging an operator-directed customer reply is meaningful active
+      // work, not merely a UI draft. Acquire the shared conversation claim
+      // now so an autonomous webhook cannot independently answer while the
+      // operator is reviewing/refining this exact thread.
+      let executionClaimId: string | null = null
+      if (tool.name === 'send_reply' && typeof (args as Record<string, unknown>).conversation_id === 'string') {
+        const conversationId = (args as Record<string, unknown>).conversation_id as string
+        const execution = await claimConversationExecution({
+          workspaceId: ctx.workspaceId,
+          conversationId,
+          holder: 'operator_caye',
+          idempotencyKey: `operator-draft:${ctx.operatorId ?? 'unknown'}:${conversationId}`,
+          reason: 'operator-directed Caye draft awaiting confirmation',
+          leaseSeconds: ttlMinutes * 60,
+        })
+        if (!execution.ok) {
+          return { ok: false, status: 'CONFLICT', error: `This customer conversation is currently owned by ${execution.blockedBy}; reload it before drafting a reply.` }
+        }
+        executionClaimId = execution.claim.id
+      }
+
       // PHASE 3 (Part E) supersession: this args_key is fresh, but if it
       // targets the SAME conversation/booking as an already-staged,
       // not-yet-confirmed row for this same tool, that older row is a
@@ -302,6 +324,7 @@ export function gateHighRisk<T>(tool: Tool<T>, ttlMinutes: number = PENDING_TTL_
         summary,
         created_in_request_id: ctx.requestId,
         expires_at: new Date(Date.now() + ttlMinutes * 60 * 1000).toISOString(),
+        execution_claim_id: executionClaimId,
       })
       if (error) {
         return { ok: false, error: `Could not stage this action: ${error.message}` }
