@@ -113,6 +113,22 @@ export function decideRouting(input: { classification: ClassificationResult; cal
     return { action: 'candidate', destination, reason: `explicitness is ${c.explicitness} — requires confirmation before writing live` }
   }
 
+  // Deterministic gate for consequential content, independent of confidence
+  // (added after the 2026-08-26 historical-learning audit, per the rule that
+  // classifier confidence is evidence about INTERPRETATION, not authority to
+  // mutate consequential business state). A model can be highly confident
+  // about a badly-scoped read of a consequential statement; confidence alone
+  // cannot certify that the payload's scope is even structurally sound. A
+  // consequential write is only eligible to proceed past this point when the
+  // scope target is a real, resolved entity — never 'unknown'.
+  if (c.risk === 'consequential' && c.scope.target === 'unknown') {
+    return {
+      action: 'candidate',
+      destination,
+      reason: 'consequential content with an unresolved scope target is never written on confidence alone',
+    }
+  }
+
   const requiredConfidence = c.risk === 'consequential' ? CONSEQUENTIAL_MIN_CONFIDENCE : LOW_RISK_MIN_CONFIDENCE
   if (c.confidence < requiredConfidence) {
     return {

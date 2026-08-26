@@ -138,6 +138,19 @@ describe('decideRouting', () => {
     expect(decideRouting({ classification: confidentRefund, callerRole: 'owner' }).action).toBe('attempt_write')
   })
 
+  it('never writes consequential content on confidence alone when scope.target is unresolved ("unknown") — deterministic gate, not a confidence bar', () => {
+    const plan = decideRouting({
+      classification: base({
+        risk: 'consequential',
+        confidence: 0.99, // maximum possible confidence
+        scope: scope({ kind: 'standing', target: 'unknown' }),
+        businessFact: { category: 'policy', text: 'Refunds work differently now.' },
+      }),
+      callerRole: 'owner',
+    })
+    expect(plan.action).toBe('candidate')
+  })
+
   it('an explicit, unambiguous pricing correction is low-risk and writes live, not gated as consequential by default', () => {
     const pricing = base({
       destination: 'pricing',

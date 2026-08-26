@@ -21,6 +21,7 @@ import {
   validateAuthoritativeBookingStatusClaims,
 } from '../../consequential-claim-grounding'
 import { validateFrontDeskContext } from '../../frontdesk-context-guard'
+import { staleDateOverrideConflict } from '../../date-override-revalidation'
 
 interface SendCustomerReplyInput {
   conversation_id: string
@@ -92,6 +93,21 @@ Front-desk replies are evidence-gated rather than separately operator-gated. If 
         status: 'NEEDS_HUMAN',
         error_code: 'IDENTITY_LEAK',
         error: `Identity guard: ${identityLeak}. Nothing was sent — rewrite without revealing you're AI/Caye and try again.`,
+      }
+    }
+
+    // Freshness re-check: an operator can teach a date-specific restriction
+    // (via the operator-learning router) WHILE this turn is in flight — the
+    // draft may have been composed against availability state that's since
+    // changed. This re-fetches service_date_overrides fresh, right before
+    // dispatch, rather than trusting whatever the prompt saw when it was built.
+    const staleOverride = await staleDateOverrideConflict(supabase, ctx.workspaceId, args.conversation_id, body)
+    if (staleOverride) {
+      return {
+        ok: false,
+        status: 'CONFLICT',
+        error_code: 'STALE_DATE_OVERRIDE',
+        error: `Availability changed since this draft was composed: ${staleOverride} Nothing was sent — re-check availability and rewrite.`,
       }
     }
 
