@@ -261,23 +261,39 @@ export async function dispatchOperatorReply(
     throw new DispatchAmbiguousError(`message sent but conversation state was not recorded: ${conversationUpdateError.message}`, true)
   }
 
-  // Also close out any open escalation row — otherwise it stays pending
-  // forever and the "Needs review" stat card keeps counting a thread the
-  // operator already replied to.
-  await resolveOpenEscalations(supabase, conversationId)
+  // Everything above this point is the definite-send boundary: the provider
+  // call succeeded and the core receipt (unified_messages + the conversation
+  // row) is durably persisted. The two steps below are best-effort follow-up
+  // bookkeeping, NOT part of that boundary — recordSalesLifecycleEvent in
+  // particular explicitly throws on its own RPC error. Letting either
+  // propagate would hand the caller a plain Error for a send that already
+  // definitely happened; every caller classifies an unrecognized Error as
+  // "definitely did not send" (see DispatchAmbiguousError's doc comment)
+  // and would incorrectly free the claim/reservation for a retry — a real
+  // duplicate-send risk for outreach email in particular. Log and swallow;
+  // never let a bookkeeping failure retroactively look like a dispatch
+  // failure once the customer-facing side effect is already confirmed.
+  try {
+    // Also close out any open escalation row — otherwise it stays pending
+    // forever and the "Needs review" stat card keeps counting a thread the
+    // operator already replied to.
+    await resolveOpenEscalations(supabase, conversationId)
 
-  // One lifecycle seam for both dashboard/manual and cron sends. Only held
-  // outreach drafts are lifecycle touches; ordinary replies on an outreach
-  // thread are not cold-cadence sends.
-  if (meta.source === 'outreach_leads' && typeof meta.lead_id === 'string' &&
-      (meta.hold_kind === 'outreach_first_touch' || meta.hold_kind === 'outreach_followup')) {
-    await recordSalesLifecycleEvent({
-      workspaceId: account.user_id,
-      leadId: meta.lead_id,
-      event: meta.hold_kind === 'outreach_first_touch' ? 'first_touch_sent' : 'followup_sent',
-      eventKey: `outbound:${messageId}`,
-      at: now,
-    })
+    // One lifecycle seam for both dashboard/manual and cron sends. Only held
+    // outreach drafts are lifecycle touches; ordinary replies on an outreach
+    // thread are not cold-cadence sends.
+    if (meta.source === 'outreach_leads' && typeof meta.lead_id === 'string' &&
+        (meta.hold_kind === 'outreach_first_touch' || meta.hold_kind === 'outreach_followup')) {
+      await recordSalesLifecycleEvent({
+        workspaceId: account.user_id,
+        leadId: meta.lead_id,
+        event: meta.hold_kind === 'outreach_first_touch' ? 'first_touch_sent' : 'followup_sent',
+        eventKey: `outbound:${messageId}`,
+        at: now,
+      })
+    }
+  } catch (followUpErr) {
+    console.error('[channel-dispatch] post-send bookkeeping failed (send itself already succeeded):', followUpErr)
   }
 
   return { success: true, channelType: conv.channel_type, messageId, deduped: idempotencyKey ? false : undefined }
