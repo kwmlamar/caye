@@ -162,6 +162,72 @@ describe('real Bimini history — category B (missing durable knowledge that sho
   })
 })
 
+describe('real Bimini history — category E (genuine one-off/customer-scoped, must NOT generalize)', () => {
+  // FOUND: 2026-08-14 17:54:24, Will's VIP Escort to Port Royale thread.
+  // Caye first quoted the generic template rate ($90 for 2). Mrs. Max
+  // corrected: "actually the total will be $125 for 2 and it covers VIP
+  // Escort to Port Royale for arrival and transportation round trip. THE
+  // ESCORT IS ONLY FOR THE ARRIVAL ON THEIR 10:45 FLIGHT ON AMERICAN
+  // AIRLINE." The explicit "only for... their... flight" phrasing scopes
+  // this to Will's specific arrival — VIP Pickup & Meet and Greet has no
+  // catalog pricing tiers at all (confirmed: booking_services shows this
+  // service with zero service_pricing_tiers rows), consistent with VIP
+  // transport being quoted per-request based on flight/distance specifics,
+  // not a fixed rate. This must never become "VIP Escort to Port Royale is
+  // $125" as a standing price.
+  it('VIP escort $125 for one guest\'s specific flight — customer_scoped, must not become a standing VIP rate', async () => {
+    const text =
+      'Actually the total will be $125 for 2 and it covers VIP Escort to Port Royale for arrival and transportation round trip. The escort is only for the arrival on their 10:45 flight on American Airlines.'
+    classifyMock = async () =>
+      ok({
+        learnable: true,
+        explicitness: 'explicit_correction',
+        scope: { kind: 'customer_scoped', target: 'customer' },
+        risk: 'low',
+        destination: 'pricing',
+        canonicalKey: 'vip-escort-port-royale-price',
+        confidence: 0.85,
+        rationale: 'price is explicitly scoped to one guest\'s specific flight arrival, not a standing rate',
+        pricing: { serviceName: 'VIP Pickup & Meet and Greet', tierName: null, variant: null, priceAmount: 125, isFlat: true },
+      })
+    await routeOperatorLearningCorrection({ ...baseInput, operatorText: text })
+    expect(writerCalls).toHaveLength(0)
+    expect(holdGenericCalls).toHaveLength(0) // customer-scoped never even becomes a "should this be global?" candidate
+    expect(auditCalls[auditCalls.length - 1]).toMatchObject({ decision: 'no_op' })
+  })
+
+  // FOUND: 2026-06-26 12:11:56 (Karenda/Mrs. Max, owner): "just tell him we
+  // will refund him and end the convo there" — a directive about ONE
+  // specific complaint (the same-day Heritage Tour complaint thread). 38
+  // minutes later (12:49:55), a SEPARATE, general refund policy was stated
+  // and correctly captured as a standing business_facts row ("Refunds are
+  // never issued immediately. All refund requests require further
+  // investigation..."). The one-off directive and the general policy are
+  // not just different scope — they're OPPOSITE operational stances
+  // (immediate refund vs. investigate-first). This is real evidence that
+  // an in-the-moment directive about one complaint must never be read as
+  // the standing policy, even when it precedes the real policy statement
+  // in the same conversation.
+  it('"refund him" — a one-off directive for one complaint, must not become "we always refund immediately"', async () => {
+    const text = 'Just tell him we will refund him and end the conversation there.'
+    classifyMock = async () =>
+      ok({
+        learnable: true,
+        explicitness: 'explicit_statement',
+        scope: { kind: 'customer_scoped', target: 'customer' },
+        risk: 'consequential',
+        destination: 'business_fact',
+        canonicalKey: 'heritage-tour-complaint-refund-directive',
+        confidence: 0.8,
+        rationale: 'a directive to resolve one specific complaint, not a statement of standing refund policy',
+        businessFact: { category: 'policy', text: 'We will refund this guest and close out the conversation.' },
+      })
+    await routeOperatorLearningCorrection({ ...baseInput, operatorText: text })
+    expect(writerCalls).toHaveLength(0)
+    expect(auditCalls[auditCalls.length - 1]).toMatchObject({ decision: 'no_op' })
+  })
+})
+
 describe('real Bimini history — category A/E discipline (correctly captured, or correctly NOT generalized)', () => {
   // FOUND: 2026-08-10, inbound: "...i want to tell that to a customer" —
   // surface framing sounds customer-specific, but the actual content states

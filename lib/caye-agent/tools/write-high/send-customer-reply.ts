@@ -96,21 +96,6 @@ Front-desk replies are evidence-gated rather than separately operator-gated. If 
       }
     }
 
-    // Freshness re-check: an operator can teach a date-specific restriction
-    // (via the operator-learning router) WHILE this turn is in flight — the
-    // draft may have been composed against availability state that's since
-    // changed. This re-fetches service_date_overrides fresh, right before
-    // dispatch, rather than trusting whatever the prompt saw when it was built.
-    const staleOverride = await staleDateOverrideConflict(supabase, ctx.workspaceId, args.conversation_id, body)
-    if (staleOverride) {
-      return {
-        ok: false,
-        status: 'CONFLICT',
-        error_code: 'STALE_DATE_OVERRIDE',
-        error: `Availability changed since this draft was composed: ${staleOverride} Nothing was sent — re-check availability and rewrite.`,
-      }
-    }
-
     const [businessFacts, businessSentThread, ownerInstructionText] = await Promise.all([
       fetchBusinessFacts(ctx.workspaceId),
       fetchAuthoritativeThread(supabase, args.conversation_id, 'business'),
@@ -231,6 +216,40 @@ Front-desk replies are evidence-gated rather than separately operator-gated. If 
         error_code: 'INSUFFICIENT_EVIDENCE',
         error: ownerNoteFor(disposition),
         data: { missing: disposition.missing },
+      }
+    }
+
+    // LAST content check before dispatch, deliberately — not run earlier in
+    // this function. An operator can teach a date-specific restriction (via
+    // the operator-learning router) WHILE this exact turn is in flight; the
+    // draft above was composed against whatever availability state existed
+    // when the prompt was built, which can be seconds to minutes stale by
+    // the time execution reaches here. Re-fetches service_date_overrides
+    // fresh, right now, rather than trusting anything read earlier.
+    //
+    // COMPOSITION WITH PR #132 (conversation-execution-coordination, open/
+    // unmerged as of this writing): that work adds a claim/validate/dispatch
+    // sequence whose own last-possible-guard call
+    // (validateConversationExecution, from lib/conversation-execution.ts)
+    // sits at this EXACT point in this file — immediately before
+    // dispatchOperatorReply, after every other content guard. This is
+    // deliberate: whichever of the two PRs merges second should place these
+    // two calls adjacent to each other, in this order:
+    //   1. staleDateOverrideConflict (this check)      — is the CONTENT still true?
+    //   2. validateConversationExecution (PR #132)     — is this call still the
+    //      valid holder of the right to send at all?
+    //   3. dispatchOperatorReply                        — send.
+    // Content freshness and execution-ownership are orthogonal concerns —
+    // neither needs the other's internals — so no shared coordinator/lock
+    // object is needed; positional adjacency in this one function is the
+    // entire integration. This code imports nothing from PR #132's branch.
+    const staleOverride = await staleDateOverrideConflict(supabase, ctx.workspaceId, args.conversation_id, body)
+    if (staleOverride) {
+      return {
+        ok: false,
+        status: 'CONFLICT',
+        error_code: 'STALE_DATE_OVERRIDE',
+        error: `Availability changed since this draft was composed: ${staleOverride} Nothing was sent — re-check availability and rewrite.`,
       }
     }
 

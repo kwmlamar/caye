@@ -35,6 +35,37 @@ const WRITE_AUTHORIZED_ROLES: Role[] = ['owner', 'founder']
 const LOW_RISK_MIN_CONFIDENCE = 0.55
 const CONSEQUENTIAL_MIN_CONFIDENCE = 0.75
 
+/**
+ * THE CONSEQUENTIAL-WRITE INVARIANT (2026-08-26 historical-learning audit,
+ * re-review requested explicitly: "classifier confidence must never itself
+ * be sufficient authority"). A consequential live write is only ever
+ * permitted when ALL FIVE of these hold — confidence is not one of them:
+ *
+ *   1. authorized operator        — WRITE_AUTHORIZED_ROLES, checked below.
+ *   2. explicit statement/correction — never inferred_from_action/ambiguous,
+ *      checked below.
+ *   3. deterministic scope validation — scope.target is a real, resolved
+ *      entity, never 'unknown' (checkConsequentialScopeResolved below).
+ *   4. deterministic destination resolution — the actual target row/service
+ *      genuinely exists. This function cannot verify it (no DB access here
+ *      by design — see the module doc above); enforced downstream in every
+ *      writer: pricing/availability/contact already refuse unconditionally
+ *      on a failed lookup regardless of risk, and business-fact-writer.ts
+ *      refuses specifically for consequential + service-scoped content
+ *      where a low-risk fact would otherwise fall back to workspace-wide.
+ *   5. no unresolved contradiction — also writer-side (findConflictingFact
+ *      + findSemanticFactMatch, both fail CLOSED on infra error), because
+ *      contradiction detection is an LLM judgment against live active facts
+ *      and cannot happen in a pure function.
+ *
+ * Confidence is used ONLY as an additional bar past this invariant, on top
+ * of everything above — never as a substitute for any of it. A maximally
+ * confident classification with an unresolved scope target still holds.
+ */
+export function checkConsequentialScopeResolved(c: ClassificationResult): boolean {
+  return c.scope.target !== 'unknown'
+}
+
 export function decideRouting(input: { classification: ClassificationResult; callerRole: Role }): RoutingPlan {
   const c = input.classification
 
@@ -113,15 +144,13 @@ export function decideRouting(input: { classification: ClassificationResult; cal
     return { action: 'candidate', destination, reason: `explicitness is ${c.explicitness} — requires confirmation before writing live` }
   }
 
-  // Deterministic gate for consequential content, independent of confidence
-  // (added after the 2026-08-26 historical-learning audit, per the rule that
-  // classifier confidence is evidence about INTERPRETATION, not authority to
-  // mutate consequential business state). A model can be highly confident
-  // about a badly-scoped read of a consequential statement; confidence alone
-  // cannot certify that the payload's scope is even structurally sound. A
-  // consequential write is only eligible to proceed past this point when the
-  // scope target is a real, resolved entity — never 'unknown'.
-  if (c.risk === 'consequential' && c.scope.target === 'unknown') {
+  // Condition 3 of the consequential-write invariant (see the module-level
+  // doc above) — conditions 1 (authorized operator) and 2 (explicit
+  // statement/correction) were already checked above and apply to every
+  // write, not only consequential ones. Conditions 4 (destination
+  // resolution) and 5 (no unresolved contradiction) are enforced downstream
+  // in the writers, where DB access actually exists.
+  if (c.risk === 'consequential' && !checkConsequentialScopeResolved(c)) {
     return {
       action: 'candidate',
       destination,

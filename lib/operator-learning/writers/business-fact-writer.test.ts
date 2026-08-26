@@ -134,14 +134,49 @@ describe('writeBusinessFact', () => {
     expect(rpcParams).toMatchObject({ p_service_id: 'svc-1' })
   })
 
-  it('still writes workspace-wide (service_id null) when service resolution fails rather than blocking the save', async () => {
+  it('still writes workspace-wide (service_id null) when LOW-risk service resolution fails rather than blocking the save', async () => {
     serviceLookupResult = { ok: false, error: 'ambiguous' }
     const c = classification({
+      risk: 'low',
       scope: { kind: 'standing', target: 'service', serviceName: 'Some Tour', dateISO: null },
     })
     const outcome = await writeBusinessFact({ workspaceId: 'ws-1', callerRole: 'owner', classification: c })
     expect(outcome.decision).toBe('written')
     expect(rpcParams).toMatchObject({ p_service_id: null })
+  })
+
+  // Deterministic destination resolution for consequential content — added
+  // after the 2026-08-26 audit's re-review of the "confidence must never
+  // itself be sufficient authority" invariant. Every other destination
+  // (pricing, availability, contact) already refuses outright on a failed
+  // service lookup regardless of risk; business_fact's low-risk fallback
+  // (service_id null, workspace-wide) is fine for an ordinary fact, but
+  // silently broadening a CONSEQUENTIAL service-specific policy to
+  // workspace-wide because the name didn't resolve is exactly the kind of
+  // scope-widening a deterministic gate — not a confidence threshold — must
+  // catch.
+  it('holds as a candidate (does not write workspace-wide) when CONSEQUENTIAL service-scoped resolution fails', async () => {
+    serviceLookupResult = { ok: false, error: 'ambiguous match for "Full Bimini"' }
+    const c = classification({
+      risk: 'consequential',
+      scope: { kind: 'standing', target: 'service', serviceName: 'Full Bimini', dateISO: null },
+      businessFact: { category: 'policy', text: 'Refunds for this tour now require 14 days notice.' },
+    })
+    const outcome = await writeBusinessFact({ workspaceId: 'ws-1', callerRole: 'owner', classification: c })
+    expect(outcome.decision).toBe('candidate')
+    expect(rpcParams).toBeNull()
+  })
+
+  it('still writes consequential content when service resolution succeeds', async () => {
+    serviceLookupResult = { ok: true, service: { id: 'svc-1', name: 'Full Bimini Experience' } }
+    const c = classification({
+      risk: 'consequential',
+      scope: { kind: 'standing', target: 'service', serviceName: 'Full Bimini', dateISO: null },
+      businessFact: { category: 'policy', text: 'Refunds for this tour now require 14 days notice.' },
+    })
+    const outcome = await writeBusinessFact({ workspaceId: 'ws-1', callerRole: 'owner', classification: c })
+    expect(outcome.decision).toBe('written')
+    expect(rpcParams).toMatchObject({ p_service_id: 'svc-1' })
   })
 
   it('surfaces an RPC error (e.g. concurrent-write constraint violation) as decision=error, not a silent success', async () => {

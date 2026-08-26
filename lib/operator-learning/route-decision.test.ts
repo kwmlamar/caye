@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { decideRouting } from './route-decision'
+import { decideRouting, checkConsequentialScopeResolved } from './route-decision'
 import type { ClassificationResult, Scope } from './schema'
 
 const scope = (over: Partial<Scope> = {}): Scope => ({
@@ -180,6 +180,15 @@ describe('decideRouting', () => {
       callerRole: 'owner',
     })
     expect(plan.action).toBe('candidate')
+  })
+
+  it('checkConsequentialScopeResolved: false only for target=unknown, true for every real target', () => {
+    expect(checkConsequentialScopeResolved(base({ scope: scope({ target: 'unknown' }) }))).toBe(false)
+    expect(checkConsequentialScopeResolved(base({ scope: scope({ target: 'workspace' }) }))).toBe(true)
+    expect(checkConsequentialScopeResolved(base({ scope: scope({ target: 'service' }) }))).toBe(true)
+    expect(checkConsequentialScopeResolved(base({ scope: scope({ target: 'specific_date' }) }))).toBe(true)
+    expect(checkConsequentialScopeResolved(base({ scope: scope({ target: 'customer' }) }))).toBe(true)
+    expect(checkConsequentialScopeResolved(base({ scope: scope({ target: 'person' }) }))).toBe(true)
   })
 
   it('candidate, not no_op, when scope/destination shape is internally inconsistent (standing scope but availability_date destination)', () => {

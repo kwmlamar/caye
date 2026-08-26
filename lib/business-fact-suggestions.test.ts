@@ -22,6 +22,7 @@ interface CandidateRow {
 let existingCandidate: CandidateRow | null = null
 let candidateUpdates: Record<string, unknown>[] = []
 let operatorMessagesInserted: Record<string, unknown>[] = []
+let candidateInserts: Record<string, unknown>[] = []
 
 vi.mock('@/lib/business-facts', () => ({
   // Simulates the router having already written this fact — a fresh read,
@@ -56,6 +57,9 @@ vi.mock('@/lib/supabase-server', () => ({
               eq: () => ({
                 maybeSingle: async () => ({ data: existingCandidate, error: null }),
               }),
+              // Open-candidate semantic-merge lookup (only reached when no
+              // exact-normalized-text match was found above).
+              in: async () => ({ data: [], error: null }),
             }),
           }),
           update: (patch: Record<string, unknown>) => ({
@@ -64,6 +68,10 @@ vi.mock('@/lib/supabase-server', () => ({
               return { error: null }
             },
           }),
+          insert: (row: Record<string, unknown>) => {
+            candidateInserts.push(row)
+            return { error: null }
+          },
         }
       }
       if (table === 'caye_operator_messages') {
@@ -85,6 +93,7 @@ beforeEach(() => {
   existingCandidate = null
   candidateUpdates = []
   operatorMessagesInserted = []
+  candidateInserts = []
   semanticMatchId = 'fact-router-1'
 })
 
@@ -112,6 +121,49 @@ describe('maybeSuggestBusinessFacts — double-capture avoidance', () => {
     expect(candidateUpdates.some((u) => u.status === 'proposed')).toBe(false)
     // No duplicate proposal ever written into the operator's sliding window.
     expect(operatorMessagesInserted).toHaveLength(0)
+  })
+
+  // Real production case (2026-08-26 historical-learning audit, Bimini
+  // Island Tours): business_fact_candidates row 683ad270-... ("It is free,
+  // it runs continuously and the Casino stop is one of the stops...") sat
+  // at occurrence_count=2, status='pending' — BELOW OCCURRENCE_THRESHOLD (3)
+  // — even three minutes AFTER the authoritative fact ("The pickup location
+  // for all tours is the Casino Tram Stop...") was saved via a different
+  // path. The old code only ever checked overlapsExistingFact once a
+  // candidate crossed the propose threshold, so a stale below-threshold
+  // candidate was never cleaned up. This proves the fix: the check now runs
+  // on every re-occurrence, not just at the threshold.
+  it('resolves a stale BELOW-THRESHOLD candidate the moment it is re-touched, without waiting for occurrence_count to reach the propose threshold (real Casino Tram Stop case)', async () => {
+    existingCandidate = {
+      id: 'candidate-683ad270',
+      status: 'pending',
+      occurrence_count: 1, // well below OCCURRENCE_THRESHOLD (3)
+      conversation_ids: ['c1'],
+      sample_text: 'You are welcome to take the free tram directly to the Casino Tram Stop.',
+    }
+
+    await maybeSuggestBusinessFacts(
+      'ws-1',
+      'c2',
+      'It is free, it runs continuously, and the Casino stop is one of the stops — nothing to figure out.'
+    )
+
+    expect(candidateUpdates.some((u) => u.status === 'resolved')).toBe(true)
+    // Never reached the propose step at all — no ping, no sliding-window insert.
+    expect(operatorMessagesInserted).toHaveLength(0)
+  })
+
+  // Same fix, the other entry point: a sentence that would otherwise start
+  // a BRAND NEW candidate is never even inserted when it already matches
+  // active knowledge — not just cleaned up after the fact.
+  it('never creates a new candidate for a first-time sentence that already matches an active fact', async () => {
+    existingCandidate = null // no candidate row exists yet at all
+    await maybeSuggestBusinessFacts(
+      'ws-1',
+      'c1',
+      'Guests can take the free tram directly to the Casino Tram Stop for pickup.'
+    )
+    expect(candidateInserts).toHaveLength(0)
   })
 
   it('still proposes normally when nothing matches an existing fact (the router has NOT captured this topic)', async () => {

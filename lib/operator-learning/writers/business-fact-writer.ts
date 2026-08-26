@@ -96,9 +96,25 @@ export async function writeBusinessFact(args: {
   let serviceId: string | null = null
   if (args.classification.scope.target === 'service' && args.classification.scope.serviceName) {
     const lookup = await resolveServiceByName(supabase, args.workspaceId, args.classification.scope.serviceName)
-    if (lookup.ok) serviceId = lookup.service.id
-    // Resolution failure is not fatal here — the fact text itself still
-    // names the service in prose; it just won't carry a structural
+    if (lookup.ok) {
+      serviceId = lookup.service.id
+    } else if (args.classification.risk === 'consequential') {
+      // Consequential content is the one case where a "best-effort, fall
+      // back to workspace-wide" resolution isn't good enough: writing a
+      // service-specific refund/payment/legal policy as workspace-wide
+      // because the service name didn't resolve would silently broaden its
+      // scope beyond what was actually said. Every other write tool's
+      // deterministic destination resolution (pricing, availability,
+      // contact) already refuses outright on a failed lookup regardless of
+      // risk — this makes business_fact consistent with that for the one
+      // risk tier where the gap matters.
+      return {
+        decision: 'candidate',
+        reason: `consequential content scoped to a specific service, but "${args.classification.scope.serviceName}" did not resolve: ${lookup.error}`,
+      }
+    }
+    // Low-risk resolution failure is not fatal — the fact text itself
+    // still names the service in prose; it just won't carry a structural
     // service_id, the same as every fact saved before this migration.
   }
 
