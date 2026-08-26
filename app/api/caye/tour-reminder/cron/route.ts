@@ -28,9 +28,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase-server'
 import { dispatchOperatorReply } from '@/lib/whatsapp/channel-dispatch'
 import { BOOKING_WITH_SERVICE_PRICE_SELECT, type ServiceJoin } from '@/lib/caye-agent/tools/_revenue'
+import { claimConversationExecution, completeConversationExecution, validateConversationExecution } from '@/lib/conversation-execution'
 
 interface BookingRow {
   id: string
+  user_id: string
   customer_name: string | null
   booking_date: string
   booking_time: string | null
@@ -86,7 +88,7 @@ async function processBatch(args: {
   const { data, error } = await supabase
     .from('bookings')
     .select(
-      `id, customer_name, booking_date, booking_time, conversation_id, ${BOOKING_WITH_SERVICE_PRICE_SELECT}`
+      `id, user_id, customer_name, booking_date, booking_time, conversation_id, ${BOOKING_WITH_SERVICE_PRICE_SELECT}`
     )
     .eq('status', 'confirmed')
     .eq('booking_date', args.dateStr)
@@ -114,7 +116,24 @@ async function processBatch(args: {
       `Reply here if anything's changed on your end.`
 
     try {
+      const execution = await claimConversationExecution({
+        workspaceId: row.user_id,
+        conversationId: row.conversation_id,
+        holder: 'scheduled_system',
+        idempotencyKey: `tour-reminder:${args.column}:${row.id}`,
+        reason: 'tour reminder',
+      })
+      if (!execution.ok) {
+        args.onSkipped()
+        continue
+      }
+      const validated = await validateConversationExecution({ claimId: execution.claim.id })
+      if (!validated.ok) {
+        args.onSkipped()
+        continue
+      }
       await dispatchOperatorReply(row.conversation_id, body, 'caye-dashboard')
+      await completeConversationExecution(execution.claim.id)
       await supabase
         .from('bookings')
         .update({ [args.column]: new Date().toISOString() })

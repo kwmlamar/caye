@@ -5,6 +5,7 @@ import { loggedMessagesCreate } from '@/lib/llm-telemetry'
 import { syncBookingToCalendar } from '@/lib/calendar-sync'
 import { dispatchOperatorReply } from '@/lib/whatsapp/channel-dispatch'
 import { sendZohoEmail } from '@/lib/email-ai'
+import { claimConversationExecution, completeConversationExecution, releaseConversationExecution, validateConversationExecution } from '@/lib/conversation-execution'
 
 interface HistoryMessage {
   from: 'user' | 'caye'
@@ -445,8 +446,26 @@ async function runSendReply(
     return { error: 'Conversation does not belong to your workspace' }
   }
 
+  const execution = await claimConversationExecution({
+    workspaceId,
+    conversationId: conversation_id,
+    holder: 'operator_caye',
+    idempotencyKey: `caye-command:${workspaceId}:${conversation_id}:${Date.now()}`,
+    reason: 'Caye Command chat send_reply',
+    leaseSeconds: 120,
+  })
+  if (!execution.ok) {
+    return { error: `This conversation is currently being handled by ${execution.blockedBy}. Reload it before sending.` }
+  }
+  const validated = await validateConversationExecution({ claimId: execution.claim.id })
+  if (!validated.ok) {
+    await releaseConversationExecution(execution.claim.id)
+    return { error: `Conversation changed before dispatch (${validated.reason}). Reload before sending.` }
+  }
+
   try {
     const result = await dispatchOperatorReply(conversation_id, body, 'caye-dashboard')
+    await completeConversationExecution(execution.claim.id)
     return {
       success: true,
       channel: result.channelType,
@@ -454,6 +473,7 @@ async function runSendReply(
       preview: body.trim().slice(0, 160),
     }
   } catch (err) {
+    await releaseConversationExecution(execution.claim.id).catch(() => undefined)
     const msg = err instanceof Error ? err.message : String(err)
     console.error('[caye/chat] send_reply failed:', msg)
     return { error: msg }

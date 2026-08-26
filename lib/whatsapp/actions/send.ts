@@ -2,9 +2,10 @@ import 'server-only'
 import { dispatchOperatorReply } from '../channel-dispatch'
 import { resolveItemRef, type PendingHeldItem } from '../pending'
 import type { ActionContext, ActionResult } from './types'
+import { claimConversationExecution, completeConversationExecution, releaseConversationExecution, validateConversationExecution } from '@/lib/conversation-execution'
 
 export async function actionSend(
-  _ctx: ActionContext,
+  ctx: ActionContext,
   intent: { item_ref?: string },
   pending: PendingHeldItem[]
 ): Promise<ActionResult> {
@@ -25,13 +26,37 @@ export async function actionSend(
     }
   }
 
+  const execution = await claimConversationExecution({
+    workspaceId: ctx.workspaceId,
+    conversationId: item.conversationId,
+    holder: 'operator_caye',
+    idempotencyKey: `whatsapp-approve:${item.conversationId}:${Date.now()}`,
+    reason: 'operator approved held item via WhatsApp',
+  })
+  if (!execution.ok) {
+    return {
+      ackBody: `This conversation is currently being handled by ${execution.blockedBy} — reload before sending to ${item.contactName}.`,
+      tag: { label: `send ${item.contactName}`, status: 'failed' },
+    }
+  }
+  const validated = await validateConversationExecution({ claimId: execution.claim.id })
+  if (!validated.ok) {
+    await releaseConversationExecution(execution.claim.id)
+    return {
+      ackBody: `Conversation changed before this could be sent (${validated.reason}) — reload before sending to ${item.contactName}.`,
+      tag: { label: `send ${item.contactName}`, status: 'failed' },
+    }
+  }
+
   try {
     await dispatchOperatorReply(item.conversationId, item.proposedReply)
+    await completeConversationExecution(execution.claim.id)
     return {
       ackBody: `Done. Sent to ${item.contactName}.`,
       tag: { label: `send ${item.contactName}`, status: 'ok' },
     }
   } catch (err) {
+    await releaseConversationExecution(execution.claim.id).catch(() => undefined)
     const msg = err instanceof Error ? err.message : String(err)
     console.error('[actions/send] dispatch failed:', msg)
     return {

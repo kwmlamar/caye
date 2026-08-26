@@ -3,7 +3,7 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { dispatchOperatorReply } from '@/lib/whatsapp/channel-dispatch'
 import type { Tool } from '../types'
 import { bookingRevenue, BOOKING_WITH_SERVICE_PRICE_SELECT, type ServiceJoin } from '../_revenue'
-import { claimConversationExecution, completeConversationExecution, validateConversationExecution } from '@/lib/conversation-execution'
+import { claimConversationExecution, completeConversationExecution, releaseConversationExecution, validateConversationExecution } from '@/lib/conversation-execution'
 
 interface SendPaymentConfirmationInput {
   customer_name: string
@@ -145,6 +145,7 @@ export const sendPaymentConfirmation: Tool<SendPaymentConfirmationInput> = {
       `We'll follow up with any final logistics before your tour date. If anything changes on your end, just reply here.\n\n` +
       `Looking forward to it!`
 
+    let claimId: string | null = null
     try {
       const execution = await claimConversationExecution({
         workspaceId: ctx.workspaceId,
@@ -154,6 +155,7 @@ export const sendPaymentConfirmation: Tool<SendPaymentConfirmationInput> = {
         reason: 'payment confirmation',
       })
       if (!execution.ok) return { ok: false, status: 'CONFLICT', error: `Customer conversation is being handled by ${execution.blockedBy}; payment confirmation was not sent.` }
+      claimId = execution.claim.id
       const validated = await validateConversationExecution({ claimId: execution.claim.id })
       if (!validated.ok) return { ok: false, status: 'CONFLICT', error: `Customer conversation changed before payment confirmation (${validated.reason}). Nothing was sent.` }
       const result = await dispatchOperatorReply(conversationId, body, 'caye-dashboard')
@@ -166,7 +168,7 @@ export const sendPaymentConfirmation: Tool<SendPaymentConfirmationInput> = {
           status: booking.status === 'pending' ? 'confirmed' : booking.status,
         })
         .eq('id', booking.id)
-      await completeConversationExecution(execution.claim.id)
+      await completeConversationExecution(claimId)
 
       return {
         ok: true,
@@ -178,6 +180,7 @@ export const sendPaymentConfirmation: Tool<SendPaymentConfirmationInput> = {
         },
       }
     } catch (err) {
+      if (claimId) await releaseConversationExecution(claimId).catch(() => undefined)
       const msg = err instanceof Error ? err.message : String(err)
       return { ok: false, error: `Send failed: ${msg}` }
     }

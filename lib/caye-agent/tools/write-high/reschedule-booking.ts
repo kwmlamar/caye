@@ -84,6 +84,8 @@ export const rescheduleBooking: Tool<RescheduleBookingInput> = {
     const calendarDeferred = !calendar.synced && calendar.deferred === true
 
     const notify = await maybeNotifyCustomer({
+      workspaceId: ctx.workspaceId,
+      bookingId: args.booking_id,
       conversationId: lookup.booking.conversation_id,
       notify: args.notify_customer ?? true,
       body: args.notification_body,

@@ -56,6 +56,8 @@ export const confirmBooking: Tool<ConfirmBookingInput> = {
     if (error) return { ok: false, error: error.message }
 
     const notify = await maybeNotifyCustomer({
+      workspaceId: ctx.workspaceId,
+      bookingId: args.booking_id,
       conversationId: lookup.booking.conversation_id,
       notify: args.notify_customer ?? true,
       body: args.notification_body,

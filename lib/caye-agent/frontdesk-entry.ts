@@ -118,6 +118,11 @@ export async function runConvergedFrontDeskTurn(
   input: ConvergedFrontDeskTurnInput
 ): Promise<ConvergedFrontDeskTurnResult> {
   const supabase = createServiceClient()
+  // Hoisted so the catch block can release a claim acquired before the
+  // crash — otherwise a mid-turn throw leaves the conversation claimed by
+  // an execution that no longer exists until the lease naturally expires,
+  // blocking the operator from replying to a thread Caye already gave up on.
+  let executionClaimId: string | null = null
 
   try {
     // Owner policy beats model judgment, always (#88). Resolve standing
@@ -167,6 +172,7 @@ export async function runConvergedFrontDeskTurn(
         holdReason: `Another customer-facing execution (${execution.blockedBy}) owns this conversation; autonomous Caye yielded.`,
       }
     }
+    executionClaimId = execution.claim.id
 
     const [{ history: historyForModel }, relationshipCtx, operational, { data: customerRow }] = await Promise.all([
       // loadFrontDeskConversationContext's `history` field is ALREADY
@@ -288,6 +294,11 @@ export async function runConvergedFrontDeskTurn(
       await markHeld(supabase, input, holdReason)
     } catch (holdErr) {
       console.error('[frontdesk-entry] also failed to record the fallback hold:', holdErr)
+    }
+    if (executionClaimId) {
+      await releaseConversationExecution(executionClaimId).catch((releaseErr) => {
+        console.error('[frontdesk-entry] also failed to release the execution claim:', releaseErr)
+      })
     }
     return { outcome: 'error', toolsUsed: [], usedOutputFallbackPath: false, errorMessage: message, holdReason }
   }

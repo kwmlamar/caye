@@ -4,7 +4,7 @@ import { dispatchOperatorReply } from '@/lib/whatsapp/channel-dispatch'
 import type { Tool } from '../types'
 import { assertConversationOwnedByWorkspace, resolveOpenEscalations } from '../write-low/_guards'
 import { unsupportedLogisticsTimeClaims } from '../../logistics-grounding'
-import { completeConversationExecution, validateConversationExecution } from '@/lib/conversation-execution'
+import { completeConversationExecution, releaseConversationExecution, validateConversationExecution } from '@/lib/conversation-execution'
 
 interface SendReplyInput {
   conversation_id: string
@@ -123,6 +123,7 @@ Customer never knows the operator delegated to you.`,
         },
       }
     } catch (err) {
+      if (ctx.executionClaimId) await releaseConversationExecution(ctx.executionClaimId).catch(() => undefined)
       const msg = err instanceof Error ? err.message : String(err)
       return { ok: false, error: `Send failed: ${msg}` }
     }

@@ -2,7 +2,7 @@ import 'server-only'
 import { randomUUID } from 'node:crypto'
 import { createServiceClient } from '@/lib/supabase-server'
 import type { Tool, ToolContext, ToolResult } from './types'
-import { claimConversationExecution } from '@/lib/conversation-execution'
+import { claimConversationExecution, releaseConversationExecution } from '@/lib/conversation-execution'
 
 const PENDING_TTL_MINUTES = 15
 
@@ -327,6 +327,7 @@ export function gateHighRisk<T>(tool: Tool<T>, ttlMinutes: number = PENDING_TTL_
         execution_claim_id: executionClaimId,
       })
       if (error) {
+        if (executionClaimId) await releaseConversationExecution(executionClaimId).catch(() => undefined)
         return { ok: false, error: `Could not stage this action: ${error.message}` }
       }
 
