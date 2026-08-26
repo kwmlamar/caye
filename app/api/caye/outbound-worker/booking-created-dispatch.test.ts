@@ -4,14 +4,16 @@ vi.mock('server-only', () => ({}))
 
 /**
  * bookingCreatedDispatchCancelReason — the dispatch-time re-check that
- * closes the quiet-hours race (2026-08-26 Autumn McNeill incident, PR #135
- * review requirement 6): a booking_created row can sit queued for hours
- * (deferred past quiet hours), during which the operator may go handle the
- * conversation directly. This must catch that regardless of whether the
- * queued row is the FIRST notification for this booking or a LATER one
- * enqueued after a genuine material state change (the idempotency fix) —
- * the check re-fetches the booking fresh every time and isn't keyed off
- * which "generation" of row it's checking.
+ * closes the quiet-hours race (2026-08-26 Autumn McNeill incident). A
+ * booking_created row can sit queued for hours (deferred past quiet
+ * hours), during which either the operator may go handle the conversation
+ * directly, or the booking's authoritative state may move on entirely
+ * (PR #135 review, third finding — the "stale queued state" adversarial
+ * question). This function is the one place both get caught, right before
+ * the send actually goes out, regardless of whether the queued row is the
+ * FIRST notification for this booking or a LATER one enqueued after a
+ * genuine material state change (the idempotency fix) — it re-fetches the
+ * booking fresh every time and isn't keyed off which "generation" it is.
  */
 
 interface Row {
@@ -20,8 +22,8 @@ interface Row {
 
 let BOOKING: Row | null = null
 
-const { hasOperatorParticipatedInConversation } = vi.hoisted(() => ({
-  hasOperatorParticipatedInConversation: vi.fn(),
+const { decideOperatorNotification } = vi.hoisted(() => ({
+  decideOperatorNotification: vi.fn(),
 }))
 
 vi.mock('@/lib/supabase-server', () => ({
@@ -39,7 +41,14 @@ vi.mock('@/lib/supabase-server', () => ({
     },
   }),
 }))
-vi.mock('@/lib/whatsapp/operator-participation', () => ({ hasOperatorParticipatedInConversation }))
+vi.mock('@/lib/whatsapp/operator-notification-gate', () => ({ decideOperatorNotification }))
+// The status/payment -> label mapping is triggers.ts's own concern and is
+// covered by ping-log-body.test.ts's "honest state language" suite —
+// stubbed here to a simple, inspectable value so this file stays about
+// dispatch-time cancellation, not label wording.
+vi.mock('@/lib/whatsapp/triggers', () => ({
+  bookingStateLabel: (status: string, paid: string | null) => (paid ? 'STATE:paid' : `STATE:${status}`),
+}))
 
 // The rest of route.ts's module-level imports are heavy (Meta send stack,
 // cron logging, etc.) — stub every one so importing the module for this one
@@ -62,9 +71,47 @@ vi.mock('@/lib/email/founder-mailer', () => ({ sendFounderAlertEmail: vi.fn() })
 vi.mock('@/lib/whatsapp/delivery-errors', () => ({ extractErrorCode: vi.fn() }))
 vi.mock('@/lib/whatsapp/template-sync', () => ({ resyncTemplatesAfterParamMismatch: vi.fn() }))
 vi.mock('@/lib/pending-operations-worker', () => ({ drainPendingOperationsSafely: vi.fn() }))
-vi.mock('@/lib/owner-attention', () => ({ markAttentionNotified: vi.fn() }))
+vi.mock('@/lib/owner-attention', () => ({
+  markAttentionNotified: vi.fn(),
+  fingerprint: (parts: unknown[]) => JSON.stringify(parts), // deterministic stand-in, not the real hash
+}))
 
 import { bookingCreatedDispatchCancelReason, type QueueRow } from './route'
+
+function pendingBookingFields(over: Partial<Row> = {}): Row {
+  return {
+    status: 'pending',
+    payment_confirmed_at: null,
+    payment_link_sent_at: null,
+    cancelled_at: null,
+    booking_date: '2026-09-05',
+    booking_time: '09:00:00',
+    number_of_people: 2,
+    ...over,
+  }
+}
+
+/** Same field order bookingCreatedDispatchCancelReason fingerprints. */
+function fp(fields: Row): string {
+  return JSON.stringify([
+    fields.status,
+    fields.payment_confirmed_at,
+    fields.payment_link_sent_at,
+    fields.cancelled_at,
+    fields.booking_date,
+    fields.booking_time,
+    fields.number_of_people,
+  ])
+}
+
+function pendingBooking(over: Partial<Row> = {}): Row {
+  return {
+    customer_name: 'Autumn McNeill',
+    conversation_id: 'conv-autumn',
+    ...pendingBookingFields(),
+    ...over,
+  }
+}
 
 function row(over: Partial<QueueRow> = {}): QueueRow {
   return {
@@ -72,21 +119,10 @@ function row(over: Partial<QueueRow> = {}): QueueRow {
     workspace_id: 'ws-bimini',
     kind: 'booking_created',
     conversation_id: 'conv-autumn',
-    payload: { bookingId: 'booking-autumn', guest: 'Autumn McNeill' },
+    payload: { bookingId: 'booking-autumn', guest: 'Autumn McNeill', stateFingerprint: fp(pendingBookingFields()) },
     scheduled_for: '2026-08-26T11:00:00Z',
     failure_count: 0,
     idempotency_key: 'booking-autumn-fp1',
-    ...over,
-  }
-}
-
-function pendingBooking(over: Partial<Row> = {}): Row {
-  return {
-    status: 'pending',
-    cancelled_at: null,
-    conversation_id: 'conv-autumn',
-    created_at: '2026-08-26T01:40:13Z',
-    updated_at: '2026-08-26T01:45:06Z',
     ...over,
   }
 }
@@ -98,13 +134,13 @@ beforeEach(() => {
 
 describe('bookingCreatedDispatchCancelReason', () => {
   it('cancels when the operator has since handled the conversation directly', async () => {
-    hasOperatorParticipatedInConversation.mockResolvedValue(true)
+    decideOperatorNotification.mockResolvedValue({ outcome: 'SUPPRESS_OPERATOR_AWARE', attentionItemId: 'a1', isMaterialChange: false })
     const reason = await bookingCreatedDispatchCancelReason(row())
     expect(reason).toBe('operator handled directly')
   })
 
-  it('proceeds (returns null) when no participation is found', async () => {
-    hasOperatorParticipatedInConversation.mockResolvedValue(false)
+  it('proceeds (returns null) when the gate says send', async () => {
+    decideOperatorNotification.mockResolvedValue({ outcome: 'SEND_NEW', attentionItemId: 'a1', isMaterialChange: false })
     const reason = await bookingCreatedDispatchCancelReason(row())
     expect(reason).toBeNull()
   })
@@ -113,7 +149,7 @@ describe('bookingCreatedDispatchCancelReason', () => {
     BOOKING = pendingBooking({ status: 'cancelled', cancelled_at: '2026-08-26T05:00:00Z' })
     const reason = await bookingCreatedDispatchCancelReason(row())
     expect(reason).toBe('booking cancelled before send')
-    expect(hasOperatorParticipatedInConversation).not.toHaveBeenCalled()
+    expect(decideOperatorNotification).not.toHaveBeenCalled()
   })
 
   it('cancels when the booking is gone entirely', async () => {
@@ -122,35 +158,75 @@ describe('bookingCreatedDispatchCancelReason', () => {
     expect(reason).toBe('booking cancelled before send')
   })
 
-  it('re-fetches the booking fresh rather than trusting the queued payload — catches a LATER-generation row the same way as the first', async () => {
+  it('re-fetches the booking fresh rather than trusting the queued payload — protects a LATER-generation row the same way as the first', async () => {
     // Simulates the idempotency-fix scenario: this queue row was enqueued
-    // for a materially different (confirmed) state than the booking
-    // started at, with its own distinct idempotency key — the dispatch
-    // check doesn't care which generation it is, only what's true now.
-    BOOKING = pendingBooking({ status: 'confirmed', payment_confirmed_at: '2026-08-27T10:00:00Z' })
-    hasOperatorParticipatedInConversation.mockResolvedValue(true)
+    // for a materially different (confirmed+paid) state than a pending
+    // booking, with its own distinct idempotency key AND matching
+    // stateFingerprint — the dispatch check doesn't care which generation
+    // it is, only that the payload still matches current truth.
+    const confirmedPaidFields = pendingBookingFields({ status: 'confirmed', payment_confirmed_at: '2026-08-27T10:00:00Z' })
+    BOOKING = pendingBooking(confirmedPaidFields)
+    decideOperatorNotification.mockResolvedValue({ outcome: 'SUPPRESS_OPERATOR_AWARE', attentionItemId: 'a1', isMaterialChange: false })
     const reason = await bookingCreatedDispatchCancelReason(
-      row({ idempotency_key: 'booking-autumn-fp2-confirmed-paid' })
+      row({
+        idempotency_key: 'booking-autumn-fp2-confirmed-paid',
+        payload: { bookingId: 'booking-autumn', guest: 'Autumn McNeill', stateFingerprint: fp(confirmedPaidFields) },
+      })
     )
     expect(reason).toBe('operator handled directly')
   })
 
-  it('prefers the booking row\'s own conversation_id over the queued row\'s', async () => {
-    BOOKING = pendingBooking({ conversation_id: 'conv-fresh' })
-    hasOperatorParticipatedInConversation.mockResolvedValue(false)
-    await bookingCreatedDispatchCancelReason(row({ conversation_id: 'conv-stale' }))
-    expect(hasOperatorParticipatedInConversation).toHaveBeenCalledWith('conv-fresh', expect.any(String))
+  describe('stale-state guard (PR #135 review, third finding + adversarial question)', () => {
+    it('cancels as stale when the booking has materially moved on since the row was queued — never sends text describing an old state', async () => {
+      // Row was queued while pending; by dispatch time the booking is
+      // confirmed+paid. The queued payload's stateFingerprint (computed at
+      // enqueue time from the PENDING fields) no longer matches current
+      // truth.
+      BOOKING = pendingBooking({ status: 'confirmed', payment_confirmed_at: '2026-08-27T10:00:00Z' })
+      const reason = await bookingCreatedDispatchCancelReason(row()) // row()'s payload.stateFingerprint is the PENDING fp
+      expect(reason).toBe('booking state changed before send')
+      // Never even asks about operator participation for a row that's
+      // going to be cancelled as stale regardless of the answer.
+      expect(decideOperatorNotification).not.toHaveBeenCalled()
+    })
+
+    it('proceeds normally when the payload still matches the current state exactly', async () => {
+      decideOperatorNotification.mockResolvedValue({ outcome: 'SEND_NEW', attentionItemId: 'a1', isMaterialChange: false })
+      const reason = await bookingCreatedDispatchCancelReason(row()) // BOOKING is still pending, matches row()'s payload
+      expect(reason).toBeNull()
+    })
+
+    it('does not treat a legacy row with no stateFingerprint in its payload as unconditionally stale', async () => {
+      BOOKING = pendingBooking({ status: 'confirmed', payment_confirmed_at: '2026-08-27T10:00:00Z' })
+      decideOperatorNotification.mockResolvedValue({ outcome: 'SEND_NEW', attentionItemId: 'a1', isMaterialChange: false })
+      const reason = await bookingCreatedDispatchCancelReason(
+        row({ payload: { bookingId: 'booking-autumn', guest: 'Autumn McNeill' } }) // no stateFingerprint at all
+      )
+      expect(reason).toBeNull()
+      expect(decideOperatorNotification).toHaveBeenCalledTimes(1)
+    })
   })
 
-  it('anchors the participation check to booking.updated_at, not the queue row\'s own timestamps', async () => {
-    hasOperatorParticipatedInConversation.mockResolvedValue(false)
+  it('prefers the booking row\'s own conversation_id over the queued row\'s', async () => {
+    BOOKING = pendingBooking({ conversation_id: 'conv-fresh' })
+    decideOperatorNotification.mockResolvedValue({ outcome: 'SEND_NEW', attentionItemId: 'a1', isMaterialChange: false })
+    await bookingCreatedDispatchCancelReason(row({ conversation_id: 'conv-stale' }))
+    expect(decideOperatorNotification.mock.calls[0][0].conversationId).toBe('conv-fresh')
+  })
+
+  it('re-runs the SAME owner-attention gate enqueueBookingCreated used, with the SAME subject identity and an operator-participation check', async () => {
+    decideOperatorNotification.mockResolvedValue({ outcome: 'SEND_NEW', attentionItemId: 'a1', isMaterialChange: false })
     await bookingCreatedDispatchCancelReason(row())
-    expect(hasOperatorParticipatedInConversation).toHaveBeenCalledWith('conv-autumn', '2026-08-26T01:45:06Z')
+    const call = decideOperatorNotification.mock.calls[0][0]
+    expect(call.subjectType).toBe('booking')
+    expect(call.subjectId).toBe('booking-autumn')
+    expect(call.priority).toBe('awareness')
+    expect(call.operatorParticipationCheck).toEqual({ conversationId: 'conv-autumn' })
   })
 
   it('is a no-op when the row carries no bookingId', async () => {
     const reason = await bookingCreatedDispatchCancelReason(row({ payload: {} }))
     expect(reason).toBeNull()
-    expect(hasOperatorParticipatedInConversation).not.toHaveBeenCalled()
+    expect(decideOperatorNotification).not.toHaveBeenCalled()
   })
 })

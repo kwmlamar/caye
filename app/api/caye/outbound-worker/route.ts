@@ -35,8 +35,9 @@ import { extractErrorCode } from '@/lib/whatsapp/delivery-errors'
 import { resyncTemplatesAfterParamMismatch } from '@/lib/whatsapp/template-sync'
 import { detectInternalLeak } from '@/lib/operator-text-guard'
 import { drainPendingOperationsSafely } from '@/lib/pending-operations-worker'
-import { markAttentionNotified, SUBJECT_CONVERSATION } from '@/lib/owner-attention'
-import { hasOperatorParticipatedInConversation } from '@/lib/whatsapp/operator-participation'
+import { markAttentionNotified, fingerprint, SUBJECT_CONVERSATION } from '@/lib/owner-attention'
+import { decideOperatorNotification } from '@/lib/whatsapp/operator-notification-gate'
+import { bookingStateLabel } from '@/lib/whatsapp/triggers'
 
 // Kinds that represent Caye proactively messaging an operator about
 // something (as opposed to system plumbing like otp/welcome/ack) — these
@@ -530,11 +531,13 @@ async function processRow(row: QueueRow): Promise<RowOutcome> {
 
 /**
  * What, if anything, should cancel a booking_created row right before it
- * dispatches — booking cancelled since it was queued, or the operator
- * having since handled the linked conversation directly. Returns the
- * cancel() reason string, or null to proceed with the send. Pulled out of
- * processRow as its own function so it's independently testable without
- * mocking every other precondition processRow checks first.
+ * dispatches — the booking having since been cancelled, its payload text
+ * having gone stale (the booking's real state moved on since this row was
+ * queued), or the operator having since handled the linked conversation
+ * directly. Returns the cancel() reason string, or null to proceed with
+ * the send. Pulled out of processRow as its own function so it's
+ * independently testable without mocking every other precondition
+ * processRow checks first.
  */
 export async function bookingCreatedDispatchCancelReason(row: QueueRow): Promise<string | null> {
   const bookingId = typeof row.payload.bookingId === 'string' ? row.payload.bookingId : null
@@ -543,25 +546,69 @@ export async function bookingCreatedDispatchCancelReason(row: QueueRow): Promise
   const supabase = createServiceClient()
   const { data: booking } = await supabase
     .from('bookings')
-    .select('status, cancelled_at, conversation_id, created_at, updated_at')
+    .select(
+      'customer_name, status, payment_confirmed_at, payment_link_sent_at, cancelled_at, booking_date, booking_time, number_of_people, conversation_id'
+    )
     .eq('id', bookingId)
     .maybeSingle()
   if (!booking || booking.status === 'cancelled') {
     return 'booking cancelled before send'
   }
 
+  // Same fields enqueueBookingCreated fingerprints — kept identical so the
+  // two hashes are directly comparable.
+  const fingerprintParts = [
+    booking.status,
+    booking.payment_confirmed_at,
+    booking.payment_link_sent_at,
+    booking.cancelled_at,
+    booking.booking_date,
+    booking.booking_time,
+    booking.number_of_people,
+  ]
+  const currentFp = fingerprint(fingerprintParts)
+  const queuedFp = typeof row.payload.stateFingerprint === 'string' ? (row.payload.stateFingerprint as string) : null
+
+  // A row whose payload no longer matches the booking's CURRENT state is
+  // stale (PR #135 review, third finding + adversarial question): its
+  // guest/summary/stateLabel text describes a state that has since moved
+  // on — e.g. queued while pending, confirmed-and-paid before the
+  // quiet-hours-deferred send actually fired. The worker must never send
+  // text describing an older state than what's now authoritative. Cancel
+  // outright rather than silently rewriting the row in place — a fresh
+  // notification for the NEW state, if one is ever warranted, is a fresh
+  // enqueueBookingCreated call's job (it will get its own fresh
+  // idempotency key), not something this dispatch-time safety check
+  // should try to produce itself. Rows enqueued before payload carried
+  // stateFingerprint (queuedFp === null) skip this check rather than being
+  // treated as unconditionally stale.
+  if (queuedFp !== null && queuedFp !== currentFp) {
+    return 'booking state changed before send'
+  }
+
   const conversationId = booking.conversation_id ?? row.conversation_id
   if (!conversationId) return null
 
-  // Same anchor enqueueBookingCreated used (booking.updated_at, falling
-  // back to created_at) — re-asked fresh at dispatch time rather than
-  // reusing the enqueue-time answer, since quiet-hours deferral can put
-  // hours between the two.
-  const participated = await hasOperatorParticipatedInConversation(
+  // Re-runs the SAME owner-attention gate enqueueBookingCreated used, not
+  // just the low-level participation check (PR #135 review, third
+  // finding) — the gate needs caye_owner_attention.first_state_fingerprint
+  // to pick the correct evidence window ('initial' vs 'post-transition'),
+  // and only the gate has access to that; re-deriving it here from raw
+  // booking fields would duplicate logic that can drift out of sync.
+  const decision = await decideOperatorNotification({
+    workspaceId: row.workspace_id,
+    subjectType: 'booking',
+    subjectId: bookingId,
     conversationId,
-    booking.updated_at ?? booking.created_at
-  )
-  return participated ? 'operator handled directly' : null
+    title: `${booking.customer_name ?? 'A guest'} — ${bookingStateLabel(booking.status, booking.payment_confirmed_at)}`,
+    priority: 'awareness',
+    fingerprintParts,
+    blockedOnOperator: false,
+    resolvableAutonomously: false,
+    operatorParticipationCheck: { conversationId },
+  })
+
+  return decision.outcome === 'SUPPRESS_OPERATOR_AWARE' ? 'operator handled directly' : null
 }
 
 async function dispatch(row: QueueRow, config: WorkspaceConfig): Promise<{ result: SendResult; phone: string }> {

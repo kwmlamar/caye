@@ -545,6 +545,7 @@ describe('autonomy model survives the new prompt blocks', () => {
           operatorAwareFingerprint: null,
           operatorAwareAt: null,
           operatorAwareSummary: null,
+          firstStateFingerprint: null,
         },
       ],
       changed: [],

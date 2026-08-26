@@ -204,14 +204,7 @@ export async function enqueueBookingCreated(input: BookingCreatedInput): Promise
     fingerprintParts,
     blockedOnOperator: false,
     resolvableAutonomously: false,
-    ...(conversationId
-      ? {
-          operatorParticipationCheck: {
-            conversationId,
-            stateSinceISO: booking.updated_at ?? booking.created_at,
-          },
-        }
-      : {}),
+    ...(conversationId ? { operatorParticipationCheck: { conversationId } } : {}),
   })
 
   if (decision.outcome !== 'SEND_NEW' && decision.outcome !== 'SEND_REMINDER' && decision.outcome !== 'SEND_CRITICAL_ESCALATION') {
@@ -230,11 +223,27 @@ export async function enqueueBookingCreated(input: BookingCreatedInput): Promise
   const now = new Date()
   const scheduledFor = inQuietHours(now, cfg) ? nextDigestTime(now, cfg) : now
 
+  // Computed once, reused for both the queue row's identity (idempotencyKey)
+  // and its payload (stateFingerprint) — see each comment below for why the
+  // SAME value has to do both jobs.
+  const stateFp = fingerprint(fingerprintParts)
+
   const queued = await enqueueOutbound({
     workspaceId: input.workspaceId,
     kind: 'booking_created',
     conversationId,
-    payload: { guest, bookingId: input.bookingId, summary, stateLabel },
+    payload: {
+      guest,
+      bookingId: input.bookingId,
+      summary,
+      stateLabel,
+      // Lets the outbound worker's dispatch-time check (PR #135 review,
+      // third finding) tell "this row still describes the CURRENT truth"
+      // from "the booking has moved on since this was queued, and this
+      // row's guest/summary/stateLabel text is now stale" — see
+      // bookingCreatedDispatchCancelReason in the outbound-worker route.
+      stateFingerprint: stateFp,
+    },
     scheduledFor,
     // MUST be state-derived, not just the booking id (fixed 2026-08-26,
     // PR #135 review). enqueueOutbound is permanently idempotent on this
@@ -254,7 +263,7 @@ export async function enqueueBookingCreated(input: BookingCreatedInput): Promise
     // Deliberately NOT updated_at — that bumps on unrelated row churn and
     // would mint a new "identity" for a booking whose reported state
     // hasn't actually moved.
-    idempotencyKey: `booking-${input.bookingId}-${fingerprint(fingerprintParts)}`,
+    idempotencyKey: `booking-${input.bookingId}-${stateFp}`,
   })
 
   if (queued) {
@@ -296,7 +305,7 @@ export async function enqueueBookingCreated(input: BookingCreatedInput): Promise
  * WOULD make a later real transition notify, if a future caller ever
  * invokes this again after creation).
  */
-function bookingStateLabel(status: string, paymentConfirmedAt: string | null): string {
+export function bookingStateLabel(status: string, paymentConfirmedAt: string | null): string {
   if (status === 'cancelled') return 'Booking cancelled'
   if (paymentConfirmedAt) return 'Booking confirmed & paid'
   if (status === 'confirmed') return 'Booking confirmed'

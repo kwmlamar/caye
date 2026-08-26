@@ -127,4 +127,5 @@ export const REPO_MIGRATIONS: readonly string[] = [
   '20260826c_operator_learning_audit',
   '20260826d_business_facts_canonical_key_scope_by_service',
   '20260826e_owner_attention_operator_awareness',
+  '20260826f_owner_attention_first_state_fingerprint',
 ]

@@ -131,10 +131,11 @@ describe('enqueueBookingCreated — Autumn McNeill regression (2026-08-26)', () 
     expect(call.subjectType).toBe('booking')
     expect(call.subjectId).toBe('booking-autumn')
     expect(call.conversationId).toBe('conv-autumn')
-    expect(call.operatorParticipationCheck).toEqual({
-      conversationId: 'conv-autumn',
-      stateSinceISO: '2026-08-26T01:45:06Z', // booking.updated_at
-    })
+    // Deliberately just a conversationId (PR #135 review, second finding)
+    // — the evidence window itself is derived inside the gate from
+    // caye_owner_attention.first_state_fingerprint, never from a
+    // caller-supplied timestamp; see operator-notification-gate.test.ts.
+    expect(call.operatorParticipationCheck).toEqual({ conversationId: 'conv-autumn' })
   })
 
   it('prefers the booking row\'s own conversation_id over the caller-supplied one', async () => {
@@ -298,5 +299,13 @@ describe('enqueueBookingCreated — idempotency identity is state-derived (PR #1
     const key = enqueueOutbound.mock.calls[0][0].idempotencyKey as string
     const expectedFp = fingerprint(bookingFingerprintParts(autumnBooking()))
     expect(key).toBe(`booking-booking-autumn-${expectedFp}`)
+  })
+
+  it('the queued payload also carries stateFingerprint, matching the idempotency key exactly — the outbound worker\'s dispatch-time staleness check depends on this', async () => {
+    await enqueueBookingCreated({ workspaceId: 'ws-bimini', conversationId: 'conv-autumn', bookingId: 'booking-autumn' })
+    const { idempotencyKey, payload } = enqueueOutbound.mock.calls[0][0]
+    const expectedFp = fingerprint(bookingFingerprintParts(autumnBooking()))
+    expect(payload.stateFingerprint).toBe(expectedFp)
+    expect(idempotencyKey).toBe(`booking-booking-autumn-${expectedFp}`)
   })
 })
