@@ -1,4 +1,5 @@
 import type { Tool } from './types'
+import { createServiceClient } from '@/lib/supabase-server'
 import { gateHighRisk } from './high-risk-gate'
 import { HIGH_RISK_TOOLS } from './high-risk-registry'
 import {
@@ -6,6 +7,7 @@ import {
   EXTERNAL_DRAFT_INTENT_REQUIRED,
   verifyExternalDraftIntent,
 } from './external-draft-intent'
+import { updateActiveWork } from '@/lib/whatsapp/active-work'
 import { confirmPendingAction } from './write-high/confirm-pending-action'
 import { getCalendar } from './read/get-calendar'
 import { getZohoCalendar } from './read/get-zoho-calendar'
@@ -163,7 +165,17 @@ function registeredHighRiskTool(tool: AnyTool): AnyTool {
         if (typeof conversationId === 'string') {
           await cancelPendingExternalDraftsForConversation({ ctx, conversationId })
         }
-        return gated.execute(args, ctx)
+        const result = await gated.execute(args, ctx)
+        const body = (args as { body?: unknown }).body
+        if (typeof body === 'string' && body.trim()) {
+          const data = result.data as { executed?: unknown } | undefined
+          await updateActiveWork({
+            supabase: createServiceClient(), workspaceId: ctx.workspaceId, operatorId: ctx.operatorId,
+            work: ctx.activeWork, artifact: body.trim(),
+            status: result.ok && data?.executed !== true ? 'ready' : result.ok ? 'completed' : 'failed',
+          })
+        }
+        return result
       },
     }
   }

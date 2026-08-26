@@ -5,6 +5,8 @@ import {
   applyActiveWorkPrecedence,
   isActiveWorkCorrection,
   seedActiveWork,
+  updateActiveWork,
+  intentWithActiveWork,
 } from './active-work'
 
 describe('active work precedence — Jeff Dworkin regression', () => {
@@ -41,5 +43,40 @@ If you have pictures, please share them with us.`
     expect(applyActiveWorkPrecedence({ kind: 'unclear', ask_back: 'which item?' }, 'change the time to 10', null)).toEqual({
       kind: 'unclear', ask_back: 'which item?',
     })
+  })
+
+  it('persists the revised artifact on the exact Jeff work record', async () => {
+    const work = { ...seedActiveWork(initial, { kind: 'edit', instruction: initial })!, sourceMessageId: 'jeff-work' }
+    const updates: Record<string, unknown>[] = []
+    let query: any
+    query = {
+      select: () => query,
+      eq: () => query,
+      maybeSingle: async () => ({ data: { id: 'jeff-work', intent: intentWithActiveWork({ kind: 'edit', instruction: initial }, work) } }),
+      update: (value: Record<string, unknown>) => { updates.push(value); return query },
+    }
+    const ok = await updateActiveWork({
+      supabase: { from: () => query }, workspaceId: 'ws', operatorId: 1, work,
+      artifact: 'Hi Jeff, James Edden made the day memorable.', status: 'ready',
+    })
+    expect(ok).toBe(true)
+    expect(JSON.stringify(updates[0])).not.toMatch(/husband/)
+    expect(JSON.stringify(updates[0])).toMatch(/James Edden/)
+  })
+
+  it('cannot let a delayed Jeff completion mutate newer Bob work', async () => {
+    const jeff = { ...seedActiveWork(initial, { kind: 'edit', instruction: initial })!, sourceMessageId: 'jeff-work' }
+    const bob = { ...seedActiveWork('Draft a thank you to bob@example.com: Hi Bob', { kind: 'edit', instruction: 'x' })!, sourceMessageId: 'bob-work' }
+    const updates: Record<string, unknown>[] = []
+    let query: any
+    query = {
+      select: () => query,
+      eq: () => query,
+      maybeSingle: async () => ({ data: { id: 'bob-work', intent: intentWithActiveWork({ kind: 'edit', instruction: 'x' }, bob) } }),
+      update: (value: Record<string, unknown>) => { updates.push(value); return query },
+    }
+    const ok = await updateActiveWork({ supabase: { from: () => query }, workspaceId: 'ws', operatorId: 1, work: jeff, status: 'completed' })
+    expect(ok).toBe(false)
+    expect(updates).toHaveLength(0)
   })
 })

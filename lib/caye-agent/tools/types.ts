@@ -211,6 +211,12 @@ export interface ToolContext {
    * caye-reply.ts already uses) rather than silently reasoning in UTC.
    */
   workspaceTimezone?: string | null
+  /** Immutable identity snapshot for the active operator task in this turn. */
+  activeWork?: {
+    sourceMessageId: string
+    entityRef: string
+    operation: 'customer_reply_draft'
+  } | null
 }
 
 /**

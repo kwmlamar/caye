@@ -75,6 +75,7 @@ export interface BackOfficeTurnContext {
   systemPrompt: string
   initialMessages: Anthropic.MessageParam[]
   workspaceTimezone: string
+  activeWork: Awaited<ReturnType<typeof loadActiveWork>>
 }
 
 function textFromUserMessage(content: CayeAgentInput['userMessage']): string {
@@ -229,7 +230,7 @@ export async function buildBackOfficeTurnContext(input: CayeAgentInput): Promise
       role: 'user',
       content: buildContinuationPrompt(input.investigation.objective, digest),
     }
-    return { systemPrompt, initialMessages: [continuationTurn], workspaceTimezone }
+    return { systemPrompt, initialMessages: [continuationTurn], workspaceTimezone, activeWork }
   }
 
   const history = threadCtx
@@ -241,7 +242,7 @@ export async function buildBackOfficeTurnContext(input: CayeAgentInput): Promise
   }
   const initialMessages: Anthropic.MessageParam[] = [...history, currentUserTurn]
 
-  return { systemPrompt, initialMessages, workspaceTimezone }
+  return { systemPrompt, initialMessages, workspaceTimezone, activeWork }
 }
 
 export async function cayeAgent(input: CayeAgentInput): Promise<CayeAgentResult> {
@@ -257,7 +258,7 @@ export async function cayeAgent(input: CayeAgentInput): Promise<CayeAgentResult>
     )
   }
 
-  const { systemPrompt, initialMessages, workspaceTimezone } = await buildBackOfficeTurnContext(input)
+  const { systemPrompt, initialMessages, workspaceTimezone, activeWork } = await buildBackOfficeTurnContext(input)
 
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
   const directThreadLinks: string[] = []
@@ -276,6 +277,7 @@ export async function cayeAgent(input: CayeAgentInput): Promise<CayeAgentResult>
       directThreadLinks,
       investigationId: input.investigation?.id ?? null,
       workspaceTimezone,
+      activeWork,
     },
     mode: 'back-office',
     // Structural write-exclusion for continuation passes — see

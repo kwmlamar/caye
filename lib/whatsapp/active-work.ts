@@ -4,6 +4,7 @@ import type { OperatorIntent } from './intent'
 export type ActiveWorkStatus = 'editing' | 'ready' | 'executing' | 'failed' | 'completed'
 
 export interface ActiveWork {
+  sourceMessageId: string
   entityRef: string
   operation: 'customer_reply_draft'
   artifact: string | null
@@ -27,6 +28,7 @@ export function seedActiveWork(operatorText: string, intent: OperatorIntent): Ac
   const colon = operatorText.indexOf(':')
   const artifact = colon >= 0 ? operatorText.slice(colon + 1).trim() || null : null
   return {
+    sourceMessageId: '',
     entityRef,
     operation: 'customer_reply_draft',
     artifact,
@@ -47,6 +49,7 @@ export function activeWorkFromIntent(intent: unknown): ActiveWork | null {
   if (typeof row.entityRef !== 'string' || row.operation !== 'customer_reply_draft') return null
   if (!['editing', 'ready', 'executing', 'failed', 'completed'].includes(String(row.status))) return null
   return {
+    sourceMessageId: '',
     entityRef: row.entityRef,
     operation: 'customer_reply_draft',
     artifact: typeof row.artifact === 'string' ? row.artifact : null,
@@ -64,7 +67,7 @@ export async function loadActiveWork(args: {
   const cutoff = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
   const { data } = await args.supabase
     .from('caye_operator_messages')
-    .select('intent, created_at')
+    .select('id, intent, created_at')
     .eq('workspace_id', args.workspaceId)
     .eq('operator_allowlist_id', args.operatorId)
     .eq('direction', 'inbound')
@@ -73,7 +76,7 @@ export async function loadActiveWork(args: {
     .limit(20)
   for (const row of data ?? []) {
     const work = activeWorkFromIntent(row.intent)
-    if (work && work.status !== 'completed') return work
+    if (work && work.status !== 'completed') return { ...work, sourceMessageId: row.id as string }
   }
   return null
   } catch {
@@ -81,35 +84,45 @@ export async function loadActiveWork(args: {
   }
 }
 
-/** Best-effort lifecycle update for the same durable audit record. */
-export async function setLatestActiveWorkStatus(args: {
+/**
+ * Atomically-shaped lifecycle/artifact update for the exact work snapshot
+ * supplied to this turn. Never searches for "the latest" task: a delayed
+ * Jeff result must not be able to mutate a newer Bob task.
+ */
+export async function updateActiveWork(args: {
   supabase: { from: (table: string) => any }
   workspaceId: string
   operatorId: number | null | undefined
-  status: ActiveWorkStatus
-}): Promise<void> {
-  if (args.operatorId == null) return
+  work: Pick<ActiveWork, 'sourceMessageId' | 'entityRef' | 'operation'> | null | undefined
+  artifact?: string
+  status?: ActiveWorkStatus
+}): Promise<boolean> {
+  if (args.operatorId == null || !args.work || (!args.artifact && !args.status)) return false
   try {
-  const { data } = await args.supabase
+  const { data: row } = await args.supabase
     .from('caye_operator_messages')
     .select('id, intent')
     .eq('workspace_id', args.workspaceId)
     .eq('operator_allowlist_id', args.operatorId)
     .eq('direction', 'inbound')
-    .order('created_at', { ascending: false })
-    .limit(20)
-  for (const row of data ?? []) {
-    const work = activeWorkFromIntent(row.intent)
-    if (!work || work.status === 'completed') continue
-    await args.supabase
-      .from('caye_operator_messages')
-      .update({ intent: { ...(row.intent as IntentRecord), active_work: { ...work, status: args.status } } })
-      .eq('id', row.id)
-    return
+    .eq('id', args.work.sourceMessageId)
+    .maybeSingle()
+  const current = activeWorkFromIntent(row?.intent)
+  if (!row || !current || current.entityRef !== args.work.entityRef || current.operation !== args.work.operation) return false
+  const next = {
+    ...current,
+    ...(args.artifact ? { artifact: args.artifact } : {}),
+    ...(args.status ? { status: args.status } : {}),
   }
+  await args.supabase
+    .from('caye_operator_messages')
+    .update({ intent: { ...(row.intent as IntentRecord), active_work: next } })
+    .eq('id', args.work.sourceMessageId)
+  return true
   } catch {
     // Lifecycle metadata must not turn a completed operator action into a
     // failed one if the audit-store update itself is temporarily unavailable.
+    return false
   }
 }
 

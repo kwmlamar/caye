@@ -5,7 +5,7 @@ import { checkZohoDraftGate, ZOHO_DRAFT_VERIFIED_KEY } from '@/lib/zoho-draft-ga
 import type { Tool } from '../types'
 import { assertConversationOwnedByWorkspace } from '../write-low/_guards'
 import { failedRetryable, needsHuman } from '../result'
-import { setLatestActiveWorkStatus } from '@/lib/whatsapp/active-work'
+import { updateActiveWork } from '@/lib/whatsapp/active-work'
 
 interface DraftInInboxInput {
   conversation_id: string
@@ -131,7 +131,7 @@ Email threads only — the operator's mailbox is the delivery surface, so this d
         ctx.workspaceId
       )
 
-      await setLatestActiveWorkStatus({ supabase, workspaceId: ctx.workspaceId, operatorId: ctx.operatorId, status: 'completed' })
+      await updateActiveWork({ supabase, workspaceId: ctx.workspaceId, operatorId: ctx.operatorId, work: ctx.activeWork, artifact: body, status: 'completed' })
 
       return {
         ok: true,
@@ -154,7 +154,7 @@ Email threads only — the operator's mailbox is the delivery surface, so this d
       // reconciliation/blocking outcome. Explicit throttling/rejection is
       // safe to retry because Zoho returned before accepting a draft.
       const preserved = { conversation_id: args.conversation_id, draft_body: body, sent: false }
-      await setLatestActiveWorkStatus({ supabase, workspaceId: ctx.workspaceId, operatorId: ctx.operatorId, status: 'failed' })
+      await updateActiveWork({ supabase, workspaceId: ctx.workspaceId, operatorId: ctx.operatorId, work: ctx.activeWork, artifact: body, status: 'failed' })
       if (/\b(?:429|rate limit|too many requests)\b/i.test(msg)) {
         return { ...failedRetryable('ZOHO_DRAFT_RATE_LIMITED', 'The email provider temporarily rejected this draft save.'), data: preserved }
       }
