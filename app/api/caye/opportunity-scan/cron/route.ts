@@ -50,7 +50,13 @@ import { listActiveEligibleGoals } from '@/lib/goals/goals'
 import { sortByPriorityScore } from '@/lib/goals/priority-score'
 import type { GoalRow } from '@/lib/goals/types'
 
+// Three passes a day, spread through waking hours — bounds LLM spend to a
+// handful of tool-loop invocations per workspace per day and avoids
+// feeling spammy. Not the digest's 7am slot on purpose (different job).
 const TARGET_LOCAL_HOURS = [10, 14, 18]
+
+// Cap what we persist into the "last scan" column — this is prompt
+// context for the next run, not a full transcript.
 const MAX_SUMMARY_CHARS = 2000
 
 interface WorkspaceRow {
@@ -77,6 +83,17 @@ export async function GET(request: NextRequest) {
   }
 }
 
+/** Extracted from GET so Admin Shell's trigger_cron can run this on demand
+ *  (lib/caye-agent/tools/admin/cron-registry.ts) without going back through
+ *  HTTP + CRON_SECRET. Same recordCronRun wrapper either way, so a manual
+ *  run updates the health row exactly like a scheduled one.
+ *
+ *  opts.force (2026-08-01, admin-shell manual trigger only — the real GET
+ *  cron never passes this): bypasses the target-hour/already-ran cadence
+ *  gate so a founder testing this doesn't have to wait for 10/14/18 local.
+ *  Deliberately does NOT bypass muted/quiet_hours — those are the owner's
+ *  own do-not-disturb preference, and a founder choosing to force a test
+ *  run shouldn't be able to override that for a live paying customer. */
 export async function runOpportunityScan(opts?: { force?: boolean }) {
   return recordCronRun('opportunity-scan', async () => {
     const supabase = createServiceClient()
@@ -125,6 +142,14 @@ async function processWorkspace(
   const operator = await resolveOperatorByPhone(supabase, row.workspace_id, row.operator_whatsapp_number)
   if (!operator) return { status: 'skip', detail: 'no operator_allowlist match for operator phone' }
 
+  // Pre-LLM change-gate (2026-08-07). Caye can't repeat a stale finding if
+  // she never runs — the root cause of the 2026-08-06 noise wasn't a
+  // prompt-compliance failure, it was running a real tool-loop against a
+  // held queue that hadn't moved in days. Bypassed on the very first scan
+  // for a workspace (no stored cutoff — run once as a baseline per the
+  // cutover decision, see the design note in decisions-log.md) and on a
+  // forced admin test run (force verifies the scan still works end to
+  // end, not that it stays quiet). See lib/caye-agent/activity-since.ts.
   let activity: ActivitySince | null = null
   if (row.last_opportunity_scan_at && !force) {
     activity = await getActivitySince(row.workspace_id, row.last_opportunity_scan_at)
@@ -137,11 +162,22 @@ async function processWorkspace(
     }
   }
 
-  // Informational only: these are structurally workspace-scoped, active and
-  // dependency-eligible. They affect prioritization context, never authority.
+  // Goal-aware context (2026-08-26) — purely informational. This does not
+  // change what Caye may act on: ACTION_INSTRUCTIONS below is unchanged,
+  // low-risk tools still execute directly and high-risk tools still stage
+  // through gateHighRisk. It only tells her WHY the workspace's current
+  // priorities are what they are, so a finding can be weighed against them
+  // instead of reported in a vacuum. Never operator/global-scope goals —
+  // listActiveEligibleGoals only ever returns this workspace's own rows.
   const activeGoals = await listActiveEligibleGoals(row.workspace_id)
+
   const prompt = buildScanPrompt(row.last_opportunity_scan_summary, activity, activeGoals)
 
+  // The caller IS the recipient. This used to hardcode callerRole 'founder'
+  // with no name, which made the prompt tell Caye the founder was listening
+  // while the result was persisted to and delivered at `operator`'s number —
+  // so she wrote founder-facing reports about the owner ("worth checking
+  // with Mrs. Max") and sent them to Mrs. Max (2026-08-06).
   const agentResult = await cayeAgent({
     mode: 'back-office',
     workspaceId: row.workspace_id,
@@ -154,8 +190,16 @@ async function processWorkspace(
 
   const rawReplyText = agentResult.replyText.trim()
   const quiet = isQuietScan(rawReplyText)
+  // Scrub unconditionally, not just on the quiet branch: on 2026-08-08 the
+  // detector missed a misplaced token AND the only strip was gated behind
+  // that same detector, so the raw sentinel rendered in Karenda's thread.
+  // Presentation must not depend on the classification being right.
   const replyText = scrubQuietSentinel(rawReplyText)
 
+  // Always record that the round happened — the cadence gate and Admin
+  // Shell both read this timestamp. Only overwrite the "what I flagged"
+  // summary when something WAS flagged: a quiet round shouldn't erase the
+  // context that stops the next scan repeating a finding.
   await supabase
     .from('workspace_ai_config')
     .update({
@@ -165,6 +209,11 @@ async function processWorkspace(
     .eq('workspace_id', row.workspace_id)
 
   if (quiet) {
+    // Persist the turns (caye_operator_messages is the only audit trail
+    // for anything Caye acted on with a low-risk tool this round) but as a
+    // log-only row — no delivery status, no send, no ping, no alert. A
+    // quiet round is a non-event, and every downstream noise source below
+    // exists to surface findings, not to announce that there weren't any.
     const insertedQuiet = await persistAgentTurns(
       supabase,
       row.workspace_id,
@@ -175,6 +224,13 @@ async function processWorkspace(
     return { status: 'ok', detail: 'nothing to report' }
   }
 
+  // Does the operator need to know or do something NEW — not "did the scan
+  // produce text." Keyed on the finding's own normalized content (cheap
+  // text normalization, not semantic classification) so a re-run that
+  // rediscovers the exact same thing collapses onto the same attention
+  // item instead of minting a fresh one every scan. This is what stops an
+  // already-pinged escalation from getting re-narrated as a "workspace scan
+  // finding" a few hours later on a different code path (2026-08-13).
   const normalizedFinding = replyText.toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 400)
   const subjectId = createHash('sha256').update(normalizedFinding).digest('hex').slice(0, 32)
 
@@ -183,6 +239,11 @@ async function processWorkspace(
     subjectType: 'scan_finding',
     subjectId,
     title: replyText.slice(0, 80),
+    // Genuinely urgent/actionable findings already have their own stronger
+    // path (escalations, holds) — what reaches here as a *scan's own*
+    // finding is informational by construction, so it gets the FYI tier:
+    // said once, no auto-reminder, and subject to the low-priority cooldown
+    // so it doesn't stack with whatever else just pinged this operator.
     priority: 'awareness',
     fingerprintParts: [normalizedFinding],
     blockedOnOperator: false,
@@ -195,9 +256,11 @@ async function processWorkspace(
     decision.outcome === 'RESOLVED_NO_NOTIFICATION' ||
     decision.outcome === 'SUPPRESS_OPERATOR_AWARE'
   ) {
-    // Keep the complete tool-loop audit trail while preventing the scan's
-    // suppressed concluding prose from rendering as an operator-facing
-    // Caye Direct bubble. This preserves the owner-awareness fix from #135.
+    // finalTurnVisibility: 'internal' — a suppressed decision means Caye's
+    // own concluding text ("already resolved" / "nothing new") is never
+    // meant to reach the operator. The tool-loop turns remain persisted in
+    // full for audit/history replay; only the human-facing final body is
+    // hidden. This preserves the owner-awareness invariant from #135.
     const inserted = await persistAgentTurns(
       supabase,
       row.workspace_id,
@@ -218,6 +281,12 @@ async function processWorkspace(
     return { status: 'ok', detail: `suppressed: ${decision.outcome}` }
   }
 
+  // Enqueued, not sent synchronously — dispatch() picks free-form vs
+  // template per-recipient at actual send time (more accurate than this
+  // cron tick's snapshot), and either way now carries the real finding, not
+  // a "come look at Caye Direct" placeholder (freeFormBodyForKind /
+  // templateForKind in the outbound worker). attentionSubjectType/Id let
+  // the worker's post-send stamp find this exact attention row.
   const queued = await enqueueOutbound({
     workspaceId: row.workspace_id,
     kind: 'opportunity_scan',
@@ -229,6 +298,8 @@ async function processWorkspace(
     idempotencyKey: `opportunity-scan-${row.workspace_id}-${subjectId}`,
   })
 
+  // Notification in flight the instant it's queued, not once it's actually
+  // sent — see the matching comment in lib/whatsapp/triggers.ts.
   if (queued) {
     await markAttentionPending({
       workspaceId: row.workspace_id,
@@ -251,6 +322,11 @@ async function processWorkspace(
   return { status: 'queued' }
 }
 
+// The token is load-bearing, not decoration — it's the only thing the cron
+// can check to tell a quiet round from a real finding, and the difference
+// decides whether the owner gets pinged. Spelled out because a model that
+// writes "nothing new this scan" in prose reads to itself as having
+// complied.
 const SENTINEL_INSTRUCTIONS =
   `If nothing needs surfacing, begin your reply with the exact token ${QUIET_SENTINEL} followed by ` +
   'one short sentence saying so, and nothing else. That token is what tells the system to stay ' +
@@ -267,6 +343,18 @@ const ACTION_INSTRUCTIONS =
   'You may act directly using your low-risk tools. For anything needing a high-risk action, ' +
   "propose it via the normal tool — it will stage for the owner's approval, not execute directly."
 
+/**
+ * activity === null means either the very first scan for this workspace
+ * (no stored last_opportunity_scan_at to gate against) or a forced admin
+ * test run — both intentionally get the old free-look behavior: review
+ * everything, decide what's worth a baseline report.
+ *
+ * activity !== null means processWorkspace's pre-LLM gate already
+ * confirmed something changed since the last scan — the prompt then
+ * scopes her to that computed delta instead of a fresh open-ended look,
+ * so a resolved or unchanged item can't get re-described just because
+ * her read tools can still see it.
+ */
 function buildScanPrompt(lastSummary: string | null, activity: ActivitySince | null, activeGoals: GoalRow[] = []): string {
   const intro = "This is your periodic self-initiated workspace scan, not a message from the operator. "
   const goalsBlock = formatActiveGoalsForPrompt(activeGoals)
@@ -303,6 +391,18 @@ function buildScanPrompt(lastSummary: string | null, activity: ActivitySince | n
   )
 }
 
+/**
+ * Additive, informational-only context block (2026-08-26) — the smallest
+ * integration point for goal-aware proactive reasoning: it tells Caye WHY
+ * the workspace's current priorities are what they are, so a finding can be
+ * weighed against them ("this holds up the trial-conversion objective")
+ * instead of reported in a vacuum. It does not instruct her to invent new
+ * work, does not grant any new tool access, and does not change
+ * ACTION_INSTRUCTIONS/SENTINEL_INSTRUCTIONS above. Empty when the workspace
+ * has no active goals — every workspace that hasn't adopted goals yet sees
+ * an unchanged prompt, matching formatBusinessFactsBlock's empty-string
+ * convention in lib/business-facts.ts.
+ */
 function formatActiveGoalsForPrompt(activeGoals: GoalRow[]): string {
   if (activeGoals.length === 0) return ''
   const ranked = sortByPriorityScore(activeGoals)
@@ -370,6 +470,10 @@ function shouldSkip(args: {
 
   const hour = localHour(now, cfg.timezone)
   if (!TARGET_LOCAL_HOURS.includes(hour)) {
+    // Explicitly labeled "local" — cayeAgent narrates this string verbatim to
+    // the founder, and without a label it's guessed "UTC" once already
+    // (2026-08-01 manual trigger_cron test), which is wrong and would read
+    // as a timezone bug that doesn't actually exist.
     return `not a scan hour (now=${hour} ${cfg.timezone} local, targets=${TARGET_LOCAL_HOURS.join(',')} local)`
   }
 
@@ -392,6 +496,7 @@ function localHour(date: Date, tz: string): number {
   }
 }
 
+/** Local YYYY-MM-DD-HH — used to dedupe "already scanned this hour block". */
 function localHourKey(date: Date, tz: string): string {
   try {
     const f = new Intl.DateTimeFormat('en-CA', {
