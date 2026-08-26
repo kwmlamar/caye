@@ -45,10 +45,17 @@ vi.mock('@/lib/supabase-server', () => ({
 
 vi.mock('./operator-notification-gate', () => ({ decideOperatorNotification }))
 vi.mock('./outbound', () => ({ enqueueOutbound }))
-vi.mock('@/lib/owner-attention', () => ({
-  markAttentionPending,
-  SUBJECT_CONVERSATION: 'conversation',
-}))
+// fingerprint is the REAL implementation (not mocked) — triggers.ts's
+// idempotencyKey fix depends on it being the exact same hash function the
+// owner-attention gate itself uses, so the test has to exercise the real
+// thing, not a stub that would hide a drift between the two.
+vi.mock('@/lib/owner-attention', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/owner-attention')>('@/lib/owner-attention')
+  return {
+    ...actual,
+    markAttentionPending,
+  }
+})
 vi.mock('./schedule', () => ({
   loadScheduleConfig: () => Promise.resolve({ timezone: 'America/New_York', digestDays: [0, 1, 2, 3, 4, 5, 6] }),
   inQuietHours: () => false,
@@ -57,6 +64,23 @@ vi.mock('./schedule', () => ({
 vi.mock('./urgency', () => ({ classifyHoldUrgency: () => 'routine' }))
 
 import { enqueueBookingCreated } from './triggers'
+import { fingerprint } from '@/lib/owner-attention'
+
+/** Same shape as the fingerprintParts array triggers.ts builds — kept here
+ *  so tests can compute the SAME hash independently and assert against it,
+ *  without hard-coding a specific hash string that would silently stop
+ *  meaning anything the moment the real array's field order changed. */
+function bookingFingerprintParts(b: Row): unknown[] {
+  return [
+    b.status,
+    b.payment_confirmed_at,
+    b.payment_link_sent_at,
+    b.cancelled_at,
+    b.booking_date,
+    b.booking_time,
+    b.number_of_people,
+  ]
+}
 
 function autumnBooking(over: Partial<Row> = {}): Row {
   return {
@@ -183,5 +207,96 @@ describe('enqueueBookingCreated — Autumn McNeill regression (2026-08-26)', () 
       await enqueueBookingCreated({ workspaceId: 'ws-bimini', conversationId: 'conv-autumn', bookingId: 'booking-autumn' })
       expect(enqueueOutbound).not.toHaveBeenCalled()
     }
+  })
+})
+
+describe('enqueueBookingCreated — idempotency identity is state-derived (PR #135 review fix)', () => {
+  // enqueueOutbound is permanently idempotent on idempotency_key (see its
+  // own doc comment) — a bare `booking-${bookingId}` key meant the SECOND
+  // real notification for a booking (a genuine status/payment transition)
+  // could pass the owner-attention gate and then silently never enqueue,
+  // because a row already existed under that same key from the first
+  // notification. This mock simulates that real uniqueness constraint so
+  // these tests fail the same way production would have.
+  let usedKeys: Set<string>
+
+  beforeEach(() => {
+    usedKeys = new Set()
+    enqueueOutbound.mockImplementation((args: { idempotencyKey: string }) => {
+      if (usedKeys.has(args.idempotencyKey)) return Promise.resolve(null)
+      usedKeys.add(args.idempotencyKey)
+      return Promise.resolve({ id: `queue-${usedKeys.size}` })
+    })
+    decideOperatorNotification.mockResolvedValue({ outcome: 'SEND_NEW', attentionItemId: 'a1', isMaterialChange: false })
+  })
+
+  it('1 — same booking + same material state twice => one queue row (duplicate protection preserved)', async () => {
+    await enqueueBookingCreated({ workspaceId: 'ws-bimini', conversationId: 'conv-autumn', bookingId: 'booking-autumn' })
+    await enqueueBookingCreated({ workspaceId: 'ws-bimini', conversationId: 'conv-autumn', bookingId: 'booking-autumn' })
+
+    expect(enqueueOutbound).toHaveBeenCalledTimes(2)
+    const [key1] = [enqueueOutbound.mock.calls[0][0].idempotencyKey]
+    const [key2] = [enqueueOutbound.mock.calls[1][0].idempotencyKey]
+    expect(key1).toBe(key2) // same key both times — the second insert is the one the DB would reject
+    expect(markAttentionPending).toHaveBeenCalledTimes(1) // only the row that actually got created
+  })
+
+  it('2 — pending booking notified, then confirmed => second eligible notification actually enqueues', async () => {
+    await enqueueBookingCreated({ workspaceId: 'ws-bimini', conversationId: 'conv-autumn', bookingId: 'booking-autumn' })
+    BOOKING = autumnBooking({ status: 'confirmed' })
+    await enqueueBookingCreated({ workspaceId: 'ws-bimini', conversationId: 'conv-autumn', bookingId: 'booking-autumn' })
+
+    expect(enqueueOutbound).toHaveBeenCalledTimes(2)
+    const key1 = enqueueOutbound.mock.calls[0][0].idempotencyKey
+    const key2 = enqueueOutbound.mock.calls[1][0].idempotencyKey
+    expect(key1).not.toBe(key2)
+    expect(markAttentionPending).toHaveBeenCalledTimes(2) // BOTH rows actually got created
+  })
+
+  it('3 — confirmed then payment confirmed => second eligible notification (payment is a fingerprinted field)', async () => {
+    BOOKING = autumnBooking({ status: 'confirmed' })
+    await enqueueBookingCreated({ workspaceId: 'ws-bimini', conversationId: 'conv-autumn', bookingId: 'booking-autumn' })
+    BOOKING = autumnBooking({ status: 'confirmed', payment_confirmed_at: '2026-08-27T10:00:00Z' })
+    await enqueueBookingCreated({ workspaceId: 'ws-bimini', conversationId: 'conv-autumn', bookingId: 'booking-autumn' })
+
+    expect(enqueueOutbound).toHaveBeenCalledTimes(2)
+    expect(markAttentionPending).toHaveBeenCalledTimes(2)
+  })
+
+  it('4 — an unrelated updated_at change alone does not enqueue a second notification', async () => {
+    await enqueueBookingCreated({ workspaceId: 'ws-bimini', conversationId: 'conv-autumn', bookingId: 'booking-autumn' })
+    // Same status/payment/date/time/party — only updated_at moved (e.g. an
+    // unrelated column got touched, or a re-sync bumped the row).
+    BOOKING = autumnBooking({ updated_at: '2026-08-26T09:00:00Z' })
+    await enqueueBookingCreated({ workspaceId: 'ws-bimini', conversationId: 'conv-autumn', bookingId: 'booking-autumn' })
+
+    const key1 = enqueueOutbound.mock.calls[0][0].idempotencyKey
+    const key2 = enqueueOutbound.mock.calls[1][0].idempotencyKey
+    expect(key1).toBe(key2) // updated_at is deliberately NOT in fingerprintParts
+    expect(markAttentionPending).toHaveBeenCalledTimes(1)
+  })
+
+  it('5 — a state suppressed as operator-aware, followed by a real material change, lets the later state notify', async () => {
+    decideOperatorNotification.mockResolvedValueOnce({
+      outcome: 'SUPPRESS_OPERATOR_AWARE',
+      attentionItemId: 'a1',
+      isMaterialChange: false,
+    })
+    await enqueueBookingCreated({ workspaceId: 'ws-bimini', conversationId: 'conv-autumn', bookingId: 'booking-autumn' })
+    expect(enqueueOutbound).not.toHaveBeenCalled() // suppressed — nothing queued at all yet
+
+    decideOperatorNotification.mockResolvedValueOnce({ outcome: 'SEND_NEW', attentionItemId: 'a1', isMaterialChange: true })
+    BOOKING = autumnBooking({ status: 'confirmed', payment_confirmed_at: '2026-08-27T10:00:00Z' })
+    await enqueueBookingCreated({ workspaceId: 'ws-bimini', conversationId: 'conv-autumn', bookingId: 'booking-autumn' })
+
+    expect(enqueueOutbound).toHaveBeenCalledTimes(1)
+    expect(markAttentionPending).toHaveBeenCalledTimes(1)
+  })
+
+  it('the idempotency key hashes the exact same fingerprintParts the owner-attention gate fingerprints', async () => {
+    await enqueueBookingCreated({ workspaceId: 'ws-bimini', conversationId: 'conv-autumn', bookingId: 'booking-autumn' })
+    const key = enqueueOutbound.mock.calls[0][0].idempotencyKey as string
+    const expectedFp = fingerprint(bookingFingerprintParts(autumnBooking()))
+    expect(key).toBe(`booking-booking-autumn-${expectedFp}`)
   })
 })

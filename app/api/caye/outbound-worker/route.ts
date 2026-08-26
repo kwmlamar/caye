@@ -118,7 +118,7 @@ export const EMAIL_FALLBACK_KINDS = new Set(['urgent_hold', 'booking_created', '
 // Kinds that bypass the operator mute.
 const MUTE_BYPASS_KINDS = new Set(['auth_failure'])
 
-interface QueueRow {
+export interface QueueRow {
   id: string
   workspace_id: string
   kind: string
@@ -514,38 +514,54 @@ async function processRow(row: QueueRow): Promise<RowOutcome> {
   // already checks operator awareness once, but quiet-hours deferral can
   // put hours between that decision and this dispatch — a stale-worker
   // race the enqueue-time check alone can't see. Same structural evidence,
-  // asked again right before the send actually goes out.
+  // asked again right before the send actually goes out. Applies equally
+  // to a row enqueued for a LATER material state (PR #135 review) — the
+  // check re-fetches the booking fresh and re-derives conversationId from
+  // it, so it's not tied to which "generation" of queue row this is.
   if (row.kind === 'booking_created') {
-    const bookingId = typeof row.payload.bookingId === 'string' ? row.payload.bookingId : null
-    if (bookingId) {
-      const { data: booking } = await supabase
-        .from('bookings')
-        .select('status, cancelled_at, conversation_id, created_at, updated_at')
-        .eq('id', bookingId)
-        .maybeSingle()
-      if (!booking || booking.status === 'cancelled') {
-        return cancel(row, 'booking cancelled before send')
-      }
-      const conversationId = booking.conversation_id ?? row.conversation_id
-      if (conversationId) {
-        // Same anchor enqueueBookingCreated used (booking.updated_at,
-        // falling back to created_at) — re-asked fresh at dispatch time
-        // rather than reusing the enqueue-time answer, since quiet-hours
-        // deferral can put hours between the two.
-        const participated = await hasOperatorParticipatedInConversation(
-          conversationId,
-          booking.updated_at ?? booking.created_at
-        )
-        if (participated) {
-          return cancel(row, 'operator handled directly')
-        }
-      }
-    }
+    const cancelReason = await bookingCreatedDispatchCancelReason(row)
+    if (cancelReason) return cancel(row, cancelReason)
   }
 
   // Build & send.
   const { result: sendOutcome, phone } = await dispatch(row, config)
   return handleResult(row, config, sendOutcome, phone)
+}
+
+/**
+ * What, if anything, should cancel a booking_created row right before it
+ * dispatches — booking cancelled since it was queued, or the operator
+ * having since handled the linked conversation directly. Returns the
+ * cancel() reason string, or null to proceed with the send. Pulled out of
+ * processRow as its own function so it's independently testable without
+ * mocking every other precondition processRow checks first.
+ */
+export async function bookingCreatedDispatchCancelReason(row: QueueRow): Promise<string | null> {
+  const bookingId = typeof row.payload.bookingId === 'string' ? row.payload.bookingId : null
+  if (!bookingId) return null
+
+  const supabase = createServiceClient()
+  const { data: booking } = await supabase
+    .from('bookings')
+    .select('status, cancelled_at, conversation_id, created_at, updated_at')
+    .eq('id', bookingId)
+    .maybeSingle()
+  if (!booking || booking.status === 'cancelled') {
+    return 'booking cancelled before send'
+  }
+
+  const conversationId = booking.conversation_id ?? row.conversation_id
+  if (!conversationId) return null
+
+  // Same anchor enqueueBookingCreated used (booking.updated_at, falling
+  // back to created_at) — re-asked fresh at dispatch time rather than
+  // reusing the enqueue-time answer, since quiet-hours deferral can put
+  // hours between the two.
+  const participated = await hasOperatorParticipatedInConversation(
+    conversationId,
+    booking.updated_at ?? booking.created_at
+  )
+  return participated ? 'operator handled directly' : null
 }
 
 async function dispatch(row: QueueRow, config: WorkspaceConfig): Promise<{ result: SendResult; phone: string }> {

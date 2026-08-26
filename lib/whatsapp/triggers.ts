@@ -3,7 +3,7 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { enqueueOutbound } from './outbound'
 import { classifyHoldUrgency } from './urgency'
 import { inQuietHours, loadScheduleConfig, nextDigestTime } from './schedule'
-import { markAttentionPending, SUBJECT_CONVERSATION } from '@/lib/owner-attention'
+import { markAttentionPending, fingerprint, SUBJECT_CONVERSATION } from '@/lib/owner-attention'
 import { decideOperatorNotification } from './operator-notification-gate'
 
 /**
@@ -178,6 +178,22 @@ export async function enqueueBookingCreated(input: BookingCreatedInput): Promise
   // the one thing every path agrees on).
   const conversationId = booking.conversation_id ?? input.conversationId ?? null
 
+  // The fields that actually define what's being reported — a status flip
+  // or a payment event re-earns a ping; the row's own churn (updated_at
+  // bumping for unrelated reasons) does not. Shared, as a single array,
+  // between the owner-attention gate's state_fingerprint AND the queue
+  // row's idempotency key below — see the comment on idempotencyKey for
+  // why those two now have to agree.
+  const fingerprintParts = [
+    booking.status,
+    booking.payment_confirmed_at,
+    booking.payment_link_sent_at,
+    booking.cancelled_at,
+    booking.booking_date,
+    booking.booking_time,
+    booking.number_of_people,
+  ]
+
   const decision = await decideOperatorNotification({
     workspaceId: input.workspaceId,
     subjectType: 'booking',
@@ -185,18 +201,7 @@ export async function enqueueBookingCreated(input: BookingCreatedInput): Promise
     conversationId,
     title: `${guest} — ${stateLabel}`,
     priority: 'awareness',
-    // The fields that actually define what's being reported — a status
-    // flip or a payment event re-earns a ping; the row's own churn
-    // (updated_at bumping for unrelated reasons) does not.
-    fingerprintParts: [
-      booking.status,
-      booking.payment_confirmed_at,
-      booking.payment_link_sent_at,
-      booking.cancelled_at,
-      booking.booking_date,
-      booking.booking_time,
-      booking.number_of_people,
-    ],
+    fingerprintParts,
     blockedOnOperator: false,
     resolvableAutonomously: false,
     ...(conversationId
@@ -215,7 +220,9 @@ export async function enqueueBookingCreated(input: BookingCreatedInput): Promise
     // told, nothing new), or RESOLVED_NO_NOTIFICATION — none of these
     // warrant a ping. The item was still observed above, so a genuinely
     // later material change (a real status/payment transition) re-earns a
-    // real notification on its own next time this fires.
+    // real notification on its own next time this fires — see the
+    // idempotencyKey comment below for how the queue row itself allows
+    // that second send to actually happen.
     return
   }
 
@@ -229,7 +236,25 @@ export async function enqueueBookingCreated(input: BookingCreatedInput): Promise
     conversationId,
     payload: { guest, bookingId: input.bookingId, summary, stateLabel },
     scheduledFor,
-    idempotencyKey: `booking-${input.bookingId}`,
+    // MUST be state-derived, not just the booking id (fixed 2026-08-26,
+    // PR #135 review). enqueueOutbound is permanently idempotent on this
+    // key — once a row exists, a second insert with the SAME key silently
+    // no-ops forever (see enqueueOutbound's own doc comment). A bare
+    // `booking-${bookingId}` key meant that once ANY booking_created
+    // notification had ever gone out for this booking, a later genuine
+    // material change (pending → confirmed, payment landing) could pass
+    // the owner-attention gate above and still never actually enqueue —
+    // silently breaking the "a material change re-earns a notification"
+    // invariant decideOperatorNotification promises. Hashing the SAME
+    // fingerprintParts array the gate itself fingerprints ties the queue
+    // row's identity to the state gate decided about, one-to-one: the same
+    // state can only ever enqueue once (duplicate protection preserved —
+    // two racing calls for the SAME state collapse onto the same key), and
+    // a materially different state gets a fresh key and a fresh row.
+    // Deliberately NOT updated_at — that bumps on unrelated row churn and
+    // would mint a new "identity" for a booking whose reported state
+    // hasn't actually moved.
+    idempotencyKey: `booking-${input.bookingId}-${fingerprint(fingerprintParts)}`,
   })
 
   if (queued) {
@@ -240,6 +265,13 @@ export async function enqueueBookingCreated(input: BookingCreatedInput): Promise
       queueId: queued.id,
     })
   }
+  // queued === null here means enqueueOutbound hit its idempotency
+  // constraint — i.e. a row for this EXACT state already exists (a race
+  // between two calls that both observed the same state, or a retry).
+  // Correctly a no-op: the row that won the race is already the one
+  // markAttentionPending/markAttentionNotified will track through the
+  // normal outbound-worker lifecycle: nothing here needs to (or safely
+  // can) re-mark an item pending against a queue row that doesn't exist.
 }
 
 /**
@@ -250,6 +282,19 @@ export async function enqueueBookingCreated(input: BookingCreatedInput): Promise
  * enum type, not a CHECK constraint, so lib/db/check-constraints.ts's guard
  * doesn't cover it — if the enum ever grows a value, this needs a manual
  * update too.
+ *
+ * The 'cancelled' branch is a defensive honesty guard, not a cancellation
+ * FEATURE (PR #135 review audit): every current call site invokes
+ * enqueueBookingCreated exactly once, at creation, from "Caye just created
+ * booking X" — there is no separate trigger that calls this again on a
+ * later status change, so 'cancelled' only fires today in the narrow race
+ * where a booking gets cancelled in the brief window between insert and
+ * this async trigger running. It exists so that race can't produce a
+ * dishonest "New pending booking" for a booking that's already dead, not
+ * to promise a dedicated cancellation-notification pipeline (there isn't
+ * one — see the idempotencyKey comment in enqueueBookingCreated for what
+ * WOULD make a later real transition notify, if a future caller ever
+ * invokes this again after creation).
  */
 function bookingStateLabel(status: string, paymentConfirmedAt: string | null): string {
   if (status === 'cancelled') return 'Booking cancelled'
