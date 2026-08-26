@@ -1,6 +1,6 @@
 import 'server-only'
 import type { Tool } from '../types'
-import { listActiveEligibleGoals, resolveAncestorChain } from '@/lib/goals/goals'
+import { listActiveEligibleGoals } from '@/lib/goals/goals'
 import { sortByPriorityScore } from '@/lib/goals/priority-score'
 
 /**
@@ -11,6 +11,13 @@ import { sortByPriorityScore } from '@/lib/goals/priority-score'
  * never operator/global-scope goals (this tool is always called with a
  * workspace's ctx.workspaceId; it has no code path to the founder's
  * cross-workspace direction — see lib/goals/goals.ts module doc comment).
+ *
+ * Deliberately does NOT resolve parent/ancestor titles here. Founder-facing
+ * lineage is useful in Direction, but following an id with the service role
+ * would create a second, unscoped read path into customer agent context if
+ * malformed data ever linked a workspace goal to an operator/global goal.
+ * The agent gets the workspace-scoped goal itself; strategic lineage remains
+ * available only through founder-gated APIs.
  *
  * This is informational only. It does not change what Caye is allowed to
  * do — the authority/confirmation gate (high-risk-gate.ts) is unaffected
@@ -35,11 +42,10 @@ export const listActiveGoals: Tool<Record<string, never>> = {
       return { ok: true, data: { goals: [], note: 'No active goals set for this workspace yet.' } }
     }
     const ranked = sortByPriorityScore(goals)
-    const withChain = await Promise.all(
-      ranked.map(async (g) => {
-        const chain = await resolveAncestorChain(g.id)
-        const ancestry = chain.slice(1).map((a) => a.title)
-        return {
+    return {
+      ok: true,
+      data: {
+        goals: ranked.map((g) => ({
           id: g.id,
           kind: g.kind,
           title: g.title,
@@ -51,10 +57,8 @@ export const listActiveGoals: Tool<Record<string, never>> = {
           target_date: g.targetDate,
           completion_criteria: g.completionCriteria,
           rationale: g.rationale,
-          supports: ancestry.length > 0 ? ancestry : undefined,
-        }
-      })
-    )
-    return { ok: true, data: { goals: withChain } }
+        })),
+      },
+    }
   },
 }
