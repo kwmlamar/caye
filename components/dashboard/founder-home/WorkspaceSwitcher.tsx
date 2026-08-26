@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { CayeMark } from '@/components/brand/CayeMark'
 import { Pill } from '@/components/dashboard/founder-home/console-ui'
-import { popoverSurface, AQUA, TEXT, TEXT_QUIET } from '../surface'
+import { sidebarPopoverSurface, paneShadowSoft, AQUA, TEXT, TEXT_QUIET } from '../surface'
 import type { WorkspaceMembership } from '@/lib/workspace-context'
 import type { CustomerStatus } from '@/types/database'
 
@@ -24,7 +24,7 @@ const STATUS_COLOR: Record<CustomerStatus, string> = {
  * presentational here.
  */
 export default function WorkspaceSwitcher({
-  businessName, status, workspaces, activeWorkspaceId, onSelect, hasActivity,
+  businessName, status, workspaces, activeWorkspaceId, onSelect, hasActivity, menuWidth = 280,
 }: {
   businessName: string
   status: CustomerStatus
@@ -32,6 +32,11 @@ export default function WorkspaceSwitcher({
   activeWorkspaceId: string
   onSelect: (workspaceId: string) => void
   hasActivity: (workspaceId: string) => boolean
+  /** The sidebar this now lives in is narrower (244px) than the popover's
+   *  old default width — without this, the sidebar's own overflow:hidden
+   *  (needed for the collapse-width animation) clips the popover's right
+   *  edge. Callers in a wider context can leave this at 280. */
+  menuWidth?: number
 }) {
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
@@ -92,13 +97,9 @@ export default function WorkspaceSwitcher({
           role="listbox"
           style={{
             position: 'absolute', top: 'calc(100% + 10px)', left: 0, zIndex: 100,
-            width: 280, borderRadius: 16, padding: 6,
-            ...popoverSurface(),
-            // Tight blur radius on purpose: this popover sits close to the
-            // icon rail (~84px from the viewport edge), and a wide soft
-            // shadow (the old 48px/-8 spread) bled visibly into the rail
-            // as a stray gray patch. This stays close to the panel itself.
-            boxShadow: '0 1px 0 rgba(255,255,255,0.08) inset, 0 10px 24px -6px rgba(0,0,0,0.55)',
+            width: menuWidth, borderRadius: 16, padding: 6,
+            ...sidebarPopoverSurface(),
+            boxShadow: paneShadowSoft,
             animation: 'caye-popover-in 0.16s ease-out',
           }}
         >

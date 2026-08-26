@@ -1,90 +1,57 @@
 'use client'
 
-import { useState, useEffect, useRef, useTransition, type ReactNode, type CSSProperties } from 'react'
+import { useState, useEffect, useCallback, useRef, useTransition } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useCommandOverview } from '@/lib/useCommandOverview'
 import { useWorkspacesActivity } from '@/lib/useWorkspacesActivity'
-import { useWorkspaceChannels } from '@/lib/useWorkspaceChannels'
 import { useTodayStats } from '@/lib/useTodayStats'
+import { getSession } from '@/lib/supabase'
 import type { FounderRailId } from '@/lib/types'
-import CayeDirect from '@/components/dashboard/caye-direct/CayeDirect'
-import WorkspaceSwitcher from './WorkspaceSwitcher'
-import FounderBriefing, { type CayeActivityState } from './FounderBriefing'
-import LiveActivity from './LiveActivity'
-import CayeLog from './CayeLog'
+import { liveOperatorDisplayNames } from '@/lib/operator-display-name'
+import CayeDirectThread from '@/components/dashboard/caye-direct/CayeDirectThread'
 import InboxPage from './InboxPage'
 import PeoplePage from './PeoplePage'
 import WorkPage from './WorkPage'
 import MemoryPage from './MemoryPage'
 import SettingsPage from './SettingsPage'
-import TalkToCaye from './TalkToCaye'
-import CayeLauncher from './CayeLauncher'
-import FounderProfile from './FounderProfile'
-import { ENV_BG, AQUA, GRADIENT, glass, paneShadowSoft, focusResetCss } from '../surface'
+import SnapshotCard from './cards/SnapshotCard'
+import CommandSidebar, { type ActiveView, type ThreadListItem, type LiveOperator } from './CommandSidebar'
+import { ENV_BG, GRADIENT, focusResetCss } from '../surface'
 
-// 2026-08-13 visual pass: moved from "cards on a black page" toward one
-// continuous environment. Hard 1px outlines are the exception now, not
-// the default — see surface.ts for the shared hierarchy this draws from.
-const GLASS: CSSProperties = glass(0.045)
+const PAGE_IDS: FounderRailId[] = ['inbox', 'people', 'work', 'memory', 'settings']
 
-// ── Icon rail — five real destinations, no stubs. Configuration
-// (channels, voice, cost, health, tools, admin) lives under Settings,
-// pinned near the bottom with the founder's own identity — not parallel
-// nav icons competing with the daily-use surfaces above them.
-type RailId = FounderRailId
-
-const RAIL_ITEMS: { id: RailId; label: string; icon: ReactNode }[] = [
-  { id: 'home', label: 'Home', icon: <path d="M3 11l9-8 9 8M5 10v10h5v-6h4v6h5V10" /> },
-  { id: 'inbox', label: 'Inbox', icon: <><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 7l9 6 9-6" /></> },
-  { id: 'people', label: 'People', icon: (
-    <><circle cx="9" cy="8" r="3" /><path d="M2 21c0-3.5 3-6 7-6s7 2.5 7 6" /><circle cx="17" cy="8" r="2.5" /><path d="M17 13.5c2.5.3 4 2.3 4 5.5" /></>
-  ) },
-  { id: 'work', label: 'Work', icon: <><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M3 10h18M8 3v4M16 3v4" /></> },
-  { id: 'memory', label: 'Memory', icon: <><path d="M12 4.5c-2-1.6-5-1.6-7 0v13c2-1.6 5-1.6 7 0" /><path d="M12 4.5c2-1.6 5-1.6 7 0v13c-2-1.6-5-1.6-7 0" /></> },
-]
-
-function RailButton({ item, active, onClick }: { item: (typeof RAIL_ITEMS)[number]; active: boolean; onClick: () => void }) {
-  const [hover, setHover] = useState(false)
-  return (
-    <button
-      onClick={onClick}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      title={item.label}
-      aria-label={item.label}
-      aria-current={active ? 'page' : undefined}
-      style={{
-        width: 44, height: 44, borderRadius: 12, flexShrink: 0,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        background: active ? 'rgba(78,190,206,0.09)' : hover ? 'rgba(255,255,255,0.04)' : 'transparent',
-        boxShadow: active ? '0 0 18px rgba(78,190,206,0.22)' : 'none',
-        color: active ? '#7DD8E0' : hover ? '#a1a1aa' : '#52525b',
-        cursor: 'pointer',
-        transition: 'background 0.15s ease, color 0.15s ease, box-shadow 0.2s ease',
-      }}
-    >
-      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-        {item.icon}
-      </svg>
-    </button>
-  )
+function storageKey(workspaceId: string): string {
+  return `caye-command-selected-thread:${workspaceId}`
 }
 
-const SETTINGS_ICON = (
-  <><line x1="4" y1="6" x2="20" y2="6" /><circle cx="9" cy="6" r="2" />
-    <line x1="4" y1="12" x2="20" y2="12" /><circle cx="15" cy="12" r="2" />
-    <line x1="4" y1="18" x2="20" y2="18" /><circle cx="9" cy="18" r="2" /></>
-)
+function sidebarStorageKey(): string {
+  return 'caye-command-sidebar-collapsed'
+}
 
-const RAIL_IDS: RailId[] = [...RAIL_ITEMS.map((r) => r.id), 'settings']
-
-// The founder's entire briefing, one page. Home stays deliberately short
-// (hero, attention, business pulse, working-now, a short log) — the
-// calendar, the full conversation list, contacts, channels/voice/cost/
-// health/tools/admin, and the complete activity history all moved to
-// their own pages (Inbox/People/Work/Memory/Settings) rather than being
-// destroyed. See the redesign audit for the reasoning per section.
+/**
+ * Caye Command — chat-first shell (2026-08-25 redesign). Caye Direct's
+ * thread view is now the persistent main surface (it used to be a modal
+ * overlay summoned on top of a multi-page Home); the old icon rail and the
+ * overlay's own thread-history panel merge into one collapsible sidebar,
+ * matching the Claude/ChatGPT app-shell reference this was modeled on —
+ * fixed destinations (Inbox/People/Work/Memory/Settings) on top, conversations
+ * below, a toggle at the top-left that fully hides the sidebar.
+ *
+ * There is no 'home' view any more. The old Home page's content (the
+ * hero briefing, business pulse, attention queue) becomes the first entry
+ * in Caye's card catalog — see SnapshotCard — pinned above the transcript
+ * instead of living on its own page.
+ *
+ * "Team" visibility (an operator's real WhatsApp conversation with Caye —
+ * Mrs. Max, Max) used to live behind a Chat/Live mode switch inside the old
+ * modal, which made it easy to lose track of. It's now its own always-
+ * visible sidebar section instead of a second mode to discover.
+ *
+ * Live agent-selected cards (Caye choosing to drop a card mid-reply) are a
+ * separate, later piece of work — see SnapshotCard's doc comment for why
+ * that's not wired here.
+ */
 export default function FounderHome() {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -95,74 +62,38 @@ export default function FounderHome() {
   const [isPending, startTransition] = useTransition()
   const [pendingWorkspaceId, setPendingWorkspaceId] = useState<string | null>(null)
   const { hasActivity } = useWorkspacesActivity(workspaces.map((m) => m.workspace_id), workspaceId)
-  const { channels } = useWorkspaceChannels(workspaceId)
-  const hasChannelError = channels ? Object.values(channels).some((c) => c?.needs_reauth === true) : false
-  const cayeState: CayeActivityState = hasChannelError
-    ? 'error'
-    : data && data.pending_escalation_count > 0
-    ? 'attention'
-    : revalidating || isPending
-    ? 'working'
-    : 'idle'
 
-  const [cayeOpen, setCayeOpen] = useState(false)
-  const [talkToCayeDraft, setTalkToCayeDraft] = useState<string | null>(null)
-  const [cayeMode, setCayeMode] = useState<'chat' | 'live'>('chat')
-  const cayeHistoryEntry = useRef(false)
-
-  function openCaye(draft?: string, mode: 'chat' | 'live' = 'chat') {
-    if (!cayeOpen) {
-      window.history.pushState({ ...(window.history.state ?? {}), cayeOverlay: true }, '')
-      cayeHistoryEntry.current = true
-      setCayeOpen(true)
-    }
-    setCayeMode(mode)
-    if (draft) setTalkToCayeDraft(draft)
-  }
-
-  function closeCaye() {
-    if (cayeHistoryEntry.current) {
-      cayeHistoryEntry.current = false
-      window.history.back()
-      return
-    }
-    setCayeOpen(false)
-  }
-
-  function handleTalkToCaye(text: string) {
-    openCaye(text)
-  }
-
-  useEffect(() => {
-    if (!cayeOpen) return
-    const onPopState = () => {
-      cayeHistoryEntry.current = false
-      setCayeOpen(false)
-    }
-    window.addEventListener('popstate', onPopState)
-    return () => window.removeEventListener('popstate', onPopState)
-  }, [cayeOpen])
-
+  const [snapshotDismissed, setSnapshotDismissed] = useState(false)
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null)
   function goToConversation(conversationId: string | null) {
     setSelectedConversationId(conversationId)
-    setRailView('inbox')
+    setActiveView({ type: 'page', id: 'inbox' })
   }
 
+  // ── URL-synced view — only page destinations round-trip through ?rail=;
+  // a thread/operator selection is local + localStorage-remembered, same
+  // as the old CayeDirect overlay never put a thread id in the URL either.
   const rawRail = searchParams.get('rail')
-  const urlRail: FounderRailId = (rawRail && RAIL_IDS.includes(rawRail as FounderRailId))
-    ? (rawRail as FounderRailId)
-    : 'home'
-  const [railView, setRailViewState] = useState<FounderRailId>(urlRail)
+  const [activeView, setActiveViewState] = useState<ActiveView>(() =>
+    (rawRail && PAGE_IDS.includes(rawRail as FounderRailId))
+      ? { type: 'page', id: rawRail as FounderRailId }
+      : { type: 'thread', id: '' }
+  )
   useEffect(() => {
-    if (!isPending) setRailViewState(urlRail)
-  }, [urlRail, isPending])
+    if (isPending) return
+    if (rawRail && PAGE_IDS.includes(rawRail as FounderRailId)) {
+      setActiveViewState({ type: 'page', id: rawRail as FounderRailId })
+    } else {
+      setActiveViewState((current) => current.type === 'page' ? { type: 'thread', id: '' } : current)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rawRail, isPending])
 
-  const setRailView = (id: FounderRailId) => {
-    setRailViewState(id)
+  function setActiveView(next: ActiveView) {
+    setActiveViewState(next)
     const params = new URLSearchParams(searchParams.toString())
-    if (id === 'home') params.delete('rail')
-    else params.set('rail', id)
+    if (next.type === 'page') params.set('rail', next.id)
+    else params.delete('rail')
     const qs = params.toString()
     startTransition(() => {
       router.replace(`/dashboard/${workspaceId}${qs ? `?${qs}` : ''}`, { scroll: false })
@@ -173,37 +104,148 @@ export default function FounderHome() {
     if (id === workspaceId) return
     setPendingWorkspaceId(id)
     startTransition(() => {
-      router.push(`/dashboard/${id}${railView !== 'home' ? `?rail=${railView}` : ''}`)
+      router.push(`/dashboard/${id}${activeView.type === 'page' ? `?rail=${activeView.id}` : ''}`)
     })
   }
   const highlightedWorkspaceId = (isPending && pendingWorkspaceId) || workspaceId
 
+  // ── Sidebar collapse — persisted per browser, not per workspace; this
+  // is a layout preference, not workspace state.
+  const [collapsed, setCollapsed] = useState(false)
+  useEffect(() => {
+    try { setCollapsed(window.localStorage.getItem(sidebarStorageKey()) === '1') } catch {}
+  }, [])
+  function toggleCollapsed() {
+    setCollapsed((current) => {
+      const next = !current
+      try { window.localStorage.setItem(sidebarStorageKey(), next ? '1' : '0') } catch {}
+      return next
+    })
+  }
+
+  // ── Thread list — moved here from the old CayeDirect.tsx overlay, since
+  // the sidebar (highlighting the active thread) and the main pane
+  // (rendering it) both need this now that chat isn't a modal owning its
+  // own isolated state.
+  const [threads, setThreads] = useState<ThreadListItem[] | null>(null)
+  const [query, setQuery] = useState('')
+  const [creating, setCreating] = useState(false)
+  const searchDebounce = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const loadThreads = useCallback(async (q: string): Promise<ThreadListItem[] | null> => {
+    const { session } = await getSession()
+    if (!session) return null
+    const url = `/api/founder/caye-direct/threads?workspaceId=${workspaceId}&status=active${q.trim() ? `&q=${encodeURIComponent(q.trim())}` : ''}`
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${session.access_token}` } })
+    const json = await res.json()
+    return res.ok ? (json.threads as ThreadListItem[]) : null
+  }, [workspaceId])
+
+  useEffect(() => {
+    let cancelled = false
+    setThreads(null)
+    setQuery('')
+    async function load() {
+      const list = await loadThreads('')
+      if (cancelled) return
+      setThreads(list ?? [])
+      let remembered: string | null = null
+      try { remembered = window.localStorage.getItem(storageKey(workspaceId)) } catch {}
+      const rememberedValid = remembered && (list ?? []).some((thread) => thread.id === remembered)
+      const initialId = rememberedValid ? remembered : (list ?? [])[0]?.id ?? null
+      if (initialId) setActiveViewState((current) => current.type === 'page' ? current : { type: 'thread', id: initialId })
+    }
+    load()
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaceId, loadThreads])
+
+  useEffect(() => {
+    if (searchDebounce.current) clearTimeout(searchDebounce.current)
+    searchDebounce.current = setTimeout(async () => {
+      const list = await loadThreads(query)
+      if (!list) return
+      setThreads(list)
+    }, 250)
+    return () => { if (searchDebounce.current) clearTimeout(searchDebounce.current) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query])
+
+  // ── Operators ("Team") — read-only visibility into an operator's real
+  // WhatsApp conversation with Caye. Ported from the old CayeDirect.tsx
+  // overlay's Live mode, minus the mode switch: it's just always here.
+  const [operators, setOperators] = useState<LiveOperator[] | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    setOperators(null)
+    async function loadOperators() {
+      const { session } = await getSession()
+      if (!session) return
+      const response = await fetch(`/api/founder/caye-operators?workspaceId=${workspaceId}`, {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      })
+      const json = await response.json()
+      if (cancelled || !response.ok) return
+      const list = (json.operators as LiveOperator[]).filter((operator) => operator.role !== 'founder')
+      setOperators(list)
+    }
+    loadOperators()
+    return () => { cancelled = true }
+  }, [workspaceId])
+
+  function selectThread(id: string) {
+    try { window.localStorage.setItem(storageKey(workspaceId), id) } catch {}
+    setActiveView({ type: 'thread', id })
+  }
+
+  function selectOperator(id: number) {
+    setActiveView({ type: 'operator', id })
+  }
+
+  async function createThread() {
+    setCreating(true)
+    try {
+      const { session } = await getSession()
+      if (!session) return
+      const res = await fetch('/api/founder/caye-direct/threads', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ workspaceId }),
+      })
+      const json = await res.json()
+      if (!res.ok || !json.thread) return
+      const thread: ThreadListItem = json.thread
+      setThreads((current) => [thread, ...(current ?? [])])
+      selectThread(thread.id)
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  function updateThreadMeta(id: string, meta: { title: string | null }) {
+    setThreads((current) => (current ?? []).map((thread) => thread.id === id ? { ...thread, title: meta.title } : thread))
+  }
+
+  function archiveThread(id: string) {
+    setThreads((current) => {
+      const remaining = (current ?? []).filter((thread) => thread.id !== id)
+      setActiveViewState((view) => (view.type === 'thread' && view.id === id)
+        ? (remaining[0] ? { type: 'thread', id: remaining[0].id } : { type: 'thread', id: '' })
+        : view)
+      return remaining
+    })
+  }
+
+  const selectedThread = activeView.type === 'thread' ? threads?.find((t) => t.id === activeView.id) ?? null : null
+  const selectedOperator = activeView.type === 'operator' ? operators?.find((o) => o.id === activeView.id) ?? null : null
+  const operatorLabels = liveOperatorDisplayNames(operators ?? [])
+
   return (
-    <div className="caye-founder" style={{ display: 'flex', height: '100%', background: ENV_BG, color: '#f4f4f5', overflow: 'hidden', fontFamily: 'var(--font-sans)' }}>
+    <div className="caye-founder" style={{ position: 'relative', display: 'flex', height: '100%', background: ENV_BG, color: '#f4f4f5', overflow: 'hidden', fontFamily: 'var(--font-sans)' }}>
       <style>{`
-        @keyframes caye-view-in {
-          from { opacity: 0; transform: translateY(4px); }
-          to   { opacity: 1; transform: none; }
-        }
         @keyframes caye-progress-slide {
           0%   { transform: translateX(-100%); }
           100% { transform: translateX(360%); }
-        }
-        @keyframes caye-popover-in {
-          from { opacity: 0; transform: translateY(-4px) scale(0.98); }
-          to   { opacity: 1; transform: none; }
-        }
-        @keyframes caye-resolve-out {
-          to { opacity: 0; transform: scale(0.97); }
-        }
-        .caye-nav-pending { opacity: 0.62; transition: opacity 0.16s ease; }
-        .caye-nav-idle { opacity: 1; transition: opacity 0.16s ease; }
-        .caye-activity-row { transition: background 0.15s ease; }
-        .caye-activity-row:hover { background: rgba(255,255,255,0.035); }
-        @media (prefers-reduced-motion: reduce) {
-          .caye-view-swap { animation: none !important; }
-          .caye-nav-pending, .caye-nav-idle { transition: none; }
-          [style*="caye-popover-in"], [style*="caye-view-in"], [style*="caye-resolve-out"] { animation: none !important; }
         }
         .caye-founder * { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.15) transparent; }
         .caye-founder *::-webkit-scrollbar { width: 6px; height: 6px; }
@@ -211,236 +253,111 @@ export default function FounderHome() {
         .caye-founder *::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 3px; }
         .caye-founder *::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.25); }
         ${focusResetCss}
-
-        /* Responsive. Desktop: hero side-by-side (text | orb). Below
-           1100px the orb block visually leads (still text-first in the
-           DOM/for assistive tech) so a glance at a laptop or tablet still
-           sees Caye's state before the paragraph. Panel grids stack. */
-        @media (max-width: 1100px) {
-          /* !important: grid-template-columns is set inline on .caye-hero
-             (FounderBriefing.tsx) for the desktop two-column split, which
-             an unqualified rule here can't outrank. */
-          .caye-hero { grid-template-columns: 1fr !important; text-align: center; gap: 20px; }
-          .caye-hero-orb { order: -1; }
-          .caye-hero-text { align-items: center; text-align: center; }
-          .caye-hero-text p { max-width: none !important; }
-          .caye-hero-pulse { position:static !important; margin-top:20px; justify-content:center; }
-          .caye-stack-grid { grid-template-columns: 1fr !important; }
-        }
-        /* The particle canvas is intentionally much larger than the
-           briefing copy. On wide screens it is a visual layer, not the
-           ruler for the document flow: allowing it to size the grid row
-           pushed the business pulse and activity panels below the fold.
-           Keep enough hero height for the briefing/attention card and the
-           orb's status line, then let Caye occupy the right side independently
-           so it cannot overlap the lower operational layer. */
-        @media (min-width: 1101px) {
-          .caye-hero {
-            position: relative;
-            display: block !important;
-            min-height: 600px;
-            padding-top: 8px !important;
-          }
-          .caye-hero-text {
-            width: min(44%, 520px);
-            /* The briefing is the human half of the composition, not a
-               page title pinned to the top edge. This optically centers it
-               against Caye while leaving the metrics/status baseline intact. */
-            padding-top: clamp(52px, 7vh, 92px) !important;
-          }
-          .caye-hero-orb {
-            position: absolute;
-            top: 8px;
-            right: 2%;
-            width: 54%;
-          }
-          .caye-hero-pulse {
-            position:absolute;
-            left:4px;
-            bottom:18px;
-          }
-        }
-        @media (max-width: 780px) {
-          .caye-rail { width: 52px !important; }
-        }
-        @media (max-width: 560px) {
-          .caye-hero { padding-top: 20px !important; }
-        }
       `}</style>
 
-      {/* ── Icon rail — five destinations, Settings + identity pinned to
-          the bottom. No workspace initials here anymore; see header. ── */}
-      <nav className="caye-rail" style={{
-        width: 64, flexShrink: 0, background: 'rgba(17,17,19,0.5)',
-        boxShadow: 'inset -1px 0 0 rgba(255,255,255,0.035)',
-        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, padding: '16px 0',
-        ...GLASS,
-      }}>
-        {RAIL_ITEMS.map((item) => (
-          <RailButton key={item.id} item={item} active={railView === item.id} onClick={() => setRailView(item.id)} />
-        ))}
-        <div style={{ flex: 1 }} />
-        <RailButton
-          item={{ id: 'settings', label: 'Settings', icon: SETTINGS_ICON }}
-          active={railView === 'settings'}
-          onClick={() => setRailView('settings')}
-        />
-        <FounderProfile />
-      </nav>
+      <CommandSidebar
+        collapsed={collapsed}
+        onToggleCollapsed={toggleCollapsed}
+        activeView={activeView}
+        onSelectPage={(id) => setActiveView({ type: 'page', id })}
+        threads={threads}
+        onSelectThread={selectThread}
+        onNewThread={createThread}
+        creatingThread={creating}
+        operators={operators}
+        onSelectOperator={selectOperator}
+        query={query}
+        onQueryChange={setQuery}
+        businessName={workspace.business_name ?? 'New signup'}
+        workspaceStatus={workspace.status}
+        workspaces={workspaces}
+        activeWorkspaceId={highlightedWorkspaceId}
+        onSelectWorkspace={goToWorkspace}
+        hasActivity={hasActivity}
+      />
 
-      {/* ── Main ── */}
       <div style={{ position: 'relative', flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0 }}>
-        {/* Atmosphere — the environment should read as "Caye's light
-            falling on the room," not a designed gradient. Third glow is
-            loosely anchored near where the orb sits in the hero; the rest
-            is deliberately faint enough to be subconscious. */}
         <div aria-hidden style={{
           position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: -1,
           background:
             'radial-gradient(ellipse 900px 500px at 100% -10%, rgba(7,102,163,0.13), transparent 60%), ' +
             'radial-gradient(ellipse 620px 480px at 78% 20%, rgba(78,190,206,0.06), transparent 65%), ' +
-            'radial-gradient(ellipse 500px 380px at 82% 16%, rgba(255,228,175,0.035), transparent 60%), ' +
             'radial-gradient(ellipse 700px 400px at -5% 110%, rgba(255,228,175,0.04), transparent 60%)',
         }} />
-        <div aria-hidden style={{
-          position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: -1, opacity: 0.025,
-          mixBlendMode: 'overlay',
-          backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E\")",
-        }} />
 
-        {/* Header — logo + current workspace + status, click to switch.
-            Replaces both the old rail's logo button and the old top
-            status bar's plain workspace name. Separation from content
-            below is tonal (glass) + a hairline inner shadow, not a border.
-            zIndex is load-bearing, not decorative: backdrop-filter (in
-            GLASS) makes this element its own stacking context, but
-            without an explicit z-index that context still paints in DOM
-            order among siblings — meaning the view-swap content div right
-            after it (later in the DOM) was painting OVER the workspace
-            popover despite the popover's own z-index:100, since that
-            z-index only wins comparisons *inside* this header's stacking
-            context, not against the header's siblings. That was the real
-            "text bleeds through the popover" bug — not a transparency
-            problem, a paint-order one. Any opacity fix alone couldn't
-            have solved it. */}
-        <div style={{
-          position: 'relative', zIndex: 20, padding: '10px 20px',
-          boxShadow: 'inset 0 -1px 0 rgba(255,255,255,0.035)',
-          display: 'flex', alignItems: 'center', flexShrink: 0,
-          background: 'rgba(17,17,19,0.4)', ...GLASS,
-        }}>
-          {(isPending || revalidating) && (
-            <div aria-hidden style={{ position: 'absolute', left: 0, right: 0, bottom: -1, height: 2, overflow: 'hidden' }}>
-              <div style={{ width: '38%', height: '100%', borderRadius: 2, background: GRADIENT, animation: 'caye-progress-slide 0.9s ease-in-out infinite' }} />
-            </div>
-          )}
-          <WorkspaceSwitcher
-            businessName={workspace.business_name ?? 'New signup'}
-            status={workspace.status}
-            workspaces={workspaces}
-            activeWorkspaceId={highlightedWorkspaceId}
-            onSelect={goToWorkspace}
-            hasActivity={hasActivity}
-          />
-        </div>
-
-        <div
-          key={railView}
-          className={`caye-view-swap ${isPending ? 'caye-nav-pending' : 'caye-nav-idle'}`}
-          style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', animation: 'caye-view-in 0.2s ease-out' }}
-        >
-          {railView === 'inbox' ? (
-            <InboxPage workspaceId={workspaceId} selectedConversationId={selectedConversationId} onSent={refetch} />
-          ) : railView === 'people' ? (
-            <PeoplePage workspaceId={workspaceId} onReviewConversation={goToConversation} />
-          ) : railView === 'work' ? (
-            <WorkPage
-              workspaceId={workspaceId}
-              data={data}
-              weekOffset={weekOffset}
-              onWeekOffsetChange={setWeekOffset}
-              onSelectConversation={goToConversation}
-            />
-          ) : railView === 'memory' ? (
-            <MemoryPage workspaceId={workspaceId} />
-          ) : railView === 'settings' ? (
-            <SettingsPage workspaceId={workspaceId} />
-          ) : (
-            // ── Home ── Level 1 (hero + attention), Level 2 (business
-            // pulse + working now), Level 3 (short log). Deliberately
-            // shorter than the old dashboard — substantial negative
-            // space is the point, not a gap to be filled.
-            // paddingBottom clears the floating global composer (~70px
-            // tall, anchored to Main's bottom) so the last row of content
-            // can still scroll fully into view above it.
-            <div className="caye-hero-wrap" style={{ flex: 1, overflowY: 'auto', padding: '8px 32px 96px', display: 'flex', flexDirection: 'column', gap: 36, minHeight: 0 }}>
-              <FounderBriefing
-                data={data}
-                today={today}
-                workspaceId={workspaceId}
-                workspaceName={workspace.business_name ?? 'New signup'}
-                state={cayeState}
-                weekLabel={weekOffset === 0 ? 'Bookings this week' : 'Bookings shown'}
-                onReviewAttention={goToConversation}
-                onDeploymentToggled={refetch}
-              />
-
-              <div className="caye-stack-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 36 }}>
-                <LiveActivity workspaceId={workspaceId} />
-                <CayeLog workspaceId={workspaceId} limit={6} onViewAll={() => setRailView('work')} />
-              </div>
-            </div>
-          )}
-        </div>
-
-        <CayeDirect
-          workspaceId={workspaceId}
-          workspaceName={workspace.business_name ?? 'New signup'}
-          open={cayeOpen}
-          onClose={closeCaye}
-          initialMode={cayeMode}
-          initialMessage={talkToCayeDraft}
-          onInitialMessageSent={() => setTalkToCayeDraft(null)}
-        />
-
-        {!cayeOpen && (
-          railView === 'inbox' ? (
-            // On Inbox, replying to the customer is the primary action —
-            // a second full-width "Ask Caye anything" bar at the same
-            // visual weight was directly competing with (and overlapping)
-            // the conversation reply composer. CayeLauncher owns its own
-            // bottom-right positioning, stacked above the reply
-            // composer's vertical span rather than beside it — see its
-            // own doc comment for why beside-it was rejected (the list/
-            // thread split is user-resizable, so a fixed side offset
-            // risked drifting into the reply composer at some ratios).
-            <CayeLauncher onSend={handleTalkToCaye} onOpenHistory={() => openCaye()} />
-          ) : (
-            // Root-caused (2026-08-14): making this wrapper's background
-            // transparent was NOT enough, because transparency was never
-            // the actual bug. This used to be a normal flex-flow sibling
-            // of the view-swap content div (flexShrink:0) — meaning it
-            // consumed its OWN reserved row at the bottom of Main.
-            // Nothing was ever painted in that row except padding, so
-            // what looked like "a dark footer" was genuinely empty
-            // canvas (Main/root's ENV_BG), not a leftover background
-            // color — the content area literally stopped short of it.
-            // Fixed by taking this out of flex flow entirely: absolutely
-            // positioned, anchored to the bottom of Main, so the
-            // view-swap div above naturally expands to fill the space
-            // this used to reserve, and page content can now genuinely
-            // scroll underneath this floating region. pointer-events:none
-            // on this wrapper (empty margin around the pill never blocks
-            // a click/scroll on content behind it); TalkToCaye's own root
-            // re-enables pointer-events:auto.
-            <div style={{
-              position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 15,
-              padding: '0 20px 14px', background: 'transparent', pointerEvents: 'none',
-            }}>
-              <TalkToCaye onSend={handleTalkToCaye} onOpenHistory={() => openCaye()} onOpen={() => openCaye()} onOpenLive={() => openCaye(undefined, 'live')} />
-            </div>
-          )
+        {(isPending || revalidating) && (
+          <div aria-hidden style={{ position: 'absolute', left: 0, right: 0, top: 0, zIndex: 20, height: 2, overflow: 'hidden' }}>
+            <div style={{ width: '38%', height: '100%', borderRadius: 2, background: GRADIENT, animation: 'caye-progress-slide 0.9s ease-in-out infinite' }} />
+          </div>
         )}
+
+        <div style={{
+          flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column',
+          // Reserves horizontal room for the floating collapse toggle
+          // (top-left, see CommandSidebar) — when the sidebar is open the
+          // toggle sits inside its own row there instead, so this is only
+          // needed once it's floating over the main pane's own top-left
+          // corner, where every page/thread's own heading would otherwise
+          // start flush against it. A left inset, not a top one — nothing
+          // should visibly move down just because the sidebar collapsed.
+          paddingLeft: collapsed ? 50 : 0,
+          transition: 'padding-left 0.18s ease',
+        }}>
+          {activeView.type === 'page' ? (
+            activeView.id === 'inbox' ? (
+              <InboxPage workspaceId={workspaceId} selectedConversationId={selectedConversationId} onSent={refetch} />
+            ) : activeView.id === 'people' ? (
+              <PeoplePage workspaceId={workspaceId} onReviewConversation={goToConversation} />
+            ) : activeView.id === 'work' ? (
+              <WorkPage workspaceId={workspaceId} onSelectConversation={goToConversation} />
+            ) : activeView.id === 'memory' ? (
+              <MemoryPage workspaceId={workspaceId} />
+            ) : (
+              <SettingsPage workspaceId={workspaceId} />
+            )
+          ) : activeView.type === 'operator' ? (
+            selectedOperator ? (
+              <CayeDirectThread
+                key={selectedOperator.id}
+                mode="operator"
+                workspaceId={workspaceId}
+                operatorId={selectedOperator.id}
+                operatorLabel={operatorLabels.get(selectedOperator.id) || 'Operator'}
+                scrollToLatest
+              />
+            ) : (
+              <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#71717a', fontSize: 13 }}>
+                {operators === null ? 'Loading…' : 'Operator not found.'}
+              </div>
+            )
+          ) : selectedThread ? (
+            <CayeDirectThread
+              key={selectedThread.id}
+              mode="thread"
+              workspaceId={workspaceId}
+              threadId={selectedThread.id}
+              threadTitle={selectedThread.title}
+              autoFocusComposer
+              composerVisible
+              scrollToLatest
+              onThreadMeta={(meta) => updateThreadMeta(selectedThread.id, meta)}
+              onArchive={() => archiveThread(selectedThread.id)}
+              leadingCard={!snapshotDismissed ? (
+                <SnapshotCard
+                  data={data}
+                  today={today}
+                  weekLabel={weekOffset === 0 ? 'Bookings this week' : 'Bookings shown'}
+                  onReviewAttention={goToConversation}
+                  onDismiss={() => setSnapshotDismissed(true)}
+                />
+              ) : undefined}
+            />
+          ) : (
+            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#71717a', fontSize: 13 }}>
+              {threads === null ? 'Loading…' : 'Start a conversation with Caye.'}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )

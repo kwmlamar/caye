@@ -3,25 +3,16 @@
 import { useState, useEffect, type ReactNode } from 'react'
 import type { Booking } from '@/lib/useCommandOverview'
 import { useCommandMonthBookings } from '@/lib/useCommandMonthBookings'
-import { Pill } from '@/components/dashboard/founder-home/console-ui'
 import { CayeLoadingPulse } from '@/components/dashboard/founder-home/CayeLoadingPulse'
 
-// Same dark-console tokens as FounderHome.tsx — kept local rather than
-// imported since FounderHome doesn't export them (matches the pattern
-// already used by GlobalPerformance.tsx / ContactsPanel.tsx).
 const LABEL_COLOR = '#71717a'
-const GRADIENT = 'linear-gradient(90deg, #0766A3, #4EBECE, #FFE4AF)'
 
 const DAY_LABELS = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN']
 
-// Which view opens by default — month gives the founder the whole
-// booking rhythm at a glance; week is the drill-down for "what's coming
-// up day by day." Remembered per-browser so a switch to week sticks.
-const CALENDAR_VIEW_KEY = 'cayeCalendarView'
-
-// Booking status → the accent color it renders with. Nothing distinguished
-// these before this pass — every booking looked identical regardless of
-// whether the customer had actually confirmed.
+// Booking status → the accent color a detail row's left edge renders
+// with. Month-grid cells no longer carry per-status color (see
+// MonthDayCell) — a cell just says "something's here," the agenda below
+// it says what.
 const STATUS_COLOR: Record<string, string> = {
   confirmed: '#4EBECE',
   pending: '#FFE4AF',
@@ -38,19 +29,9 @@ function fmtTime(t: string): string {
   return `${h}:${m}`
 }
 
-// Same UTC-pin as fmtMonthYear below — monday/sunday are UTC-midnight
-// Date objects, so this must render in UTC too or it can show the wrong
-// day near a local-timezone midnight boundary.
-function fmtDayMonth(d: Date): string {
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
-}
-
-// timeZone: 'UTC' matters here — monthDate is a UTC-midnight Date built
-// from getUTCFullYear/getUTCMonth (matching every other date computed in
-// this file), and toLocaleDateString defaults to the browser's local
-// timezone. Without pinning it, a US-timezone browser renders the 1st of
-// the month as if it were still the last day of the month before —
-// disagreeing with the grid's own (correctly UTC) day numbers.
+// monthDate is a UTC-midnight Date built from getUTCFullYear/getUTCMonth,
+// so this must render in UTC too or it can show the wrong month near a
+// local-timezone midnight boundary.
 function fmtMonthYear(d: Date): string {
   return d.toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' })
 }
@@ -96,28 +77,6 @@ function NavButton({ onClick, disabled, children, title }: { onClick: () => void
   )
 }
 
-function ViewToggle({ view, onChange }: { view: 'month' | 'week'; onChange: (v: 'month' | 'week') => void }) {
-  return (
-    <div style={{ display: 'flex', gap: 2, background: 'rgba(255,255,255,0.05)', borderRadius: 8, padding: 3, flexShrink: 0 }}>
-      {(['month', 'week'] as const).map((v) => (
-        <button
-          key={v}
-          onClick={() => onChange(v)}
-          style={{
-            border: 'none', cursor: 'pointer', padding: '4px 11px', borderRadius: 6,
-            fontSize: 10.5, fontWeight: 700, fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.05em',
-            background: view === v ? '#f5f5f4' : 'transparent',
-            color: view === v ? '#0a0a0b' : '#a1a1aa',
-            transition: 'background 0.15s ease, color 0.15s ease',
-          }}
-        >
-          {v}
-        </button>
-      ))}
-    </div>
-  )
-}
-
 interface MonthCell {
   iso: string
   dayNum: number
@@ -126,11 +85,14 @@ interface MonthCell {
   bookings: Booking[]
 }
 
-const MAX_CELL_DOTS = 5
-
+// A cell says "something's here" and "this needs you," not a legend of
+// every status color at once — a 28px square can't carry that much
+// meaning legibly, and the day's own agenda strip below already breaks
+// it down properly once you click in.
 function MonthDayCell({ cell, selected, onSelect }: { cell: MonthCell; selected: boolean; onSelect: () => void }) {
   const [hover, setHover] = useState(false)
   const hasEscalation = cell.bookings.some((b) => b.has_open_escalation)
+  const hasBookings = cell.bookings.length > 0
   const interactive = cell.inMonth
 
   return (
@@ -141,17 +103,15 @@ function MonthDayCell({ cell, selected, onSelect }: { cell: MonthCell; selected:
       disabled={!interactive}
       style={{
         position: 'relative', textAlign: 'left', display: 'flex', flexDirection: 'column', gap: 4,
-        border: selected ? '1px solid rgba(78,190,206,0.5)' : cell.isToday ? '1px solid rgba(78,190,206,0.25)' : '1px solid transparent',
+        border: selected ? '1px solid rgba(78,190,206,0.5)' : 'none',
         borderRadius: 8, padding: '6px 6px 5px',
         cursor: interactive ? 'pointer' : 'default',
         background: selected
           ? 'rgba(78,190,206,0.14)'
           : hover && interactive
-          ? 'rgba(255,255,255,0.07)'
-          : cell.isToday
-          ? 'rgba(78,190,206,0.06)'
-          : 'rgba(255,255,255,0.02)',
-        opacity: cell.inMonth ? 1 : 0.35,
+          ? 'rgba(255,255,255,0.05)'
+          : 'transparent',
+        opacity: cell.inMonth ? 1 : 0.3,
         transition: 'background 0.12s ease, border-color 0.12s ease',
         minHeight: 0,
       }}
@@ -165,15 +125,8 @@ function MonthDayCell({ cell, selected, onSelect }: { cell: MonthCell; selected:
       }}>
         {cell.dayNum}
       </span>
-      {cell.bookings.length > 0 && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3, alignItems: 'center' }}>
-          {cell.bookings.slice(0, MAX_CELL_DOTS).map((b) => (
-            <span key={b.id} style={{ width: 5, height: 5, borderRadius: '50%', background: STATUS_COLOR[b.status] ?? LABEL_COLOR, flexShrink: 0 }} />
-          ))}
-          {cell.bookings.length > MAX_CELL_DOTS && (
-            <span style={{ fontSize: 8, color: 'rgba(245,245,244,0.4)', fontFamily: 'var(--font-mono)' }}>+{cell.bookings.length - MAX_CELL_DOTS}</span>
-          )}
-        </div>
+      {hasBookings && (
+        <span aria-hidden style={{ width: 5, height: 5, borderRadius: '50%', background: '#4EBECE' }} />
       )}
     </button>
   )
@@ -206,47 +159,24 @@ function BookingDetailRow({ b, onClick }: { b: Booking; onClick: () => void }) {
 
 interface Props {
   workspaceId: string
-  bookings: Booking[]
-  weekStart: string // YYYY-MM-DD, Monday
-  weekOffset: number
-  onWeekOffsetChange: (offset: number) => void
   onSelectConversation?: (conversationId: string) => void
 }
 
-export default function CommandCalendar({ workspaceId, bookings, weekStart, weekOffset, onWeekOffsetChange, onSelectConversation }: Props) {
+/**
+ * A month grid you glance at and a day you click into — that's the whole
+ * job. This used to also carry a Week view (a second layout maintained in
+ * parallel), per-status-colored dot clusters in every cell, and a
+ * "SOURCE CALENDAR · Synced" header nobody needed to see daily. Cut all
+ * of it (2026-08-25): Month + a day's own agenda already tells you
+ * everything Week did, just without a mode to pick first.
+ */
+export default function CommandCalendar({ workspaceId, onSelectConversation }: Props) {
   const todayIso = new Date().toISOString().slice(0, 10)
-
-  const [view, setView] = useState<'month' | 'week'>(() => {
-    if (typeof window === 'undefined') return 'month'
-    return window.localStorage.getItem(CALENDAR_VIEW_KEY) === 'week' ? 'week' : 'month'
-  })
-  useEffect(() => {
-    window.localStorage.setItem(CALENDAR_VIEW_KEY, view)
-  }, [view])
 
   function handleBookingClick(b: Booking) {
     if (b.conversation_id && onSelectConversation) onSelectConversation(b.conversation_id)
   }
 
-  // ── Week view (unchanged) ──
-  const parsed = new Date(`${weekStart}T00:00:00Z`)
-  const monday = Number.isNaN(parsed.getTime()) ? new Date() : parsed
-  const sunday = new Date(monday)
-  sunday.setUTCDate(monday.getUTCDate() + 6)
-
-  const week = DAY_LABELS.map((label, i) => {
-    const d = new Date(monday)
-    d.setUTCDate(monday.getUTCDate() + i)
-    const iso = d.toISOString().slice(0, 10)
-    return {
-      label,
-      date: d.getUTCDate(),
-      isToday: iso === todayIso,
-      bookings: bookings.filter((b) => b.booking_date === iso),
-    }
-  })
-
-  // ── Month view ──
   const [monthOffset, setMonthOffset] = useState(0)
   const [selectedDayIso, setSelectedDayIso] = useState<string | null>(todayIso)
   // A month change invalidates whatever was selected in the old one —
@@ -290,175 +220,76 @@ export default function CommandCalendar({ workspaceId, bookings, weekStart, week
 
   return (
     <div style={{ height: '100%', overflowY: 'auto', padding: 20, color: '#f5f5f4', display: 'flex', flexDirection: 'column', gap: 14 }}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, paddingRight: 36, flexWrap: 'wrap' }}>
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 600, letterSpacing: '0.06em', color: LABEL_COLOR }}>SOURCE CALENDAR</span>
-            <Pill color="#4EBECE" label="Synced" dot={false} />
-            {view === 'month' && monthLoading && !monthData && <CayeLoadingPulse size={11} />}
-          </div>
-          <p style={{ fontSize: 12, color: 'rgba(245,245,244,0.4)', marginTop: 4 }}>
-            {view === 'month' ? (
-              <>{monthLabel}{monthOffset === 0 && <span style={{ color: '#4EBECE' }}> · this month</span>}</>
-            ) : (
-              <>{fmtDayMonth(monday)} – {fmtDayMonth(sunday)}{weekOffset === 0 && <span style={{ color: '#4EBECE' }}> · this week</span>}</>
-            )}
-          </p>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 14, fontWeight: 600 }}>
+            {monthLabel}{monthOffset === 0 && <span style={{ color: '#4EBECE' }}> · this month</span>}
+          </span>
+          {monthLoading && !monthData && <CayeLoadingPulse size={11} />}
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-          <ViewToggle view={view} onChange={setView} />
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            {view === 'month' ? (
-              <>
-                <NavButton title="Previous month" onClick={() => setMonthOffset((o) => o - 1)}>
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
-                </NavButton>
-                {monthOffset !== 0 && (
-                  <button
-                    onClick={() => setMonthOffset(0)}
-                    style={{
-                      height: 24, padding: '0 10px', fontSize: 10.5, fontWeight: 600, fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.06em',
-                      borderRadius: 6, background: 'rgba(255,255,255,0.06)', color: '#a1a1aa', cursor: 'pointer',
-                    }}
-                  >
-                    This month
-                  </button>
-                )}
-                <NavButton title="Next month" onClick={() => setMonthOffset((o) => o + 1)}>
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6" /></svg>
-                </NavButton>
-              </>
-            ) : (
-              <>
-                <NavButton title="Previous week" onClick={() => onWeekOffsetChange(weekOffset - 1)}>
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
-                </NavButton>
-                {weekOffset !== 0 && (
-                  <button
-                    onClick={() => onWeekOffsetChange(0)}
-                    style={{
-                      height: 24, padding: '0 10px', fontSize: 10.5, fontWeight: 600, fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.06em',
-                      borderRadius: 6, background: 'rgba(255,255,255,0.06)', color: '#a1a1aa', cursor: 'pointer',
-                    }}
-                  >
-                    Today
-                  </button>
-                )}
-                <NavButton title="Next week" onClick={() => onWeekOffsetChange(weekOffset + 1)}>
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6" /></svg>
-                </NavButton>
-              </>
-            )}
-          </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+          <NavButton title="Previous month" onClick={() => setMonthOffset((o) => o - 1)}>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
+          </NavButton>
+          {monthOffset !== 0 && (
+            <button
+              onClick={() => setMonthOffset(0)}
+              style={{
+                height: 24, padding: '0 10px', fontSize: 11, fontWeight: 500,
+                borderRadius: 6, background: 'rgba(255,255,255,0.06)', color: '#a1a1aa', cursor: 'pointer',
+              }}
+            >
+              This month
+            </button>
+          )}
+          <NavButton title="Next month" onClick={() => setMonthOffset((o) => o + 1)}>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6" /></svg>
+          </NavButton>
         </div>
       </div>
 
-      {view === 'month' ? (
-        <>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 4, flexShrink: 0 }}>
-            {DAY_LABELS.map((label) => (
-              <div key={label} style={{ fontSize: 9, fontFamily: 'var(--font-mono)', color: LABEL_COLOR, letterSpacing: '0.06em', textAlign: 'center', padding: '0 0 2px' }}>
-                {label}
-              </div>
-            ))}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 4, flexShrink: 0 }}>
+        {DAY_LABELS.map((label) => (
+          <div key={label} style={{ fontSize: 9, fontFamily: 'var(--font-mono)', color: LABEL_COLOR, letterSpacing: '0.06em', textAlign: 'center', padding: '0 0 2px' }}>
+            {label}
           </div>
-          {/* Content-sized, not flex-stretched: a grid row's minimum is its
-              own content (day number + dot row), which can't shrink below
-              ~28px. Forcing it to fill a shorter flex remainder (the old
-              `flex: 1, minHeight: 0` + gridAutoRows: '1fr') made rows
-              collapse past that minimum, which doesn't clip — it overflows
-              the row box and bleeds into whatever renders next, which is
-              exactly the "text on top of grid" corruption this replaces.
-              flexShrink: 0 here plus overflowY: 'auto' on the outer
-              container (above) means a short card just scrolls instead. ── */}
-          <div style={{
-            display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gridAutoRows: 'minmax(28px, auto)',
-            gap: 4, flexShrink: 0,
-          }}>
-            {monthCells.map((cell) => (
-              <MonthDayCell
-                key={cell.iso}
-                cell={cell}
-                selected={cell.iso === selectedDayIso}
-                onSelect={() => setSelectedDayIso(cell.iso === selectedDayIso ? null : cell.iso)}
-              />
-            ))}
-          </div>
+        ))}
+      </div>
+      {/* Content-sized, not flex-stretched: a grid row's minimum is its own
+          content (day number + a dot), which can't shrink below ~28px.
+          flexShrink: 0 here plus overflowY: 'auto' on the outer container
+          means a short card just scrolls instead of the row box
+          overflowing past its own bounds. */}
+      <div style={{
+        display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gridAutoRows: 'minmax(28px, auto)',
+        gap: 4, flexShrink: 0,
+      }}>
+        {monthCells.map((cell) => (
+          <MonthDayCell
+            key={cell.iso}
+            cell={cell}
+            selected={cell.iso === selectedDayIso}
+            onSelect={() => setSelectedDayIso(cell.iso === selectedDayIso ? null : cell.iso)}
+          />
+        ))}
+      </div>
 
-          {selectedDayIso && (
-            <div style={{
-              flexShrink: 0, maxHeight: 200, overflowY: 'auto',
-              borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: 10,
-              display: 'flex', flexDirection: 'column', gap: 6,
-            }}>
-              <div style={{ fontSize: 10.5, fontFamily: 'var(--font-mono)', color: LABEL_COLOR, letterSpacing: '0.06em' }}>
-                {fmtFullDate(selectedDayIso)}{selectedDayIso === todayIso && <span style={{ color: '#4EBECE' }}> · Today</span>}
-              </div>
-              {selectedDayBookings.length === 0 ? (
-                <div style={{ fontSize: 11, color: 'rgba(245,245,244,0.3)' }}>No bookings.</div>
-              ) : (
-                selectedDayBookings.map((b) => (
-                  <BookingDetailRow key={b.id} b={b} onClick={() => handleBookingClick(b)} />
-                ))
-              )}
-            </div>
+      {selectedDayIso && (
+        <div style={{
+          flexShrink: 0, maxHeight: 200, overflowY: 'auto',
+          borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: 10,
+          display: 'flex', flexDirection: 'column', gap: 6,
+        }}>
+          <div style={{ fontSize: 11, color: LABEL_COLOR }}>
+            {fmtFullDate(selectedDayIso)}{selectedDayIso === todayIso && <span style={{ color: '#4EBECE' }}> · Today</span>}
+          </div>
+          {selectedDayBookings.length === 0 ? (
+            <div style={{ fontSize: 11, color: 'rgba(245,245,244,0.3)' }}>No bookings.</div>
+          ) : (
+            selectedDayBookings.map((b) => (
+              <BookingDetailRow key={b.id} b={b} onClick={() => handleBookingClick(b)} />
+            ))
           )}
-        </>
-      ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: week.map((d) => (d.isToday ? '1.7fr' : '1fr')).join(' '), gap: 6, flex: 1, minHeight: 0 }}>
-          {week.map((d) => (
-            <div key={d.label} style={{
-              position: 'relative', overflow: 'hidden', display: 'flex', flexDirection: 'column',
-              background: d.isToday ? 'rgba(78,190,206,0.07)' : 'rgba(255,255,255,0.045)',
-              border: d.isToday ? '1px solid rgba(78,190,206,0.4)' : 'none',
-              borderRadius: 10, padding: d.isToday ? 10 : 8,
-            }}>
-              {d.isToday && <div aria-hidden style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 2, background: GRADIENT }} />}
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 6 }}>
-                <span style={{ fontSize: 9, fontFamily: 'var(--font-mono)', color: d.isToday ? '#4EBECE' : '#71717a', letterSpacing: '0.06em' }}>{d.label}</span>
-                <span style={{ fontSize: d.isToday ? 15 : 13, fontFamily: 'var(--font-display)', fontWeight: 600 }}>{d.date}</span>
-                {d.isToday && <span style={{ fontSize: 9, fontFamily: 'var(--font-mono)', color: '#4EBECE', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Today</span>}
-              </div>
-
-              {d.bookings.length === 0 ? (
-                <div style={{ fontSize: 9, color: 'rgba(245,245,244,0.25)' }}>no bookings</div>
-              ) : d.isToday ? (
-                // Today gets the full detail: time, customer, tour, guests,
-                // status/payment/escalation — the "what needs handling right
-                // now" surface the founder actually checks.
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, overflowY: 'auto' }}>
-                  {d.bookings.map((b) => (
-                    <BookingDetailRow key={b.id} b={b} onClick={() => handleBookingClick(b)} />
-                  ))}
-                </div>
-              ) : (
-                // Other days stay compact: at most 3 shown, name + status dot
-                // only, "+N more" instead of pushing the row taller.
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 3, overflowY: 'auto' }}>
-                  {d.bookings.slice(0, 3).map((b) => (
-                    <button
-                      key={b.id}
-                      onClick={() => handleBookingClick(b)}
-                      disabled={!b.conversation_id}
-                      title={`${b.customer_name} · ${b.booking_time ? fmtTime(b.booking_time) : 'time TBD'}`}
-                      style={{
-                        display: 'flex', alignItems: 'center', gap: 4, textAlign: 'left',
-                        background: 'rgba(255,255,255,0.04)', borderRadius: '3px 5px 5px 3px', padding: '3px 6px',
-                        borderLeft: `2px solid ${STATUS_COLOR[b.status] ?? LABEL_COLOR}`, cursor: b.conversation_id ? 'pointer' : 'default',
-                      }}
-                    >
-                      <span style={{ fontSize: 10, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flex: 1 }}>{b.customer_name}</span>
-                      {b.payment_confirmed && <PaidBadge />}
-                      {b.has_open_escalation && <EscalationDot />}
-                    </button>
-                  ))}
-                  {d.bookings.length > 3 && (
-                    <div style={{ fontSize: 9, color: 'rgba(245,245,244,0.35)', padding: '2px 6px' }}>+{d.bookings.length - 3} more</div>
-                  )}
-                </div>
-              )}
-            </div>
-          ))}
         </div>
       )}
     </div>
