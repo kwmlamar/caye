@@ -19,6 +19,7 @@ import {
   detectConsequentialPolarityConflict,
   fetchScopedOwnerInstructionText,
   validateAuthoritativeBookingStatusClaims,
+  validateAuthoritativeBookingTimeClaims,
 } from '../../consequential-claim-grounding'
 import { validateFrontDeskContext } from '../../frontdesk-context-guard'
 import { completeConversationExecution, resolveConversationExecutionAfterFailure, validateConversationExecution } from '@/lib/conversation-execution'
@@ -201,6 +202,24 @@ Front-desk replies are evidence-gated rather than separately operator-gated. If 
         status: 'CONFLICT',
         error_code: 'BOOKING_STATUS_CONFLICT',
         error: `Booking-status guard: ${bookingStatusConflict}. Nothing was sent — re-read authoritative booking state or get an explicit operator instruction.`,
+      }
+    }
+
+    // 2026-08-26 Sonja Pettus incident (see consequential-claim-grounding.ts)
+    // — no owner-instruction bypass: a stated time change is not evidence
+    // the booking record changed.
+    const bookingTimeConflict = await validateAuthoritativeBookingTimeClaims(
+      supabase,
+      ctx.workspaceId,
+      args.conversation_id,
+      body
+    )
+    if (bookingTimeConflict) {
+      return {
+        ok: false,
+        status: 'CONFLICT',
+        error_code: 'UNGROUNDED_BOOKING_TIME',
+        error: `${bookingTimeConflict}. The booking must actually be rescheduled before the customer is told the time changed. Nothing was sent.`,
       }
     }
 

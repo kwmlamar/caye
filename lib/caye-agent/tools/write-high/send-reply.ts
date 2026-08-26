@@ -4,6 +4,7 @@ import { dispatchOperatorReply } from '@/lib/whatsapp/channel-dispatch'
 import type { Tool } from '../types'
 import { assertConversationOwnedByWorkspace, resolveOpenEscalations } from '../write-low/_guards'
 import { unsupportedLogisticsTimeClaims } from '../../logistics-grounding'
+import { validateAuthoritativeBookingTimeClaims } from '../../consequential-claim-grounding'
 import { completeConversationExecution, resolveConversationExecutionAfterFailure, validateConversationExecution } from '@/lib/conversation-execution'
 
 interface SendReplyInput {
@@ -82,6 +83,29 @@ Customer never knows the operator delegated to you.`,
         status: 'CONFLICT',
         error_code: 'UNGROUNDED_LOGISTICS_TIME',
         error: `Draft associates a time with an event the customer thread does not support: ${unsupportedLogistics.join(', ')}. Re-read the thread and correct the schedule; nothing was sent.`,
+      }
+    }
+
+    // 2026-08-26 Sonja Pettus incident: the operator SAYING a booking's
+    // time changed is not evidence the booking record changed — Caye told
+    // a customer their tour moved without ever calling reschedule_booking,
+    // and a payment confirmation sent seconds later read the stale time
+    // back. Unlike the logistics-thread check above, there is deliberately
+    // NO ownerApproved bypass here: owner approval of a draft's WORDING is
+    // not proof the underlying bookings row was actually mutated, which is
+    // exactly what this incident disproved.
+    const bookingTimeConflict = await validateAuthoritativeBookingTimeClaims(
+      supabase,
+      ctx.workspaceId,
+      args.conversation_id,
+      body
+    )
+    if (bookingTimeConflict) {
+      return {
+        ok: false,
+        status: 'CONFLICT',
+        error_code: 'UNGROUNDED_BOOKING_TIME',
+        error: `${bookingTimeConflict}. Call reschedule_booking to actually change the booking BEFORE telling the customer the time changed — a message alone never updates the record. Nothing was sent.`,
       }
     }
 

@@ -219,3 +219,127 @@ export async function validateAuthoritativeBookingStatusClaims(
     ownerInstructionText,
   })
 }
+
+// ============================================================================
+// Booking TIME grounding (2026-08-26 Sonja Pettus incident)
+//
+// An operator told Caye to move a tour from 9:00 a.m. to 10:00 a.m. Caye
+// sent the customer a message saying the tour was now at 10:00 a.m. — but
+// never called reschedule_booking, so the authoritative bookings.booking_time
+// row stayed at 9:00 a.m. A payment-confirmation message sent four seconds
+// later read the same stale 9:00 a.m. back to the customer.
+//
+// Deliberately UNLIKE validateBookingStatusClaimsAgainstEvidence above, this
+// check has NO scoped-owner-instruction override. The whole point of the
+// incident is that the operator SAYING the time changed is not evidence the
+// booking record changed — communication must never substitute for the
+// mutation. Only an actual reschedule_booking call (or the record already
+// matching) can ground a time claim.
+// ============================================================================
+
+const TOUR_TIME = String.raw`(?:\d{1,2}:[0-5]\d(?:\s*(?:a\.?m\.?|p\.?m\.?))?|\d{1,2}\s*(?:a\.?m\.?|p\.?m\.?))`
+
+/**
+ * "10:00 a.m." / "9am" / "09:00" -> "10:00" 24h, or null if unparseable /
+ * genuinely ambiguous (a bare single-digit hour with no am/pm and no
+ * leading zero, e.g. a lone "9:00" with nothing to disambiguate — real
+ * tour copy in this codebase always carries either am/pm or the
+ * leading-zero 24h form booking_time.slice(0,5) produces).
+ */
+function to24Hour(raw: string): string | null {
+  const m = raw.trim().toLowerCase().match(/^(\d{1,2})(?::([0-5]\d))?\s*(a\.?m\.?|p\.?m\.?)?$/)
+  if (!m) return null
+  let hour = parseInt(m[1], 10)
+  const minute = m[2] ? parseInt(m[2], 10) : 0
+  if (m[3]) {
+    const meridiem = m[3].replace(/\./g, '')
+    if (hour < 1 || hour > 12) return null
+    if (meridiem === 'pm' && hour !== 12) hour += 12
+    if (meridiem === 'am' && hour === 12) hour = 0
+  } else if (!/^\d{2}$/.test(m[1]) || hour > 23) {
+    return null
+  }
+  if (hour > 23 || minute > 59) return null
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
+}
+
+/**
+ * Extracts "the tour is at HH:MM" claims — a time near the word "tour" in
+ * the same sentence, EXCLUDING a time explicitly marked as the prior value
+ * ("...to 10 a.m. rather than 9 a.m.", "updated time from 9 a.m.") so a
+ * legitimate correction message doesn't flag its own old-time context as an
+ * ungrounded claim.
+ */
+export function extractTourTimeClaims(text: string): string[] {
+  const claims = new Set<string>()
+  for (const sentence of text.split(/\n|(?<=[.!?])\s+/)) {
+    if (!/\btour\b/i.test(sentence)) continue
+    const timeRe = new RegExp(TOUR_TIME, 'gi')
+    let match: RegExpExecArray | null
+    while ((match = timeRe.exec(sentence)) !== null) {
+      const before = sentence.slice(Math.max(0, match.index - 20), match.index).toLowerCase()
+      if (/(?:rather than|instead of|from|previously|was)\s*$/.test(before)) continue
+      const canonical = to24Hour(match[0])
+      if (canonical) claims.add(canonical)
+    }
+  }
+  return [...claims]
+}
+
+/** Pure decision layer, split from DB loading so the invariant is unit-testable. */
+export function validateBookingTimeClaimsAgainstEvidence(
+  content: string,
+  bookingTime: string | null
+): string | null {
+  const claims = extractTourTimeClaims(content)
+  if (claims.length === 0) return null
+  if (!bookingTime) return null // no linked booking with a time on record — nothing to contradict
+
+  const actual = to24Hour(bookingTime.slice(0, 5))
+  if (!actual) return null
+
+  for (const claim of claims) {
+    if (claim !== actual) {
+      return `claims the tour time is "${claim}" but the authoritative booking record still shows "${actual}"`
+    }
+  }
+  return null
+}
+
+/**
+ * Loads the authoritative booking_time for the SINGLE booking linked to
+ * this conversation (by conversation_id, excluding cancelled). Deliberately
+ * conservative: if zero or more than one booking matches, returns null
+ * (skip the check) rather than falling back to name/email/phone matching —
+ * unlike the status check above, a time mismatch is specific enough that a
+ * wrong-booking false positive would incorrectly block a legitimate send,
+ * and the conversation_id link already covers the case this incident
+ * actually happened in.
+ */
+export async function fetchAuthoritativeBookingTime(
+  db: ReturnType<typeof createServiceClient>,
+  workspaceId: string,
+  conversationId: string
+): Promise<string | null> {
+  const { data } = await db
+    .from('bookings')
+    .select('booking_time')
+    .eq('user_id', workspaceId)
+    .eq('conversation_id', conversationId)
+    .neq('status', 'cancelled')
+
+  const rows = data ?? []
+  if (rows.length !== 1) return null
+  return (rows[0].booking_time as string | null) ?? null
+}
+
+export async function validateAuthoritativeBookingTimeClaims(
+  db: ReturnType<typeof createServiceClient>,
+  workspaceId: string,
+  conversationId: string,
+  content: string
+): Promise<string | null> {
+  if (extractTourTimeClaims(content).length === 0) return null
+  const bookingTime = await fetchAuthoritativeBookingTime(db, workspaceId, conversationId)
+  return validateBookingTimeClaimsAgainstEvidence(content, bookingTime)
+}

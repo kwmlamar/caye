@@ -9,6 +9,7 @@ import {
   NOTIFY_BODY_DESCRIPTION,
   NOTIFY_CUSTOMER_DESCRIPTION,
 } from './_booking-helpers'
+import { validateBookingTimeClaimsAgainstEvidence } from '../../consequential-claim-grounding'
 
 interface RescheduleBookingInput {
   booking_id: string
@@ -80,16 +81,52 @@ export const rescheduleBooking: Tool<RescheduleBookingInput> = {
       .eq('id', args.booking_id)
     if (error) return { ok: false, error: error.message }
 
+    // Verify what was actually persisted rather than trusting the request
+    // we just sent (2026-08-26 Sonja Pettus incident's required invariant:
+    // "operator instruction -> authorized booking mutation -> authoritative
+    // booking state updated successfully" — updated SUCCESSFULLY, not just
+    // requested). Everything below reads FROM THIS ROW, never from
+    // args.new_date/args.new_time again.
+    const { data: persisted, error: verifyError } = await supabase
+      .from('bookings')
+      .select('booking_date, booking_time')
+      .eq('id', args.booking_id)
+      .maybeSingle()
+    const persistedOk =
+      !verifyError &&
+      persisted &&
+      persisted.booking_date === args.new_date &&
+      (!args.new_time || persisted.booking_time?.slice(0, 5) === args.new_time)
+    if (!persistedOk) {
+      return {
+        ok: false,
+        error: `Booking update did not verifiably persist — nothing was communicated to the customer. Re-read booking ${args.booking_id} before retrying rather than assuming this reschedule took effect.`,
+      }
+    }
+
     const calendar = await syncBookingToCalendar(ctx.workspaceId, args.booking_id, 'upsert')
     const calendarDeferred = !calendar.synced && calendar.deferred === true
 
-    const notify = await maybeNotifyCustomer({
-      workspaceId: ctx.workspaceId,
-      bookingId: args.booking_id,
-      conversationId: lookup.booking.conversation_id,
-      notify: args.notify_customer ?? true,
-      body: args.notification_body,
-    })
+    // The model composes notification_body itself; ground it against the
+    // row we just verified rather than trusting it matches. A mismatch
+    // here (stale time, typo) must never reach the customer just because
+    // the booking mutation succeeded — same invariant as send_reply's
+    // UNGROUNDED_BOOKING_TIME check, applied to this tool's own dispatch
+    // path (maybeNotifyCustomer bypasses send_reply/send_customer_reply
+    // entirely, so it needs its own grounding here).
+    const notificationConflict = args.notification_body
+      ? validateBookingTimeClaimsAgainstEvidence(args.notification_body, persisted.booking_time)
+      : null
+
+    const notify = notificationConflict
+      ? { sent: false, error: `Notification text not sent — ${notificationConflict}.` }
+      : await maybeNotifyCustomer({
+          workspaceId: ctx.workspaceId,
+          bookingId: args.booking_id,
+          conversationId: lookup.booking.conversation_id,
+          notify: args.notify_customer ?? true,
+          body: args.notification_body,
+        })
 
     return {
       ok: true,
@@ -99,10 +136,10 @@ export const rescheduleBooking: Tool<RescheduleBookingInput> = {
         : undefined,
       data: {
         booking_id: args.booking_id,
-        new_date: args.new_date,
-        new_time: args.new_time ?? lookup.booking.booking_time?.slice(0, 5) ?? null,
+        new_date: persisted.booking_date,
+        new_time: persisted.booking_time?.slice(0, 5) ?? null,
         customer_notified: notify.sent,
-        notification_channel: notify.channel ?? null,
+        notification_channel: 'channel' in notify ? notify.channel ?? null : null,
         notification_error: notify.error ?? null,
         calendar_synced: calendar.synced,
         calendar_sync_status: calendar.synced ? 'synced' : calendarDeferred ? 'pending' : 'not_applicable',
