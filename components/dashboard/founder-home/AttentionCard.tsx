@@ -77,7 +77,6 @@ export default function AttentionCard({ escalations, onReview }: {
   return (
     <div style={{
       background: 'rgba(255,228,175,0.035)', borderRadius: 16,
-      boxShadow: '0 1px 0 rgba(255,255,255,0.03) inset, 0 0 44px -16px rgba(255,228,175,0.3)',
       padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 440,
       animation: hasOpen ? 'caye-view-in 0.25s ease-out' : 'caye-resolve-out 0.3s ease forwards',
     }}>

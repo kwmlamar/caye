@@ -66,6 +66,35 @@ export function popoverSurface(): CSSProperties {
   }
 }
 
+/** A popover that opens INSIDE an already-dark, controlled surface (the
+ *  Command sidebar) rather than floating over arbitrary page content.
+ *  popoverSurface() above is tuned for the latter — max legibility over any
+ *  possible background, which is why it reads as a hard foreground "card."
+ *  Inside the sidebar there's no arbitrary content to guard against (it's
+ *  the same near-black tone throughout), so that same treatment instead
+ *  reads as a mismatched slab of a different material dropped onto a
+ *  surface that's deliberately flat and shadow-free everywhere else. Same
+ *  opacity (legibility is unchanged) — just matched to the sidebar's own
+ *  near-black rather than a generic one, with the softer ambient shadow
+ *  (paneShadowSoft) instead of popoverSurface's heavy drop shadow. Used by
+ *  WorkspaceSwitcher and FounderProfile's account menu.
+ *
+ *  Background is ENV_BG itself (not a nearby-but-different near-black) —
+ *  literally the app's own root tone, so "consistent with the rest of the
+ *  app" is true by construction rather than by eyeballing a close color.
+ *  No saturate() boost, unlike glass()/popoverSurface() above: at this
+ *  opacity almost nothing behind the panel shows through anyway, so
+ *  saturate had no job to do here except add a faint, unintended color
+ *  cast. */
+export function sidebarPopoverSurface(): CSSProperties {
+  return {
+    background: `${ENV_BG}f7`,
+    backdropFilter: 'blur(16px)',
+    WebkitBackdropFilter: 'blur(16px)',
+    isolation: 'isolate',
+  }
+}
+
 /** Replaces a hard outline on a floating pane: a faint inner top
  *  highlight (light catching the upper edge) + a diffuse shadow for
  *  depth. No border color. */
