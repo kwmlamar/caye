@@ -13,6 +13,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { requireFounder } from '@/lib/founder'
+import { createServiceClient } from '@/lib/supabase-server'
 import {
   getGoal,
   listChildren,
@@ -94,7 +95,35 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       rationale: typeof replacement.rationale === 'string' ? replacement.rationale : `Supersedes "${existing.title}"`,
     }
     const { goal, error } = await supersedeGoal(id, input)
-    if (!goal) return NextResponse.json({ error: error ?? 'Failed to supersede goal' }, { status: 400 })
+
+    // supersedeGoal creates the replacement before retiring the old row.
+    // If the second write fails, never report the replacement as a success:
+    // compensate by removing it so we do not leave two live strategic rows.
+    // A future DB RPC can make the pair crash-atomic; this closes the normal
+    // partial-DB-failure path now and, critically, fails closed to the UI.
+    if (error) {
+      let cleanupError: string | null = null
+      if (goal) {
+        const supabase = createServiceClient()
+        const { error: deleteError } = await supabase.from('caye_goals').delete().eq('id', goal.id)
+        cleanupError = deleteError?.message ?? null
+      }
+      console.error('[founder/goals] supersede failed', {
+        goalId: id,
+        replacementId: goal?.id ?? null,
+        error,
+        cleanupError,
+      })
+      return NextResponse.json(
+        {
+          error: cleanupError
+            ? `Failed to supersede goal; replacement cleanup also failed: ${cleanupError}`
+            : 'Failed to supersede goal; no strategic change was committed',
+        },
+        { status: 500 }
+      )
+    }
+    if (!goal) return NextResponse.json({ error: 'Failed to supersede goal' }, { status: 500 })
     return NextResponse.json({ goal })
   }
 
