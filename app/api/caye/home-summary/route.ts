@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient, createServiceClient } from '@/lib/supabase-server'
+import { isAttentionHold, holdKindOf } from '@/lib/hold-kinds-shared'
 
 export async function GET(req: NextRequest) {
   const token = req.headers.get('authorization')?.replace('Bearer ', '')
@@ -49,13 +50,21 @@ export async function GET(req: NextRequest) {
   let heldCount = 0
   let overnightHandled = 0
   if (accountIds.length > 0) {
-    const heldRes = await supabase
+    // Fetched + filtered in TS (metadata.hold_kind), not a head-only count —
+    // a plain human_agent_enabled=true count also catches drafted-outreach
+    // queue holds, confidently-classified newsletter/blast holds, and
+    // founder-only escalation gaps, none of which mean this workspace's
+    // owner is actually waiting on anything (2026-08-26, owner-attention
+    // audit). Same fix already applied to app/api/founder/conversations/route.ts's
+    // review count — see that route's comment for the incident this class
+    // of bug caused there.
+    const { data: heldRows } = await supabase
       .from('unified_conversations')
-      .select('id', { count: 'exact', head: true })
+      .select('id, human_agent_enabled, metadata')
       .in('connected_account_id', accountIds)
       .eq('is_archived', false)
       .eq('human_agent_enabled', true)
-    heldCount = heldRes.count || 0
+    heldCount = (heldRows ?? []).filter((c: { metadata: unknown }) => isAttentionHold(holdKindOf(c.metadata))).length
 
     // Conversations that the agent handled overnight: an outgoing message
     // from sender_type='ai' since overnightStart, in conversations that are

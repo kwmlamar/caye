@@ -7,6 +7,8 @@ import { getDayAvailability } from '@/lib/calendar-availability'
 import { buildOperatorBrief } from '@/lib/operator-brief'
 import { extractInboundDigest } from '@/lib/inbound-digest-extract'
 import { observeAttentionItem, SUBJECT_CONVERSATION } from '@/lib/owner-attention'
+import { mergeHoldKind } from '@/lib/hold-kinds'
+import { assessEscalationReasonQuality } from './escalation-reason-quality'
 import { displayContactName, looksLikeEmailAddress } from './contact-display'
 import type {
   CayeAutoReply,
@@ -154,6 +156,18 @@ export async function recordEscalation(
   // pinged. Resolving the contact behind conversationId and checking every
   // other open conversation for that same contact closes the gap for those
   // pre-existing forks too, not just future ones.
+  // Founder-only escalations (category='gap', routeTo='founder' — "the
+  // operator can't fix this" per escalate_to_team's own category contract)
+  // must not enter the workspace OWNER's attention state: the founder still
+  // gets pinged (resolveEscalationRecipients below) and sees it in their own
+  // dashboard via caye_escalations.route_to directly, but human_agent_enabled
+  // alone can't tell an owner-facing surface "this hold has a real open
+  // question, just not one you can answer" (2026-08-26, owner-attention
+  // audit — the Jonathan-shaped counterpart to the newsletter fix: same
+  // conflated flag, different reason it's wrong). hold_kind='founder_gap'
+  // (lib/hold-kinds-shared.ts) is how the read layer tells the two apart.
+  const founderOnlyHoldKind = input.routeTo === 'founder' ? 'founder_gap' : null
+
   if (input.conversationId) {
     let conversationIds = [input.conversationId]
     const { data: thisConv } = await supabase
@@ -201,6 +215,9 @@ export async function recordEscalation(
           human_agent_reason: input.internalContext.replace(/\s+/g, ' ').trim().slice(0, 120),
           human_agent_marked_at: new Date().toISOString(),
           target_date: resolvedTargetDate,
+          ...(founderOnlyHoldKind
+            ? { metadata: await mergeHoldKind(supabase, input.conversationId, founderOnlyHoldKind) }
+            : {}),
         })
         .eq('id', input.conversationId)
       await supabase.from('unified_messages').insert({
@@ -237,6 +254,22 @@ export async function recordEscalation(
   // of reconstructing one from internal_context on every read.
   const pingSummary =
     input.pingSummary ?? input.internalContext.replace(/\s+/g, ' ').trim().slice(0, 200)
+
+  // Deterministic quality signal, not a gate — see
+  // lib/whatsapp/escalation-reason-quality.ts for why this never blocks the
+  // escalation. Logged with enough to find the row later (workspace,
+  // category, conversation) so a pattern of vague reasons is discoverable
+  // without depending on a human happening to notice one in the wild.
+  const reasonQuality = assessEscalationReasonQuality(input.internalContext)
+  if (!reasonQuality.ok) {
+    console.warn('[escalation] low-quality internal_context', {
+      workspaceId: input.workspaceId,
+      conversationId: input.conversationId,
+      category: input.category,
+      routeTo: input.routeTo,
+      concerns: reasonQuality.concerns,
+    })
+  }
 
   const { data, error } = await supabase
     .from('caye_escalations')
@@ -283,6 +316,9 @@ export async function recordEscalation(
           human_agent_reason: pingSummary.slice(0, 120),
           human_agent_marked_at: new Date().toISOString(),
           target_date: resolvedTargetDate,
+          ...(founderOnlyHoldKind
+            ? { metadata: await mergeHoldKind(supabase, input.conversationId, founderOnlyHoldKind) }
+            : {}),
         })
         .eq('id', input.conversationId)
     }
@@ -316,29 +352,39 @@ export async function recordEscalation(
   //
   // Falls back to the escalation id only for a conversation-less escalation,
   // which has no thread for the sync to find and so cannot collide.
-  await observeAttentionItem({
-    workspaceId: input.workspaceId,
-    subjectType: input.conversationId ? SUBJECT_CONVERSATION : 'escalation',
-    subjectId: input.conversationId ?? data.id,
-    conversationId: input.conversationId,
-    title: `${input.contactName} — ${pingSummary.slice(0, 80)}`,
-    priority: 'decision',
-    nextAction: 'Waiting on your call',
-    digest,
-    // Caye escalated specifically because she couldn't handle this herself
-    // — feeds the notification gate's reminder cadence (blocking items get
-    // the shorter threshold) and its "rising autonomy resolves rather than
-    // pings" rule (brief §9), even though this create path doesn't itself
-    // route through the gate (see the dedupe guard above for why: a
-    // genuinely new escalation always sends, quiet-hours/cooldown don't
-    // apply to it by design, same as enqueueEscalationPings already does).
-    blockedOnOperator: true,
-    resolvableAutonomously: false,
-    // What re-earns attention: a different ask, a different date, a
-    // different category. Not the clock — an item that has merely aged is
-    // handled by the unchanged bucket, not by a fresh fingerprint.
-    fingerprintParts: [input.category, resolvedTargetDate, pingSummary],
-  })
+  //
+  // Skipped for founder-only escalations (2026-08-26, owner-attention
+  // audit) — this ledger is what the morning digest reads to tell the
+  // WORKSPACE OWNER "waiting on your call". A category='gap' escalation
+  // routed solely to the founder is, definitionally, not that; writing it
+  // here would tell the owner to wait on a decision they cannot make. The
+  // founder is still pinged below and still sees it via
+  // caye_escalations.route_to in their own dashboard.
+  if (!founderOnlyHoldKind) {
+    await observeAttentionItem({
+      workspaceId: input.workspaceId,
+      subjectType: input.conversationId ? SUBJECT_CONVERSATION : 'escalation',
+      subjectId: input.conversationId ?? data.id,
+      conversationId: input.conversationId,
+      title: `${input.contactName} — ${pingSummary.slice(0, 80)}`,
+      priority: 'decision',
+      nextAction: 'Waiting on your call',
+      digest,
+      // Caye escalated specifically because she couldn't handle this herself
+      // — feeds the notification gate's reminder cadence (blocking items get
+      // the shorter threshold) and its "rising autonomy resolves rather than
+      // pings" rule (brief §9), even though this create path doesn't itself
+      // route through the gate (see the dedupe guard above for why: a
+      // genuinely new escalation always sends, quiet-hours/cooldown don't
+      // apply to it by design, same as enqueueEscalationPings already does).
+      blockedOnOperator: true,
+      resolvableAutonomously: false,
+      // What re-earns attention: a different ask, a different date, a
+      // different category. Not the clock — an item that has merely aged is
+      // handled by the unchanged bucket, not by a fresh fingerprint.
+      fingerprintParts: [input.category, resolvedTargetDate, pingSummary],
+    })
+  }
 
   enqueueEscalationPings({
     workspaceId: input.workspaceId,

@@ -8,6 +8,7 @@
 
 import { getSupabase } from '@/lib/supabase'
 import { resolveOpenEscalations } from '@/lib/caye-agent/tools/write-low/resolve-open-escalations'
+import { isAttentionHold, holdKindOf } from '@/lib/hold-kinds-shared'
 
 // ── Channel mapping ──────────────────────────────────────────────────────────
 // DB stores 'whatsapp' | 'instagram' | 'messenger' | 'email' | 'sms'.
@@ -94,6 +95,21 @@ interface ConvRow {
   last_message_at: string | null
   last_message_preview: string | null
   last_sender_type: string | null
+  metadata: Record<string, unknown> | null
+}
+
+/** True when the workspace owner is actually waiting on this thread — not
+ *  just held. Mirrors lib/hold-kinds.ts's conversationNeedsFounder: a
+ *  queue hold (batched outreach draft), a confidently-classified
+ *  newsletter/blast, or a founder-only escalation gap all set
+ *  human_agent_enabled without a person waiting on THIS workspace's owner
+ *  (2026-08-26, owner-attention audit). This data layer has no Supabase
+ *  service client of its own (getSupabase is the browser/RLS client used
+ *  by the mobile PWA), so it can't reuse lib/hold-kinds.ts's server-only
+ *  helpers directly — hold-kinds-shared.ts's pure predicates exist for
+ *  exactly this. */
+function isOwnerAttentionHold(c: Pick<ConvRow, 'human_agent_enabled' | 'metadata'>): boolean {
+  return c.human_agent_enabled && isAttentionHold(holdKindOf(c.metadata))
 }
 
 async function workspaceConversations(workspaceId: string): Promise<ConvRow[]> {
@@ -107,7 +123,7 @@ async function workspaceConversations(workspaceId: string): Promise<ConvRow[]> {
 
   const { data } = await supabase
     .from('unified_conversations')
-    .select('id, customer_name, channel_type, human_agent_enabled, human_agent_reason, human_agent_marked_at, last_message_at, last_message_preview, last_sender_type')
+    .select('id, customer_name, channel_type, human_agent_enabled, human_agent_reason, human_agent_marked_at, last_message_at, last_message_preview, last_sender_type, metadata')
     .in('connected_account_id', accountIds)
     .eq('is_archived', false)
     .order('last_message_at', { ascending: false, nullsFirst: false })
@@ -145,7 +161,7 @@ export async function getMobileHome(workspaceId: string): Promise<HomeSummary> {
   const supabase = getSupabase()
   const convs = await workspaceConversations(workspaceId)
 
-  const heldConvs = convs.filter(c => c.human_agent_enabled)
+  const heldConvs = convs.filter(isOwnerAttentionHold)
 
   // Bookings created/scheduled for today
   const { data: bks } = await supabase
@@ -363,7 +379,7 @@ interface MsgRow {
 export async function getHeldConversations(workspaceId: string): Promise<HeldDetail[]> {
   const supabase = getSupabase()
   const convs = await workspaceConversations(workspaceId)
-  const held = convs.filter(c => c.human_agent_enabled)
+  const held = convs.filter(isOwnerAttentionHold)
   if (held.length === 0) return []
 
   const { data: allMsgs } = await supabase

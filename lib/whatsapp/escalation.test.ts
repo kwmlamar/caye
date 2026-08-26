@@ -293,3 +293,87 @@ describe('recordEscalation — digest extraction and attention bookkeeping', () 
     vi.resetModules()
   })
 })
+
+// 2026-08-26 owner-attention audit: a category='gap' escalation
+// (escalate_to_team's own contract: "the operator can't fix this") routed
+// solely to the founder must not tell the WORKSPACE OWNER they have a call
+// to make — they don't, and the pre-fix behavior (human_agent_enabled=true
+// with no hold_kind, plus an unconditional observeAttentionItem write) put
+// exactly that lie in front of them, the Jonathan-shaped counterpart to the
+// Kelsey newsletter bug.
+describe('recordEscalation — founder-only escalations', () => {
+  const founderOnlyBase = {
+    workspaceId: 'ws-1',
+    conversationId: 'conv-gap',
+    contactName: 'A customer',
+    category: 'gap' as const,
+    routeTo: 'founder' as const,
+    customerFacingMessage: "Let me check with the team and I'll circle back.",
+    internalContext: 'Caye lacks a tool to look up third-party partner availability for this request.',
+  }
+
+  it('holds the conversation but tags it founder_gap, not a plain attention hold', async () => {
+    const { client, updateCalls } = makeFakeSupabase()
+    vi.doMock('@/lib/supabase-server', () => ({ createServiceClient: () => client }))
+    const { recordEscalation } = await import('./escalation')
+
+    await recordEscalation(founderOnlyBase)
+
+    const convUpdate = updateCalls.find((c) => c.table === 'unified_conversations')
+    expect(convUpdate?.patch.human_agent_enabled).toBe(true)
+    expect((convUpdate?.patch.metadata as Record<string, unknown>)?.hold_kind).toBe('founder_gap')
+    vi.resetModules()
+  })
+
+  it('does not write into the shared owner-attention ledger', async () => {
+    const { client } = makeFakeSupabase()
+    vi.doMock('@/lib/supabase-server', () => ({ createServiceClient: () => client }))
+    const { recordEscalation } = await import('./escalation')
+    const { observeAttentionItem } = await import('@/lib/owner-attention')
+
+    await recordEscalation(founderOnlyBase)
+
+    expect(observeAttentionItem).not.toHaveBeenCalled()
+    vi.resetModules()
+  })
+
+  it('still pings — founder-only means "not the owner\'s ledger", not "nobody is told"', async () => {
+    const { client } = makeFakeSupabase()
+    vi.doMock('@/lib/supabase-server', () => ({ createServiceClient: () => client }))
+    const { recordEscalation } = await import('./escalation')
+    const { enqueueEscalationPings } = await import('./triggers')
+
+    await recordEscalation(founderOnlyBase)
+
+    expect(enqueueEscalationPings).toHaveBeenCalledWith(
+      expect.objectContaining({ routeTo: 'founder' })
+    )
+    vi.resetModules()
+  })
+
+  it('routeTo=owner (the ordinary case) still writes the owner-attention ledger', async () => {
+    const { client } = makeFakeSupabase()
+    vi.doMock('@/lib/supabase-server', () => ({ createServiceClient: () => client }))
+    const { recordEscalation } = await import('./escalation')
+    const { observeAttentionItem } = await import('@/lib/owner-attention')
+
+    await recordEscalation({ ...founderOnlyBase, category: 'knowledge', routeTo: 'owner' })
+
+    expect(observeAttentionItem).toHaveBeenCalled()
+    vi.resetModules()
+  })
+
+  it('routeTo=both still writes the owner-attention ledger — the owner genuinely has a call too', async () => {
+    const { client, updateCalls } = makeFakeSupabase()
+    vi.doMock('@/lib/supabase-server', () => ({ createServiceClient: () => client }))
+    const { recordEscalation } = await import('./escalation')
+    const { observeAttentionItem } = await import('@/lib/owner-attention')
+
+    await recordEscalation({ ...founderOnlyBase, category: 'gap', routeTo: 'both' })
+
+    expect(observeAttentionItem).toHaveBeenCalled()
+    const convUpdate = updateCalls.find((c) => c.table === 'unified_conversations')
+    expect((convUpdate?.patch.metadata as Record<string, unknown> | undefined)?.hold_kind).toBeUndefined()
+    vi.resetModules()
+  })
+})

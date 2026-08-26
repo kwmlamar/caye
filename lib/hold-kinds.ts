@@ -1,7 +1,17 @@
 import 'server-only'
 import type { createServiceClient } from '@/lib/supabase-server'
 import { isAttentionHold, holdKindOf } from './hold-kinds-shared'
-export { QUEUE_HOLD_KINDS, isQueueHold, isAttentionHold, holdKindOf, conversationNeedsFounder } from './hold-kinds-shared'
+export {
+  QUEUE_HOLD_KINDS,
+  isQueueHold,
+  NON_ACTIONABLE_HOLD_KINDS,
+  isNonActionableHold,
+  FOUNDER_ONLY_HOLD_KINDS,
+  isFounderOnlyHold,
+  isAttentionHold,
+  holdKindOf,
+  conversationNeedsFounder,
+} from './hold-kinds-shared'
 
 /**
  * Two different things share the `human_agent_enabled` flag, and conflating
@@ -88,6 +98,28 @@ const ATTENTION_HOLD_SCAN_CAP = 500
  * return shape throws away by design. See that route for why forcing it
  * through this helper would be the wrong abstraction, not a missed one.
  */
+/**
+ * Merge `hold_kind` into a conversation's existing metadata without
+ * clobbering the other keys already there (subject, from, thread_id, ...).
+ * Shared by every producer that classifies a hold into a non-attention
+ * category (email/poll's newsletter/cold-sales filter, gmail-poll's mirror,
+ * lib/whatsapp/escalation.ts's founder-only gap) so they write the same
+ * shape isAttentionHold reads.
+ */
+export async function mergeHoldKind(
+  supabase: SupabaseClient,
+  conversationId: string,
+  holdKind: string
+): Promise<Record<string, unknown>> {
+  const { data } = await supabase
+    .from('unified_conversations')
+    .select('metadata')
+    .eq('id', conversationId)
+    .maybeSingle()
+  const existing = (data as { metadata: Record<string, unknown> | null } | null)?.metadata ?? {}
+  return { ...existing, hold_kind: holdKind }
+}
+
 export interface HeldSummary {
   /** Real holds — someone is waiting. */
   attention: AttentionHold[]
