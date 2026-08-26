@@ -107,4 +107,19 @@ describe('Sales inbound boundary', () => {
       leadId: 'lead-1', event: 'bounce_or_delivery_failure',
     }))
   })
+
+  it('uses the same durable lifecycle receipt key when a provider replays the same DSN', async () => {
+    const bounce = { ...inbound, senderEmail: 'mailer-daemon@example.test', subject: 'Undeliverable mail', body: 'Final-Recipient: rfc822; prospect@example.test' }
+    await handleSalesInbound(bounce)
+    await handleSalesInbound(bounce)
+    const keys = state.lifecycle.mock.calls.map(([input]) => input.eventKey)
+    expect(keys).toEqual(['inbound:message-1:bounce_or_delivery_failure', 'inbound:message-1:bounce_or_delivery_failure'])
+  })
+
+  it('does not suppress an arbitrary address when a DSN contains no explicit recipient', async () => {
+    state.lead = null
+    await handleSalesInbound({ ...inbound, senderEmail: 'mailer-daemon@example.test', subject: 'Undeliverable mail', body: 'Delivery failed for a recipient listed below.' })
+    expect(state.leadLookupEmails).toContain('mailer-daemon@example.test')
+    expect(state.lifecycle).not.toHaveBeenCalled()
+  })
 })

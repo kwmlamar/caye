@@ -47,6 +47,7 @@ import { isValidOutreachEmail } from '@/lib/outreach-email'
 import { isProductionSalesWorkspace } from '@/lib/sales/workspace-eligibility'
 import { getRevalidatableParkedDraft } from '@/lib/outreach-parked-draft'
 import { reserveFirstTouchCapacity } from '@/lib/outreach-first-touch-capacity'
+import { ensureOutreachOutboundReceipt } from '@/lib/outreach-bounce-evidence'
 
 /** Leads examined per tick. Bounds runtime; the next tick picks up the rest. */
 const LEAD_BATCH_SIZE = 40
@@ -491,6 +492,12 @@ export async function processLead(args: {
   // execution evidence. Its idempotency key makes a retry return the same
   // receipt instead of issuing another external send.
   if (!dispatch.success) return 0
+
+  if (dispatch.messageId) {
+    // Persist minimal delivery attribution evidence for a later DSN. This is
+    // idempotent, including when dispatch returned an earlier send receipt.
+    await ensureOutreachOutboundReceipt({ workspaceId, conversationId, channelMessageId: dispatch.messageId })
+  }
 
   // If a prior attempt persisted the outbound message but died before its
   // lifecycle write, dispatch returns the same receipt without re-sending.

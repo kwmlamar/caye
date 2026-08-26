@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { dispatch, update, firstTouch, followup, lifecycle } = vi.hoisted(() => ({
+const { dispatch, update, firstTouch, followup, lifecycle, receipt } = vi.hoisted(() => ({
   dispatch: vi.fn(async () => ({ success: true, channelType: 'email' })),
   update: vi.fn(() => ({ eq: vi.fn(async () => ({ error: null })) })),
   firstTouch: vi.fn(),
   followup: vi.fn(),
   lifecycle: vi.fn(),
+  receipt: vi.fn(),
 }))
 
 vi.mock('server-only', () => ({}))
@@ -21,6 +22,7 @@ vi.mock('@/lib/cron-run-log', () => ({ recordCronRun: (_name: string, fn: () => 
 vi.mock('@/lib/whatsapp/triggers', () => ({ enqueueHoldPing: vi.fn() }))
 vi.mock('@/lib/sales/lifecycle', () => ({ recordSalesLifecycleEvent: lifecycle }))
 vi.mock('@/lib/outreach-first-touch-capacity', () => ({ reserveFirstTouchCapacity: vi.fn(async () => true) }))
+vi.mock('@/lib/outreach-bounce-evidence', () => ({ ensureOutreachOutboundReceipt: receipt }))
 
 import { processLead } from './route'
 
@@ -31,6 +33,7 @@ describe('outreach autosend parked-draft recovery', () => {
     firstTouch.mockReset()
     followup.mockReset()
     lifecycle.mockReset()
+    receipt.mockReset()
   })
 
   it('revalidates and sends an eligible queued first touch without owner approval', async () => {

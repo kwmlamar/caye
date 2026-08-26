@@ -49,7 +49,7 @@ export async function getOutreachOperationalStatus(workspaceId: string): Promise
   const db = createServiceClient()
   const [customer, config, account, scan, sourcingRun, sourced, cooldown, stalled, sourcingJobs, history] = await Promise.all([
     db.from('customers').select('workspace_kind,autosend_enabled,timezone').eq('id', workspaceId).maybeSingle(),
-    db.from('workspace_ai_config').select('outreach_autosend_paused,outreach_pause_source,outreach_pause_reason,outreach_paused_at,outreach_bounce_threshold,outreach_bounce_window_hours').eq('workspace_id', workspaceId).maybeSingle(),
+    db.from('workspace_ai_config').select('outreach_autosend_paused,outreach_pause_source,outreach_pause_reason,outreach_paused_at,outreach_pause_generation,outreach_bounce_threshold,outreach_bounce_window_hours').eq('workspace_id', workspaceId).maybeSingle(),
     db.from('connected_accounts').select('id,channel_type,is_active,token_expires_at,refresh_token,updated_at').eq('user_id', workspaceId).eq('channel_type', 'email').eq('is_active', true).maybeSingle(),
     db.from('caye_cron_runs').select('last_started_at,last_status,last_summary,last_error').eq('cron_name', 'outreach-autosend-scan').maybeSingle(),
     db.from('caye_cron_runs').select('last_started_at,last_status,last_summary,last_error').eq('cron_name', 'outreach-sourcing-scan').maybeSingle(),
@@ -97,6 +97,7 @@ export async function getOutreachOperationalStatus(workspaceId: string): Promise
     source: config.data?.outreach_pause_source,
     reason: config.data?.outreach_pause_reason,
     pausedAt: config.data?.outreach_paused_at,
+    generation: config.data?.outreach_pause_generation,
     activeSafetyCondition,
   })
   const base: Omit<OutreachOperationalStatus, 'reasonNoOutreach'> = {
