@@ -111,7 +111,19 @@ create table if not exists public.conversation_execution_claims (
   released_at timestamptz,
   completed_at timestamptz,
   superseded_at timestamptz,
-  metadata jsonb not null default '{}'::jsonb
+  metadata jsonb not null default '{}'::jsonb,
+  -- Defense in depth: the RPCs above are written as full three-way CAS
+  -- (every terminal mutation's WHERE clause requires ALL THREE terminal
+  -- columns null, not just the one being set), which is what actually
+  -- enforces "exactly one terminal state, ever" under delayed/concurrent
+  -- callers. This CHECK makes the same invariant impossible to violate even
+  -- from a future code path that gets the predicate wrong — it does not
+  -- substitute for correct CAS predicates, it backstops them.
+  constraint conversation_execution_claims_terminal_exclusive check (
+    (case when completed_at is not null then 1 else 0 end) +
+    (case when released_at is not null then 1 else 0 end) +
+    (case when superseded_at is not null then 1 else 0 end) <= 1
+  )
 );
 
 create unique index if not exists conversation_execution_one_active_claim
@@ -149,7 +161,14 @@ create table if not exists public.conversation_response_executions (
   -- Uncertain outcome (provider call threw, or accepted-but-unpersisted):
   -- deliberately NOT excluded from the partial unique index. Requires
   -- manual reconciliation; never auto-retried.
-  send_uncertain_at timestamptz
+  send_uncertain_at timestamptz,
+  -- Same defense-in-depth reasoning as conversation_execution_claims_
+  -- terminal_exclusive above, for this table's three terminal columns.
+  constraint conversation_response_executions_terminal_exclusive check (
+    (case when completed_at is not null then 1 else 0 end) +
+    (case when abandoned_at is not null then 1 else 0 end) +
+    (case when send_uncertain_at is not null then 1 else 0 end) <= 1
+  )
 );
 
 create unique index if not exists conversation_response_executions_one_live_reservation
@@ -256,7 +275,13 @@ begin
     active_tier := case when active.holder_kind in ('human_manual', 'operator_caye', 'correction_followup') then 2 else 1 end;
 
     if new_tier > active_tier then
-      update public.conversation_execution_claims set superseded_at = now() where id = active.id;
+      -- Explicit three-way CAS even though the `for update` lock on
+      -- `active` above already makes this safe within this transaction —
+      -- every terminal mutation in this file uses the same full predicate
+      -- so the invariant is enforced uniformly, not by "trust the caller
+      -- got the locking right" at each individual site.
+      update public.conversation_execution_claims set superseded_at = now()
+       where id = active.id and completed_at is null and released_at is null and superseded_at is null;
     else
       select exists(
         select 1 from public.caye_pending_actions pa
@@ -265,7 +290,8 @@ begin
       if active.expires_at > now() or has_pending then
         return query select active.id, active.generation, false, active.holder_kind; return;
       end if;
-      update public.conversation_execution_claims set superseded_at = now() where id = active.id;
+      update public.conversation_execution_claims set superseded_at = now()
+       where id = active.id and completed_at is null and released_at is null and superseded_at is null;
     end if;
   end if;
 
@@ -306,16 +332,32 @@ begin
   return query select true, null::text;
 end $$;
 
+-- Every terminal-state mutation below (claim: completed_at / released_at /
+-- superseded_at; response-execution: completed_at / abandoned_at /
+-- send_uncertain_at) is a full three-way compare-and-set: the WHERE clause
+-- requires ALL THREE terminal columns to still be null, not just the one
+-- this function is about to set. This is what makes "exactly one terminal
+-- state wins" hold even when a DELAYED worker calls one of these functions
+-- on a claim/reservation that a different, faster transaction already
+-- concluded a different way — a stale caller's UPDATE simply matches zero
+-- rows instead of clobbering the already-decided outcome. Never rely on
+-- caller ordering; the predicate itself is the enforcement.
 create or replace function public.complete_conversation_execution(p_claim_id uuid, p_outbound_message_id uuid default null)
 returns void language plpgsql security definer set search_path = public as $$
 begin
-  update public.conversation_execution_claims set completed_at = now() where id = p_claim_id and completed_at is null;
-  update public.conversation_response_executions set outbound_message_id = p_outbound_message_id, completed_at = now() where claim_id = p_claim_id and completed_at is null and abandoned_at is null;
+  update public.conversation_execution_claims
+     set completed_at = now()
+   where id = p_claim_id and completed_at is null and released_at is null and superseded_at is null;
+  update public.conversation_response_executions
+     set outbound_message_id = p_outbound_message_id, completed_at = now()
+   where claim_id = p_claim_id and completed_at is null and abandoned_at is null and send_uncertain_at is null;
 end $$;
 
 create or replace function public.release_conversation_execution(p_claim_id uuid)
 returns void language sql security definer set search_path = public as $$
-  update public.conversation_execution_claims set released_at = now() where id = p_claim_id and completed_at is null and released_at is null
+  update public.conversation_execution_claims
+     set released_at = now()
+   where id = p_claim_id and completed_at is null and released_at is null and superseded_at is null
 $$;
 
 -- Certain non-send: the caller knows for a fact its provider call was never
@@ -331,7 +373,7 @@ begin
    where claim_id = p_claim_id and completed_at is null and abandoned_at is null and send_uncertain_at is null;
   update public.conversation_execution_claims
      set released_at = now()
-   where id = p_claim_id and completed_at is null and released_at is null;
+   where id = p_claim_id and completed_at is null and released_at is null and superseded_at is null;
 end $$;
 
 -- Uncertain outcome: the caller cannot tell whether the provider accepted
@@ -347,7 +389,7 @@ begin
    where claim_id = p_claim_id and completed_at is null and abandoned_at is null and send_uncertain_at is null;
   update public.conversation_execution_claims
      set released_at = now()
-   where id = p_claim_id and completed_at is null and released_at is null;
+   where id = p_claim_id and completed_at is null and released_at is null and superseded_at is null;
 end $$;
 
 revoke all on function public.claim_conversation_execution(uuid, uuid, text, text, uuid, text, integer) from public;

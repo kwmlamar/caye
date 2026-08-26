@@ -103,6 +103,14 @@ describe('conversation execution coordination migration (PGlite)', () => {
     return rows[0]
   }
 
+  async function reservationStatus(claimId: string) {
+    const { rows } = await db.query<{ completed_at: string | null; abandoned_at: string | null; send_uncertain_at: string | null }>(
+      `select completed_at, abandoned_at, send_uncertain_at from conversation_response_executions where claim_id = $1`,
+      [claimId]
+    )
+    return rows[0]
+  }
+
   it('permits one active owner but preserves the completed audit history', async () => {
     const { rows: ws } = await db.query<{ id: string }>('insert into public.customers default values returning id')
     const { rows: conv } = await db.query<{ id: string }>('insert into public.unified_conversations default values returning id')
@@ -378,6 +386,117 @@ describe('conversation execution coordination migration (PGlite)', () => {
       const stale = await validate(c2.claim_id, firstMsg)
       expect(stale.valid).toBe(false)
       expect(stale.reason).toBe('newer_customer_message')
+    })
+  })
+
+  // ── Adversarial: terminal-state CAS under delayed/competing workers ────
+  describe('terminal-state transitions are true compare-and-set — exactly one ever wins', () => {
+    it('1: active -> superseded -> a delayed release is a no-op; superseded_at stays authoritative', async () => {
+      const { workspaceId, conversationId } = await makeWorkspaceAndConversation()
+      const stale = await claim({ workspaceId, conversationId, holder: 'autonomous_frontdesk', idempotencyKey: 'cas-1-a' })
+      const superseding = await claim({ workspaceId, conversationId, holder: 'operator_caye', idempotencyKey: 'cas-1-b' })
+      expect(superseding.acquired).toBe(true)
+      const statusAfterSupersede = await claimStatus(stale.claim_id)
+      expect(statusAfterSupersede.superseded_at).not.toBeNull()
+
+      // A delayed worker that doesn't yet know it was superseded calls
+      // release() on its own claim id.
+      await release(stale.claim_id)
+
+      const finalStatus = await claimStatus(stale.claim_id)
+      expect(finalStatus.released_at).toBeNull()
+      expect(finalStatus.superseded_at).not.toBeNull()
+      expect(finalStatus.completed_at).toBeNull()
+    })
+
+    it('2: active -> released -> a delayed complete is a no-op; completed_at stays null', async () => {
+      const { workspaceId, conversationId } = await makeWorkspaceAndConversation()
+      const c = await claim({ workspaceId, conversationId, holder: 'scheduled_system', idempotencyKey: 'cas-2' })
+      await release(c.claim_id)
+
+      await complete(c.claim_id)
+
+      const status = await claimStatus(c.claim_id)
+      expect(status.completed_at).toBeNull()
+      expect(status.released_at).not.toBeNull()
+    })
+
+    it('3: active -> completed -> a delayed release is a no-op; released_at stays null', async () => {
+      const { workspaceId, conversationId } = await makeWorkspaceAndConversation()
+      const c = await claim({ workspaceId, conversationId, holder: 'scheduled_system', idempotencyKey: 'cas-3' })
+      await complete(c.claim_id)
+
+      await release(c.claim_id)
+
+      const status = await claimStatus(c.claim_id)
+      expect(status.released_at).toBeNull()
+      expect(status.completed_at).not.toBeNull()
+    })
+
+    it('4: response reserved -> abandoned -> a delayed complete is a no-op; completed_at stays null', async () => {
+      const { workspaceId, conversationId } = await makeWorkspaceAndConversation()
+      const inboundId = await makeCustomerMessage(conversationId)
+      const c = await claim({ workspaceId, conversationId, holder: 'autonomous_frontdesk', idempotencyKey: 'cas-4', triggeringMessageId: inboundId })
+      await validate(c.claim_id, inboundId)
+      await abandon(c.claim_id)
+
+      // Delayed worker thinks it succeeded and calls complete().
+      await complete(c.claim_id)
+
+      const reservation = await reservationStatus(c.claim_id)
+      expect(reservation.completed_at).toBeNull()
+      expect(reservation.abandoned_at).not.toBeNull()
+      const claimStat = await claimStatus(c.claim_id)
+      expect(claimStat.completed_at).toBeNull()
+      expect(claimStat.released_at).not.toBeNull()
+    })
+
+    it('5: response reserved -> send_uncertain -> a delayed abandon is a no-op; abandoned_at stays null', async () => {
+      const { workspaceId, conversationId } = await makeWorkspaceAndConversation()
+      const inboundId = await makeCustomerMessage(conversationId)
+      const c = await claim({ workspaceId, conversationId, holder: 'autonomous_frontdesk', idempotencyKey: 'cas-5', triggeringMessageId: inboundId })
+      await validate(c.claim_id, inboundId)
+      await markAmbiguous(c.claim_id)
+
+      // Delayed worker (or a naive retry cleanup) tries to mark it
+      // abandoned so it looks safe to retry — must not un-fail-close it.
+      await abandon(c.claim_id)
+
+      const reservation = await reservationStatus(c.claim_id)
+      expect(reservation.abandoned_at).toBeNull()
+      expect(reservation.send_uncertain_at).not.toBeNull()
+    })
+
+    it('6: two competing terminal transitions on the same claim — exactly one wins, in either race order', async () => {
+      const { workspaceId, conversationId: convA } = await makeWorkspaceAndConversation()
+      const a = await claim({ workspaceId, conversationId: convA, holder: 'scheduled_system', idempotencyKey: 'cas-6-a' })
+      // complete() reaches the row first.
+      await complete(a.claim_id)
+      await release(a.claim_id)
+      const statusA = await claimStatus(a.claim_id)
+      expect(statusA.completed_at).not.toBeNull()
+      expect(statusA.released_at).toBeNull()
+
+      const { conversationId: convB } = await makeWorkspaceAndConversation()
+      const b = await claim({ workspaceId, conversationId: convB, holder: 'scheduled_system', idempotencyKey: 'cas-6-b' })
+      // release() reaches the row first — the reverse race order.
+      await release(b.claim_id)
+      await complete(b.claim_id)
+      const statusB = await claimStatus(b.claim_id)
+      expect(statusB.released_at).not.toBeNull()
+      expect(statusB.completed_at).toBeNull()
+    })
+
+    it('the CHECK constraints reject a direct attempt to set two terminal columns on one row', async () => {
+      const { workspaceId, conversationId } = await makeWorkspaceAndConversation()
+      const { rows } = await db.query<{ id: string }>(
+        `insert into public.conversation_execution_claims (workspace_id, conversation_id, holder_kind, idempotency_key, expires_at, completed_at)
+         values ($1, $2, 'scheduled_system', 'cas-check-1', now() + interval '15 minutes', now()) returning id`,
+        [workspaceId, conversationId]
+      )
+      await expect(
+        db.query('update public.conversation_execution_claims set released_at = now() where id = $1', [rows[0].id])
+      ).rejects.toMatchObject({ code: '23514' })
     })
   })
 })
