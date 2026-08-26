@@ -4,10 +4,8 @@ import { useState, useEffect, useCallback } from 'react'
 import { getSession } from '@/lib/supabase'
 import { CayeLoadingPulse } from '@/components/dashboard/founder-home/CayeLoadingPulse'
 import { Pill } from '@/components/dashboard/founder-home/console-ui'
+import { rowDivider } from '@/components/dashboard/surface'
 
-// Same dark-console tokens as ChannelsCard/ContactsPanel — kept local per
-// the established per-file pattern in this directory.
-const CARD_BG = '#1a1a1e'
 const LABEL_COLOR = '#71717a'
 const TEAL = '#4EBECE'
 
@@ -77,6 +75,14 @@ function DayChip({ label, active, onClick, disabled }: { label: string; active: 
 function FieldLabel({ children }: { children: React.ReactNode }) {
   return (
     <div style={{ fontSize: 10, fontFamily: 'var(--font-mono)', letterSpacing: '0.06em', textTransform: 'uppercase', color: LABEL_COLOR, marginBottom: 5 }}>
+      {children}
+    </div>
+  )
+}
+
+function SectionHeading({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{ fontSize: 13, fontWeight: 600, color: '#f4f4f5', paddingBottom: 10, borderBottom: rowDivider, marginBottom: 4 }}>
       {children}
     </div>
   )
@@ -289,26 +295,24 @@ export default function SettingsCard({ workspaceId, compact }: { workspaceId: st
 
   return (
     <div style={{
-      background: CARD_BG, borderRadius: 16, padding: '16px 18px',
       display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0,
       overflowY: compact ? 'visible' : 'auto',
     }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 4, flexShrink: 0 }}>
-        <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', textTransform: 'uppercase', color: LABEL_COLOR }}>
-          Settings
-        </span>
-      </div>
-      <p style={{ fontSize: 11.5, color: LABEL_COLOR, margin: '0 0 12px', lineHeight: 1.5, flexShrink: 0 }}>
-        How Caye operates for this workspace.
-      </p>
+      {!compact && (
+        <p style={{ fontSize: 12.5, color: LABEL_COLOR, margin: '0 0 20px', lineHeight: 1.5, flexShrink: 0, maxWidth: 480 }}>
+          How Caye operates and sounds for this workspace.
+        </p>
+      )}
 
       {loading ? (
         <div style={{ padding: '10px 4px' }}><CayeLoadingPulse size={14} /></div>
       ) : error && !config ? (
         <p style={{ fontSize: 12, color: '#fb7185' }}>{error}</p>
       ) : !config ? null : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16, flex: 1, minHeight: 0 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 22, flex: 1, minHeight: 0, maxWidth: 520 }}>
           {error && <p style={{ fontSize: 11.5, color: '#fb7185', margin: 0 }}>{error}</p>}
+
+          {!compact && <SectionHeading>How she operates</SectionHeading>}
 
           {/* Digest days — always live-editable, compact or expanded. */}
           <div>
@@ -393,22 +397,16 @@ export default function SettingsCard({ workspaceId, compact }: { workspaceId: st
             </div>
           ) : (
             <>
-              {/* System prompt */}
-              <div>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 }}>
-                  <FieldLabel>System prompt</FieldLabel>
-                  <SaveButton dirty={promptDirty} saving={promptSaving} onClick={savePrompt} />
-                </div>
-                <textarea
-                  value={systemPrompt}
-                  onChange={(e) => setSystemPrompt(e.target.value)}
-                  rows={8}
-                  style={{ ...textAreaStyle, minHeight: 140 }}
-                />
-              </div>
-
-              {/* Voice profile */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {/* Voice profile — business instructions in plain product
+                  terms (formality, writing style, standard phrases), not
+                  the raw prompt. The system prompt itself moved into the
+                  Advanced disclosure below: it's the same information a
+                  founder can already express through these fields plus
+                  durable knowledge (business facts/standing rules, edited
+                  via Caye in chat, not here), so it's a debugging escape
+                  hatch now rather than the centerpiece it used to be. */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                <SectionHeading>Voice</SectionHeading>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <FieldLabel>Voice profile</FieldLabel>
                   <SaveButton dirty={voiceDirty} saving={voiceSaving} onClick={saveVoice} />
@@ -501,6 +499,28 @@ export default function SettingsCard({ workspaceId, compact }: { workspaceId: st
                         style={textInputStyle}
                       />
                     </div>
+                  </div>
+                </details>
+
+                {/* Raw system prompt — founder-only debugging escape hatch,
+                    not the primary way to shape Caye's voice (that's the
+                    fields above). Collapsed by default so it reads as an
+                    advanced/developer control, not a centerpiece textarea. */}
+                <details>
+                  <summary style={{ fontSize: 10.5, fontFamily: 'var(--font-mono)', letterSpacing: '0.06em', textTransform: 'uppercase', color: LABEL_COLOR, cursor: 'pointer', marginBottom: 8 }}>
+                    Advanced — raw system prompt
+                  </summary>
+                  <div style={{ paddingBottom: 4 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 }}>
+                      <FieldLabel>System prompt</FieldLabel>
+                      <SaveButton dirty={promptDirty} saving={promptSaving} onClick={savePrompt} />
+                    </div>
+                    <textarea
+                      value={systemPrompt}
+                      onChange={(e) => setSystemPrompt(e.target.value)}
+                      rows={8}
+                      style={{ ...textAreaStyle, minHeight: 140 }}
+                    />
                   </div>
                 </details>
               </div>

@@ -8,9 +8,6 @@ import { useWorkspaceChannels, type ChannelAccount } from '@/lib/useWorkspaceCha
 import { CayeLoadingPulse } from '@/components/dashboard/founder-home/CayeLoadingPulse'
 import { Pill, GhostButton } from '@/components/dashboard/founder-home/console-ui'
 
-// Same dark-console tokens as the rest of FounderHome's rail — kept
-// local per the established pattern (see ContactsPanel.tsx).
-const CARD_BG = '#1a1a1e'
 const LABEL_COLOR = '#71717a'
 
 const CHANNEL_META: Record<string, { name: string; mark: string; markBg: string }> = {
@@ -72,7 +69,7 @@ function ChannelRow({
   }
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 4px' }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '11px 2px', boxShadow: 'inset 0 -1px 0 rgba(255,255,255,0.045)' }}>
       <span style={{
         width: 26, height: 26, borderRadius: 8, flexShrink: 0,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -130,13 +127,8 @@ export default function ChannelsCard({ workspaceId }: { workspaceId: string }) {
   const { channels, loading, error, refetch } = useWorkspaceChannels(workspaceId)
 
   return (
-    <div style={{ flexShrink: 0, background: CARD_BG, borderRadius: 16, padding: '16px 18px' }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 4 }}>
-        <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', textTransform: 'uppercase', color: LABEL_COLOR }}>
-          Channels
-        </span>
-      </div>
-      <p style={{ fontSize: 11.5, color: LABEL_COLOR, margin: '0 0 8px', lineHeight: 1.5 }}>
+    <div style={{ flexShrink: 0, maxWidth: 520 }}>
+      <p style={{ fontSize: 12.5, color: LABEL_COLOR, margin: '0 0 16px', lineHeight: 1.5 }}>
         Where this workspace's front desk listens — connect Zoho or Gmail here if the owner hasn't.
       </p>
       {loading ? (

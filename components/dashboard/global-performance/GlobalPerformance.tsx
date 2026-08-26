@@ -165,6 +165,19 @@ function ConversionTrendChart({ daily }: { daily: DailyPoint[] }) {
 // actions here, act via Caye Direct / Command Conversations instead.
 // Clicking a row expands an inline 30-day daily trend in place, rather
 // than navigating away and losing the cross-workspace table.
+//
+// "Handled by Caye" (2026-08-26 redesign note): the product framing this
+// page should eventually lead with is an Autonomous Resolution Rate — "41
+// of 45 resolved without your help" — but that number isn't honestly
+// computable from what's persisted today. caye_escalations records when
+// Caye asked for help; nothing records a per-conversation "resolved
+// without asking" flag, and there's no "total situations" denominator
+// that isn't itself just raw conversation count (which conflates a
+// two-message chit-chat with a real booking situation). Computing this
+// correctly needs a schema decision (what counts as one "situation," and
+// a resolved/escalated flag on it), not a UI change — see the notice
+// below rather than a fabricated percentage. Everything else on this
+// page (conversion rate, call volume) is real and unchanged.
 export default function GlobalPerformance() {
   const [rows, setRows] = useState<WorkspaceRow[] | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -205,24 +218,35 @@ export default function GlobalPerformance() {
   const totalCalls = rows?.reduce((acc, r) => acc + r.call_count, 0) ?? 0
 
   return (
-    <div style={{ flex: 1, overflowY: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 16, minHeight: 0 }}>
-      <div style={{ flexShrink: 0, display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12 }}>
-        <div style={{ background: CARD_BG, borderRadius: 18, padding: '16px 18px' }}>
-          <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', textTransform: 'uppercase', color: LABEL_COLOR, marginBottom: 8 }}>
-            Workspaces
-          </div>
-          <div style={{ fontSize: 20, fontFamily: 'var(--font-display)', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
-            {rows?.length ?? '—'}
-          </div>
+    <div style={{ flex: 1, overflowY: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 14, minHeight: 0 }}>
+      <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', textTransform: 'uppercase', color: LABEL_COLOR, flexShrink: 0 }}>
+        Operations / Performance
+      </div>
+
+      <div style={{
+        flexShrink: 0, borderRadius: 12, padding: '12px 14px',
+        background: 'rgba(255,228,175,0.035)', boxShadow: 'inset 0 0 0 1px rgba(255,228,175,0.07)',
+      }}>
+        <div style={{ fontSize: 12.5, fontWeight: 600, color: '#FFE4AF', marginBottom: 3 }}>
+          "Handled by Caye" isn&apos;t computable yet
         </div>
-        <div style={{ background: CARD_BG, borderRadius: 18, padding: '16px 18px' }}>
-          <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', textTransform: 'uppercase', color: LABEL_COLOR, marginBottom: 8 }}>
-            7-day calls (all workspaces)
-          </div>
-          <div style={{ fontSize: 20, fontFamily: 'var(--font-display)', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
-            {rows ? totalCalls.toLocaleString() : '—'}
-          </div>
-        </div>
+        <p style={{ fontSize: 11.5, color: LABEL_COLOR, lineHeight: 1.5, margin: 0, maxWidth: 560 }}>
+          The product number this page should lead with is an autonomous resolution rate — e.g. "41 of 45 resolved without your help."
+          That needs a per-conversation resolved-without-escalation flag and a real "situation" denominator, neither of which is persisted
+          today (only escalations — when Caye asked for help — are tracked). Shown below instead: real conversion and call-volume data,
+          which don&apos;t require that schema change.
+        </p>
+      </div>
+
+      <div style={{ flexShrink: 0, display: 'flex', flexWrap: 'wrap', columnGap: 28, rowGap: 10, fontSize: 13 }}>
+        <span>
+          <strong style={{ fontVariantNumeric: 'tabular-nums' }}>{rows?.length ?? '—'}</strong>
+          <span style={{ color: LABEL_COLOR }}> workspaces</span>
+        </span>
+        <span>
+          <strong style={{ fontVariantNumeric: 'tabular-nums' }}>{rows ? totalCalls.toLocaleString() : '—'}</strong>
+          <span style={{ color: LABEL_COLOR }}> 7-day calls (internal diagnostic, all workspaces)</span>
+        </span>
       </div>
 
       <div style={{ flex: 1, minHeight: 0, background: CARD_BG, borderRadius: 16, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>

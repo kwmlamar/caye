@@ -3,9 +3,11 @@
 import { useState } from 'react'
 import type { CommandOverview } from '@/lib/useCommandOverview'
 import type { TodayStats } from '@/lib/useTodayStats'
+import { sortEscalationsByPriority } from '@/lib/attention-briefing'
+import { buildBriefingLine } from '@/lib/founder-briefing-copy'
 import AttentionCard from '../AttentionCard'
 import BusinessPulse from '../BusinessPulse'
-import { TEXT_QUIET } from '../../surface'
+import { TEXT, TEXT_QUIET } from '../../surface'
 
 /**
  * The first entry in Caye's card catalog — the founder's daily snapshot
@@ -28,8 +30,17 @@ import { TEXT_QUIET } from '../../surface'
  * sender identity every Caye message already carries. The goal is "Caye
  * mentioned this in passing," not a dashboard widget bolted onto a chat
  * window. When there's nothing needing a decision, it renders just the
- * three numbers and stops; it never manufactures a "you're all caught up"
+ * compact strip and stops; it never manufactures a "you're all caught up"
  * line to fill the space.
+ *
+ * Caye speaks first (buildBriefingLine — lib/founder-briefing-copy.ts): a
+ * one-line, templated-not-generated summary of the same real numbers
+ * BusinessPulse/AttentionCard already render, so the structured UI below
+ * SUPPORTS that sentence instead of replacing it with a KPI grid. This is
+ * the documented interim step toward the future direction where Caye picks
+ * her own presentation (prose/table/card/chart) per response — not that
+ * system itself; building real generative UI selection is out of scope
+ * here (see this file's own note above about the tool-call ledger).
  *
  * Card selection (Caye choosing to drop a card mid-conversation, from
  * lib/caye-agent tool calls) is intentionally NOT wired here — the agent's
@@ -52,7 +63,17 @@ export default function SnapshotCard({
   const [hover, setHover] = useState(false)
   if (!data) return null
 
-  const hasAttention = data.pending_escalation_count > 0
+  const openEscalations = sortEscalationsByPriority(
+    data.escalations.filter((e) => !e.owner_responded_at && !e.expired_at)
+  )
+  const hasAttention = openEscalations.length > 0
+  const primary = openEscalations[0]
+  const briefingLine = buildBriefingLine({
+    bookingsCount: data.bookings.length,
+    customersAnswered: today?.customersAnswered ?? 0,
+    primaryAttentionName: primary ? (primary.customer_name || 'A customer') : null,
+    additionalAttentionCount: Math.max(openEscalations.length - 1, 0),
+  })
 
   return (
     <div
@@ -77,6 +98,11 @@ export default function SnapshotCard({
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="m6 6 12 12M18 6 6 18" /></svg>
       </button>
 
+      {briefingLine && (
+        <p style={{ fontSize: 14.5, lineHeight: 1.5, color: TEXT, margin: '0 0 8px', maxWidth: 460 }}>
+          {briefingLine}
+        </p>
+      )}
       <BusinessPulse data={data} today={today} weekLabel={weekLabel} />
       {hasAttention && (
         <div style={{ marginTop: 16 }}>
