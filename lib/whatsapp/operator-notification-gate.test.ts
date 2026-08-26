@@ -564,4 +564,28 @@ describe('SUPPRESS_OPERATOR_AWARE — structural operator-participation evidence
     await decideOperatorNotification(autumnInput)
     expect(hasOperatorParticipatedInConversation).toHaveBeenCalledWith('conv-autumn', seededLastChanged, 'initial')
   })
+
+  it('6 — a legacy row (first_state_fingerprint NULL — predates the migration) always uses strict post-transition semantics, including at a dispatch-time recheck, however stale its evidence looks', async () => {
+    // bookingCreatedDispatchCancelReason re-runs this exact gate for its
+    // dispatch-time recheck (app/api/caye/outbound-worker/route.ts) — this
+    // is the property that keeps that recheck conservative for a row whose
+    // attention item predates 20260826f: first_state_fingerprint stays
+    // NULL forever for such a row (lib/owner-attention.ts's
+    // observeAttentionItem update path never writes it), so it can never
+    // read as 'initial' no matter how many times it's re-observed.
+    ATTENTION = [
+      attentionRow({
+        subject_type: 'booking',
+        subject_id: 'booking-autumn',
+        conversation_id: 'conv-autumn',
+        state_fingerprint: FP_AUTUMN, // unchanged from whatever it always was
+        first_state_fingerprint: null, // legacy — genuinely unknown origin
+        notify_count: 0,
+        notified_fingerprint: null,
+      }),
+    ]
+    hasOperatorParticipatedInConversation.mockResolvedValue(false)
+    await decideOperatorNotification(autumnInput)
+    expect(hasOperatorParticipatedInConversation).toHaveBeenCalledWith('conv-autumn', expect.any(String), 'post-transition')
+  })
 })

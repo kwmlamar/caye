@@ -282,14 +282,23 @@ export async function observeAttentionItem(args: {
         state_fingerprint: fp ?? existing.state_fingerprint,
         status,
         ...(changed ? { last_changed_at: now } : {}),
-        // Lazy backfill for a row that predates first_state_fingerprint
-        // (20260826f) — treats the first post-migration observation as the
-        // baseline going forward. Never touched again once set, same as
-        // the insert path — see the migration's own comment for why a
-        // bulk backfill guess would have been unsafe.
-        ...(existing.first_state_fingerprint === null || existing.first_state_fingerprint === undefined
-          ? { first_state_fingerprint: fp ?? existing.state_fingerprint }
-          : {}),
+        // first_state_fingerprint is DELIBERATELY absent from this update —
+        // the update branch never writes it, under any condition, ever
+        // (PR #135 review, third finding). A row only gets one whose
+        // legitimacy we can vouch for: the moment observeAttentionItem
+        // FIRST inserts it (the insert branch above). For a row that
+        // predates the 20260826f migration, first_state_fingerprint is
+        // NULL and stays NULL for that row's entire remaining lifetime —
+        // there is no later moment where "we don't know its true original
+        // state" becomes "now we do." Writing ANY value here on a later
+        // observation — even the state as it stood just before this
+        // update — would convert a genuine transition into something that
+        // reads as "provably still the original state," which is exactly
+        // the false-initial-mode bug this column exists to prevent. A NULL
+        // first_state_fingerprint permanently means "not provably initial"
+        // for that row, which decideOperatorNotification correctly reads
+        // as always 'post-transition' (the strict, no-pre-state-buffer
+        // mode) — see its own comment.
         ...(args.blockedOnOperator !== undefined ? { blocked_on_operator: args.blockedOnOperator } : {}),
         ...(args.resolvableAutonomously !== undefined
           ? { resolvable_autonomously: args.resolvableAutonomously }

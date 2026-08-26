@@ -367,4 +367,96 @@ describe('observeAttentionItem', () => {
     })
     expect(UPDATES[0].status).toBe('resolved')
   })
+
+  describe('first_state_fingerprint — legacy-row policy (PR #135 review, third finding)', () => {
+    it('a brand-new row gets first_state_fingerprint stamped to its own initial fingerprint', async () => {
+      TABLE = []
+      await observeAttentionItem({
+        workspaceId: 'ws',
+        subjectType: 'booking',
+        subjectId: 'booking-1',
+        title: 'Autumn — New pending booking',
+        priority: 'awareness',
+        fingerprintParts: ['pending', null, null, null, '2026-09-05', '09:00:00', 2],
+      })
+      expect(INSERTS[0].first_state_fingerprint).toBe(INSERTS[0].state_fingerprint)
+      expect(INSERTS[0].first_state_fingerprint).toBeTruthy()
+    })
+
+    it('3 — a legacy row (first_state_fingerprint already NULL) re-observed with an UNCHANGED state stays NULL, not silently backfilled', async () => {
+      const parts = ['pending', null, null, null, '2026-09-05', '09:00:00', 2]
+      TABLE = [row({ state_fingerprint: fingerprint(parts), first_state_fingerprint: null })]
+      await observeAttentionItem({
+        workspaceId: 'ws',
+        subjectType: 'booking',
+        subjectId: 'booking-1',
+        title: 'Autumn — New pending booking',
+        priority: 'awareness',
+        fingerprintParts: parts, // unchanged
+      })
+      expect(UPDATES[0]).not.toHaveProperty('first_state_fingerprint')
+    })
+
+    it('4 — a legacy row transitioning pending -> confirmed also leaves first_state_fingerprint untouched, not set to either state', async () => {
+      const pendingParts = ['pending', null, null, null, '2026-09-05', '09:00:00', 2]
+      const confirmedParts = ['confirmed', '2026-08-27T10:00:00Z', null, null, '2026-09-05', '09:00:00', 2]
+      TABLE = [row({ state_fingerprint: fingerprint(pendingParts), first_state_fingerprint: null })]
+      await observeAttentionItem({
+        workspaceId: 'ws',
+        subjectType: 'booking',
+        subjectId: 'booking-1',
+        title: 'Autumn — Booking confirmed & paid',
+        priority: 'awareness',
+        fingerprintParts: confirmedParts, // real transition
+      })
+      // The bug this guards against: writing EITHER the old (pending) or
+      // new (confirmed) fingerprint here would convert "unknown history"
+      // into a false "provably initial" — first_state_fingerprint must
+      // simply never be written by the update path, full stop.
+      expect(UPDATES[0]).not.toHaveProperty('first_state_fingerprint')
+      expect(UPDATES[0].state_fingerprint).toBe(fingerprint(confirmedParts)) // the real state still updates normally
+    })
+
+    it('5 — re-observing a legacy row THREE times (unchanged, then a real transition, then unchanged again) never converts it into a "known initial" row', async () => {
+      const pendingParts = ['pending', null, null, null, '2026-09-05', '09:00:00', 2]
+      const confirmedParts = ['confirmed', '2026-08-27T10:00:00Z', null, null, '2026-09-05', '09:00:00', 2]
+
+      // Round 1: unchanged re-observation.
+      TABLE = [row({ state_fingerprint: fingerprint(pendingParts), first_state_fingerprint: null })]
+      await observeAttentionItem({
+        workspaceId: 'ws',
+        subjectType: 'booking',
+        subjectId: 'booking-1',
+        title: 'x',
+        priority: 'awareness',
+        fingerprintParts: pendingParts,
+      })
+      expect(UPDATES[0]).not.toHaveProperty('first_state_fingerprint')
+
+      // Round 2: a real transition.
+      UPDATES = []
+      await observeAttentionItem({
+        workspaceId: 'ws',
+        subjectType: 'booking',
+        subjectId: 'booking-1',
+        title: 'x',
+        priority: 'awareness',
+        fingerprintParts: confirmedParts,
+      })
+      expect(UPDATES[0]).not.toHaveProperty('first_state_fingerprint')
+
+      // Round 3: unchanged re-observation of the NEW state — still no write.
+      UPDATES = []
+      TABLE = [row({ state_fingerprint: fingerprint(confirmedParts), first_state_fingerprint: null })]
+      await observeAttentionItem({
+        workspaceId: 'ws',
+        subjectType: 'booking',
+        subjectId: 'booking-1',
+        title: 'x',
+        priority: 'awareness',
+        fingerprintParts: confirmedParts,
+      })
+      expect(UPDATES[0]).not.toHaveProperty('first_state_fingerprint')
+    })
+  })
 })

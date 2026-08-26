@@ -32,15 +32,22 @@ alter table caye_owner_attention
   add column if not exists first_state_fingerprint text;
 
 comment on column caye_owner_attention.first_state_fingerprint is
-  'state_fingerprint as it was the FIRST time this subject was ever observed. Set once at insert; also lazily backfilled by observeAttentionItem on the first post-migration update of a row that predates this column (see its own comment) — never overwritten once set. Comparing to the live state_fingerprint tells the participation-evidence check whether the current state is the subject''s original one (a small pre-state evidence window is legitimate) or a later transition (evidence must be at-or-after the transition itself).';
+  'state_fingerprint as it was the FIRST time this subject was ever observed. Set ONLY at insert — observeAttentionItem''s update path never writes this column, under any condition, ever, including for a row where it is currently NULL. Comparing to the live state_fingerprint tells the participation-evidence check whether the current state is the subject''s original one (a small pre-state evidence window is legitimate) or a later transition (evidence must be at-or-after the transition itself). NULL permanently means "we have no provable original state for this row" and must always resolve to the strict post-transition evidence mode — never lazily upgraded to a guessed baseline.';
 
--- No backfill UPDATE here on purpose: for a row that already existed before
--- this migration, we genuinely don't know whether its CURRENT
--- state_fingerprint is still its original one or already a transition —
--- guessing either way risks being wrong in the unsafe direction (treating
--- a real transition as "still original" would wrongly permit a pre-state
--- evidence window for it). observeAttentionItem instead backfills lazily,
--- the first time each such row is next observed post-migration, treating
--- that moment as the baseline going forward — safe (NULL means "not
--- provably still original", the stricter mode) and self-healing without
--- a bulk guess.
+-- No backfill UPDATE here, and NO lazy backfill in application code either
+-- (PR #135 review, third finding — an earlier version of this design did
+-- lazily backfill on next observation, which is unsafe and was removed).
+-- For a row that already existed before this migration, we genuinely don't
+-- know whether its CURRENT state_fingerprint is still its original one or
+-- already a transition. There is no later moment — not this migration, not
+-- a subsequent observeAttentionItem call, not a second or third
+-- observation — where that unknown history becomes known. Any code path
+-- that writes first_state_fingerprint for such a row, using either the
+-- fingerprint AS OF that later write or the fingerprint the row happened
+-- to have just before it, would silently convert "we don't know if this is
+-- the original state" into "this is provably the original state" — which
+-- is precisely the false-initial-mode bug this column exists to prevent
+-- (a genuine transition would then wrongly qualify for the pre-state
+-- evidence buffer). A legacy row's first_state_fingerprint stays NULL,
+-- and therefore its evidence mode stays strict post-transition, for the
+-- entire remaining lifetime of that row.
