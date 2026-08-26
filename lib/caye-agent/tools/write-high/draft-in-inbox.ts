@@ -4,6 +4,8 @@ import { createZohoReplyDraft } from '@/lib/email-ai'
 import { checkZohoDraftGate, ZOHO_DRAFT_VERIFIED_KEY } from '@/lib/zoho-draft-gate'
 import type { Tool } from '../types'
 import { assertConversationOwnedByWorkspace } from '../write-low/_guards'
+import { failedRetryable, needsHuman } from '../result'
+import { setLatestActiveWorkStatus } from '@/lib/whatsapp/active-work'
 
 interface DraftInInboxInput {
   conversation_id: string
@@ -129,6 +131,8 @@ Email threads only — the operator's mailbox is the delivery surface, so this d
         ctx.workspaceId
       )
 
+      await setLatestActiveWorkStatus({ supabase, workspaceId: ctx.workspaceId, operatorId: ctx.operatorId, status: 'completed' })
+
       return {
         ok: true,
         data: {
@@ -145,7 +149,22 @@ Email threads only — the operator's mailbox is the delivery surface, so this d
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
-      return { ok: false, error: `Draft failed: ${msg}` }
+      // A provider timeout is not proof that no draft was created. Retrying
+      // that case can create duplicate drafts, so it is intentionally a
+      // reconciliation/blocking outcome. Explicit throttling/rejection is
+      // safe to retry because Zoho returned before accepting a draft.
+      const preserved = { conversation_id: args.conversation_id, draft_body: body, sent: false }
+      await setLatestActiveWorkStatus({ supabase, workspaceId: ctx.workspaceId, operatorId: ctx.operatorId, status: 'failed' })
+      if (/\b(?:429|rate limit|too many requests)\b/i.test(msg)) {
+        return { ...failedRetryable('ZOHO_DRAFT_RATE_LIMITED', 'The email provider temporarily rejected this draft save.'), data: preserved }
+      }
+      if (/\b(?:401|403|unauthori[sz]ed|forbidden|re-?authori[sz])\b/i.test(msg)) {
+        return { ...needsHuman('ZOHO_DRAFT_AUTH_REQUIRED', 'The email connection needs to be reconnected before this draft can be saved.'), data: preserved }
+      }
+      return {
+        ...needsHuman('ZOHO_DRAFT_CREATION_UNCERTAIN', 'The email provider did not confirm whether the draft was created.'),
+        data: preserved,
+      }
     }
   },
 }

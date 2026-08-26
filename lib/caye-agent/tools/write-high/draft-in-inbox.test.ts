@@ -51,6 +51,17 @@ vi.mock('@/lib/supabase-server', () => ({
           }),
         }
       }
+      if (table === 'caye_operator_messages') {
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                order: () => ({ limit: async () => ({ data: [] }) }),
+              }),
+            }),
+          }),
+        }
+      }
       throw new Error(`unexpected table: ${table}`)
     },
   }),
