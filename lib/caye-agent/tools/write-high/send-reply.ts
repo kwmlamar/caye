@@ -4,6 +4,8 @@ import { dispatchOperatorReply } from '@/lib/whatsapp/channel-dispatch'
 import type { Tool } from '../types'
 import { assertConversationOwnedByWorkspace, resolveOpenEscalations } from '../write-low/_guards'
 import { unsupportedLogisticsTimeClaims } from '../../logistics-grounding'
+import { validateAuthoritativeBookingTimeClaims } from '../../consequential-claim-grounding'
+import { completeConversationExecution, resolveConversationExecutionAfterFailure, validateConversationExecution } from '@/lib/conversation-execution'
 
 interface SendReplyInput {
   conversation_id: string
@@ -84,12 +86,52 @@ Customer never knows the operator delegated to you.`,
       }
     }
 
+    // 2026-08-26 Sonja Pettus incident: the operator SAYING a booking's
+    // time changed is not evidence the booking record changed — Caye told
+    // a customer their tour moved without ever calling reschedule_booking,
+    // and a payment confirmation sent seconds later read the stale time
+    // back. Unlike the logistics-thread check above, there is deliberately
+    // NO ownerApproved bypass here: owner approval of a draft's WORDING is
+    // not proof the underlying bookings row was actually mutated, which is
+    // exactly what this incident disproved.
+    const bookingTimeConflict = await validateAuthoritativeBookingTimeClaims(
+      supabase,
+      ctx.workspaceId,
+      args.conversation_id,
+      body
+    )
+    if (bookingTimeConflict) {
+      return {
+        ok: false,
+        status: 'CONFLICT',
+        error_code: 'UNGROUNDED_BOOKING_TIME',
+        error: `${bookingTimeConflict}. Call reschedule_booking to actually change the booking BEFORE telling the customer the time changed — a message alone never updates the record. Nothing was sent.`,
+      }
+    }
+
+    // Set the instant dispatchOperatorReply returns successfully — guards
+    // the catch below so a LATER failure (completing the coordinator
+    // record, clearing the held flag, resolving escalations) is never
+    // mistaken for "nothing was sent."
+    let dispatched = false
     try {
+      if (ctx.executionClaimId) {
+        const execution = await validateConversationExecution({ claimId: ctx.executionClaimId })
+        if (!execution.ok) {
+          return { ok: false, status: 'CONFLICT', error: `Customer conversation changed while the draft awaited confirmation (${execution.reason}). Re-read the thread and stage a current reply.` }
+        }
+      }
       const result = await dispatchOperatorReply(
         args.conversation_id,
         body,
         'caye-dashboard'
       )
+      dispatched = true
+      if (ctx.executionClaimId) {
+        await completeConversationExecution(ctx.executionClaimId).catch((completeErr) => {
+          console.error('[send-reply] dispatch succeeded but completing the execution claim failed (safe — left unresolved rather than freed for retry):', completeErr)
+        })
+      }
 
       // Clear the held flag since we've now replied. If it wasn't held in
       // the first place, this is a no-op.
@@ -115,6 +157,7 @@ Customer never knows the operator delegated to you.`,
         },
       }
     } catch (err) {
+      if (ctx.executionClaimId && !dispatched) await resolveConversationExecutionAfterFailure(ctx.executionClaimId, err)
       const msg = err instanceof Error ? err.message : String(err)
       return { ok: false, error: `Send failed: ${msg}` }
     }

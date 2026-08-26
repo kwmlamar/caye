@@ -19,6 +19,8 @@ import { maybeRefreshOwnerVoiceProfile } from '@/lib/owner-voice-learning'
 import { maybeSuggestBusinessFacts } from '@/lib/business-fact-suggestions'
 import { recordSalesLifecycleEvent } from '@/lib/sales/lifecycle'
 import { classifyOutboundAuthorship } from '@/lib/message-authorship'
+import { claimConversationExecution, completeConversationExecution, releaseConversationExecution, resolveConversationExecutionAfterFailure, validateConversationExecution } from '@/lib/conversation-execution'
+import { DispatchAmbiguousError } from '@/lib/whatsapp/channel-dispatch'
 
 export async function POST(request: NextRequest) {
   // ── Auth ────────────────────────────────────────────────────────────────────
@@ -96,6 +98,22 @@ export async function POST(request: NextRequest) {
 
   const text = content.trim()
   const now = new Date().toISOString()
+  const execution = await claimConversationExecution({
+    workspaceId: account.user_id,
+    conversationId: conversation_id,
+    holder: 'human_manual',
+    idempotencyKey: `manual:${user.id}:${conversation_id}:${now}`,
+    reason: 'owner dashboard send',
+    leaseSeconds: 120,
+  })
+  if (!execution.ok) {
+    return NextResponse.json({ error: `This conversation is currently being handled by ${execution.blockedBy}. Reload it before sending.` }, { status: 409 })
+  }
+  const executionValid = await validateConversationExecution({ claimId: execution.claim.id })
+  if (!executionValid.ok) {
+    await releaseConversationExecution(execution.claim.id)
+    return NextResponse.json({ error: `Conversation changed before dispatch (${executionValid.reason}). Reload before sending.` }, { status: 409 })
+  }
   // Read before dispatch: the send path below can clear or rewrite thread
   // metadata, and authorship has to be judged against the draft as it stood
   // when this request arrived.
@@ -106,61 +124,74 @@ export async function POST(request: NextRequest) {
   let zohoMessageId: string | null = null
 
   // ── Dispatch to channel ─────────────────────────────────────────────────────
+  // Validated (and, if unsupported, released) BEFORE any provider call is
+  // attempted — this is a definite non-send, safe to release outright,
+  // unlike anything past this point.
+  if (!['messenger', 'instagram', 'whatsapp', 'email'].includes(conv.channel_type)) {
+    await releaseConversationExecution(execution.claim.id).catch(() => undefined)
+    return NextResponse.json({ error: `Unsupported channel: ${conv.channel_type}` }, { status: 422 })
+  }
+
   try {
-    switch (conv.channel_type) {
-      case 'messenger':
-      case 'instagram': {
-        // customer_id = page-scoped sender ID (PSID)
-        await sendMetaMessage(conv.customer_id, text, account.access_token)
-        break
-      }
-
-      case 'whatsapp': {
-        // customer_id = WA phone number, channel_account_id = phone_number_id
-        await sendWhatsAppMessage(
-          conv.customer_id,
-          text,
-          account.channel_account_id,
-          account.access_token
-        )
-        break
-      }
-
-      case 'email': {
-        const meta = (conv.metadata ?? {}) as Record<string, string>
-        if (meta.hold_kind === 'outreach_first_touch') {
-          // First-touch cold outreach — there's no real prior thread to reply
-          // into and no inbound subject to inherit, so send a clean standalone
-          // email with the subject the draft was created with. Using
-          // sendZohoReply here produced "Re: (no subject)" in practice.
-          const subject = meta.subject || 'Quick question'
-          const sent = await sendZohoEmail(conv.customer_id, subject, text, account.user_id)
-          zohoMessageId = sent.messageId
-        } else {
-          const originalSubject = meta.subject || '(no subject)'
-          const replySubject = originalSubject.startsWith('Re:')
-            ? originalSubject
-            : `Re: ${originalSubject}`
-          // customer_id = sender email address, channel_conversation_id = Zoho thread ID
-          const replySent = await sendZohoReply(
-            conv.customer_id,
-            replySubject,
-            text,
-            conv.channel_conversation_id,
-            account.user_id
-          )
-          zohoMessageId = replySent.messageId
+    // Everything in this switch can perform the real customer-facing side
+    // effect. Any exception from here on is wrapped as DispatchAmbiguousError
+    // (mirrors lib/whatsapp/channel-dispatch.ts's dispatchOperatorReply) so
+    // the catch below can never mistake "provider call threw" for
+    // "definitely nothing was sent."
+    try {
+      switch (conv.channel_type) {
+        case 'messenger':
+        case 'instagram': {
+          // customer_id = page-scoped sender ID (PSID)
+          await sendMetaMessage(conv.customer_id, text, account.access_token)
+          break
         }
-        break
-      }
 
-      default:
-        return NextResponse.json(
-          { error: `Unsupported channel: ${conv.channel_type}` },
-          { status: 422 }
-        )
+        case 'whatsapp': {
+          // customer_id = WA phone number, channel_account_id = phone_number_id
+          await sendWhatsAppMessage(
+            conv.customer_id,
+            text,
+            account.channel_account_id,
+            account.access_token
+          )
+          break
+        }
+
+        case 'email': {
+          const meta = (conv.metadata ?? {}) as Record<string, string>
+          if (meta.hold_kind === 'outreach_first_touch') {
+            // First-touch cold outreach — there's no real prior thread to reply
+            // into and no inbound subject to inherit, so send a clean standalone
+            // email with the subject the draft was created with. Using
+            // sendZohoReply here produced "Re: (no subject)" in practice.
+            const subject = meta.subject || 'Quick question'
+            const sent = await sendZohoEmail(conv.customer_id, subject, text, account.user_id)
+            zohoMessageId = sent.messageId
+          } else {
+            const originalSubject = meta.subject || '(no subject)'
+            const replySubject = originalSubject.startsWith('Re:')
+              ? originalSubject
+              : `Re: ${originalSubject}`
+            // customer_id = sender email address, channel_conversation_id = Zoho thread ID
+            const replySent = await sendZohoReply(
+              conv.customer_id,
+              replySubject,
+              text,
+              conv.channel_conversation_id,
+              account.user_id
+            )
+            zohoMessageId = replySent.messageId
+          }
+          break
+        }
+      }
+    } catch (sendErr) {
+      const msg = sendErr instanceof Error ? sendErr.message : String(sendErr)
+      throw new DispatchAmbiguousError(`provider send failed or its outcome is unknown: ${msg}`, false)
     }
   } catch (err) {
+    await resolveConversationExecutionAfterFailure(execution.claim.id, err)
     const msg = err instanceof Error ? err.message : String(err)
     console.error(`[messages/send] Channel send failed (${conv.channel_type}):`, msg)
     return NextResponse.json({ error: `Failed to deliver message: ${msg}` }, { status: 502 })
@@ -196,9 +227,21 @@ export async function POST(request: NextRequest) {
 
   if (insertErr) {
     console.error('[messages/send] Message insert failed:', insertErr)
+    // Delivery succeeded even though the inbox ledger failed. Preserve the
+    // completed execution state so another live worker cannot treat this as
+    // an unanswered turn while the receipt is repaired.
+    await completeConversationExecution(execution.claim.id).catch(() => undefined)
     // Delivery already succeeded — return partial success so UI doesn't show "failed"
     return NextResponse.json({ success: true, message: null })
   }
+
+  // Best-effort: the send and its receipt are already durably persisted
+  // above. A failure here must never surface as a delivery failure to the
+  // owner — the reservation just stays "reserved" (safe; see the
+  // migration's crash-point-5 doc comment) rather than freed for a retry.
+  await completeConversationExecution(execution.claim.id, message.id).catch((completeErr) => {
+    console.error('[messages/send] delivered but completing the execution claim failed:', completeErr)
+  })
 
   // Update conversation preview. Also clear the human_agent_enabled hold
   // flag — the owner is responding, so Caye should resume monitoring on

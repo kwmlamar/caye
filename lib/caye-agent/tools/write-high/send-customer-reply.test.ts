@@ -27,11 +27,30 @@ vi.mock('@/lib/whatsapp/channel-dispatch', () => ({
     dispatchOperatorReplyMock(conversationId, text, sender),
 }))
 
+// Channel-context behavior is covered by frontdesk-context-guard.test.ts;
+// this boundary suite isolates evidence and dispatch behavior.
+vi.mock('../../frontdesk-context-guard', () => ({
+  validateFrontDeskContext: vi.fn(async () => null),
+}))
+
 const conversationUpdateCalls: unknown[] = []
 let threadRowsMock: Array<{ content: string; sender_type?: string }> = []
+// Sonja-style booking time on the fake conversation-linked booking, so the
+// new UNGROUNDED_BOOKING_TIME check (validateAuthoritativeBookingTimeClaims)
+// has something to check the front-desk draft against.
+let fakeBookingTimeMock: string | null = null
 vi.mock('@/lib/supabase-server', () => ({
   createServiceClient: () => ({
     from: (table: string) => {
+      if (table === 'bookings') {
+        const query = {
+          eq: () => query,
+          neq: () => query,
+          then: (resolve: (v: { data: Array<{ status: string; booking_time: string | null }> }) => void) =>
+            resolve({ data: fakeBookingTimeMock === null ? [] : [{ status: 'confirmed', booking_time: fakeBookingTimeMock }] }),
+        }
+        return { select: () => query }
+      }
       if (table === 'unified_messages') {
         return {
           select: () => {
@@ -93,6 +112,7 @@ describe('sendCustomerReply', () => {
     businessFactsMock.mockReset().mockResolvedValue([])
     conversationUpdateCalls.length = 0
     threadRowsMock = []
+    fakeBookingTimeMock = null
   })
 
   it('sends autonomously (no send-blocking claim) when the draft makes no price/availability claim', async () => {
@@ -254,5 +274,32 @@ describe('sendCustomerReply', () => {
   it('is tagged high-risk and front-desk only', () => {
     expect(sendCustomerReply.risk).toBe('high')
     expect(sendCustomerReply.modes).toEqual(['front-desk'])
+  })
+
+  describe('2026-08-26 Sonja Pettus incident — concurrent-autonomous-send protection', () => {
+    it('blocks the autonomous front-desk from asserting a tour time that does not match the authoritative booking record', async () => {
+      // The scenario this guards: an operator's reschedule_booking call
+      // has already moved the authoritative record to 10:00 while an
+      // autonomous front-desk turn — working from a stale read, or simply
+      // composing the wrong thing — tries to tell the customer 9:00.
+      fakeBookingTimeMock = '10:00:00'
+      const result = await sendCustomerReply.execute(
+        { conversation_id: 'c1', body: 'Just confirming — your tour is at 9:00 a.m. tomorrow, see you then!' },
+        ctx()
+      )
+      expect(result.ok).toBe(false)
+      expect(result.error_code).toBe('UNGROUNDED_BOOKING_TIME')
+      expect(dispatchOperatorReplyMock).not.toHaveBeenCalled()
+    })
+
+    it('allows the autonomous front-desk to state a tour time that matches the authoritative booking record', async () => {
+      fakeBookingTimeMock = '10:00:00'
+      const result = await sendCustomerReply.execute(
+        { conversation_id: 'c1', body: 'Just confirming — your tour is at 10:00 a.m. tomorrow, see you then!' },
+        ctx()
+      )
+      expect(result.ok).toBe(true)
+      expect(dispatchOperatorReplyMock).toHaveBeenCalled()
+    })
   })
 })

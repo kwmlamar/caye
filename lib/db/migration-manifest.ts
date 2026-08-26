@@ -121,6 +121,7 @@ export const REPO_MIGRATIONS: readonly string[] = [
   '20260819_business_facts_supersede_rpc',
   '20260824_outreach_first_touch_capacity',
   '20260824_outreach_pause_provenance',
+  '20260825_conversation_execution_coordination',
   '20260826_business_facts_scope_and_canonical_key',
   '20260826b_service_date_overrides',
   '20260826c_operator_learning_audit',

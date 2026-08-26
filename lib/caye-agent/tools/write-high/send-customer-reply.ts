@@ -19,9 +19,11 @@ import {
   detectConsequentialPolarityConflict,
   fetchScopedOwnerInstructionText,
   validateAuthoritativeBookingStatusClaims,
+  validateAuthoritativeBookingTimeClaims,
 } from '../../consequential-claim-grounding'
 import { validateFrontDeskContext } from '../../frontdesk-context-guard'
 import { staleDateOverrideConflict } from '../../date-override-revalidation'
+import { completeConversationExecution, resolveConversationExecutionAfterFailure, validateConversationExecution } from '@/lib/conversation-execution'
 
 interface SendCustomerReplyInput {
   conversation_id: string
@@ -204,6 +206,24 @@ Front-desk replies are evidence-gated rather than separately operator-gated. If 
       }
     }
 
+    // 2026-08-26 Sonja Pettus incident (see consequential-claim-grounding.ts)
+    // — no owner-instruction bypass: a stated time change is not evidence
+    // the booking record changed.
+    const bookingTimeConflict = await validateAuthoritativeBookingTimeClaims(
+      supabase,
+      ctx.workspaceId,
+      args.conversation_id,
+      body
+    )
+    if (bookingTimeConflict) {
+      return {
+        ok: false,
+        status: 'CONFLICT',
+        error_code: 'UNGROUNDED_BOOKING_TIME',
+        error: `${bookingTimeConflict}. The booking must actually be rescheduled before the customer is told the time changed. Nothing was sent.`,
+      }
+    }
+
     const evidence: EvidenceSet = new Set(ctx.evidenceCollected ?? [])
     const quotesPrice = extractDollarAmounts(body).length > 0
     const claimsAvailability = assertsAvailability(body)
@@ -227,22 +247,23 @@ Front-desk replies are evidence-gated rather than separately operator-gated. If 
     // the time execution reaches here. Re-fetches service_date_overrides
     // fresh, right now, rather than trusting anything read earlier.
     //
-    // COMPOSITION WITH PR #132 (conversation-execution-coordination, open/
-    // unmerged as of this writing): that work adds a claim/validate/dispatch
-    // sequence whose own last-possible-guard call
-    // (validateConversationExecution, from lib/conversation-execution.ts)
-    // sits at this EXACT point in this file — immediately before
-    // dispatchOperatorReply, after every other content guard. This is
-    // deliberate: whichever of the two PRs merges second should place these
-    // two calls adjacent to each other, in this order:
-    //   1. staleDateOverrideConflict (this check)      — is the CONTENT still true?
-    //   2. validateConversationExecution (PR #132)     — is this call still the
+    // COMPOSITION WITH PR #132 (conversation-execution-coordination — now
+    // merged): confirmed by this merge that validateConversationExecution
+    // sits exactly where this comment predicted it would, immediately
+    // before dispatchOperatorReply. The two checks are adjacent, in order,
+    // exactly as planned:
+    //   1. staleDateOverrideConflict (this check)   — is the CONTENT still true?
+    //   2. validateConversationExecution (#132)     — is this call still the
     //      valid holder of the right to send at all?
-    //   3. dispatchOperatorReply                        — send.
+    //   3. dispatchOperatorReply                     — send.
     // Content freshness and execution-ownership are orthogonal concerns —
     // neither needs the other's internals — so no shared coordinator/lock
-    // object is needed; positional adjacency in this one function is the
-    // entire integration. This code imports nothing from PR #132's branch.
+    // object was needed; positional adjacency in this one function is the
+    // entire integration. Nothing here imports from or depends on
+    // conversation-execution.ts's internals, and nothing there depends on
+    // this check — a stale-date-override rejection returns before
+    // validateConversationExecution is ever called, so a doomed send never
+    // consumes/burns the execution claim either.
     const staleOverride = await staleDateOverrideConflict(supabase, ctx.workspaceId, args.conversation_id, body)
     if (staleOverride) {
       return {
@@ -253,13 +274,39 @@ Front-desk replies are evidence-gated rather than separately operator-gated. If 
       }
     }
 
+    // Set the instant dispatchOperatorReply returns successfully. Guards the
+    // catch below: once true, a LATER failure (completing the coordinator
+    // record, the send_and_flag update, anything) must never be treated as
+    // "nothing was sent" — the customer-facing side effect already happened.
+    let dispatched = false
     try {
+      if (ctx.executionClaimId) {
+        const execution = await validateConversationExecution({
+          claimId: ctx.executionClaimId,
+          triggeringMessageId: ctx.triggeringMessageId,
+        })
+        if (!execution.ok) {
+          return { ok: false, status: 'CONFLICT', error_code: 'STALE_CONVERSATION_EXECUTION', error: `Conversation changed while this reply was being prepared (${execution.reason}). Nothing was sent; reload the current thread.` }
+        }
+      }
       const result = await dispatchOperatorReply(
         args.conversation_id,
         body,
         'caye-frontdesk-agent',
         ctx.triggeringMessageId ?? undefined
       )
+      dispatched = true
+
+      // The send is CONFIRMED at this point. If completing the coordinator
+      // record itself now fails, that must never be treated as a dispatch
+      // failure — the reservation just stays "reserved" (never abandoned),
+      // which still correctly blocks a second answer to this same inbound
+      // turn (see the migration's crash-point-5 doc comment).
+      if (ctx.executionClaimId) {
+        await completeConversationExecution(ctx.executionClaimId).catch((completeErr) => {
+          console.error('[send-customer-reply] dispatch succeeded but completing the execution claim failed (safe — left unresolved rather than freed for retry):', completeErr)
+        })
+      }
 
       if (disposition.disposition === 'send_and_flag') {
         await supabase
@@ -284,6 +331,7 @@ Front-desk replies are evidence-gated rather than separately operator-gated. If 
         },
       }
     } catch (err) {
+      if (ctx.executionClaimId && !dispatched) await resolveConversationExecutionAfterFailure(ctx.executionClaimId, err)
       const msg = err instanceof Error ? err.message : String(err)
       return { ok: false, error: `Send failed: ${msg}` }
     }

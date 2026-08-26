@@ -15,9 +15,51 @@ vi.mock('server-only', () => ({}))
 // test uses its own workspaceId so rows never leak across tests.
 type Row = Record<string, unknown>
 
+// Faithful-enough simulation of claim_conversation_execution's terminal-
+// state/idempotency-key semantics (see the migration's PGlite tests for the
+// authoritative version) — just enough to prove high-risk-gate.ts's OWN key
+// construction doesn't regress into colliding across separate drafts on the
+// same conversation. One conversation per active claim, single tier (every
+// call here uses the same holder_kind).
+function makeClaimSimulator() {
+  const claims = new Map<string, { id: string; conversationId: string; idempotencyKey: string; terminal: boolean }>()
+  let nextId = 0
+  const rpcCalls: Array<{ fn: string; params: Record<string, unknown> }> = []
+  return {
+    rpcCalls,
+    rpc(fn: string, params: Record<string, unknown>) {
+      rpcCalls.push({ fn, params })
+      if (fn === 'claim_conversation_execution') {
+        const conversationId = params.p_conversation_id as string
+        const idempotencyKey = params.p_idempotency_key as string
+        const existingForKey = [...claims.values()].find((c) => c.idempotencyKey === idempotencyKey)
+        if (existingForKey && !existingForKey.terminal) {
+          return Promise.resolve({ data: [{ claim_id: existingForKey.id, generation: 1, acquired: true, blocked_by: null }], error: null })
+        }
+        const active = [...claims.values()].find((c) => c.conversationId === conversationId && !c.terminal)
+        if (active) {
+          return Promise.resolve({ data: [{ claim_id: active.id, generation: 1, acquired: false, blocked_by: 'operator_caye' }], error: null })
+        }
+        const id = `claim_${nextId++}`
+        claims.set(id, { id, conversationId, idempotencyKey, terminal: false })
+        return Promise.resolve({ data: [{ claim_id: id, generation: 1, acquired: true, blocked_by: null }], error: null })
+      }
+      if (fn === 'release_conversation_execution' || fn === 'complete_conversation_execution') {
+        const claim = claims.get(params.p_claim_id as string)
+        if (claim) claim.terminal = true
+        return Promise.resolve({ data: null, error: null })
+      }
+      return Promise.resolve({ data: null, error: null })
+    },
+  }
+}
+
 function makeFakeSupabase() {
   const rows: Row[] = []
+  const claimSim = makeClaimSimulator()
   const client = {
+    __claimRpcCalls: claimSim.rpcCalls,
+    rpc: claimSim.rpc,
     __rows: rows,
     from(_table: string) {
       return {
@@ -364,5 +406,100 @@ describe('gateHighRisk — draft_in_inbox staged summary (2026-08-17 Pam Ott inc
 
     expect(mutate).toHaveBeenCalledTimes(1)
     expect(confirmed).toEqual({ ok: true, data: { sent: false, draft_id: 'd1' } })
+  })
+})
+
+describe('gateHighRisk conversation-execution claim acquisition (tool.name === "send_reply")', () => {
+  function makeRealSendReplyTool(mutate: Tool<FakeSendArgs>['execute']): Tool<FakeSendArgs> {
+    return {
+      name: 'send_reply',
+      description: 'real send_reply name — triggers claim acquisition',
+      risk: 'high',
+      roles: ['owner', 'founder'],
+      modes: ['back-office'],
+      inputSchema: {
+        type: 'object',
+        properties: { conversation_id: { type: 'string' }, body: { type: 'string' } },
+        required: ['conversation_id', 'body'],
+      },
+      execute: mutate,
+    }
+  }
+
+  it('a second, later draft on the same conversation is NOT permanently blocked by the first draft having already completed', async () => {
+    const mutate = vi.fn<Tool<FakeSendArgs>['execute']>(async () => ({ ok: true, data: { sent: true } }))
+    const gated = gateHighRisk(makeRealSendReplyTool(mutate))
+    const wsId = 'ws-claim-key-1'
+    const conversationId = 'conv-claim-key-1'
+
+    const rpcCalls = (fakeSupabase as unknown as { __claimRpcCalls: Array<{ fn: string; params: Record<string, unknown> }> }).__claimRpcCalls
+    rpcCalls.length = 0
+
+    // First draft: stage, acquire a claim, then simulate a successful send
+    // (the real send-reply.ts would call completeConversationExecution
+    // itself; call the same underlying RPC here directly).
+    const first = await gated.execute(
+      { conversation_id: conversationId, body: 'First reply, sent successfully.' },
+      ctx({ workspaceId: wsId, requestId: 'req-1' })
+    )
+    const firstClaimCall = rpcCalls.find((c) => c.fn === 'claim_conversation_execution')
+    expect(firstClaimCall).toBeTruthy()
+    const firstKey = firstClaimCall!.params.p_idempotency_key as string
+    const firstClaimResult = await fakeSupabase.rpc('claim_conversation_execution', { p_workspace_id: wsId, p_conversation_id: conversationId, p_holder_kind: 'operator_caye', p_idempotency_key: firstKey })
+    const firstClaimId = (firstClaimResult as { data: Array<{ claim_id: string }> }).data[0].claim_id
+    await fakeSupabase.rpc('complete_conversation_execution', { p_claim_id: firstClaimId })
+
+    const firstPendingId = (first.data as { pending_action_id: string }).pending_action_id
+    void firstPendingId
+
+    // Much later, the SAME operator drafts an entirely NEW, unrelated reply
+    // to the SAME conversation. Under the old (operator, conversation)-keyed
+    // design this would reuse the now-COMPLETED claim and validate would
+    // fail closed forever. It must instead get a clean, fresh acquisition.
+    rpcCalls.length = 0
+    const second = await gated.execute(
+      { conversation_id: conversationId, body: 'Second, unrelated reply — much later.' },
+      ctx({ workspaceId: wsId, requestId: 'req-2' })
+    )
+    const secondClaimCall = rpcCalls.find((c) => c.fn === 'claim_conversation_execution')
+    expect(secondClaimCall).toBeTruthy()
+    expect(secondClaimCall!.params.p_idempotency_key).not.toBe(firstKey)
+    expect((second.data as { status: string }).status).toBe('awaiting_operator_confirmation')
+  })
+
+  it('the model re-emitting the identical send_reply call (the non-confirm_pending_action confirmation path) threads the SAME execution claim into ctx — it must not bypass coordination', async () => {
+    let claimIdSeenByTool: unknown
+    const mutate = vi.fn<Tool<FakeSendArgs>['execute']>(async (_args, execCtx) => {
+      claimIdSeenByTool = execCtx.executionClaimId
+      return { ok: true, data: { sent: true } }
+    })
+    const gated = gateHighRisk(makeRealSendReplyTool(mutate))
+    const wsId = 'ws-reconfirm-1'
+    const conversationId = 'conv-reconfirm-1'
+    const rpcCalls = (fakeSupabase as unknown as { __claimRpcCalls: Array<{ fn: string; params: Record<string, unknown> }> }).__claimRpcCalls
+    rpcCalls.length = 0
+
+    // Stage.
+    const staged = await gated.execute(
+      { conversation_id: conversationId, body: 'Tell the guest 11am pickup.' },
+      ctx({ workspaceId: wsId, requestId: 'req-1' })
+    )
+    const stagedPendingId = (staged.data as { pending_action_id: string }).pending_action_id
+    const stagedRow = (fakeSupabase as unknown as { __rows: Row[] }).__rows.find((r) => r.id === stagedPendingId)
+    const stagedClaimId = stagedRow?.execution_claim_id
+    expect(stagedClaimId).toBeTruthy()
+
+    // Operator confirms not via confirm_pending_action, but by the model
+    // re-emitting the EXACT same tool call in a new turn — the second
+    // documented confirmation path (see the "Either the same request..."
+    // comment in gateHighRisk.execute).
+    expect(mutate).not.toHaveBeenCalled()
+    await gated.execute(
+      { conversation_id: conversationId, body: 'Tell the guest 11am pickup.' },
+      ctx({ workspaceId: wsId, requestId: 'req-2' })
+    )
+    expect(mutate).toHaveBeenCalledTimes(1)
+    expect(claimIdSeenByTool).toBeTruthy()
+    expect(claimIdSeenByTool).toBe(stagedClaimId)
   })
 })
