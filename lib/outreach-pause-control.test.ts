@@ -12,6 +12,10 @@ describe('outreach pause provenance', () => {
     expect(classifyOutreachPause({ paused: true, source: 'bounce_safety', activeSafetyCondition: 'bounce_threshold' }).disposition).toBe('safety_active')
   })
 
+  it('does not let an owner-manual provenance mask a current safety stop', () => {
+    expect(classifyOutreachPause({ paused: true, source: 'owner_manual', activeSafetyCondition: 'bounce_threshold' }).disposition).toBe('safety_active')
+  })
+
   it('does not turn a historical safety stop into an owner override after the immediate threshold clears', () => {
     expect(classifyOutreachPause({ paused: true, source: 'bounce_safety' }).disposition).toBe('safety_recovery_not_supported')
   })

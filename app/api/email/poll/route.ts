@@ -27,7 +27,8 @@ import { clearStaleOutreachAutofill } from '@/lib/outreach-autofill'
 import { detectOwnerCorrection } from '@/lib/owner-correction'
 import { sendZohoReply } from '@/lib/email-ai'
 import { isNoReplySender, isCalendarInvite, isPaymentReceipt, isOutOfOffice, isBounceNotification } from '@/lib/sender-classifier'
-import { recordBounceAndMaybeTrip } from '@/lib/outreach-kill-switch'
+import { pageFounderOutreachPaused } from '@/lib/outreach-kill-switch'
+import { recordAttributedOutreachBounce } from '@/lib/outreach-bounce-evidence'
 import { hasSalesCapability } from '@/lib/sales/capability'
 import {
   isWeb3FormsNotification,
@@ -671,25 +672,6 @@ async function processMessage(
   const meta = (account.metadata || {}) as Record<string, string>
   const accountId = meta.zoho_account_id || String(account.channel_account_id)
 
-  // Bounce/NDR detection for the autonomous cold-outreach kill switch
-  // (decisions-log 2026-08-12). Cheap subject check first — only spends a
-  // DB round-trip confirming workspace_kind on the rare message that
-  // actually looks like a bounce. Runs before the self-loop guard below
-  // since a bounce comes from mailer-daemon@, not our own address, so it'd
-  // never trip that guard anyway — but keep this ahead of it defensively.
-  if (isBounceNotification(subject)) {
-    const { data: ws } = await supabase
-      .from('customers')
-      .select('workspace_kind')
-      .eq('id', workspaceId)
-      .maybeSingle()
-    if (hasSalesCapability(ws)) {
-      await recordBounceAndMaybeTrip(workspaceId).catch(err =>
-        console.error('[email/poll] recordBounceAndMaybeTrip failed:', err)
-      )
-    }
-  }
-
   // Self-loop guard
   if (!fromEmail || fromEmail === ownEmail) return 'skipped'
 
@@ -1279,6 +1261,24 @@ async function processMessage(
     .from('unified_conversations')
     .update({ last_sender_type: 'customer', last_message_at: receivedTime, last_message_preview: (body || subject).slice(0, 100) })
     .eq('id', conversation.id)
+
+  // Record delivery evidence only after the inbound message has won the
+  // atomic claim. This makes a poll/webhook race one bounce, not two, and
+  // gives the evidence record a durable inbound-message receipt.
+  if (isBounceNotification(subject)) {
+    const { data: ws } = await supabase.from('customers').select('workspace_kind').eq('id', workspaceId).maybeSingle()
+    if (hasSalesCapability(ws)) {
+      try {
+        const bounce = await recordAttributedOutreachBounce({
+          workspaceId, inboundMessageId: claim.messageId, inboundProviderMessageId: messageId,
+          body, occurredAt: receivedTime,
+        })
+        if (bounce.tripped) await pageFounderOutreachPaused(bounce.count ?? 0, bounce.windowHours ?? 24)
+      } catch (err) {
+        console.error('[email/poll] deterministic bounce evidence failed:', err)
+      }
+    }
+  }
 
   // ── Newsletter / marketing-blast filter ───────────────────────────────────
   // Skip the AI loop for mailing-list content but keep it visible in the inbox

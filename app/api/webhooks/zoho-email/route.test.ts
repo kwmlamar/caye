@@ -187,6 +187,7 @@ vi.mock('@/lib/sender-classifier', () => ({
   isCalendarInvite: () => false,
   isPaymentReceipt: () => false,
   isOutOfOffice: () => false,
+  isBounceNotification: () => false,
 }))
 
 vi.mock('@/lib/email/web3forms', () => ({

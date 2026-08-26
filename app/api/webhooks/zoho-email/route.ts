@@ -34,11 +34,14 @@ import { resolveOrCreateContact } from '@/lib/contacts/resolve-contact'
 import { ownerAlreadyAnsweredInbound } from '@/lib/owner-reply-guard'
 import { runConvergedFrontDeskTurn } from '@/lib/caye-agent/frontdesk-entry'
 import { convergedFrontDeskEnabled } from '@/lib/caye-agent/frontdesk-rollback'
+import { recordAttributedOutreachBounce } from '@/lib/outreach-bounce-evidence'
+import { pageFounderOutreachPaused } from '@/lib/outreach-kill-switch'
 import {
   isNoReplySender,
   isCalendarInvite,
   isPaymentReceipt,
   isOutOfOffice,
+  isBounceNotification,
 } from '@/lib/sender-classifier'
 import {
   isWeb3FormsNotification,
@@ -383,6 +386,18 @@ export async function processInboundEmail(payload: Record<string, unknown>): Pro
     .from('unified_conversations')
     .update({ last_sender_type: 'customer', last_message_at: sentAt, last_message_preview: (effectiveBody || subject).slice(0, 100) })
     .eq('id', conversation.id)
+
+  if (isSalesWorkspace && isBounceNotification(subject)) {
+    try {
+      const bounce = await recordAttributedOutreachBounce({
+        workspaceId, inboundMessageId: claim.messageId, inboundProviderMessageId: messageId,
+        body: effectiveBody, occurredAt: sentAt,
+      })
+      if (bounce.tripped) await pageFounderOutreachPaused(bounce.count ?? 0, bounce.windowHours ?? 24)
+    } catch (err) {
+      console.error('[zoho-email webhook] deterministic bounce evidence failed:', err)
+    }
+  }
 
   // Fire-and-forget customer style learning. Never blocks the reply path.
   if (contactRow?.id) {
