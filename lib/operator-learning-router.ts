@@ -128,19 +128,25 @@ export async function routeOperatorLearningCorrection(input: {
 async function dispatchWrite(
   destination: Destination,
   classification: ClassificationResult,
-  input: { workspaceId: string; operatorRole: Role }
+  input: { workspaceId: string; operatorRole: Role; operatorText: string }
 ): Promise<WriteOutcome> {
+  // operatorText is threaded into every writer that performs semantic
+  // service resolution (pricing, business_fact when service-scoped, both
+  // availability writers) so resolveGroundedService can require the
+  // resolved service to actually be mentioned in what the operator said,
+  // not just in the classifier's own paraphrase — see
+  // operator-learning/service-grounding.ts.
   switch (destination) {
     case 'business_fact':
-      return writeBusinessFact({ workspaceId: input.workspaceId, callerRole: input.operatorRole, classification })
+      return writeBusinessFact({ workspaceId: input.workspaceId, callerRole: input.operatorRole, classification, operatorText: input.operatorText })
     case 'pricing':
-      return writePricing({ workspaceId: input.workspaceId, classification })
+      return writePricing({ workspaceId: input.workspaceId, classification, operatorText: input.operatorText })
     case 'contact':
       return writeContact({ workspaceId: input.workspaceId, callerRole: input.operatorRole, classification })
     case 'availability_recurring':
-      return writeAvailabilityRecurring({ workspaceId: input.workspaceId, callerRole: input.operatorRole, classification })
+      return writeAvailabilityRecurring({ workspaceId: input.workspaceId, callerRole: input.operatorRole, classification, operatorText: input.operatorText })
     case 'availability_date':
-      return writeAvailabilityDate({ workspaceId: input.workspaceId, callerRole: input.operatorRole, classification })
+      return writeAvailabilityDate({ workspaceId: input.workspaceId, callerRole: input.operatorRole, classification, operatorText: input.operatorText })
     case 'none':
       return { decision: 'error', reason: 'attempt_write plan with destination=none — should be unreachable' }
   }

@@ -1,6 +1,6 @@
 import 'server-only'
 import { createServiceClient } from '@/lib/supabase-server'
-import { resolveServiceByName } from '@/lib/caye-agent/tools/_catalog-helpers'
+import { resolveGroundedService } from '../service-grounding'
 import type { ClassificationResult } from '../schema'
 import type { WriteOutcome } from './types'
 
@@ -22,13 +22,14 @@ export async function writeAvailabilityRecurring(args: {
   workspaceId: string
   callerRole: string
   classification: ClassificationResult
+  operatorText: string
 }): Promise<WriteOutcome> {
   const payload = args.classification.availabilityRecurring
   if (!payload) return { decision: 'error', reason: 'destination availability_recurring but no payload' }
 
   const supabase = createServiceClient()
-  const lookup = await resolveServiceByName(supabase, args.workspaceId, payload.serviceName)
-  if (!lookup.ok) return { decision: 'candidate', reason: `service resolution failed: ${lookup.error}` }
+  const lookup = await resolveGroundedService(supabase, args.workspaceId, payload.serviceName, args.operatorText)
+  if (!lookup.ok || !lookup.service) return { decision: 'candidate', reason: `service resolution failed: ${lookup.error}` }
 
   const { data, error } = await supabase
     .from('service_availability_rules')
@@ -62,13 +63,14 @@ export async function writeAvailabilityDate(args: {
   workspaceId: string
   callerRole: string
   classification: ClassificationResult
+  operatorText: string
 }): Promise<WriteOutcome> {
   const payload = args.classification.availabilityDate
   if (!payload) return { decision: 'error', reason: 'destination availability_date but no payload' }
 
   const supabase = createServiceClient()
-  const lookup = await resolveServiceByName(supabase, args.workspaceId, payload.serviceName)
-  if (!lookup.ok) return { decision: 'candidate', reason: `service resolution failed: ${lookup.error}` }
+  const lookup = await resolveGroundedService(supabase, args.workspaceId, payload.serviceName, args.operatorText)
+  if (!lookup.ok || !lookup.service) return { decision: 'candidate', reason: `service resolution failed: ${lookup.error}` }
 
   const { data, error } = await supabase
     .from('service_date_overrides')

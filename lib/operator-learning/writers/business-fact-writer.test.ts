@@ -2,11 +2,20 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 vi.mock('server-only', () => ({}))
 
-let activeFacts: { id: string; fact: string; source: string; expires_at: string | null; canonical_key?: string | null }[] = []
+let activeFacts: {
+  id: string
+  fact: string
+  source: string
+  expires_at: string | null
+  canonical_key?: string | null
+  service_id?: string | null
+}[] = []
 let conflictResult: { conflictId: string | null; resolution: 'supersede' | 'ambiguous' | null; checkFailed?: boolean } = {
   conflictId: null,
   resolution: null,
 }
+let conflictCtxSeen: { newFactScopeLabel?: string } | null = null
+let conflictCandidatesSeen: { id: string; scopeLabel?: string }[] | null = null
 let semanticMatchResult: { matchId: string | null } = { matchId: null }
 let rpcParams: Record<string, unknown> | null = null
 let rpcError: { message: string } | null = null
@@ -15,34 +24,51 @@ let rpcResponse: { id: string; created_at: string; superseded_id: string | null 
   created_at: '2026-08-26T00:00:00Z',
   superseded_id: null,
 }
-let serviceLookupResult: { ok: true; service: { id: string; name: string } } | { ok: false; error: string } = {
+let groundedServiceResult:
+  | { ok: true; service: { id: string; name: string }; error: null }
+  | { ok: false; service: null; error: string } = {
   ok: false,
+  service: null,
   error: 'no lookup requested',
 }
+let scopedServices: { id: string; name: string }[] = []
 
 vi.mock('@/lib/business-fact-conflict', () => ({
-  findConflictingFact: async () => conflictResult,
+  findConflictingFact: async (
+    _newFact: string,
+    candidates: { id: string; scopeLabel?: string }[],
+    ctx: { newFactScopeLabel?: string }
+  ) => {
+    conflictCandidatesSeen = candidates
+    conflictCtxSeen = ctx
+    return conflictResult
+  },
 }))
 
 vi.mock('@/lib/business-fact-semantic-match', () => ({
   findSemanticFactMatch: async () => semanticMatchResult,
 }))
 
-vi.mock('@/lib/caye-agent/tools/_catalog-helpers', () => ({
-  resolveServiceByName: async () => serviceLookupResult,
+vi.mock('../service-grounding', () => ({
+  resolveGroundedService: async () => groundedServiceResult,
 }))
 
 vi.mock('@/lib/supabase-server', () => ({
   createServiceClient: () => ({
     from(table: string) {
-      if (table !== 'business_facts') throw new Error(`unexpected table: ${table}`)
-      return {
-        select: () => ({
-          eq: () => ({
-            is: async () => ({ data: activeFacts, error: null }),
+      if (table === 'business_facts') {
+        return {
+          select: () => ({
+            eq: () => ({
+              is: async () => ({ data: activeFacts, error: null }),
+            }),
           }),
-        }),
+        }
       }
+      if (table === 'booking_services') {
+        return { select: () => ({ in: async () => ({ data: scopedServices, error: null }) }) }
+      }
+      throw new Error(`unexpected table: ${table}`)
     },
     rpc(fn: string, params: Record<string, unknown>) {
       if (fn !== 'write_business_fact_atomic') throw new Error(`unexpected rpc: ${fn}`)
@@ -74,14 +100,30 @@ function classification(overrides: Record<string, unknown> = {}) {
   return res.value
 }
 
+function call(
+  c: ReturnType<typeof classification>,
+  over: Partial<{ workspaceId: string; callerRole: string; operatorText: string }> = {}
+) {
+  return writeBusinessFact({
+    workspaceId: 'ws-1',
+    callerRole: 'owner',
+    operatorText: 'default raw operator statement used by tests that do not care about grounding',
+    classification: c,
+    ...over,
+  })
+}
+
 beforeEach(() => {
   activeFacts = []
   conflictResult = { conflictId: null, resolution: null }
+  conflictCtxSeen = null
+  conflictCandidatesSeen = null
   semanticMatchResult = { matchId: null }
   rpcParams = null
   rpcError = null
   rpcResponse = { id: 'fact-new', created_at: '2026-08-26T00:00:00Z', superseded_id: null }
-  serviceLookupResult = { ok: false, error: 'no lookup requested' }
+  groundedServiceResult = { ok: false, service: null, error: 'no lookup requested' }
+  scopedServices = []
 })
 
 describe('writeBusinessFact', () => {
@@ -90,7 +132,7 @@ describe('writeBusinessFact', () => {
       canonicalKey: 'bottled-water-price',
       businessFact: { category: 'service_detail', text: 'Bottled water is $2.50 per guest, one bottle per person.' },
     })
-    const outcome = await writeBusinessFact({ workspaceId: 'ws-1', callerRole: 'owner', classification: c })
+    const outcome = await call(c)
     expect(outcome.decision).toBe('written')
     expect(rpcParams).toMatchObject({ p_canonical_key: 'bottled-water-price', p_source: 'owner-direct' })
   })
@@ -102,7 +144,7 @@ describe('writeBusinessFact', () => {
     conflictResult = { conflictId: 'fact-old', resolution: 'supersede' }
     rpcResponse = { id: 'fact-new', created_at: '2026-08-26T00:00:00Z', superseded_id: 'fact-old' }
 
-    const outcome = await writeBusinessFact({ workspaceId: 'ws-1', callerRole: 'owner', classification: classification() })
+    const outcome = await call(classification())
     expect(outcome.decision).toBe('superseded_and_written')
     expect(rpcParams).toMatchObject({ p_supersede_id: 'fact-old' })
   })
@@ -111,7 +153,7 @@ describe('writeBusinessFact', () => {
     activeFacts = [{ id: 'fact-old', fact: 'Tours run daily at 9am.', source: 'owner-direct', expires_at: null }]
     conflictResult = { conflictId: 'fact-old', resolution: 'ambiguous' }
 
-    const outcome = await writeBusinessFact({ workspaceId: 'ws-1', callerRole: 'owner', classification: classification() })
+    const outcome = await call(classification())
     expect(outcome.decision).toBe('candidate')
     expect(rpcParams).toBeNull()
   })
@@ -120,27 +162,27 @@ describe('writeBusinessFact', () => {
     activeFacts = [{ id: 'fact-old', fact: 'Cash is not accepted.', source: 'owner-direct', expires_at: null }]
     conflictResult = { conflictId: null, resolution: null, checkFailed: true }
 
-    const outcome = await writeBusinessFact({ workspaceId: 'ws-1', callerRole: 'owner', classification: classification() })
+    const outcome = await call(classification())
     expect(outcome.decision).toBe('error')
     expect(rpcParams).toBeNull()
   })
 
   it('resolves and attaches service_id when scope.target is service and the lookup succeeds', async () => {
-    serviceLookupResult = { ok: true, service: { id: 'svc-1', name: 'Full Bimini Experience' } }
+    groundedServiceResult = { ok: true, service: { id: 'svc-1', name: 'Full Bimini Experience' }, error: null }
     const c = classification({
       scope: { kind: 'standing', target: 'service', serviceName: 'Full Bimini', dateISO: null },
     })
-    await writeBusinessFact({ workspaceId: 'ws-1', callerRole: 'owner', classification: c })
+    await call(c)
     expect(rpcParams).toMatchObject({ p_service_id: 'svc-1' })
   })
 
   it('still writes workspace-wide (service_id null) when LOW-risk service resolution fails rather than blocking the save', async () => {
-    serviceLookupResult = { ok: false, error: 'ambiguous' }
+    groundedServiceResult = { ok: false, service: null, error: 'ambiguous' }
     const c = classification({
       risk: 'low',
       scope: { kind: 'standing', target: 'service', serviceName: 'Some Tour', dateISO: null },
     })
-    const outcome = await writeBusinessFact({ workspaceId: 'ws-1', callerRole: 'owner', classification: c })
+    const outcome = await call(c)
     expect(outcome.decision).toBe('written')
     expect(rpcParams).toMatchObject({ p_service_id: null })
   })
@@ -156,33 +198,84 @@ describe('writeBusinessFact', () => {
   // scope-widening a deterministic gate — not a confidence threshold — must
   // catch.
   it('holds as a candidate (does not write workspace-wide) when CONSEQUENTIAL service-scoped resolution fails', async () => {
-    serviceLookupResult = { ok: false, error: 'ambiguous match for "Full Bimini"' }
+    groundedServiceResult = { ok: false, service: null, error: 'ambiguous match for "Full Bimini"' }
     const c = classification({
       risk: 'consequential',
       scope: { kind: 'standing', target: 'service', serviceName: 'Full Bimini', dateISO: null },
       businessFact: { category: 'policy', text: 'Refunds for this tour now require 14 days notice.' },
     })
-    const outcome = await writeBusinessFact({ workspaceId: 'ws-1', callerRole: 'owner', classification: c })
+    const outcome = await call(c)
     expect(outcome.decision).toBe('candidate')
     expect(rpcParams).toBeNull()
   })
 
   it('still writes consequential content when service resolution succeeds', async () => {
-    serviceLookupResult = { ok: true, service: { id: 'svc-1', name: 'Full Bimini Experience' } }
+    groundedServiceResult = { ok: true, service: { id: 'svc-1', name: 'Full Bimini Experience' }, error: null }
     const c = classification({
       risk: 'consequential',
       scope: { kind: 'standing', target: 'service', serviceName: 'Full Bimini', dateISO: null },
       businessFact: { category: 'policy', text: 'Refunds for this tour now require 14 days notice.' },
     })
-    const outcome = await writeBusinessFact({ workspaceId: 'ws-1', callerRole: 'owner', classification: c })
+    const outcome = await call(c)
     expect(outcome.decision).toBe('written')
     expect(rpcParams).toMatchObject({ p_service_id: 'svc-1' })
   })
 
   it('surfaces an RPC error (e.g. concurrent-write constraint violation) as decision=error, not a silent success', async () => {
     rpcError = { message: 'duplicate key value violates unique constraint' }
-    const outcome = await writeBusinessFact({ workspaceId: 'ws-1', callerRole: 'owner', classification: classification() })
+    const outcome = await call(classification())
     expect(outcome.decision).toBe('error')
+  })
+
+  // Real scope-correctness gap found 2026-08-26: resolveGroundedService now
+  // rejects when the service the classifier claims resolves confidently but
+  // is never mentioned in what the operator actually said — proves
+  // business-fact-writer.ts propagates that rejection as a hold, same as an
+  // ordinary resolution failure, rather than treating "the string-match
+  // succeeded" as good enough on its own.
+  it('holds as a candidate when resolveGroundedService rejects a stale-context mis-attribution', async () => {
+    groundedServiceResult = { ok: false, service: null, error: 'resolved to "Full Bimini Experience" but none of its distinguishing words appear in what the operator actually said' }
+    const c = classification({
+      risk: 'consequential',
+      scope: { kind: 'standing', target: 'service', serviceName: 'Full Bimini Experience', dateISO: null },
+      businessFact: { category: 'policy', text: 'Refunds for this tour now require 14 days notice.' },
+    })
+    const outcome = await call(c, {})
+    expect(outcome.decision).toBe('candidate')
+    expect(rpcParams).toBeNull()
+  })
+
+  // Real production ambiguity (2026-08-26 audit): "the meeting point for the
+  // Heritage Tour is the pink building by the dock" (service-scoped,
+  // 2026-06-25) and "the pickup location for all tours is the Casino Tram
+  // Stop" (workspace-wide, 2026-08-26) are BOTH still active today. Proves
+  // the writer enriches the conflict judge with scope labels rather than
+  // handing it bare, scope-blind text.
+  it('passes scope labels to the conflict judge for both the new fact and existing scoped facts (real pink-building / Casino-Tram-Stop case)', async () => {
+    scopedServices = [{ id: 'svc-heritage', name: 'North Bimini Heritage Tour' }]
+    activeFacts = [
+      {
+        id: 'fact-pink-building',
+        fact: 'The meeting point for the Heritage Tour is the pink building by the dock.',
+        source: 'owner-direct',
+        expires_at: null,
+        canonical_key: null,
+        service_id: 'svc-heritage',
+      },
+    ]
+    conflictResult = { conflictId: null, resolution: null }
+    const c = classification({
+      canonicalKey: 'all-tours-pickup-location',
+      scope: { kind: 'standing', target: 'workspace', serviceName: null, dateISO: null },
+      businessFact: { category: 'logistics', text: 'The pickup location for all tours is the Casino Tram Stop.' },
+    })
+
+    await call(c)
+
+    expect(conflictCtxSeen).toMatchObject({ newFactScopeLabel: 'workspace-wide (applies to all services)' })
+    expect(conflictCandidatesSeen).toMatchObject([
+      { id: 'fact-pink-building', scopeLabel: 'specific to North Bimini Heritage Tour' },
+    ])
   })
 
   // Real Bimini production incident, found during the 2026-08-26 historical-
@@ -216,7 +309,7 @@ describe('writeBusinessFact', () => {
         text: 'Bimini Island Tours only accepts online payment. Do not offer or mention Cash or Zelle as payment options in any customer-facing communication.',
       },
     })
-    const outcome = await writeBusinessFact({ workspaceId: 'ws-1', callerRole: 'owner', classification: c })
+    const outcome = await call(c)
 
     expect(outcome.decision).toBe('superseded_and_written')
     expect(rpcParams).toMatchObject({
@@ -232,8 +325,82 @@ describe('writeBusinessFact', () => {
     conflictResult = { conflictId: null, resolution: null }
     semanticMatchResult = { matchId: null }
 
-    const outcome = await writeBusinessFact({ workspaceId: 'ws-1', callerRole: 'owner', classification: classification() })
+    const outcome = await call(classification())
     expect(outcome.decision).toBe('written')
     expect(rpcParams).toMatchObject({ p_supersede_id: null, p_canonical_key: 'payment-method' })
+  })
+})
+
+// ── Canonical-key / paraphrase behavior (task item 4) ──────────────────────
+//
+// The router does NOT decide paraphrase identity itself — it defers
+// entirely to the semantic-dedup judge (findSemanticFactMatch), the same
+// judge business-fact-suggestions.ts already trusts for "is this the same
+// fact reworded". These tests prove the writer correctly acts on whatever
+// that judge decides in both directions: collapse when told to, and
+// — just as important — do NOT collapse when the judge says the
+// distinction is real.
+describe('writeBusinessFact — canonical-key stability across paraphrases', () => {
+  const existingOnlineOnly = {
+    id: 'fact-online-only',
+    fact: 'We only take online payments.',
+    source: 'owner-direct',
+    expires_at: null,
+    canonical_key: 'payment-method',
+  }
+
+  // "we only take online payments" / "payment is online only" / "no cash or
+  // Zelle" / "customers must pay using the invoice link" all describe the
+  // SAME underlying policy. The judge deciding they match is what the
+  // router relies on — proven here for each paraphrase independently.
+  it.each([
+    'Payment is online only.',
+    'No cash or Zelle.',
+    'Customers must pay using the invoice link.',
+  ])('paraphrase "%s" chains onto the existing payment-method fact when the semantic judge says they match', async (paraphrase) => {
+    activeFacts = [existingOnlineOnly]
+    conflictResult = { conflictId: null, resolution: null }
+    semanticMatchResult = { matchId: 'fact-online-only' }
+    rpcResponse = { id: 'fact-new', created_at: '2026-08-26T00:00:00Z', superseded_id: 'fact-online-only' }
+
+    const c = classification({
+      canonicalKey: `paraphrase-key-${paraphrase.length}`, // deliberately a DIFFERENT key each time
+      businessFact: { category: 'policy', text: paraphrase },
+    })
+    const outcome = await call(c)
+
+    expect(outcome.decision).toBe('superseded_and_written')
+    expect(rpcParams).toMatchObject({ p_supersede_id: 'fact-online-only', p_canonical_key: 'payment-method' })
+  })
+
+  // The task's explicit warning: "card only" and "online payment only" must
+  // NOT be blindly collapsed if the distinction could matter operationally
+  // (card-present vs. card-not-present is a real operational difference).
+  // The router doesn't hard-code this distinction — it defers to the judge.
+  // This proves that when the judge decides the two are NOT the same fact,
+  // the writer respects that and does not force a merge.
+  it('does NOT collapse "card only" into "online payment only" when the semantic judge decides the distinction is real', async () => {
+    activeFacts = [
+      {
+        id: 'fact-card-only',
+        fact: 'All payments are made in advance by card only.',
+        source: 'owner-direct',
+        expires_at: null,
+        canonical_key: 'payment-method-card',
+      },
+    ]
+    conflictResult = { conflictId: null, resolution: null } // not a literal contradiction
+    semanticMatchResult = { matchId: null } // judge: these are NOT the same fact — a real distinction
+
+    const c = classification({
+      canonicalKey: 'payment-method-online',
+      businessFact: { category: 'policy', text: 'Online payment only.' },
+    })
+    const outcome = await call(c)
+
+    // Written as its OWN independent fact, under its OWN key — not forced
+    // to supersede the card-only fact.
+    expect(outcome.decision).toBe('written')
+    expect(rpcParams).toMatchObject({ p_supersede_id: null, p_canonical_key: 'payment-method-online' })
   })
 })

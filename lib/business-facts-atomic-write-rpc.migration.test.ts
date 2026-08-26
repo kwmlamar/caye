@@ -65,6 +65,15 @@ describe('write_business_fact_atomic RPC (PGlite)', () => {
       'utf8'
     )
     await db.exec(migrationSql)
+    // Contradiction-handling hardening pass: scopes canonical-key chaining
+    // by service_id (see that migration's own header for the real
+    // production case — pink building vs. Casino Tram Stop — that motivated
+    // it). Applied on top, same as it would be in a real deploy.
+    const scopeFixSql = readFileSync(
+      join(__dirname, '..', 'supabase', 'migrations', '20260826d_business_facts_canonical_key_scope_by_service.sql'),
+      'utf8'
+    )
+    await db.exec(scopeFixSql)
   })
 
   afterAll(async () => {
@@ -210,6 +219,103 @@ describe('write_business_fact_atomic RPC (PGlite)', () => {
     ).rejects.toThrow(/does not belong to workspace/)
     expect(await activeFacts(wsA)).toHaveLength(0)
   })
+
+  // Real production case (2026-08-26 historical-learning audit, second
+  // pass): "the meeting point for the Heritage Tour is the pink building by
+  // the dock" (service-scoped) and "the pickup location for all tours is
+  // the Casino Tram Stop" (workspace-wide) are BOTH still active in real
+  // Bimini data today, un-reconciled. If a classifier ever assigned the
+  // SAME canonical_key to both (a realistic mistake, not the norm), the
+  // pre-fix chain would have silently superseded one with the other purely
+  // because the key string matched — regardless of the very different
+  // scope. This proves the fix: same canonical_key, different scope, never
+  // auto-chains.
+  it('a workspace-wide fact and a service-scoped fact sharing the SAME canonical_key never chain/supersede each other', async () => {
+    const ws = await makeWorkspace()
+    const { rows: svc } = await db.query<{ id: string }>(`insert into public.booking_services default values returning id`)
+    const heritageServiceId = svc[0].id
+
+    await db.query(
+      `select * from public.write_business_fact_atomic($1, 'logistics', 'The meeting point for the Heritage Tour is the pink building by the dock.', 'owner-direct', 'owner', $2, 'pickup-location')`,
+      [ws, heritageServiceId]
+    )
+    await db.query(
+      `select * from public.write_business_fact_atomic($1, 'logistics', 'The pickup location for all tours is the Casino Tram Stop.', 'owner-direct', 'owner', null, 'pickup-location')`,
+      [ws]
+    )
+
+    // Both still active — a shared canonical_key string alone did NOT
+    // collapse them, because they're in different scopes.
+    const active = await activeFacts(ws)
+    expect(active).toHaveLength(2)
+    expect(active.map((r) => r.fact).sort()).toEqual(
+      [
+        'The meeting point for the Heritage Tour is the pink building by the dock.',
+        'The pickup location for all tours is the Casino Tram Stop.',
+      ].sort()
+    )
+  })
+
+  it('the scoped chain still correctly supersedes within the SAME scope (service-scoped correcting service-scoped)', async () => {
+    const ws = await makeWorkspace()
+    const { rows: svc } = await db.query<{ id: string }>(`insert into public.booking_services default values returning id`)
+    const heritageServiceId = svc[0].id
+
+    const r1 = await db.query<{ id: string }>(
+      `select * from public.write_business_fact_atomic($1, 'logistics', 'The Heritage Tour meets at the pink building by the dock.', 'owner-direct', 'owner', $2, 'heritage-meeting-point')`,
+      [ws, heritageServiceId]
+    )
+    const r2 = await db.query<{ id: string }>(
+      `select * from public.write_business_fact_atomic($1, 'logistics', 'The Heritage Tour now meets at the Casino Tram Stop.', 'owner-direct', 'owner', $2, 'heritage-meeting-point')`,
+      [ws, heritageServiceId]
+    )
+
+    const active = await activeFacts(ws)
+    expect(active).toHaveLength(1)
+    expect(active[0].id).toBe(r2.rows[0].id)
+
+    const { rows: oldRow } = await db.query<{ superseded_by: string | null }>(
+      `select superseded_by from public.business_facts where id = $1`,
+      [r1.rows[0].id]
+    )
+    expect(oldRow[0].superseded_by).toBe(r2.rows[0].id)
+  })
+
+  it('the scoped chain still correctly supersedes within workspace-wide scope (workspace-wide correcting workspace-wide)', async () => {
+    const ws = await makeWorkspace()
+    await db.query(
+      `select * from public.write_business_fact_atomic($1, 'logistics', 'The pickup for all tours is the Marina dock.', 'owner-direct', 'owner', null, 'pickup-location')`,
+      [ws]
+    )
+    await db.query(
+      `select * from public.write_business_fact_atomic($1, 'logistics', 'The pickup location for all tours is the Casino Tram Stop.', 'owner-direct', 'owner', null, 'pickup-location')`,
+      [ws]
+    )
+    const active = await activeFacts(ws)
+    expect(active).toHaveLength(1)
+    expect(active[0].fact).toBe('The pickup location for all tours is the Casino Tram Stop.')
+  })
+
+  it('an explicit p_supersede_id can still cross the scope boundary — a judged contradiction is not blocked by the scoping fix', async () => {
+    const ws = await makeWorkspace()
+    const { rows: svc } = await db.query<{ id: string }>(`insert into public.booking_services default values returning id`)
+    const heritageServiceId = svc[0].id
+
+    const oldRow = await db.query<{ id: string }>(
+      `select * from public.write_business_fact_atomic($1, 'logistics', 'The meeting point for the Heritage Tour is the pink building by the dock.', 'owner-direct', 'owner', $2, 'heritage-meeting-point')`,
+      [ws, heritageServiceId]
+    )
+    // A DIFFERENT canonical_key this time, but the conflict judge explicitly
+    // identified oldRow as the contradiction target (p_supersede_id) — this
+    // must still work; only the coincidental-key-match path is scoped.
+    const newRow = await db.query<{ id: string }>(
+      `select * from public.write_business_fact_atomic($1, 'logistics', 'All tours now meet at the Casino Tram Stop.', 'owner-direct', 'owner', null, 'all-tours-pickup', null, $2)`,
+      [ws, oldRow.rows[0].id]
+    )
+    const active = await activeFacts(ws)
+    expect(active).toHaveLength(1)
+    expect(active[0].id).toBe(newRow.rows[0].id)
+  })
 })
 
 /**
@@ -250,6 +356,9 @@ describe('fresh-context retrieval — the fetchBusinessFacts query shape', () =>
     `)
     await db.exec(
       readFileSync(join(__dirname, '..', 'supabase', 'migrations', '20260826_business_facts_scope_and_canonical_key.sql'), 'utf8')
+    )
+    await db.exec(
+      readFileSync(join(__dirname, '..', 'supabase', 'migrations', '20260826d_business_facts_canonical_key_scope_by_service.sql'), 'utf8')
     )
   })
 

@@ -124,4 +124,5 @@ export const REPO_MIGRATIONS: readonly string[] = [
   '20260826_business_facts_scope_and_canonical_key',
   '20260826b_service_date_overrides',
   '20260826c_operator_learning_audit',
+  '20260826d_business_facts_canonical_key_scope_by_service',
 ]

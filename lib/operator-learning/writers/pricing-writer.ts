@@ -1,6 +1,6 @@
 import 'server-only'
 import { createServiceClient } from '@/lib/supabase-server'
-import { resolveServiceByName } from '@/lib/caye-agent/tools/_catalog-helpers'
+import { resolveGroundedService } from '../service-grounding'
 import type { ClassificationResult } from '../schema'
 import type { WriteOutcome } from './types'
 
@@ -28,13 +28,14 @@ function formatPriceLabel(amount: number, isFlat: boolean): string {
 export async function writePricing(args: {
   workspaceId: string
   classification: ClassificationResult
+  operatorText: string
 }): Promise<WriteOutcome> {
   const payload = args.classification.pricing
   if (!payload) return { decision: 'error', reason: 'destination pricing but no pricing payload' }
 
   const supabase = createServiceClient()
-  const lookup = await resolveServiceByName(supabase, args.workspaceId, payload.serviceName)
-  if (!lookup.ok) {
+  const lookup = await resolveGroundedService(supabase, args.workspaceId, payload.serviceName, args.operatorText)
+  if (!lookup.ok || !lookup.service) {
     return { decision: 'candidate', reason: `service resolution failed: ${lookup.error}` }
   }
 

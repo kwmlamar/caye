@@ -317,3 +317,38 @@ describe('real Bimini history — structural safety properties confirmed against
     }
   })
 })
+
+describe('real Bimini history — explicit durable-teaching language is captured correctly', () => {
+  // FOUND: 2026-08-10 10:02:33 (Lamar/founder): "Actually, groups of 6 or
+  // more get a 10% discount — remember that going forward" — Caye correctly
+  // called add_business_fact. 2026-08-10 10:07:15, five minutes later,
+  // Lamar: "Undo the change you made when I sent this [...]" — Caye
+  // correctly called remove_business_fact. This is real, deliberate
+  // evidence that (a) explicit "remember that going forward" language (the
+  // prefilter's own OBVIOUS_DURABLE signal) reliably produces durable
+  // capture under the OLD tool-choice-dependent system, and (b) an explicit
+  // retraction is honored. Documented here as a KNOWN, deliberate scope
+  // boundary rather than a gap: the router (this PR) captures forward
+  // corrections; it does not yet expose an "undo my last teaching"
+  // pathway — retraction still goes through the existing back-office
+  // remove_business_fact/remove_pricing_tier/remove_standing_rule tools,
+  // called by the conversational agent exactly as it already does today.
+  it('"remember that going forward" classifies as standing, low-risk, explicit — writes live', async () => {
+    const text = 'Actually, groups of 6 or more get a 10% discount — remember that going forward.'
+    classifyMock = async () =>
+      ok({
+        learnable: true,
+        explicitness: 'explicit_statement',
+        scope: { kind: 'standing', target: 'workspace' },
+        risk: 'low',
+        destination: 'business_fact',
+        canonicalKey: 'group-discount-6plus',
+        confidence: 0.9,
+        rationale: 'explicit durable-scope language ("remember that going forward") stating a standing discount policy',
+        businessFact: { category: 'policy', text: 'Groups of 6 or more guests receive a 10% discount on any tour.' },
+      })
+    await routeOperatorLearningCorrection({ ...baseInput, operatorText: text })
+    expect(writerCalls[0].writer).toBe('business_fact')
+    expect(auditCalls[auditCalls.length - 1]).toMatchObject({ decision: 'written' })
+  })
+})
