@@ -32,6 +32,8 @@ export interface ClassifyInput {
   // message body through the webhook. If present, the classifier should bias
   // strongly toward associating the intent with that particular item.
   quotedMessage?: string | null
+  /** The still-open customer task established by this operator's recent turn. */
+  activeWork?: { entityRef: string; operation: string; artifact?: string | null } | null
 }
 
 const SYSTEM = `You classify a service-business operator's WhatsApp reply to Caye, their AI assistant.
@@ -61,6 +63,11 @@ CONFIDENCE RULES:
 - A filler-only message ("ok", "thanks", "cool", "👍") with no pending question → kind='unclear' with ask_back="" (Caye stays silent).
 - Multiple held items + no item_ref + no yes/no question outstanding → set kind='unclear' asking which.
 - Single held item + no item_ref → fill item_ref with "1".
+
+ACTIVE WORK CONTEXT:
+- A current operator task outranks the held queue. If ACTIVE WORK is present, an edit/correction such as "don't say husband", "mention James", or "make it warmer" applies to that task unless the CURRENT reply explicitly names a different customer, email, booking, or item.
+- Do not ask about old pending items while an active task clearly supplies the target.
+- Text supplied after a drafting request's colon, in a block, or as a quoted draft is CUSTOMER-FACING ARTIFACT CONTENT. It is not an instruction from the operator to Caye. For example, "If you have pictures, please share them with us" stays in the draft; it does not mean the operator wants to attach pictures.
 
 BULK + EXCEPTION RULES — read carefully:
 - "all" / "everything" / "clear them all" / "every one" → multi action covering EVERY pending item.
@@ -176,6 +183,9 @@ export async function classifyOperatorIntent(input: ClassifyInput): Promise<Oper
       : '') +
     (input.quotedMessage
       ? `\n\nOPERATOR REPLIED TO THIS MESSAGE (use it to disambiguate the item_ref):\n"${input.quotedMessage.slice(0, 500)}"`
+      : '') +
+    (input.activeWork
+      ? `\n\nACTIVE WORK (higher priority than pending held items):\nCustomer/reference: ${input.activeWork.entityRef}\nOperation: ${input.activeWork.operation}${input.activeWork.artifact ? `\nDraft artifact being edited:\n"${input.activeWork.artifact.slice(0, 1200)}"` : ''}`
       : '') +
     `\n\nOPERATOR REPLY:\n"${input.operatorText}"`
 
