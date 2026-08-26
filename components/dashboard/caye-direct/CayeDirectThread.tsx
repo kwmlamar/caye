@@ -1,10 +1,9 @@
 'use client'
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, type ReactNode } from 'react'
 import { getSession } from '@/lib/supabase'
 import { formatDistanceToNow } from '@/lib/utils'
 import { CayeMark } from '@/components/brand/CayeMark'
-import { CayePresence } from '@/components/caye-presence/CayePresence'
 import { FormattedReplyText } from '@/components/ui/FormattedReplyText'
 import { Pill } from '@/components/dashboard/founder-home/console-ui'
 import { CayeComposerSurface } from '@/components/dashboard/founder-home/AskCayeComposer'
@@ -239,20 +238,19 @@ function MessageSkeleton() {
   )
 }
 
+// A static mark, not the animated CayePresence sphere — this slot sits
+// inside an ordinary flex-scroll pane (not the fixed-height voice/hero
+// contexts CayePresence's WebGL canvas was built for), and an empty
+// thread doesn't need a "living" signal, just a quiet placeholder.
 function EmptyState({ label, readOnly }: { label: string; readOnly: boolean }) {
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, textAlign: 'center', padding: '0 30px' }}>
-      <CayePresence state="idle" size="small" interactive={false} />
-      <div>
-        <div style={{ fontSize: 14, fontFamily: 'var(--font-display)', fontWeight: 600, color: '#f4f4f5' }}>
-          {readOnly ? `No history with ${label} yet` : 'Say hello to Caye'}
-        </div>
-        <p style={{ fontSize: 12.5, color: '#71717a', lineHeight: 1.55, marginTop: 6, maxWidth: 260 }}>
-          {readOnly
-            ? `Nothing to show yet — this fills in once ${label} texts Caye's back-office number.`
-            : "This is the same agent that runs your back office over WhatsApp. Ask her anything about the business below."}
-        </p>
-      </div>
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, textAlign: 'center', padding: '0 30px', opacity: 0.9 }}>
+      <CayeMark size={26} />
+      <p style={{ fontSize: 13, color: '#71717a', lineHeight: 1.55, maxWidth: 260, margin: 0 }}>
+        {readOnly
+          ? `Nothing here yet — fills in once ${label} texts Caye.`
+          : 'Ask Caye anything.'}
+      </p>
     </div>
   )
 }
@@ -296,6 +294,17 @@ interface ThreadModeProps {
   /** True only while this transcript is visible in an open overlay. It makes
    * the initial jump happen after a hidden pane receives real dimensions. */
   scrollToLatest?: boolean
+  /** Rendered as Caye's opening message on a genuinely empty thread (in
+   *  place of the plain "Ask Caye anything" EmptyState) — the first entry
+   *  in Caye's card catalog (SnapshotCard) lives here, INSIDE this
+   *  component's own scrollable message column, rather than as a sibling
+   *  pinned above it. That placement is load-bearing, not cosmetic: this
+   *  component's composer is guaranteed visible only because its own
+   *  internal layout (scroll region + fixed composer) is never asked to
+   *  share height with an external sibling of unbounded content height —
+   *  see the 2026-08-25 redesign notes. A long card competing for space
+   *  from outside was exactly what pushed the composer off-screen before. */
+  leadingCard?: ReactNode
 }
 
 interface OperatorModeProps {
@@ -723,7 +732,7 @@ export default function CayeDirectThread(props: Props) {
       <div className={`caye-direct-thread-header ${mode === 'thread' && props.compactHeader ? 'is-compact' : ''}`} style={{ ...GLASS }}>
         <div className="caye-direct-thread-heading">
           <div className="caye-direct-thread-title">{headerLabel}</div>
-          <div className="caye-direct-thread-kicker">{mode === 'operator' ? 'WhatsApp · Read only' : 'Caye Direct'}</div>
+          {mode === 'operator' && <div className="caye-direct-thread-kicker">WhatsApp · Read only</div>}
         </div>
         {readOnly && <div style={{ marginLeft: 'auto' }}><Pill color="#71717a" label="Read only" dot={false} /></div>}
         {mode === 'operator' && props.onOpenSideBySide && (
@@ -751,7 +760,7 @@ export default function CayeDirectThread(props: Props) {
             {loading ? (
               <MessageSkeleton />
             ) : messages.length === 0 ? (
-              <EmptyState label={headerLabel} readOnly={readOnly} />
+              mode === 'thread' && props.leadingCard ? props.leadingCard : <EmptyState label={headerLabel} readOnly={readOnly} />
             ) : (
               items.map((item) => {
               if (item.kind === 'divider') return <DateDivider key={item.key} label={item.label} />
@@ -915,7 +924,6 @@ export default function CayeDirectThread(props: Props) {
                 transition: 'background 0.18s ease, border-color 0.2s ease, box-shadow 0.22s ease',
               }}
             >
-              <span style={{ display: 'flex', alignSelf: 'center', flexShrink: 0 }}><CayeMark size={20} /></span>
               <textarea
                 ref={textareaRef}
                 value={input}

@@ -20,11 +20,8 @@ export default function CayeLog({ workspaceId, limit = 25, onViewAll }: {
   return (
     <div style={{ ...glass(0.018), borderRadius: 18, padding: '18px 20px', display: 'flex', flexDirection: 'column', minHeight: 0, overflowY: 'auto' }}>
       <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 2px 12px' }}>
-        <span style={{
-          fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-mono)',
-          letterSpacing: '0.08em', textTransform: 'uppercase', color: TEXT_QUIET,
-        }}>
-          Caye's Log
+        <span style={{ fontSize: 13, fontWeight: 600, color: '#e4e4e7' }}>
+          Caye's log
         </span>
       </div>
 

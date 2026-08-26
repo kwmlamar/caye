@@ -7,6 +7,7 @@ import { useFounderIdentity } from '@/lib/useFounderIdentity'
 import { useMediaQuery } from '@/lib/useMediaQuery'
 import { CayeMark } from '@/components/brand/CayeMark'
 import { CayeLoadingPulse } from '@/components/dashboard/founder-home/CayeLoadingPulse'
+import { CayeComposerSurface } from '@/components/dashboard/founder-home/AskCayeComposer'
 import { useFounderConversations, fetchConversationById, type ConversationSummary } from '@/lib/useFounderConversations'
 import { useFreshness, useRevalidateOnFocus } from '@/lib/founder-freshness'
 import { conversationNeedsFounder } from '@/lib/hold-kinds-shared'
@@ -416,36 +417,6 @@ export default function CommandConversations({ workspaceId, selectedConversation
     replyTextareaRef.current?.focus()
   }
 
-  // Publishes the reply composer's real rendered height as a CSS custom
-  // property on :root, so CayeLauncher (a sibling under a different parent
-  // — see FounderHome, which renders it alongside this whole panel rather
-  // than inside it) can float itself just above the composer's actual top
-  // edge instead of guessing with a fixed bottom offset. That fixed offset
-  // was tuned for a single-line composer and started overlapping it once a
-  // draft grew past one line (2026-08-13) — this is the fix: one real
-  // measurement, not a bigger guess.
-  //
-  // A callback ref rather than a ref+effect pair: this wrapper mounts and
-  // unmounts per conversation (SEND_UNSUPPORTED channels, no active
-  // conversation) and a callback ref fires with the node — or null — on
-  // every one of those transitions, including full unmount, so the
-  // ResizeObserver is always attached to the live node and the property
-  // resets to 0 the instant there's no composer to clear above.
-  const composerResizeObserverRef = useRef<ResizeObserver | null>(null)
-  const composerWrapperRef = useCallback((el: HTMLDivElement | null) => {
-    composerResizeObserverRef.current?.disconnect()
-    if (!el) {
-      document.documentElement.style.setProperty('--caye-reply-composer-height', '0px')
-      return
-    }
-    const publish = () => document.documentElement.style.setProperty('--caye-reply-composer-height', `${el.offsetHeight}px`)
-    publish()
-    const ro = new ResizeObserver(publish)
-    ro.observe(el)
-    composerResizeObserverRef.current = ro
-  }, [])
-  useEffect(() => () => composerResizeObserverRef.current?.disconnect(), [])
-
   useEffect(() => {
     if (threadLoading) return
     const el = threadContainerRef.current
@@ -495,7 +466,7 @@ export default function CommandConversations({ workspaceId, selectedConversation
   const customerLabel = activeSummary?.customer_name || activeSummary?.customer_id || thread?.customer_name || 'the customer'
 
   return (
-    <div ref={containerRef} style={{ height: '100%', display: 'flex', color: TEXT }}>
+    <div ref={containerRef} style={{ flex: 1, minWidth: 0, width: '100%', height: '100%', display: 'flex', color: TEXT }}>
       <style>{`
         @keyframes caye-resolve-out { to { opacity: 0; transform: scale(0.98); } }
       `}</style>
@@ -530,12 +501,8 @@ export default function CommandConversations({ workspaceId, selectedConversation
             />
           </div>
         </div>
-        {/* paddingBottom clears the floating global composer, which spans
-            Main's full width (so it can sit over both this list column
-            and the thread pane), even though the list itself has no
-            composer of its own. */}
         <div
-          style={{ flex: 1, overflowY: 'auto', padding: '0 6px 96px' }}
+          style={{ flex: 1, overflowY: 'auto', padding: '0 6px 8px' }}
           onScroll={(e) => {
             const el = e.currentTarget
             if (!nextCursor || loadingMore) return
@@ -620,19 +587,7 @@ export default function CommandConversations({ workspaceId, selectedConversation
               )}
             </div>
 
-            {/* paddingBottom (not a reserved flex row anymore — see the
-                composer below) is what lets the last message actually
-                scroll clear of the floating reply composer instead of
-                permanently sitting behind it. 192px clears a typical
-                (collapsed-to-a-few-lines) reply composer plus CayeLauncher
-                stacked above it (FounderHome, Inbox-only — its bottom
-                offset now tracks the composer's real height, see
-                composerWrapperRef below). An unusually long draft can push
-                the composer taller than this fixed clearance; that's a
-                pre-existing characteristic of a static paddingBottom, not
-                something introduced by making CayeLauncher's own position
-                dynamic. */}
-            <div ref={threadContainerRef} style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '16px 18px 192px' }}>
+            <div ref={threadContainerRef} style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '16px 18px' }}>
               {threadLoading ? (
                 <CayeLoadingPulse size={16} />
               ) : (
@@ -669,15 +624,7 @@ export default function CommandConversations({ workspaceId, selectedConversation
             </div>
 
             {!SEND_UNSUPPORTED.has(activeSummary.channel_type) && (
-              // Root-caused the same way as the global composer: this used
-              // to be a flexShrink:0 sibling of the message-scroll div,
-              // reserving its own row — so scrolling could never bring the
-              // last message "behind" it, because there was no content
-              // back there to begin with. Now absolutely positioned within
-              // the (position:relative) thread column, so the scroll area
-              // above genuinely extends underneath it.
-              <div ref={composerWrapperRef} style={{ position: 'absolute', left: 0, right: 0, bottom: 0, padding: '10px 18px 16px', pointerEvents: 'none' }}>
-                <div style={{ pointerEvents: 'auto' }}>
+              <div style={{ padding: '12px 18px 16px', flexShrink: 0 }}>
                 {sendError && <div style={{ fontSize: 11.5, color: '#fb7185', marginBottom: 6 }}>{sendError}</div>}
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6, minHeight: 16 }}>
                   {!replyText.trim() && DRAFT_SUPPORTED_CHANNELS.has(activeSummary.channel_type) && (
@@ -710,7 +657,6 @@ export default function CommandConversations({ workspaceId, selectedConversation
                   maxHeight={REPLY_MAX_HEIGHT}
                   customerLabel={customerLabel}
                 />
-                </div>
               </div>
             )}
           </>
@@ -733,23 +679,25 @@ function ReplyBox({
   customerLabel: string
 }) {
   const [focused, setFocused] = useState(false)
+  const ready = !sending && !!replyText.trim()
   return (
-    // This pill now floats directly over scrolled message content (see
-    // the thread-column comment above) rather than sitting on empty
-    // background — it needed a real surface (blur + a baseline shadow),
-    // not just a faint alpha wash, to stay legible against whatever's
-    // behind it at any given scroll position.
-    <div style={{
-      display: 'flex', alignItems: 'flex-end', gap: 8, flex: 1,
-      borderRadius: 20, padding: '8px 8px 8px 14px',
-      background: focused ? 'rgba(30,30,34,0.92)' : 'rgba(24,24,28,0.88)',
-      backdropFilter: 'blur(18px) saturate(150%)',
-      WebkitBackdropFilter: 'blur(18px) saturate(150%)',
-      boxShadow: focused
-        ? `0 1px 0 rgba(255,255,255,0.05) inset, 0 0 0 1px ${AQUA}44, 0 0 20px rgba(78,190,206,0.12), 0 10px 24px rgba(0,0,0,0.35)`
-        : '0 1px 0 rgba(255,255,255,0.04) inset, 0 8px 20px rgba(0,0,0,0.3)',
-      transition: 'background 0.15s ease, box-shadow 0.2s ease',
-    }}>
+    // Same surface CayeDirectThread's own composer uses (CayeComposerSurface)
+    // — the two should read as the same control, not lookalikes maintained
+    // separately.
+    <CayeComposerSurface
+      active={focused}
+      maxWidth="100%"
+      style={{
+        alignItems: 'flex-end',
+        borderRadius: 20,
+        background: focused ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.035)',
+        border: `1px solid ${focused ? 'rgba(78,190,206,0.28)' : 'rgba(255,255,255,0.07)'}`,
+        boxShadow: focused
+          ? '0 1px 0 rgba(255,255,255,0.04) inset, 0 0 14px -4px rgba(78,190,206,0.18), 0 10px 24px -12px rgba(0,0,0,0.5)'
+          : '0 1px 0 rgba(255,255,255,0.03) inset, 0 8px 18px -10px rgba(0,0,0,0.45)',
+        transition: 'background 0.18s ease, border-color 0.2s ease, box-shadow 0.22s ease',
+      }}
+    >
       <textarea
         ref={replyTextareaRef}
         value={replyText}
@@ -772,25 +720,26 @@ function ReplyBox({
       />
       <button
         onClick={onSend}
-        disabled={sending || !replyText.trim()}
+        disabled={!ready}
         title="Send (⌘/Ctrl+Enter)"
         aria-label="Send reply"
         style={{
-          flexShrink: 0, width: 32, height: 32, borderRadius: '50%', border: 'none',
+          flexShrink: 0, width: 34, height: 34, borderRadius: '50%',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          cursor: sending || !replyText.trim() ? 'default' : 'pointer',
-          background: sending || !replyText.trim() ? 'rgba(255,255,255,0.08)' : AQUA,
-          transition: 'background 0.15s ease',
+          background: ready ? 'rgba(78,190,206,0.16)' : 'rgba(255,255,255,0.09)',
+          border: `1px solid ${ready ? 'rgba(78,190,206,0.5)' : 'rgba(255,255,255,0.14)'}`,
+          cursor: ready ? 'pointer' : 'default',
+          transition: 'background 0.15s ease, border-color 0.15s ease, transform 0.08s ease',
         }}
       >
         {sending ? <CayeLoadingPulse size={12} /> : (
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
-            stroke={!replyText.trim() ? 'rgba(245,245,244,0.35)' : '#0a0a0b'}
+            stroke={ready ? '#4EBECE' : 'rgba(244,244,245,0.65)'}
             strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
             <path d="M12 19V5" /><path d="M5 12l7-7 7 7" />
           </svg>
         )}
       </button>
-    </div>
+    </CayeComposerSurface>
   )
 }
