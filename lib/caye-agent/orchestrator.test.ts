@@ -90,6 +90,28 @@ describe('runToolWithRecovery — retry budgets', () => {
     expect(calls).toBe(1)
   })
 
+  it('retries a draft only when the draft tool explicitly proves the failure is retryable', async () => {
+    let calls = 0
+    const tool = { ...makeTool('high', async () => {
+      calls += 1
+      return { ok: false, status: 'FAILED_RETRYABLE' as const, retryable: true, error: 'rate limited' }
+    }), name: 'draft_in_inbox' }
+    const { attempts } = await runToolWithRecovery(tool, {}, ctx(), { mode: 'back-office' })
+    expect(calls).toBe(2)
+    expect(attempts).toBe(2)
+  })
+
+  it('does not retry an ambiguously created draft', async () => {
+    let calls = 0
+    const tool = { ...makeTool('high', async () => {
+      calls += 1
+      return { ok: false, status: 'NEEDS_HUMAN' as const, error: 'creation uncertain' }
+    }), name: 'draft_in_inbox' }
+    const { attempts } = await runToolWithRecovery(tool, {}, ctx(), { mode: 'back-office' })
+    expect(calls).toBe(1)
+    expect(attempts).toBe(1)
+  })
+
   it('does not retry a permanent failure even for a read', async () => {
     let calls = 0
     const tool = makeTool('read', async () => {
@@ -207,6 +229,12 @@ describe('guidanceFor', () => {
     // own note down; this is the instruction that replaces that judgement.
     const g = guidanceFor('FAILED_PERMANENT', false)!
     expect(g).toMatch(/never ask the operator to do it themselves/i)
+  })
+
+  it('preserves a draft request rather than offering a send after a draft failure', () => {
+    const g = guidanceFor('NEEDS_HUMAN', false, 'draft_in_inbox')!
+    expect(g).toMatch(/do NOT offer to send/i)
+    expect(g).toMatch(/do not retry blindly/i)
   })
 
   it('tells the model a deferred write is done', () => {

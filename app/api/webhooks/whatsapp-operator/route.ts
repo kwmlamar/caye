@@ -63,6 +63,7 @@ import { FIRST_DISCOVERY_QUESTION } from '@/lib/onboarding'
 import { mediaPlaceholder } from '@/lib/operator-text-guard'
 import { fetchBusinessFacts, formatBusinessFactsBlock } from '@/lib/business-facts'
 import { routeOperatorLearningCorrection } from '@/lib/operator-learning-router'
+import { applyActiveWorkPrecedence, intentWithActiveWork, isActiveWorkCorrection, loadActiveWork, seedActiveWork } from '@/lib/whatsapp/active-work'
 import {
   getActiveDemoSession,
   startDemoSession,
@@ -900,11 +901,13 @@ async function handleOneInbound(
     .maybeSingle()
   const lastOutboundBody: string | null = lastRow?.body ?? null
 
+  const activeWork = await loadActiveWork({ supabase, workspaceId, operatorId })
   const rawIntent = await classifyOperatorIntent({
     operatorText: body,
     pending,
     lastCayeOutboundBody: lastOutboundBody,
     quotedMessage: null,
+    activeWork,
   })
 
   // Strip an item_ref the operator never gave. The classifier answered a bare
@@ -922,12 +925,14 @@ async function handleOneInbound(
     if (reason) console.warn(`[whatsapp-operator] ${workspaceId}: ${reason} — dropped`)
     return { ...one, item_ref: itemRef }
   }
-  const intent: OperatorIntent =
+  const unprecedencedIntent: OperatorIntent =
     rawIntent.kind === 'multi'
       ? { ...rawIntent, actions: rawIntent.actions.map(guardRef) }
       : rawIntent.kind === 'unclear'
         ? rawIntent // carries no item_ref
         : guardRef(rawIntent)
+  const intent = applyActiveWorkPrecedence(unprecedencedIntent, body, activeWork)
+  const seededWork = seedActiveWork(body, intent)
 
   // Persist inbound + classified intent + claude_format for the user turn.
   // claude_format is what the back-office agent's sliding-window loader
@@ -940,7 +945,7 @@ async function handleOneInbound(
       direction: 'inbound',
       wa_message_id: message.id,
       body,
-      intent,
+      intent: intentWithActiveWork(intent, seededWork),
       claude_format: { role: 'user', content: body },
       operator_allowlist_id: operator.id,
       operator_name: operator.name,
@@ -1069,7 +1074,7 @@ async function handleOneInbound(
     )
   }
 
-  if (LEGACY_DISPATCH_KINDS.has(intent.kind) && ownership.owner === 'legacy' && !legacyTargetMissing) {
+  if (LEGACY_DISPATCH_KINDS.has(intent.kind) && ownership.owner === 'legacy' && !legacyTargetMissing && !isActiveWorkCorrection(body, activeWork)) {
     const result = await dispatchOperatorIntent({ workspaceId }, intent, pending)
     if (result.ackBody && result.ackBody.trim()) {
       // Send ack synchronously instead of via the outbound queue. The
