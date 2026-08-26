@@ -145,6 +145,57 @@ describe('bookingCreatedDispatchCancelReason', () => {
     expect(reason).toBeNull()
   })
 
+  describe('SEND-vs-SUPPRESS invariant — the gate is authoritative at dispatch time, not just for operator-awareness (PR #135 review, fourth finding)', () => {
+    // The bug: an earlier version only cancelled on SUPPRESS_OPERATOR_AWARE
+    // and let every other non-send outcome fall through and dispatch
+    // anyway — including SUPPRESS_NO_CHANGE (another producer already told
+    // the operator about this exact state while the row sat queued),
+    // SUPPRESS_RECENTLY_NOTIFIED (a cooldown now applies), and
+    // RESOLVED_NO_NOTIFICATION (the attention item was resolved out from
+    // under it). Only a genuine SEND_* outcome may proceed.
+    it('1 — SUPPRESS_NO_CHANGE (another notifier already told the operator about this state while queued) cancels, no duplicate send', async () => {
+      decideOperatorNotification.mockResolvedValue({ outcome: 'SUPPRESS_NO_CHANGE', attentionItemId: 'a1', isMaterialChange: false })
+      const reason = await bookingCreatedDispatchCancelReason(row())
+      expect(reason).toBe('operator already informed / no material change')
+    })
+
+    it('2 — SUPPRESS_RECENTLY_NOTIFIED cancels', async () => {
+      decideOperatorNotification.mockResolvedValue({ outcome: 'SUPPRESS_RECENTLY_NOTIFIED', attentionItemId: 'a1', isMaterialChange: false })
+      const reason = await bookingCreatedDispatchCancelReason(row())
+      expect(reason).toBe('notification no longer warranted')
+    })
+
+    it('3 — the attention item becoming resolved before dispatch (RESOLVED_NO_NOTIFICATION) cancels', async () => {
+      decideOperatorNotification.mockResolvedValue({ outcome: 'RESOLVED_NO_NOTIFICATION', attentionItemId: 'a1', isMaterialChange: false })
+      const reason = await bookingCreatedDispatchCancelReason(row())
+      expect(reason).toBe('attention item resolved')
+    })
+
+    it('4 — SUPPRESS_OPERATOR_AWARE still cancels as before', async () => {
+      decideOperatorNotification.mockResolvedValue({ outcome: 'SUPPRESS_OPERATOR_AWARE', attentionItemId: 'a1', isMaterialChange: false })
+      const reason = await bookingCreatedDispatchCancelReason(row())
+      expect(reason).toBe('operator handled directly')
+    })
+
+    it('5 — SEND_NEW proceeds', async () => {
+      decideOperatorNotification.mockResolvedValue({ outcome: 'SEND_NEW', attentionItemId: 'a1', isMaterialChange: false })
+      const reason = await bookingCreatedDispatchCancelReason(row())
+      expect(reason).toBeNull()
+    })
+
+    it('6 — SEND_REMINDER proceeds', async () => {
+      decideOperatorNotification.mockResolvedValue({ outcome: 'SEND_REMINDER', attentionItemId: 'a1', isMaterialChange: false })
+      const reason = await bookingCreatedDispatchCancelReason(row())
+      expect(reason).toBeNull()
+    })
+
+    it('SEND_CRITICAL_ESCALATION proceeds too', async () => {
+      decideOperatorNotification.mockResolvedValue({ outcome: 'SEND_CRITICAL_ESCALATION', attentionItemId: 'a1', isMaterialChange: false })
+      const reason = await bookingCreatedDispatchCancelReason(row())
+      expect(reason).toBeNull()
+    })
+  })
+
   it('cancels when the booking was cancelled before the send fired', async () => {
     BOOKING = pendingBooking({ status: 'cancelled', cancelled_at: '2026-08-26T05:00:00Z' })
     const reason = await bookingCreatedDispatchCancelReason(row())
@@ -177,7 +228,7 @@ describe('bookingCreatedDispatchCancelReason', () => {
   })
 
   describe('stale-state guard (PR #135 review, third finding + adversarial question)', () => {
-    it('cancels as stale when the booking has materially moved on since the row was queued — never sends text describing an old state', async () => {
+    it('7 — cancels as stale when the booking has materially moved on since the row was queued, BEFORE the gate is ever evaluated — never sends text describing an old state', async () => {
       // Row was queued while pending; by dispatch time the booking is
       // confirmed+paid. The queued payload's stateFingerprint (computed at
       // enqueue time from the PENDING fields) no longer matches current
@@ -185,7 +236,8 @@ describe('bookingCreatedDispatchCancelReason', () => {
       BOOKING = pendingBooking({ status: 'confirmed', payment_confirmed_at: '2026-08-27T10:00:00Z' })
       const reason = await bookingCreatedDispatchCancelReason(row()) // row()'s payload.stateFingerprint is the PENDING fp
       expect(reason).toBe('booking state changed before send')
-      // Never even asks about operator participation for a row that's
+      // The stale check runs BEFORE the gate — never even asks about
+      // operator participation or any other gate outcome for a row that's
       // going to be cancelled as stale regardless of the answer.
       expect(decideOperatorNotification).not.toHaveBeenCalled()
     })

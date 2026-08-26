@@ -587,14 +587,21 @@ export async function bookingCreatedDispatchCancelReason(row: QueueRow): Promise
   }
 
   const conversationId = booking.conversation_id ?? row.conversation_id
-  if (!conversationId) return null
 
-  // Re-runs the SAME owner-attention gate enqueueBookingCreated used, not
-  // just the low-level participation check (PR #135 review, third
-  // finding) — the gate needs caye_owner_attention.first_state_fingerprint
-  // to pick the correct evidence window ('initial' vs 'post-transition'),
-  // and only the gate has access to that; re-deriving it here from raw
-  // booking fields would duplicate logic that can drift out of sync.
+  // Re-runs the SAME owner-attention gate enqueueBookingCreated used
+  // (PR #135 review, third and fourth findings) — not just the operator-
+  // participation check, and not treated as authoritative only when it
+  // says SUPPRESS_OPERATOR_AWARE. At dispatch time the gate is the single
+  // authority on whether this notification is STILL warranted at all: the
+  // enqueue-time decision can go stale exactly like the payload text can
+  // (another producer may have told the operator about this same state in
+  // the meantime, the attention item may have been resolved, a cooldown
+  // may now apply) — every one of those is a fresh SUPPRESS_*/
+  // RESOLVED_NO_NOTIFICATION outcome the worker must respect, not just the
+  // operator-awareness case. Only the gate has access to
+  // caye_owner_attention.first_state_fingerprint to pick the correct
+  // participation-evidence mode, so re-deriving any of this from raw
+  // booking fields here would duplicate logic that can drift out of sync.
   const decision = await decideOperatorNotification({
     workspaceId: row.workspace_id,
     subjectType: 'booking',
@@ -605,10 +612,23 @@ export async function bookingCreatedDispatchCancelReason(row: QueueRow): Promise
     fingerprintParts,
     blockedOnOperator: false,
     resolvableAutonomously: false,
-    operatorParticipationCheck: { conversationId },
+    ...(conversationId ? { operatorParticipationCheck: { conversationId } } : {}),
   })
 
-  return decision.outcome === 'SUPPRESS_OPERATOR_AWARE' ? 'operator handled directly' : null
+  switch (decision.outcome) {
+    case 'SEND_NEW':
+    case 'SEND_REMINDER':
+    case 'SEND_CRITICAL_ESCALATION':
+      return null
+    case 'SUPPRESS_OPERATOR_AWARE':
+      return 'operator handled directly'
+    case 'SUPPRESS_NO_CHANGE':
+      return 'operator already informed / no material change'
+    case 'SUPPRESS_RECENTLY_NOTIFIED':
+      return 'notification no longer warranted'
+    case 'RESOLVED_NO_NOTIFICATION':
+      return 'attention item resolved'
+  }
 }
 
 async function dispatch(row: QueueRow, config: WorkspaceConfig): Promise<{ result: SendResult; phone: string }> {
