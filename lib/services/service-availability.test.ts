@@ -1,9 +1,12 @@
 import { describe, it, expect } from 'vitest'
 import {
   evaluateServiceAvailability,
+  evaluateServiceAvailabilityWithOverrides,
+  evaluateDateOverride,
   buildAvailabilityBlock,
   weekdayOf,
   type ServiceAvailabilityRule,
+  type ServiceDateOverride,
 } from './service-availability'
 import {
   matchServiceByName,
@@ -189,6 +192,105 @@ describe('buildAvailabilityBlock', () => {
     expect(block).toMatch(/NOT a refusal/i)
     expect(block).toContain('3 guests')
     expect(block).toMatch(/never be restated as a flat total/i)
+  })
+})
+
+// ── service_date_overrides (Operator Learning Router, Bimini fixture #7) ──
+//
+// "Only private tours are available on September 5" — a one-off date
+// restriction, must never leak into a standing weekday rule.
+describe('evaluateDateOverride / evaluateServiceAvailabilityWithOverrides', () => {
+  const SEPT_5 = '2026-09-05'
+  const SEPT_6 = '2026-09-06'
+
+  const override = (over: Partial<ServiceDateOverride> = {}): ServiceDateOverride => ({
+    id: 'ov1',
+    date_iso: SEPT_5,
+    effect: 'variant_only',
+    min_party: null,
+    restricted_variant: 'private',
+    note: null,
+    ...over,
+  })
+
+  it('returns null when no override matches the date', () => {
+    expect(evaluateDateOverride({ overrides: [], dateISO: SEPT_5 })).toBeNull()
+    expect(evaluateDateOverride({ overrides: [override()], dateISO: SEPT_6 })).toBeNull()
+  })
+
+  it('returns null when dateISO is null', () => {
+    expect(evaluateDateOverride({ overrides: [override()], dateISO: null })).toBeNull()
+  })
+
+  it('restricts the date to one variant without touching other dates', () => {
+    const v = evaluateDateOverride({ overrides: [override()], dateISO: SEPT_5 })
+    expect(v?.status).toBe('variant_restricted')
+    if (v?.status === 'variant_restricted') expect(v.restrictedToVariant).toBe('private')
+
+    // The day AFTER the override is untouched — this must not generalize
+    // into a standing rule.
+    expect(evaluateDateOverride({ overrides: [override()], dateISO: SEPT_6 })).toBeNull()
+  })
+
+  it('a date override takes precedence over a recurring weekday rule for that date', () => {
+    const fridayWeekday = weekdayOf(SEPT_5) // whatever weekday Sept 5 2026 actually is
+    const recurringRule: ServiceAvailabilityRule = {
+      id: 'weekday-rule',
+      weekday: fridayWeekday,
+      effect: 'departure_minimum',
+      min_party: 4,
+      note: 'Needs 4 to run that weekday.',
+    }
+    const v = evaluateServiceAvailabilityWithOverrides({
+      rules: [recurringRule],
+      overrides: [override()],
+      dateISO: SEPT_5,
+      partySize: 2,
+    })
+    expect(v.status).toBe('variant_restricted')
+  })
+
+  it('falls back to the recurring weekday rule when no override applies', () => {
+    const recurringRule: ServiceAvailabilityRule = {
+      id: 'weekday-rule',
+      weekday: weekdayOf(SEPT_6),
+      effect: 'unavailable',
+      min_party: null,
+      note: 'Closed.',
+    }
+    const v = evaluateServiceAvailabilityWithOverrides({
+      rules: [recurringRule],
+      overrides: [override()], // only applies to SEPT_5
+      dateISO: SEPT_6,
+      partySize: 2,
+    })
+    expect(v.status).toBe('unavailable')
+  })
+
+  it('a full unavailable override beats a variant-only override for the same date', () => {
+    const v = evaluateDateOverride({
+      overrides: [override({ id: 'block', effect: 'unavailable', min_party: null }), override()],
+      dateISO: SEPT_5,
+    })
+    expect(v?.status).toBe('unavailable')
+  })
+})
+
+describe('buildAvailabilityBlock — variant_restricted', () => {
+  it('names the variant and forbids quoting other variants for that date only', () => {
+    const block = buildAvailabilityBlock({
+      verdict: {
+        status: 'variant_restricted',
+        restrictedToVariant: 'private',
+        reason: 'Shared boat is in maintenance.',
+        overrideId: 'ov1',
+      },
+      serviceName: 'Full Bimini Experience',
+      dateISO: '2026-09-05',
+    })
+    expect(block).toContain('private')
+    expect(block).toContain('Full Bimini Experience')
+    expect(block).toMatch(/this date only/i)
   })
 })
 

@@ -58,6 +58,46 @@ export type AvailabilityVerdict =
       ruleId: string
     }
 
+/**
+ * Deliberately a SEPARATE, wider type from AvailabilityVerdict rather than
+ * adding 'variant_restricted' to it directly — evaluateServiceAvailability's
+ * return type must stay exactly the 3 statuses it has always returned, so
+ * every existing caller (including the standing-rule-standdown safety gate)
+ * keeps its narrow, unchanged type and cannot silently start seeing a status
+ * it was never written to handle. Only callers that explicitly ask for
+ * date-override-aware evaluation (evaluateServiceAvailabilityWithOverrides)
+ * see this wider type.
+ */
+export type AvailabilityVerdictWithDateOverride =
+  | AvailabilityVerdict
+  | {
+      /**
+       * A single-date override (service_date_overrides, effect='variant_only')
+       * restricted bookings to one pricing-tier variant this date — e.g. only
+       * the 'private' tier is bookable, 'shared' is not. The tour still runs;
+       * this is narrower than 'unavailable' and distinct from a recurring
+       * weekday rule, which has no notion of a variant at all.
+       */
+      status: 'variant_restricted'
+      restrictedToVariant: string
+      reason: string | null
+      overrideId: string
+    }
+
+/**
+ * A single-date restriction (service_date_overrides) — distinct from
+ * ServiceAvailabilityRule (recurring weekday) and add_blackout_date (full
+ * closure). See the migration's header for why this exists.
+ */
+export interface ServiceDateOverride {
+  id: string
+  date_iso: string
+  effect: 'unavailable' | 'departure_minimum' | 'variant_only'
+  min_party: number | null
+  restricted_variant: string | null
+  note: string | null
+}
+
 /** Day of week for a 'YYYY-MM-DD' date, parsed as UTC to avoid tz off-by-one. */
 export function weekdayOf(dateISO: string): number {
   return new Date(`${dateISO}T00:00:00Z`).getUTCDay()
@@ -131,6 +171,77 @@ export function evaluateServiceAvailability(args: {
   return { status: 'available' }
 }
 
+/**
+ * Evaluate single-date overrides only, independent of the recurring weekday
+ * rules. Returns null when nothing applies to this date, so the caller can
+ * fall back to the weekday evaluation.
+ *
+ * Precedence within the date itself mirrors evaluateServiceAvailability: a
+ * hard block beats a variant restriction beats a departure minimum — the
+ * strongest true statement about the date wins.
+ */
+export function evaluateDateOverride(args: {
+  overrides: ServiceDateOverride[]
+  dateISO: string | null
+}): AvailabilityVerdictWithDateOverride | null {
+  const { overrides, dateISO } = args
+  if (!dateISO) return null
+
+  const matches = overrides.filter((o) => o.date_iso === dateISO)
+  if (matches.length === 0) return null
+
+  const block = matches.find((o) => o.effect === 'unavailable')
+  if (block) {
+    return {
+      status: 'unavailable',
+      availableFromPartySize: block.min_party,
+      reason: block.note,
+      ruleId: block.id,
+    }
+  }
+
+  const variantOnly = matches.find((o) => o.effect === 'variant_only')
+  if (variantOnly) {
+    return {
+      status: 'variant_restricted',
+      restrictedToVariant: variantOnly.restricted_variant!,
+      reason: variantOnly.note,
+      overrideId: variantOnly.id,
+    }
+  }
+
+  const departure = matches.find((o) => o.effect === 'departure_minimum')
+  if (departure) {
+    return {
+      status: 'available_below_minimum',
+      departureMinimum: departure.min_party!,
+      reason: departure.note,
+      ruleId: departure.id,
+    }
+  }
+
+  return null
+}
+
+/**
+ * Full evaluation: a single date's override (service_date_overrides) takes
+ * precedence over the general recurring weekday pattern
+ * (service_availability_rules) for that same date — a specific, one-time
+ * statement about September 5th is stronger evidence than a standing "no
+ * Sundays" rule, and the two are never meant to be combined into one
+ * verdict.
+ */
+export function evaluateServiceAvailabilityWithOverrides(args: {
+  rules: ServiceAvailabilityRule[]
+  overrides: ServiceDateOverride[]
+  dateISO: string | null
+  partySize: number | null
+}): AvailabilityVerdictWithDateOverride {
+  const overrideVerdict = evaluateDateOverride({ overrides: args.overrides, dateISO: args.dateISO })
+  if (overrideVerdict) return overrideVerdict
+  return evaluateServiceAvailability({ rules: args.rules, dateISO: args.dateISO, partySize: args.partySize })
+}
+
 const WEEKDAY_NAMES = [
   'Sunday',
   'Monday',
@@ -150,7 +261,7 @@ const WEEKDAY_NAMES = [
  * nothing to constrain, so callers can append unconditionally.
  */
 export function buildAvailabilityBlock(args: {
-  verdict: AvailabilityVerdict
+  verdict: AvailabilityVerdictWithDateOverride
   serviceName: string
   dateISO: string | null
 }): string {
@@ -159,6 +270,18 @@ export function buildAvailabilityBlock(args: {
 
   const dayName = WEEKDAY_NAMES[weekdayOf(dateISO)] ?? 'that day'
   const when = `${dayName} ${dateISO}`
+
+  if (verdict.status === 'variant_restricted') {
+    return (
+      '\n\nAVAILABILITY — DECIDED, NOT NEGOTIABLE:\n' +
+      `- On ${when}, "${serviceName}" is only bookable as the ${verdict.restrictedToVariant} option — ` +
+      'other variants are not available that date.\n' +
+      (verdict.reason ? `- Owner's reason: ${verdict.reason}\n` : '') +
+      `- Quote and offer only the ${verdict.restrictedToVariant} option for this date. Do not quote ` +
+      'or offer any other variant for this date. This applies to this date only — say nothing about ' +
+      'other dates being restricted.'
+    )
+  }
 
   if (verdict.status === 'unavailable') {
     const lift =
