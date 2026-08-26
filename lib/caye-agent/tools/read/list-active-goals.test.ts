@@ -25,12 +25,6 @@ vi.mock('@/lib/goals/goals', () => ({
     requestedWorkspaceIds.push(workspaceId)
     return goalsByWorkspace[workspaceId] ?? []
   },
-  resolveAncestorChain: async (goalId: string) => {
-    // Minimal stand-in: no ancestry needed for these tool-level tests.
-    const all = Object.values(goalsByWorkspace).flat()
-    const found = all.find((g) => g.id === goalId)
-    return found ? [found] : []
-  },
 }))
 
 const { listActiveGoals } = await import('./list-active-goals')
@@ -60,6 +54,27 @@ describe('list_active_goals tool', () => {
     if (!result.ok) throw new Error('unreachable')
     const titles = (result.data as { goals: Array<{ title: string }> }).goals.map((g) => g.title)
     expect(titles).toEqual(['Workspace A objective'])
+  })
+
+  it('does not expose parent ids or resolved lineage into workspace agent context', async () => {
+    goalsByWorkspace['ws-a'] = [
+      goal({
+        id: 'workspace-goal',
+        workspaceId: 'ws-a',
+        parentId: 'operator-global-parent',
+        title: 'Workspace objective',
+      }),
+    ]
+
+    const result = await listActiveGoals.execute({}, ctx('ws-a'))
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error('unreachable')
+    const [returned] = (result.data as { goals: Array<Record<string, unknown>> }).goals
+    expect(returned).toBeDefined()
+    expect(returned).not.toHaveProperty('parentId')
+    expect(returned).not.toHaveProperty('parent_id')
+    expect(returned).not.toHaveProperty('supports')
+    expect(JSON.stringify(returned)).not.toContain('operator-global-parent')
   })
 
   it('returns a clean empty-state note when the workspace has no active goals', async () => {
