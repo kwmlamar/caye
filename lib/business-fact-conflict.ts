@@ -27,6 +27,19 @@ export interface ActiveFact {
   text: string
   /** business_facts.source of the existing row. */
   source: string
+  /**
+   * Optional human-readable scope annotation ("workspace-wide" / "specific
+   * to <Service Name>"), added after the 2026-08-26 historical-learning
+   * audit found a real, still-unresolved case in production: a
+   * service-scoped fact ("the Heritage Tour meeting point is the pink
+   * building by the dock") and a later workspace-wide fact ("the pickup
+   * location for all tours is the Casino Tram Stop") both stayed active —
+   * bare fact text alone gives the judge no way to reason about whether a
+   * general claim actually overrides a specific one. Optional and additive:
+   * existing callers (add-business-fact.ts, confirm-fact-candidate.ts) that
+   * don't pass it see identical behavior to before this field existed.
+   */
+  scopeLabel?: string
 }
 
 export type ConflictResolution = 'supersede' | 'ambiguous'
@@ -94,7 +107,7 @@ export function outranksForSupersession(newSource: string, oldSource: string): b
 export async function findConflictingFact(
   newFact: string,
   active: ActiveFact[],
-  ctx: { workspaceId: string; source: string }
+  ctx: { workspaceId: string; source: string; newFactScopeLabel?: string }
 ): Promise<ConflictCheckResult> {
   if (active.length === 0) return NO_CONFLICT
 
@@ -103,7 +116,10 @@ export async function findConflictingFact(
 
   try {
     const client = new Anthropic()
-    const list = plausible.map((f, i) => `${i + 1}. [${f.id}] ${f.text}`).join('\n')
+    const list = plausible
+      .map((f, i) => `${i + 1}. [${f.id}]${f.scopeLabel ? ` (${f.scopeLabel})` : ''} ${f.text}`)
+      .join('\n')
+    const newFactLine = ctx.newFactScopeLabel ? `New fact (${ctx.newFactScopeLabel}): "${newFact}"` : `New fact: "${newFact}"`
 
     const message = await loggedMessagesCreate(
       client,
@@ -116,6 +132,15 @@ export async function findConflictingFact(
           'same detail), not merely a different but compatible fact about a related topic. Two ' +
           'facts about different services, different guest segments, or different time periods ' +
           'are NOT a conflict even if topically similar.\n\n' +
+          'Some facts carry a scope annotation in parentheses ("workspace-wide" or "specific to ' +
+          '<Service Name>"). Use it explicitly: a workspace-wide claim CAN genuinely conflict with ' +
+          'a service-specific one on the same topic (e.g. a new "pickup for all tours is at X" ' +
+          'claim against an existing "the Heritage Tour meets at Y" fact, if X and Y are actually ' +
+          'different places) — scope difference alone does not mean "not a conflict"; you still ' +
+          'have to judge whether the general claim, taken at face value, actually contradicts the ' +
+          'specific one. When you cannot tell whether they describe the same real-world thing (e.g. ' +
+          'you cannot tell if two named locations are the same place), that uncertainty is exactly ' +
+          'what "ambiguous" is for — do not guess.\n\n' +
           'If you find a real contradiction, also judge how to resolve it:\n' +
           '- "supersede": the new fact plainly states the business now does things differently — ' +
           'a correction or updated policy that fully replaces the old one, with nothing indicating ' +
@@ -132,7 +157,7 @@ export async function findConflictingFact(
         messages: [
           {
             role: 'user',
-            content: `New fact: "${newFact}"\n\nExisting facts:\n${list}`,
+            content: `${newFactLine}\n\nExisting facts:\n${list}`,
           },
         ],
       },

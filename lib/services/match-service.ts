@@ -42,7 +42,7 @@ export interface ServiceMatchResult {
  * shared filler ("Tour", "Experience") and miss the distinguishing token
  * (e.g. "Heritage" vs "Sit-Low" vs "Eat").
  */
-const LOW_SIGNAL_WORDS = new Set([
+export const LOW_SIGNAL_WORDS = new Set([
   'tour', 'tours', 'experience', 'bimini', 'bahamas', 'island', 'a', 'an', 'the',
   'of', 'and', 'with', 'on', 'in', 'at', 'for', 'to', 'min', 'mins', 'minute',
   'minutes', 'hr', 'hrs', 'hour', 'hours',
@@ -93,7 +93,7 @@ const SYNONYM_MAP: Map<string, string> = (() => {
   return m
 })()
 
-function tokenize(s: string): string[] {
+export function tokenize(s: string): string[] {
   return s
     .toLowerCase()
     .replace(/[^a-z0-9\s-]/g, ' ')

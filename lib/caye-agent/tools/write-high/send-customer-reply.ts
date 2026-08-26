@@ -22,6 +22,7 @@ import {
   validateAuthoritativeBookingTimeClaims,
 } from '../../consequential-claim-grounding'
 import { validateFrontDeskContext } from '../../frontdesk-context-guard'
+import { staleDateOverrideConflict } from '../../date-override-revalidation'
 import { completeConversationExecution, resolveConversationExecutionAfterFailure, validateConversationExecution } from '@/lib/conversation-execution'
 
 interface SendCustomerReplyInput {
@@ -235,6 +236,41 @@ Front-desk replies are evidence-gated rather than separately operator-gated. If 
         error_code: 'INSUFFICIENT_EVIDENCE',
         error: ownerNoteFor(disposition),
         data: { missing: disposition.missing },
+      }
+    }
+
+    // LAST content check before dispatch, deliberately — not run earlier in
+    // this function. An operator can teach a date-specific restriction (via
+    // the operator-learning router) WHILE this exact turn is in flight; the
+    // draft above was composed against whatever availability state existed
+    // when the prompt was built, which can be seconds to minutes stale by
+    // the time execution reaches here. Re-fetches service_date_overrides
+    // fresh, right now, rather than trusting anything read earlier.
+    //
+    // COMPOSITION WITH PR #132 (conversation-execution-coordination — now
+    // merged): confirmed by this merge that validateConversationExecution
+    // sits exactly where this comment predicted it would, immediately
+    // before dispatchOperatorReply. The two checks are adjacent, in order,
+    // exactly as planned:
+    //   1. staleDateOverrideConflict (this check)   — is the CONTENT still true?
+    //   2. validateConversationExecution (#132)     — is this call still the
+    //      valid holder of the right to send at all?
+    //   3. dispatchOperatorReply                     — send.
+    // Content freshness and execution-ownership are orthogonal concerns —
+    // neither needs the other's internals — so no shared coordinator/lock
+    // object was needed; positional adjacency in this one function is the
+    // entire integration. Nothing here imports from or depends on
+    // conversation-execution.ts's internals, and nothing there depends on
+    // this check — a stale-date-override rejection returns before
+    // validateConversationExecution is ever called, so a doomed send never
+    // consumes/burns the execution claim either.
+    const staleOverride = await staleDateOverrideConflict(supabase, ctx.workspaceId, args.conversation_id, body)
+    if (staleOverride) {
+      return {
+        ok: false,
+        status: 'CONFLICT',
+        error_code: 'STALE_DATE_OVERRIDE',
+        error: `Availability changed since this draft was composed: ${staleOverride} Nothing was sent — re-check availability and rewrite.`,
       }
     }
 

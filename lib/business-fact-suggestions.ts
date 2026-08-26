@@ -89,6 +89,19 @@ export async function maybeSuggestBusinessFacts(
     }
 
     if (!existing) {
+      // Confirmed live gap (2026-08-26 historical-learning audit): a
+      // candidate below the propose threshold was never checked against
+      // active facts at all — the check below only ran once occurrence_count
+      // crossed OCCURRENCE_THRESHOLD, so authoritative knowledge captured
+      // through a DIFFERENT path (e.g. the operator-learning router, or a
+      // direct add_business_fact call) never suppressed a low-occurrence
+      // candidate already sitting in the table for the same topic. Checking
+      // here, before ever inserting, is the cheapest fix — it also stops a
+      // brand-new candidate from being created at all when the fact already
+      // exists, not just cleaning one up after the fact.
+      const alreadyKnownAtInsert = await overlapsExistingFact(workspaceId, sentence)
+      if (alreadyKnownAtInsert) continue
+
       const { error: insertErr } = await supabase.from('business_fact_candidates').insert({
         workspace_id: workspaceId,
         normalized_text: normalized,
@@ -122,8 +135,12 @@ export async function maybeSuggestBusinessFacts(
       continue
     }
 
-    if (!shouldProposeCandidate(existing.status, newCount)) continue
-
+    // Same fix as above, applied on every re-occurrence of an EXISTING
+    // candidate — not gated by shouldProposeCandidate — so a stale
+    // below-threshold candidate self-resolves the next time it's touched,
+    // rather than sitting pending indefinitely once the same knowledge
+    // becomes authoritative through another path. Provenance is preserved:
+    // this only ever sets status, never deletes the row or its history.
     const alreadyKnown = await overlapsExistingFact(workspaceId, sentence)
     if (alreadyKnown) {
       await supabase
@@ -132,6 +149,8 @@ export async function maybeSuggestBusinessFacts(
         .eq('id', existing.id)
       continue
     }
+
+    if (!shouldProposeCandidate(existing.status, newCount)) continue
 
     await proposeCandidate(supabase, workspaceId, existing.id, sentence, guessCategory(sentence))
   }

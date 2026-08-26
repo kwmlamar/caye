@@ -34,8 +34,10 @@ import {
 } from './services/match-service'
 import {
   evaluateServiceAvailability,
+  evaluateServiceAvailabilityWithOverrides,
   buildAvailabilityBlock,
   type ServiceAvailabilityRule,
+  type ServiceDateOverride,
 } from './services/service-availability'
 import {
   summarizeBookingHistory,
@@ -1938,23 +1940,39 @@ async function buildAvailabilityConstraint(
   if (!dateISO) return ''
   if (!serviceMatch?.best || serviceMatch.confidence !== 'high') return ''
 
-  const { data, error } = await createServiceClient()
-    .from('service_availability_rules')
-    .select('id, weekday, effect, min_party, note')
-    .eq('workspace_id', workspaceId)
-    .eq('service_id', serviceMatch.best.id)
-    .eq('is_active', true)
-    .limit(20)
+  const supabase = createServiceClient()
+
+  const [{ data, error }, { data: overrideData, error: overrideErr }] = await Promise.all([
+    supabase
+      .from('service_availability_rules')
+      .select('id, weekday, effect, min_party, note')
+      .eq('workspace_id', workspaceId)
+      .eq('service_id', serviceMatch.best.id)
+      .eq('is_active', true)
+      .limit(20),
+    supabase
+      .from('service_date_overrides')
+      .select('id, date_iso, effect, min_party, restricted_variant, note')
+      .eq('workspace_id', workspaceId)
+      .eq('service_id', serviceMatch.best.id)
+      .eq('is_active', true)
+      .eq('date_iso', dateISO)
+      .limit(5),
+  ])
 
   if (error) {
     console.error('[caye-reply] availability rule lookup failed:', error.message)
     return ''
   }
+  if (overrideErr) {
+    console.error('[caye-reply] date override lookup failed:', overrideErr.message)
+  }
 
   const rules = (data ?? []) as ServiceAvailabilityRule[]
-  if (rules.length === 0) return ''
+  const overrides = (overrideErr ? [] : (overrideData ?? [])) as ServiceDateOverride[]
+  if (rules.length === 0 && overrides.length === 0) return ''
 
-  const verdict = evaluateServiceAvailability({ rules, dateISO, partySize })
+  const verdict = evaluateServiceAvailabilityWithOverrides({ rules, overrides, dateISO, partySize })
   return buildAvailabilityBlock({
     verdict,
     serviceName: serviceMatch.best.name,

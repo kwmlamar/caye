@@ -62,6 +62,7 @@ import { shouldSyncOnboardingOperatorName } from '@/lib/onboarding-operator-name
 import { FIRST_DISCOVERY_QUESTION } from '@/lib/onboarding'
 import { mediaPlaceholder } from '@/lib/operator-text-guard'
 import { fetchBusinessFacts, formatBusinessFactsBlock } from '@/lib/business-facts'
+import { routeOperatorLearningCorrection } from '@/lib/operator-learning-router'
 import {
   getActiveDemoSession,
   startDemoSession,
@@ -932,17 +933,38 @@ async function handleOneInbound(
   // claude_format is what the back-office agent's sliding-window loader
   // consumes; we populate it for every inbound regardless of routing path
   // so the agent has full history when it does run.
-  await supabase.from('caye_operator_messages').insert({
-    workspace_id: workspaceId,
-    direction: 'inbound',
-    wa_message_id: message.id,
-    body,
-    intent,
-    claude_format: { role: 'user', content: body },
-    operator_allowlist_id: operator.id,
-    operator_name: operator.name,
-    operator_role: operator.role,
-  })
+  const { data: persistedInbound } = await supabase
+    .from('caye_operator_messages')
+    .insert({
+      workspace_id: workspaceId,
+      direction: 'inbound',
+      wa_message_id: message.id,
+      body,
+      intent,
+      claude_format: { role: 'user', content: body },
+      operator_allowlist_id: operator.id,
+      operator_name: operator.name,
+      operator_role: operator.role,
+    })
+    .select('id')
+    .single()
+
+  // Operator Learning Router: capture durable knowledge from this verified
+  // operator boundary independent of whether the back-office agent, later in
+  // this same turn, happens to call a write tool itself. Deliberately NOT
+  // awaited — same fire-and-forget convention as maybeSuggestBusinessFacts
+  // (lib/business-fact-suggestions.ts) — so a classifier/write failure can
+  // never delay or break the operator's reply. Customer messages never reach
+  // this call site at all; it is only wired into this operator webhook.
+  routeOperatorLearningCorrection({
+    workspaceId,
+    operatorId: operator.id,
+    operatorRole: operator.role,
+    operatorText: body,
+    previousCayeText: lastOutboundBody,
+    sourceMessageId: persistedInbound?.id ?? null,
+    sourceConversationId: `operator:${operator.id}`,
+  }).catch((err) => console.error('[whatsapp-operator] operator-learning-router failed:', err))
 
   // If the workspace flag is off we don't act on intents — but we still logged
   // and stamped the window. This means flipping the flag back on doesn't replay
