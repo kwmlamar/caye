@@ -66,7 +66,7 @@ export function escalationCategoryLabel(
 }
 
 /** Tool markers emitted by summarizeTurnBody for the audit `body` column. */
-const TOOL_MARKER_PATTERN = /\s*\[tool_use:[^\]]*\]|\s*\[tool_result\]/g
+const TOOL_MARKER_PATTERN = /\s*\[tool_use:[^\]]*\]|\s*\[tool_result\]|\s*\[internal_only\]/g
 
 /**
  * The machine-composed stems from forced-escalation.ts's build(). These are

@@ -58,8 +58,10 @@ export function isInternalTurnBody(body: string): boolean {
   return stripToolMarkers(body).length === 0
 }
 
-/** Matches any marker summarizeTurnBody emits for a tool block. */
-const TOOL_MARKER_PRESENT = /\[tool_use:|\[tool_result\]/
+/** Matches any marker summarizeTurnBody emits for a tool block, plus the
+ *  '[internal_only]' marker persistAgentTurns writes in place of a
+ *  suppressed final turn's real text (see finalTurnVisibility). */
+const TOOL_MARKER_PRESENT = /\[tool_use:|\[tool_result\]|\[internal_only\]/
 
 /**
  * The text of a persisted turn as a human should see it.
@@ -121,6 +123,30 @@ export function dedupeConsecutive<T extends { direction: string; body: string }>
  * (the operator webhook) keep their behavior unchanged; the Direct routes
  * pass 'dashboard' explicitly. See 20260813_caye_direct_threads.sql.
  *
+ * finalTurnVisibility: 'internal' (default 'visible', so every existing
+ * caller is unaffected) replaces the LAST assistant turn's persisted body
+ * with the '[internal_only]' marker instead of its real text, so it never
+ * renders as a chat bubble in Caye Direct / the operator webhook read paths
+ * (isInternalTurnBody). claude_format still stores the real turn — this
+ * only changes what a human sees, never the agent's own conversation
+ * history.
+ *
+ * WHY THIS EXISTS (2026-08-26 Autumn McNeill incident, message 2 of 2)
+ * decideOperatorNotification correctly decided NOT to send a WhatsApp
+ * message ("operator already knows, nothing changed") — but the caller
+ * still persisted the model's full concluding prose ("...already on your
+ * radar... needs nothing further") via this function with wa_delivery_
+ * status: 'not_sent'. Nothing in isInternalTurnBody distinguishes "not sent
+ * because the channel/window was unavailable" (still real content the
+ * operator should eventually see) from "not sent because there was
+ * deliberately nothing to say" (the model's own reasoning transcript,
+ * never meant to be operator-facing) — so the second case rendered as an
+ * ordinary chat bubble in Caye Direct, which is itself the disallowed
+ * interruption: telling the operator "nothing needs you" IS telling them
+ * something. Any suppressed decideOperatorNotification outcome (the
+ * SUPPRESS_ variants, RESOLVED_NO_NOTIFICATION, SUPPRESS_OPERATOR_AWARE)
+ * should pass 'internal'.
+ *
  * Returns the inserted rows' ids in turn order, so a thread-aware caller
  * can link them into caye_direct_thread_messages without a second query.
  */
@@ -131,7 +157,8 @@ export async function persistAgentTurns(
   operator: OperatorIdentity | null,
   finalSendResult?: SendResult,
   notSentReason?: string,
-  origin: 'whatsapp' | 'dashboard' = 'whatsapp'
+  origin: 'whatsapp' | 'dashboard' = 'whatsapp',
+  finalTurnVisibility: 'visible' | 'internal' = 'visible'
 ): Promise<{ id: string }[]> {
   const lastAssistantIndex = turns.map((t) => t.role).lastIndexOf('assistant')
   const inserted: { id: string }[] = []
@@ -145,13 +172,15 @@ export async function persistAgentTurns(
         : notSentReason && isLastAssistant
           ? { wa_message_id: null, wa_delivery_status: 'not_sent' as const, wa_delivery_error: notSentReason }
           : { wa_message_id: null, wa_delivery_status: null, wa_delivery_error: null }
+    const body =
+      isLastAssistant && finalTurnVisibility === 'internal' ? '[internal_only]' : summarizeTurnBody(turn)
     const { data, error } = await supabase
       .from('caye_operator_messages')
       .insert({
         workspace_id: workspaceId,
         direction,
         ...delivery,
-        body: summarizeTurnBody(turn),
+        body,
         intent: null,
         claude_format: turn,
         operator_allowlist_id: operator?.id ?? null,

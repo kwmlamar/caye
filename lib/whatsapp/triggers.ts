@@ -3,7 +3,8 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { enqueueOutbound } from './outbound'
 import { classifyHoldUrgency } from './urgency'
 import { inQuietHours, loadScheduleConfig, nextDigestTime } from './schedule'
-import { markAttentionPending, SUBJECT_CONVERSATION } from '@/lib/owner-attention'
+import { markAttentionPending, fingerprint, SUBJECT_CONVERSATION } from '@/lib/owner-attention'
+import { decideOperatorNotification } from './operator-notification-gate'
 
 /**
  * Trigger sites in the five webhook handlers call enqueueHoldPing() right
@@ -131,6 +132,19 @@ export interface BookingCreatedInput {
  * pass them through — every call site already has bookingId from
  * decision.bookingId and nothing else, so resolving details here keeps
  * every call site a one-liner.
+ *
+ * WHY THIS ROUTES THROUGH decideOperatorNotification (2026-08-26, Autumn
+ * McNeill incident). This used to enqueue unconditionally, with no
+ * awareness of the caye_owner_attention ledger at all — it was the one
+ * proactive producer in the codebase that never asked "does the operator
+ * already know this." Real production trace: Mrs. Max personally drafted,
+ * edited, and sent Autumn's reply through Caye, then told Caye directly she
+ * had. A "Just booked — Autumn McNeill..." ping still fired ~9.5h later
+ * (quiet-hours deferred it), because nothing here had ever checked. Now it
+ * observes the same ledger every other producer uses and, when a
+ * conversation is linked, asks the shared operatorParticipationCheck
+ * whether the operator was already structurally proven to be in that exact
+ * conversation — see lib/whatsapp/operator-participation.ts.
  */
 export async function enqueueBookingCreated(input: BookingCreatedInput): Promise<void> {
   const enabled = await operatorPingsEnabled(input.workspaceId)
@@ -139,7 +153,9 @@ export async function enqueueBookingCreated(input: BookingCreatedInput): Promise
   const supabase = createServiceClient()
   const { data: booking } = await supabase
     .from('bookings')
-    .select('customer_name, booking_date, booking_time, number_of_people, service:booking_services(name)')
+    .select(
+      'conversation_id, customer_name, booking_date, booking_time, number_of_people, status, payment_confirmed_at, payment_link_sent_at, cancelled_at, created_at, updated_at, service:booking_services(name)'
+    )
     .eq('id', input.bookingId)
     .maybeSingle()
 
@@ -148,6 +164,7 @@ export async function enqueueBookingCreated(input: BookingCreatedInput): Promise
   const serviceRaw = booking.service as { name: string | null } | { name: string | null }[] | null
   const serviceName = (Array.isArray(serviceRaw) ? serviceRaw[0]?.name : serviceRaw?.name) ?? null
   const guest = booking.customer_name ?? 'A guest'
+  const stateLabel = bookingStateLabel(booking.status, booking.payment_confirmed_at)
   const summary = formatBookingSummary({
     serviceName,
     bookingDate: booking.booking_date,
@@ -155,18 +172,144 @@ export async function enqueueBookingCreated(input: BookingCreatedInput): Promise
     partySize: booking.number_of_people,
   })
 
+  // bookings.conversation_id is the authoritative link — prefer it over the
+  // caller-supplied conversationId (every call site resolves its own
+  // conversation slightly differently; the booking row's own reference is
+  // the one thing every path agrees on).
+  const conversationId = booking.conversation_id ?? input.conversationId ?? null
+
+  // The fields that actually define what's being reported — a status flip
+  // or a payment event re-earns a ping; the row's own churn (updated_at
+  // bumping for unrelated reasons) does not. Shared, as a single array,
+  // between the owner-attention gate's state_fingerprint AND the queue
+  // row's idempotency key below — see the comment on idempotencyKey for
+  // why those two now have to agree.
+  const fingerprintParts = [
+    booking.status,
+    booking.payment_confirmed_at,
+    booking.payment_link_sent_at,
+    booking.cancelled_at,
+    booking.booking_date,
+    booking.booking_time,
+    booking.number_of_people,
+  ]
+
+  const decision = await decideOperatorNotification({
+    workspaceId: input.workspaceId,
+    subjectType: 'booking',
+    subjectId: input.bookingId,
+    conversationId,
+    title: `${guest} — ${stateLabel}`,
+    priority: 'awareness',
+    fingerprintParts,
+    blockedOnOperator: false,
+    resolvableAutonomously: false,
+    ...(conversationId ? { operatorParticipationCheck: { conversationId } } : {}),
+  })
+
+  if (decision.outcome !== 'SEND_NEW' && decision.outcome !== 'SEND_REMINDER' && decision.outcome !== 'SEND_CRITICAL_ESCALATION') {
+    // SUPPRESS_OPERATOR_AWARE (operator already handled this conversation
+    // directly), SUPPRESS_NO_CHANGE / SUPPRESS_RECENTLY_NOTIFIED (already
+    // told, nothing new), or RESOLVED_NO_NOTIFICATION — none of these
+    // warrant a ping. The item was still observed above, so a genuinely
+    // later material change (a real status/payment transition) re-earns a
+    // real notification on its own next time this fires — see the
+    // idempotencyKey comment below for how the queue row itself allows
+    // that second send to actually happen.
+    return
+  }
+
   const cfg = await loadScheduleConfig(input.workspaceId)
   const now = new Date()
   const scheduledFor = inQuietHours(now, cfg) ? nextDigestTime(now, cfg) : now
 
-  await enqueueOutbound({
+  // Computed once, reused for both the queue row's identity (idempotencyKey)
+  // and its payload (stateFingerprint) — see each comment below for why the
+  // SAME value has to do both jobs.
+  const stateFp = fingerprint(fingerprintParts)
+
+  const queued = await enqueueOutbound({
     workspaceId: input.workspaceId,
     kind: 'booking_created',
-    conversationId: input.conversationId ?? null,
-    payload: { guest, bookingId: input.bookingId, summary },
+    conversationId,
+    payload: {
+      guest,
+      bookingId: input.bookingId,
+      summary,
+      stateLabel,
+      // Lets the outbound worker's dispatch-time check (PR #135 review,
+      // third finding) tell "this row still describes the CURRENT truth"
+      // from "the booking has moved on since this was queued, and this
+      // row's guest/summary/stateLabel text is now stale" — see
+      // bookingCreatedDispatchCancelReason in the outbound-worker route.
+      stateFingerprint: stateFp,
+    },
     scheduledFor,
-    idempotencyKey: `booking-${input.bookingId}`,
+    // MUST be state-derived, not just the booking id (fixed 2026-08-26,
+    // PR #135 review). enqueueOutbound is permanently idempotent on this
+    // key — once a row exists, a second insert with the SAME key silently
+    // no-ops forever (see enqueueOutbound's own doc comment). A bare
+    // `booking-${bookingId}` key meant that once ANY booking_created
+    // notification had ever gone out for this booking, a later genuine
+    // material change (pending → confirmed, payment landing) could pass
+    // the owner-attention gate above and still never actually enqueue —
+    // silently breaking the "a material change re-earns a notification"
+    // invariant decideOperatorNotification promises. Hashing the SAME
+    // fingerprintParts array the gate itself fingerprints ties the queue
+    // row's identity to the state gate decided about, one-to-one: the same
+    // state can only ever enqueue once (duplicate protection preserved —
+    // two racing calls for the SAME state collapse onto the same key), and
+    // a materially different state gets a fresh key and a fresh row.
+    // Deliberately NOT updated_at — that bumps on unrelated row churn and
+    // would mint a new "identity" for a booking whose reported state
+    // hasn't actually moved.
+    idempotencyKey: `booking-${input.bookingId}-${stateFp}`,
   })
+
+  if (queued) {
+    await markAttentionPending({
+      workspaceId: input.workspaceId,
+      subjectType: 'booking',
+      subjectId: input.bookingId,
+      queueId: queued.id,
+    })
+  }
+  // queued === null here means enqueueOutbound hit its idempotency
+  // constraint — i.e. a row for this EXACT state already exists (a race
+  // between two calls that both observed the same state, or a retry).
+  // Correctly a no-op: the row that won the race is already the one
+  // markAttentionPending/markAttentionNotified will track through the
+  // normal outbound-worker lifecycle: nothing here needs to (or safely
+  // can) re-mark an item pending against a queue row that doesn't exist.
+}
+
+/**
+ * Honest, ground-truth booking state language — never "Just booked" for a
+ * booking nobody has paid for. Mirrors the real booking_status Postgres
+ * enum (pending/confirmed/cancelled — see `enum_range(null::booking_status)`)
+ * plus payment_confirmed_at, which the enum alone doesn't capture. A native
+ * enum type, not a CHECK constraint, so lib/db/check-constraints.ts's guard
+ * doesn't cover it — if the enum ever grows a value, this needs a manual
+ * update too.
+ *
+ * The 'cancelled' branch is a defensive honesty guard, not a cancellation
+ * FEATURE (PR #135 review audit): every current call site invokes
+ * enqueueBookingCreated exactly once, at creation, from "Caye just created
+ * booking X" — there is no separate trigger that calls this again on a
+ * later status change, so 'cancelled' only fires today in the narrow race
+ * where a booking gets cancelled in the brief window between insert and
+ * this async trigger running. It exists so that race can't produce a
+ * dishonest "New pending booking" for a booking that's already dead, not
+ * to promise a dedicated cancellation-notification pipeline (there isn't
+ * one — see the idempotencyKey comment in enqueueBookingCreated for what
+ * WOULD make a later real transition notify, if a future caller ever
+ * invokes this again after creation).
+ */
+export function bookingStateLabel(status: string, paymentConfirmedAt: string | null): string {
+  if (status === 'cancelled') return 'Booking cancelled'
+  if (paymentConfirmedAt) return 'Booking confirmed & paid'
+  if (status === 'confirmed') return 'Booking confirmed'
+  return 'New pending booking'
 }
 
 function formatBookingSummary(args: {
