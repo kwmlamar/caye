@@ -5,7 +5,7 @@ import { loggedMessagesCreate } from '@/lib/llm-telemetry'
 import { syncBookingToCalendar } from '@/lib/calendar-sync'
 import { dispatchOperatorReply } from '@/lib/whatsapp/channel-dispatch'
 import { sendZohoEmail } from '@/lib/email-ai'
-import { claimConversationExecution, completeConversationExecution, releaseConversationExecution, validateConversationExecution } from '@/lib/conversation-execution'
+import { claimConversationExecution, completeConversationExecution, releaseConversationExecution, resolveConversationExecutionAfterFailure, validateConversationExecution } from '@/lib/conversation-execution'
 
 interface HistoryMessage {
   from: 'user' | 'caye'
@@ -463,9 +463,16 @@ async function runSendReply(
     return { error: `Conversation changed before dispatch (${validated.reason}). Reload before sending.` }
   }
 
+  // Set the instant dispatchOperatorReply returns successfully — guards the
+  // catch below so a failure completing the coordinator record afterward is
+  // never mistaken for "nothing was sent."
+  let dispatched = false
   try {
     const result = await dispatchOperatorReply(conversation_id, body, 'caye-dashboard')
-    await completeConversationExecution(execution.claim.id)
+    dispatched = true
+    await completeConversationExecution(execution.claim.id).catch((completeErr) => {
+      console.error('[caye/chat] dispatch succeeded but completing the execution claim failed (safe — left unresolved rather than freed for retry):', completeErr)
+    })
     return {
       success: true,
       channel: result.channelType,
@@ -473,7 +480,7 @@ async function runSendReply(
       preview: body.trim().slice(0, 160),
     }
   } catch (err) {
-    await releaseConversationExecution(execution.claim.id).catch(() => undefined)
+    if (!dispatched) await resolveConversationExecutionAfterFailure(execution.claim.id, err)
     const msg = err instanceof Error ? err.message : String(err)
     console.error('[caye/chat] send_reply failed:', msg)
     return { error: msg }

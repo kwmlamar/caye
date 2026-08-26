@@ -189,7 +189,7 @@ export function gateHighRisk<T>(tool: Tool<T>, ttlMinutes: number = PENDING_TTL_
 
       let existingQuery = supabase
         .from('caye_pending_actions')
-        .select('id, created_in_request_id')
+        .select('id, created_in_request_id, execution_claim_id')
         .eq('workspace_id', ctx.workspaceId)
         .eq('tool_name', tool.name)
         .eq('args_key', argsKey)
@@ -219,6 +219,16 @@ export function gateHighRisk<T>(tool: Tool<T>, ttlMinutes: number = PENDING_TTL_
           // supply this confirming half, regardless of requestId — see
           // the doc comment above gateHighRisk. Falls through to the
           // "still staged" branch below instead.
+          //
+          // This is a SECOND, separate confirmation path from
+          // confirm_pending_action.ts (the model re-emitting the identical
+          // tool call, rather than calling confirm_pending_action) — it
+          // must thread the SAME execution claim through, or the tool's own
+          // validate/complete/resolve calls silently no-op (ctx.executionClaimId
+          // undefined) and this send bypasses coordination entirely.
+          if (existing.execution_claim_id) {
+            ctx.executionClaimId = existing.execution_claim_id as string
+          }
           const result = await tool.execute(args, ctx)
           await supabase
             .from('caye_pending_actions')
@@ -257,27 +267,6 @@ export function gateHighRisk<T>(tool: Tool<T>, ttlMinutes: number = PENDING_TTL_
       // takes it as its only argument).
       const pendingActionId = randomUUID()
 
-      // Staging an operator-directed customer reply is meaningful active
-      // work, not merely a UI draft. Acquire the shared conversation claim
-      // now so an autonomous webhook cannot independently answer while the
-      // operator is reviewing/refining this exact thread.
-      let executionClaimId: string | null = null
-      if (tool.name === 'send_reply' && typeof (args as Record<string, unknown>).conversation_id === 'string') {
-        const conversationId = (args as Record<string, unknown>).conversation_id as string
-        const execution = await claimConversationExecution({
-          workspaceId: ctx.workspaceId,
-          conversationId,
-          holder: 'operator_caye',
-          idempotencyKey: `operator-draft:${ctx.operatorId ?? 'unknown'}:${conversationId}`,
-          reason: 'operator-directed Caye draft awaiting confirmation',
-          leaseSeconds: ttlMinutes * 60,
-        })
-        if (!execution.ok) {
-          return { ok: false, status: 'CONFLICT', error: `This customer conversation is currently owned by ${execution.blockedBy}; reload it before drafting a reply.` }
-        }
-        executionClaimId = execution.claim.id
-      }
-
       // PHASE 3 (Part E) supersession: this args_key is fresh, but if it
       // targets the SAME conversation/booking as an already-staged,
       // not-yet-confirmed row for this same tool, that older row is a
@@ -288,11 +277,15 @@ export function gateHighRisk<T>(tool: Tool<T>, ttlMinutes: number = PENDING_TTL_
       // cancelled_at + superseded_by are written, so the original draft
       // stays in the audit trail. See stableArgsKey/describePendingAction
       // above for why args can't just be mutated in place instead.
+      //
+      // Runs BEFORE claim acquisition below: a stale row's execution claim
+      // (if any) is released here first, so the new claim acquisition never
+      // has to fight the old one for authority over the same conversation.
       const targetKey = extractTargetKey(args as Record<string, unknown>)
       if (targetKey) {
         let staleQuery = supabase
           .from('caye_pending_actions')
-          .select('id, args')
+          .select('id, args, execution_claim_id')
           .eq('workspace_id', ctx.workspaceId)
           .eq('tool_name', tool.name)
           .is('executed_at', null)
@@ -307,11 +300,44 @@ export function gateHighRisk<T>(tool: Tool<T>, ttlMinutes: number = PENDING_TTL_
           (row) => extractTargetKey(row.args as Record<string, unknown>) === targetKey
         )
         for (const row of stale) {
+          if (row.execution_claim_id) {
+            await releaseConversationExecution(row.execution_claim_id as string).catch(() => undefined)
+          }
           await supabase
             .from('caye_pending_actions')
             .update({ cancelled_at: nowISO, superseded_by: pendingActionId })
             .eq('id', row.id as string)
         }
+      }
+
+      // Staging an operator-directed customer reply is meaningful active
+      // work, not merely a UI draft. Acquire the shared conversation claim
+      // now so an autonomous webhook cannot independently answer while the
+      // operator is reviewing/refining this exact thread.
+      //
+      // Keyed to THIS pending action, not to (operator, conversation): that
+      // pair recurs forever — every future draft this operator ever stages
+      // on this same conversation — and conversation-execution treats a
+      // completed claim for a given key as permanently final, which would
+      // make every draft after the FIRST successful send permanently
+      // unclaimable. A fresh key per pending action means each draft always
+      // gets a clean acquisition; any stale row's claim was already
+      // released just above.
+      let executionClaimId: string | null = null
+      if (tool.name === 'send_reply' && typeof (args as Record<string, unknown>).conversation_id === 'string') {
+        const conversationId = (args as Record<string, unknown>).conversation_id as string
+        const execution = await claimConversationExecution({
+          workspaceId: ctx.workspaceId,
+          conversationId,
+          holder: 'operator_caye',
+          idempotencyKey: `operator-draft:${pendingActionId}`,
+          reason: 'operator-directed Caye draft awaiting confirmation',
+          leaseSeconds: ttlMinutes * 60,
+        })
+        if (!execution.ok) {
+          return { ok: false, status: 'CONFLICT', error: `This customer conversation is currently owned by ${execution.blockedBy}; reload it before drafting a reply.` }
+        }
+        executionClaimId = execution.claim.id
       }
 
       const { error } = await supabase.from('caye_pending_actions').insert({

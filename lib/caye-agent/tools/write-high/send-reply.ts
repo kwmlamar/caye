@@ -4,7 +4,7 @@ import { dispatchOperatorReply } from '@/lib/whatsapp/channel-dispatch'
 import type { Tool } from '../types'
 import { assertConversationOwnedByWorkspace, resolveOpenEscalations } from '../write-low/_guards'
 import { unsupportedLogisticsTimeClaims } from '../../logistics-grounding'
-import { completeConversationExecution, releaseConversationExecution, validateConversationExecution } from '@/lib/conversation-execution'
+import { completeConversationExecution, resolveConversationExecutionAfterFailure, validateConversationExecution } from '@/lib/conversation-execution'
 
 interface SendReplyInput {
   conversation_id: string
@@ -85,6 +85,11 @@ Customer never knows the operator delegated to you.`,
       }
     }
 
+    // Set the instant dispatchOperatorReply returns successfully — guards
+    // the catch below so a LATER failure (completing the coordinator
+    // record, clearing the held flag, resolving escalations) is never
+    // mistaken for "nothing was sent."
+    let dispatched = false
     try {
       if (ctx.executionClaimId) {
         const execution = await validateConversationExecution({ claimId: ctx.executionClaimId })
@@ -97,7 +102,12 @@ Customer never knows the operator delegated to you.`,
         body,
         'caye-dashboard'
       )
-      if (ctx.executionClaimId) await completeConversationExecution(ctx.executionClaimId)
+      dispatched = true
+      if (ctx.executionClaimId) {
+        await completeConversationExecution(ctx.executionClaimId).catch((completeErr) => {
+          console.error('[send-reply] dispatch succeeded but completing the execution claim failed (safe — left unresolved rather than freed for retry):', completeErr)
+        })
+      }
 
       // Clear the held flag since we've now replied. If it wasn't held in
       // the first place, this is a no-op.
@@ -123,7 +133,7 @@ Customer never knows the operator delegated to you.`,
         },
       }
     } catch (err) {
-      if (ctx.executionClaimId) await releaseConversationExecution(ctx.executionClaimId).catch(() => undefined)
+      if (ctx.executionClaimId && !dispatched) await resolveConversationExecutionAfterFailure(ctx.executionClaimId, err)
       const msg = err instanceof Error ? err.message : String(err)
       return { ok: false, error: `Send failed: ${msg}` }
     }

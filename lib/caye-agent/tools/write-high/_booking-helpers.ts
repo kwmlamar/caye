@@ -63,8 +63,12 @@ export async function maybeNotifyCustomer(args: {
     return { sent: false, error: 'Booking has no linked conversation thread' }
   }
   let claimId: string | null = null
+  // Set the instant dispatchOperatorReply returns successfully — guards the
+  // catch below so a failure completing the coordinator record afterward is
+  // never mistaken for "nothing was sent."
+  let dispatched = false
   try {
-    const { claimConversationExecution, completeConversationExecution, releaseConversationExecution, validateConversationExecution } = await import(
+    const { claimConversationExecution, completeConversationExecution, resolveConversationExecutionAfterFailure, validateConversationExecution } = await import(
       '@/lib/conversation-execution'
     )
     const execution = await claimConversationExecution({
@@ -90,12 +94,15 @@ export async function maybeNotifyCustomer(args: {
       args.body.trim(),
       'caye-dashboard'
     )
-    await completeConversationExecution(claimId)
+    dispatched = true
+    await completeConversationExecution(claimId).catch((completeErr) => {
+      console.error('[_booking-helpers] dispatch succeeded but completing the execution claim failed (safe — left unresolved rather than freed for retry):', completeErr)
+    })
     return { sent: true, channel: result.channelType }
   } catch (err) {
-    if (claimId) {
-      const { releaseConversationExecution } = await import('@/lib/conversation-execution')
-      await releaseConversationExecution(claimId).catch(() => undefined)
+    if (claimId && !dispatched) {
+      const { resolveConversationExecutionAfterFailure } = await import('@/lib/conversation-execution')
+      await resolveConversationExecutionAfterFailure(claimId, err)
     }
     const msg = err instanceof Error ? err.message : String(err)
     return { sent: false, error: msg }

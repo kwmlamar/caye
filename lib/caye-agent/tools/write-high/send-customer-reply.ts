@@ -21,7 +21,7 @@ import {
   validateAuthoritativeBookingStatusClaims,
 } from '../../consequential-claim-grounding'
 import { validateFrontDeskContext } from '../../frontdesk-context-guard'
-import { completeConversationExecution, validateConversationExecution } from '@/lib/conversation-execution'
+import { completeConversationExecution, resolveConversationExecutionAfterFailure, validateConversationExecution } from '@/lib/conversation-execution'
 
 interface SendCustomerReplyInput {
   conversation_id: string
@@ -219,6 +219,11 @@ Front-desk replies are evidence-gated rather than separately operator-gated. If 
       }
     }
 
+    // Set the instant dispatchOperatorReply returns successfully. Guards the
+    // catch below: once true, a LATER failure (completing the coordinator
+    // record, the send_and_flag update, anything) must never be treated as
+    // "nothing was sent" — the customer-facing side effect already happened.
+    let dispatched = false
     try {
       if (ctx.executionClaimId) {
         const execution = await validateConversationExecution({
@@ -235,8 +240,18 @@ Front-desk replies are evidence-gated rather than separately operator-gated. If 
         'caye-frontdesk-agent',
         ctx.triggeringMessageId ?? undefined
       )
+      dispatched = true
 
-      if (ctx.executionClaimId) await completeConversationExecution(ctx.executionClaimId)
+      // The send is CONFIRMED at this point. If completing the coordinator
+      // record itself now fails, that must never be treated as a dispatch
+      // failure — the reservation just stays "reserved" (never abandoned),
+      // which still correctly blocks a second answer to this same inbound
+      // turn (see the migration's crash-point-5 doc comment).
+      if (ctx.executionClaimId) {
+        await completeConversationExecution(ctx.executionClaimId).catch((completeErr) => {
+          console.error('[send-customer-reply] dispatch succeeded but completing the execution claim failed (safe — left unresolved rather than freed for retry):', completeErr)
+        })
+      }
 
       if (disposition.disposition === 'send_and_flag') {
         await supabase
@@ -261,6 +276,7 @@ Front-desk replies are evidence-gated rather than separately operator-gated. If 
         },
       }
     } catch (err) {
+      if (ctx.executionClaimId && !dispatched) await resolveConversationExecutionAfterFailure(ctx.executionClaimId, err)
       const msg = err instanceof Error ? err.message : String(err)
       return { ok: false, error: `Send failed: ${msg}` }
     }

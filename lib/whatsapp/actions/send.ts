@@ -2,7 +2,7 @@ import 'server-only'
 import { dispatchOperatorReply } from '../channel-dispatch'
 import { resolveItemRef, type PendingHeldItem } from '../pending'
 import type { ActionContext, ActionResult } from './types'
-import { claimConversationExecution, completeConversationExecution, releaseConversationExecution, validateConversationExecution } from '@/lib/conversation-execution'
+import { claimConversationExecution, completeConversationExecution, releaseConversationExecution, resolveConversationExecutionAfterFailure, validateConversationExecution } from '@/lib/conversation-execution'
 
 export async function actionSend(
   ctx: ActionContext,
@@ -48,15 +48,22 @@ export async function actionSend(
     }
   }
 
+  // Set the instant dispatchOperatorReply returns successfully — guards the
+  // catch below so a failure completing the coordinator record afterward is
+  // never mistaken for "nothing was sent."
+  let dispatched = false
   try {
     await dispatchOperatorReply(item.conversationId, item.proposedReply)
-    await completeConversationExecution(execution.claim.id)
+    dispatched = true
+    await completeConversationExecution(execution.claim.id).catch((completeErr) => {
+      console.error('[actions/send] dispatch succeeded but completing the execution claim failed (safe — left unresolved rather than freed for retry):', completeErr)
+    })
     return {
       ackBody: `Done. Sent to ${item.contactName}.`,
       tag: { label: `send ${item.contactName}`, status: 'ok' },
     }
   } catch (err) {
-    await releaseConversationExecution(execution.claim.id).catch(() => undefined)
+    if (!dispatched) await resolveConversationExecutionAfterFailure(execution.claim.id, err)
     const msg = err instanceof Error ? err.message : String(err)
     console.error('[actions/send] dispatch failed:', msg)
     return {

@@ -28,6 +28,36 @@ export interface DispatchResult {
 }
 
 /**
+ * Thrown instead of a plain Error whenever the caller cannot safely assume
+ * "nothing was sent." Conversation-execution coordination (lib/conversation-
+ * execution.ts) uses `definitelySent` to decide whether a failed dispatch is
+ * safe to retry:
+ *
+ * - `definitelySent: true` — the provider call itself returned successfully
+ *   (the customer-facing side effect happened) and ONLY our own bookkeeping
+ *   (the unified_messages insert or the conversation preview update)
+ *   afterward failed. The send is certain; treat this like a completed send,
+ *   never like a retryable failure.
+ * - `definitelySent: false` — the provider call itself threw (network
+ *   error, timeout, non-2xx, etc). Whether the provider actually received
+ *   and will act on the message before erroring back to us is NOT knowable
+ *   from here. Must fail closed: not safe to complete, not safe to retry.
+ *
+ * Plain `Error`s thrown by this function (conversation not found, empty
+ * body, unsupported channel, the idempotency pre-check) all happen BEFORE
+ * any provider call is attempted — those are the only failures safe to
+ * treat as "definitely did not send."
+ */
+export class DispatchAmbiguousError extends Error {
+  readonly definitelySent: boolean
+  constructor(message: string, definitelySent: boolean) {
+    super(message)
+    this.name = 'DispatchAmbiguousError'
+    this.definitelySent = definitelySent
+  }
+}
+
+/**
  * 'caye-frontdesk-agent' (2026-08-16, Phase 3) — a customer reply the
  * converged front-desk agent composed and sent AUTONOMOUSLY (evidence
  * sufficient, no operator in the loop), distinct from the other two labels
@@ -109,59 +139,70 @@ export async function dispatchOperatorReply(
   // findReplyTargetZohoMessageId in lib/email-ai.ts.
   let zohoMessageId: string | null = null
 
-  switch (conv.channel_type) {
-    case 'messenger':
-    case 'instagram':
-      await sendMetaMessage(conv.customer_id, trimmed, account.access_token)
-      break
-    case 'whatsapp':
-      await sendWhatsAppMessage(
-        conv.customer_id,
-        trimmed,
-        account.channel_account_id,
-        account.access_token
-      )
-      break
-    case 'email': {
-      if (meta.hold_kind === 'outreach_first_touch') {
-        // First-touch cold outreach — no real prior thread to reply into and
-        // no inbound subject to inherit, so send a clean standalone email
-        // with the subject the draft was created with (mirrors
-        // app/api/messages/send/route.ts's outreach branch). No "Re:"
-        // prefix and no tagline — those are reply-thread conventions that
-        // don't apply to a cold open.
-        const subject = (meta.subject as string) || 'Quick question'
-        const sent = await sendZohoEmail(conv.customer_id, subject, trimmed, account.user_id)
-        zohoMessageId = sent.messageId
+  if (!['messenger', 'instagram', 'whatsapp', 'email'].includes(conv.channel_type)) {
+    throw new Error(`unsupported channel: ${conv.channel_type}`)
+  }
+
+  // Everything below this line can perform the real customer-facing side
+  // effect. Any exception from here on is wrapped as DispatchAmbiguousError
+  // so a caller can never mistake "provider call threw" for "definitely
+  // nothing was sent" — see the class doc comment.
+  try {
+    switch (conv.channel_type) {
+      case 'messenger':
+      case 'instagram':
+        await sendMetaMessage(conv.customer_id, trimmed, account.access_token)
+        break
+      case 'whatsapp':
+        await sendWhatsAppMessage(
+          conv.customer_id,
+          trimmed,
+          account.channel_account_id,
+          account.access_token
+        )
+        break
+      case 'email': {
+        if (meta.hold_kind === 'outreach_first_touch') {
+          // First-touch cold outreach — no real prior thread to reply into and
+          // no inbound subject to inherit, so send a clean standalone email
+          // with the subject the draft was created with (mirrors
+          // app/api/messages/send/route.ts's outreach branch). No "Re:"
+          // prefix and no tagline — those are reply-thread conventions that
+          // don't apply to a cold open.
+          const subject = (meta.subject as string) || 'Quick question'
+          const sent = await sendZohoEmail(conv.customer_id, subject, trimmed, account.user_id)
+          zohoMessageId = sent.messageId
+          break
+        }
+        const subj = (meta.subject as string) || '(no subject)'
+        const replySubject = subj.startsWith('Re:') ? subj : `Re: ${subj}`
+        // The body here is Caye-composed (operator approved/revised the draft),
+        // so the outbound-email tagline guarantee applies just like the
+        // auto-reply paths — the draft usually predates ensureTagline and the
+        // operator shouldn't have to remember to re-add the tagline when editing.
+        const { data: workspaceRow } = await supabase
+          .from('customers')
+          .select('ai_voice_profile')
+          .eq('id', account.user_id)
+          .maybeSingle()
+        outboundBody = ensureTagline(
+          trimmed,
+          (workspaceRow?.ai_voice_profile ?? undefined) as VoiceProfile | undefined
+        )
+        const replySent = await sendZohoReply(
+          conv.customer_id,
+          replySubject,
+          outboundBody,
+          conv.channel_conversation_id,
+          account.user_id
+        )
+        zohoMessageId = replySent.messageId
         break
       }
-      const subj = (meta.subject as string) || '(no subject)'
-      const replySubject = subj.startsWith('Re:') ? subj : `Re: ${subj}`
-      // The body here is Caye-composed (operator approved/revised the draft),
-      // so the outbound-email tagline guarantee applies just like the
-      // auto-reply paths — the draft usually predates ensureTagline and the
-      // operator shouldn't have to remember to re-add the tagline when editing.
-      const { data: workspaceRow } = await supabase
-        .from('customers')
-        .select('ai_voice_profile')
-        .eq('id', account.user_id)
-        .maybeSingle()
-      outboundBody = ensureTagline(
-        trimmed,
-        (workspaceRow?.ai_voice_profile ?? undefined) as VoiceProfile | undefined
-      )
-      const replySent = await sendZohoReply(
-        conv.customer_id,
-        replySubject,
-        outboundBody,
-        conv.channel_conversation_id,
-        account.user_id
-      )
-      zohoMessageId = replySent.messageId
-      break
     }
-    default:
-      throw new Error(`unsupported channel: ${conv.channel_type}`)
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    throw new DispatchAmbiguousError(`provider send failed or its outcome is unknown: ${msg}`, false)
   }
 
   const now = new Date().toISOString()
@@ -197,7 +238,7 @@ export async function dispatchOperatorReply(
     },
   })
   if (messageInsertError) {
-    throw new Error(`message sent but outbound message was not recorded: ${messageInsertError.message}`)
+    throw new DispatchAmbiguousError(`message sent but outbound message was not recorded: ${messageInsertError.message}`, true)
   }
 
   const { error: conversationUpdateError } = await supabase
@@ -217,7 +258,7 @@ export async function dispatchOperatorReply(
     })
     .eq('id', conversationId)
   if (conversationUpdateError) {
-    throw new Error(`message sent but conversation state was not recorded: ${conversationUpdateError.message}`)
+    throw new DispatchAmbiguousError(`message sent but conversation state was not recorded: ${conversationUpdateError.message}`, true)
   }
 
   // Also close out any open escalation row — otherwise it stays pending

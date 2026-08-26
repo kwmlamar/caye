@@ -3,7 +3,7 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { dispatchOperatorReply } from '@/lib/whatsapp/channel-dispatch'
 import type { Tool } from '../types'
 import { bookingRevenue, BOOKING_WITH_SERVICE_PRICE_SELECT, type ServiceJoin } from '../_revenue'
-import { claimConversationExecution, completeConversationExecution, releaseConversationExecution, validateConversationExecution } from '@/lib/conversation-execution'
+import { claimConversationExecution, completeConversationExecution, resolveConversationExecutionAfterFailure, validateConversationExecution } from '@/lib/conversation-execution'
 
 interface SendPaymentConfirmationInput {
   customer_name: string
@@ -146,6 +146,10 @@ export const sendPaymentConfirmation: Tool<SendPaymentConfirmationInput> = {
       `Looking forward to it!`
 
     let claimId: string | null = null
+    // Set the instant dispatchOperatorReply returns successfully — guards
+    // the catch below so a LATER failure (the booking update, completing
+    // the coordinator record) is never mistaken for "nothing was sent."
+    let dispatched = false
     try {
       const execution = await claimConversationExecution({
         workspaceId: ctx.workspaceId,
@@ -159,6 +163,15 @@ export const sendPaymentConfirmation: Tool<SendPaymentConfirmationInput> = {
       const validated = await validateConversationExecution({ claimId: execution.claim.id })
       if (!validated.ok) return { ok: false, status: 'CONFLICT', error: `Customer conversation changed before payment confirmation (${validated.reason}). Nothing was sent.` }
       const result = await dispatchOperatorReply(conversationId, body, 'caye-dashboard')
+      dispatched = true
+      // Complete the coordinator record BEFORE any other post-send step
+      // that could throw — otherwise a failure below (e.g. the booking
+      // update) would leave this claim's idempotency key still "active,"
+      // and a caller retrying on that failure would reuse it and dispatch
+      // a genuine duplicate send.
+      await completeConversationExecution(claimId).catch((completeErr) => {
+        console.error('[send-payment-confirmation] dispatch succeeded but completing the execution claim failed (safe — left unresolved rather than freed for retry):', completeErr)
+      })
 
       const now = new Date().toISOString()
       await supabase
@@ -168,7 +181,6 @@ export const sendPaymentConfirmation: Tool<SendPaymentConfirmationInput> = {
           status: booking.status === 'pending' ? 'confirmed' : booking.status,
         })
         .eq('id', booking.id)
-      await completeConversationExecution(claimId)
 
       return {
         ok: true,
@@ -180,7 +192,7 @@ export const sendPaymentConfirmation: Tool<SendPaymentConfirmationInput> = {
         },
       }
     } catch (err) {
-      if (claimId) await releaseConversationExecution(claimId).catch(() => undefined)
+      if (claimId && !dispatched) await resolveConversationExecutionAfterFailure(claimId, err)
       const msg = err instanceof Error ? err.message : String(err)
       return { ok: false, error: `Send failed: ${msg}` }
     }
