@@ -22,6 +22,7 @@ const FP_KARIN = fingerprint(['policy', '2026-11-06', 'deposit invoice'])
 let ATTENTION: Row[] = []
 let OPERATOR_MESSAGES: Row[] = []
 let OUTBOUND_QUEUE: Row[] = []
+let UNIFIED_MESSAGES: Row[] = []
 let ATTENTION_INSERTS: Row[] = []
 let ATTENTION_UPDATES: Row[] = []
 let RESOLVE_CALLS: Row[] = []
@@ -109,6 +110,7 @@ function makeClient() {
       }
       if (table === 'caye_operator_messages') return passthroughChain(() => OPERATOR_MESSAGES)
       if (table === 'caye_outbound_queue') return passthroughChain(() => OUTBOUND_QUEUE)
+      if (table === 'unified_messages') return passthroughChain(() => UNIFIED_MESSAGES)
       throw new Error(`unexpected table in test: ${table}`)
     },
   }
@@ -138,6 +140,7 @@ beforeEach(() => {
   ATTENTION = []
   OPERATOR_MESSAGES = []
   OUTBOUND_QUEUE = []
+  UNIFIED_MESSAGES = []
   ATTENTION_INSERTS = []
   ATTENTION_UPDATES = []
   RESOLVE_CALLS = []
@@ -368,5 +371,132 @@ describe('workspace scoping', () => {
     await decideOperatorNotification({ ...karinInput, workspaceId: 'ws-other' })
     expect(ATTENTION_INSERTS).toHaveLength(1)
     expect(ATTENTION_INSERTS[0].workspace_id).toBe('ws-other')
+  })
+})
+
+// The Autumn McNeill scenario (2026-08-26 Bimini incident): Mrs. Max pulled
+// Autumn's thread, drafted/edited/sent the reply herself, and told Caye
+// directly she'd handled it. booking_created still pinged her ~9.5h later.
+// operatorParticipationCheck is the fix — see lib/whatsapp/triggers.ts and
+// lib/whatsapp/operator-participation.ts.
+describe('SUPPRESS_OPERATOR_AWARE — structural operator-participation evidence (Autumn McNeill, 2026-08-26)', () => {
+  const autumnInput = {
+    workspaceId: 'ws-bimini',
+    subjectType: 'booking',
+    subjectId: 'booking-autumn',
+    conversationId: 'conv-autumn',
+    title: 'Autumn McNeill — New pending booking',
+    priority: 'awareness' as const,
+    fingerprintParts: ['pending', null, null, null, '2026-09-05', '09:00:00', 2],
+    blockedOnOperator: false,
+    resolvableAutonomously: false,
+    operatorParticipationCheck: { conversationId: 'conv-autumn', stateSinceISO: '2026-08-26T01:45:06Z' },
+  }
+  const FP_AUTUMN = fingerprint(autumnInput.fingerprintParts)
+
+  function operatorApprovedMessage(sentAt: string) {
+    return { id: 'm-1', conversation_id: 'conv-autumn', metadata: { operator_approved: true }, sent_at: sentAt }
+  }
+
+  it('a brand-new booking never sends when the operator already handled that exact conversation', async () => {
+    ATTENTION = []
+    UNIFIED_MESSAGES = [operatorApprovedMessage('2026-08-26T01:39:06Z')] // before the ping ever fires
+    const decision = await decideOperatorNotification(autumnInput)
+    expect(decision.outcome).toBe('SUPPRESS_OPERATOR_AWARE')
+  })
+
+  it('stamps operator_aware_fingerprint to the current state so the awareness is auditable and re-comparable later', async () => {
+    ATTENTION = [
+      attentionRow({
+        subject_type: 'booking',
+        subject_id: 'booking-autumn',
+        conversation_id: 'conv-autumn',
+        state_fingerprint: FP_AUTUMN,
+        notify_count: 0,
+        notified_fingerprint: null,
+        operator_aware_fingerprint: null,
+        operator_aware_at: null,
+      }),
+    ]
+    UNIFIED_MESSAGES = [operatorApprovedMessage('2026-08-26T01:39:06Z')]
+    const decision = await decideOperatorNotification(autumnInput)
+    expect(decision.outcome).toBe('SUPPRESS_OPERATOR_AWARE')
+    const stamp = ATTENTION_UPDATES.find((u) => u.operator_aware_fingerprint)
+    expect(stamp?.operator_aware_fingerprint).toBe(FP_AUTUMN)
+  })
+
+  it('D — a real material change after awareness still notifies (payment actually confirming, no fresh participation)', async () => {
+    ATTENTION = [
+      attentionRow({
+        subject_type: 'booking',
+        subject_id: 'booking-autumn',
+        conversation_id: 'conv-autumn',
+        state_fingerprint: FP_AUTUMN,
+        notify_count: 0,
+        notified_fingerprint: null,
+        operator_aware_fingerprint: FP_AUTUMN, // was current as of the pending state
+        operator_aware_at: '2026-08-26T01:39:06Z',
+      }),
+    ]
+    UNIFIED_MESSAGES = [] // no NEW participation around the payment-confirmed state
+    const decision = await decideOperatorNotification({
+      ...autumnInput,
+      fingerprintParts: ['confirmed', '2026-08-27T10:00:00Z', null, null, '2026-09-05', '09:00:00', 2],
+      operatorParticipationCheck: {
+        conversationId: 'conv-autumn',
+        stateSinceISO: '2026-08-27T10:00:00Z', // payment_confirmed_at
+      },
+    })
+    expect(decision.outcome).toBe('SEND_NEW')
+    expect(decision.isMaterialChange).toBe(false) // never notified before — this is the first real send, not a "changed" re-notify
+  })
+
+  it('E — a new blocker requiring operator authority still surfaces, even though the operator was aware of the OLD state', async () => {
+    // Stale participation more than an hour before the NEW state's own
+    // timestamp doesn't count — hasOperatorParticipatedInConversation's
+    // lookback is anchored to THIS state, not "ever in this conversation".
+    ATTENTION = [
+      attentionRow({
+        subject_type: 'booking',
+        subject_id: 'booking-autumn',
+        conversation_id: 'conv-autumn',
+        state_fingerprint: FP_AUTUMN,
+        notify_count: 0,
+        notified_fingerprint: null,
+        operator_aware_fingerprint: FP_AUTUMN,
+        operator_aware_at: '2026-08-26T01:39:06Z',
+      }),
+    ]
+    UNIFIED_MESSAGES = [] // the blocker arose long after that old participation — nothing fresh
+    const decision = await decideOperatorNotification({
+      ...autumnInput,
+      priority: 'decision',
+      blockedOnOperator: true,
+      fingerprintParts: ['pending', null, null, null, '2026-09-05', '09:00:00', 2, 'payment method declined twice'],
+      operatorParticipationCheck: { conversationId: 'conv-autumn', stateSinceISO: '2026-09-01T00:00:00Z' },
+    })
+    expect(decision.outcome).toBe('SEND_NEW')
+  })
+
+  it('never applies to critical priority, however strong the participation evidence', async () => {
+    ATTENTION = []
+    UNIFIED_MESSAGES = [operatorApprovedMessage('2026-08-26T01:39:06Z')]
+    const decision = await decideOperatorNotification({ ...autumnInput, priority: 'critical' })
+    expect(decision.outcome).toBe('SEND_CRITICAL_ESCALATION')
+  })
+
+  it('falls through to a real send when no participation evidence is found', async () => {
+    ATTENTION = []
+    UNIFIED_MESSAGES = []
+    const decision = await decideOperatorNotification(autumnInput)
+    expect(decision.outcome).toBe('SEND_NEW')
+  })
+
+  it('is opt-in — a caller that never passes operatorParticipationCheck keeps sending exactly as before', async () => {
+    ATTENTION = []
+    UNIFIED_MESSAGES = [operatorApprovedMessage('2026-08-26T01:39:06Z')]
+    const { operatorParticipationCheck: _drop, ...withoutCheck } = autumnInput
+    const decision = await decideOperatorNotification(withoutCheck)
+    expect(decision.outcome).toBe('SEND_NEW')
   })
 })

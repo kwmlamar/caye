@@ -3,9 +3,11 @@ import { createServiceClient } from '@/lib/supabase-server'
 import {
   observeAttentionItem,
   markAttentionNotified,
+  recordOperatorAwareness,
   setAttentionStatus,
   type AttentionPriority,
 } from '@/lib/owner-attention'
+import { hasOperatorParticipatedInConversation } from './operator-participation'
 
 /**
  * Shared gate every autonomous producer (escalations, opportunity-scan,
@@ -29,6 +31,10 @@ export type NotificationOutcome =
   | 'RESOLVED_NO_NOTIFICATION'
   | 'SUPPRESS_NO_CHANGE'
   | 'SUPPRESS_RECENTLY_NOTIFIED'
+  /** The operator already demonstrated awareness of this EXACT current
+   *  state themselves (structural evidence, not inference) — Caye never
+   *  said anything and doesn't need to. See operatorParticipationCheck. */
+  | 'SUPPRESS_OPERATOR_AWARE'
 
 export interface NotificationDecision {
   outcome: NotificationOutcome
@@ -63,6 +69,22 @@ export interface DecideNotificationInput {
    *  low-priority cooldown below — only proactive, self-initiated findings
    *  (scans, insights) are subject to it. Default false. */
   bypassCooldown?: boolean
+  /** Opt-in structural awareness check: does live evidence show the
+   *  operator already personally participated in this exact conversation
+   *  around the time the reported state came to be? When provided and a
+   *  match is found, the gate suppresses as SUPPRESS_OPERATOR_AWARE instead
+   *  of sending — Caye already has proof the operator knows, independent of
+   *  whether she ever told them.
+   *
+   *  Opt-in, not automatic for every caller with a conversationId — this is
+   *  a real behavior change (a subject can now go straight from "never
+   *  observed" to "suppressed" with zero notifications), and existing
+   *  callers (escalations, opportunity-scan) keep their current behavior
+   *  unchanged unless they explicitly ask for this. Never applied to
+   *  'critical' priority — a customer-blocking item stays conservative even
+   *  against strong participation evidence (design constraint: false
+   *  suppression is worse than one redundant critical ping). */
+  operatorParticipationCheck?: { conversationId: string; stateSinceISO: string }
 }
 
 // Reminder cadence — a human pace, not a monitoring system's. The goal is
@@ -135,6 +157,29 @@ export async function decideOperatorNotification(
 
   if (item.status === 'resolved' || item.status === 'dismissed') {
     return { outcome: 'RESOLVED_NO_NOTIFICATION', attentionItemId: item.id, isMaterialChange: false }
+  }
+
+  // Structural operator-awareness check — evaluated fresh every call (not
+  // cached), so a re-check after a material change correctly asks "did the
+  // operator participate around THIS state" rather than trusting a stale
+  // answer. Skipped for 'critical': a customer-blocking item stays on the
+  // conservative path even against strong participation evidence.
+  if (input.operatorParticipationCheck && input.priority !== 'critical') {
+    const participated = await hasOperatorParticipatedInConversation(
+      input.operatorParticipationCheck.conversationId,
+      input.operatorParticipationCheck.stateSinceISO
+    )
+    if (participated) {
+      if (item.operatorAwareFingerprint !== item.stateFingerprint) {
+        await recordOperatorAwareness({
+          workspaceId: input.workspaceId,
+          subjectType: input.subjectType,
+          subjectId: input.subjectId,
+          evidence: 'Operator sent a customer-facing reply in this conversation themselves.',
+        })
+      }
+      return { outcome: 'SUPPRESS_OPERATOR_AWARE', attentionItemId: item.id, isMaterialChange: false }
+    }
   }
 
   const changed = item.stateFingerprint !== item.notifiedFingerprint

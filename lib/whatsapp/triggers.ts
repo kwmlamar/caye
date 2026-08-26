@@ -4,6 +4,7 @@ import { enqueueOutbound } from './outbound'
 import { classifyHoldUrgency } from './urgency'
 import { inQuietHours, loadScheduleConfig, nextDigestTime } from './schedule'
 import { markAttentionPending, SUBJECT_CONVERSATION } from '@/lib/owner-attention'
+import { decideOperatorNotification } from './operator-notification-gate'
 
 /**
  * Trigger sites in the five webhook handlers call enqueueHoldPing() right
@@ -131,6 +132,19 @@ export interface BookingCreatedInput {
  * pass them through — every call site already has bookingId from
  * decision.bookingId and nothing else, so resolving details here keeps
  * every call site a one-liner.
+ *
+ * WHY THIS ROUTES THROUGH decideOperatorNotification (2026-08-26, Autumn
+ * McNeill incident). This used to enqueue unconditionally, with no
+ * awareness of the caye_owner_attention ledger at all — it was the one
+ * proactive producer in the codebase that never asked "does the operator
+ * already know this." Real production trace: Mrs. Max personally drafted,
+ * edited, and sent Autumn's reply through Caye, then told Caye directly she
+ * had. A "Just booked — Autumn McNeill..." ping still fired ~9.5h later
+ * (quiet-hours deferred it), because nothing here had ever checked. Now it
+ * observes the same ledger every other producer uses and, when a
+ * conversation is linked, asks the shared operatorParticipationCheck
+ * whether the operator was already structurally proven to be in that exact
+ * conversation — see lib/whatsapp/operator-participation.ts.
  */
 export async function enqueueBookingCreated(input: BookingCreatedInput): Promise<void> {
   const enabled = await operatorPingsEnabled(input.workspaceId)
@@ -139,7 +153,9 @@ export async function enqueueBookingCreated(input: BookingCreatedInput): Promise
   const supabase = createServiceClient()
   const { data: booking } = await supabase
     .from('bookings')
-    .select('customer_name, booking_date, booking_time, number_of_people, service:booking_services(name)')
+    .select(
+      'conversation_id, customer_name, booking_date, booking_time, number_of_people, status, payment_confirmed_at, payment_link_sent_at, cancelled_at, created_at, updated_at, service:booking_services(name)'
+    )
     .eq('id', input.bookingId)
     .maybeSingle()
 
@@ -148,6 +164,7 @@ export async function enqueueBookingCreated(input: BookingCreatedInput): Promise
   const serviceRaw = booking.service as { name: string | null } | { name: string | null }[] | null
   const serviceName = (Array.isArray(serviceRaw) ? serviceRaw[0]?.name : serviceRaw?.name) ?? null
   const guest = booking.customer_name ?? 'A guest'
+  const stateLabel = bookingStateLabel(booking.status, booking.payment_confirmed_at)
   const summary = formatBookingSummary({
     serviceName,
     bookingDate: booking.booking_date,
@@ -155,18 +172,90 @@ export async function enqueueBookingCreated(input: BookingCreatedInput): Promise
     partySize: booking.number_of_people,
   })
 
+  // bookings.conversation_id is the authoritative link — prefer it over the
+  // caller-supplied conversationId (every call site resolves its own
+  // conversation slightly differently; the booking row's own reference is
+  // the one thing every path agrees on).
+  const conversationId = booking.conversation_id ?? input.conversationId ?? null
+
+  const decision = await decideOperatorNotification({
+    workspaceId: input.workspaceId,
+    subjectType: 'booking',
+    subjectId: input.bookingId,
+    conversationId,
+    title: `${guest} — ${stateLabel}`,
+    priority: 'awareness',
+    // The fields that actually define what's being reported — a status
+    // flip or a payment event re-earns a ping; the row's own churn
+    // (updated_at bumping for unrelated reasons) does not.
+    fingerprintParts: [
+      booking.status,
+      booking.payment_confirmed_at,
+      booking.payment_link_sent_at,
+      booking.cancelled_at,
+      booking.booking_date,
+      booking.booking_time,
+      booking.number_of_people,
+    ],
+    blockedOnOperator: false,
+    resolvableAutonomously: false,
+    ...(conversationId
+      ? {
+          operatorParticipationCheck: {
+            conversationId,
+            stateSinceISO: booking.updated_at ?? booking.created_at,
+          },
+        }
+      : {}),
+  })
+
+  if (decision.outcome !== 'SEND_NEW' && decision.outcome !== 'SEND_REMINDER' && decision.outcome !== 'SEND_CRITICAL_ESCALATION') {
+    // SUPPRESS_OPERATOR_AWARE (operator already handled this conversation
+    // directly), SUPPRESS_NO_CHANGE / SUPPRESS_RECENTLY_NOTIFIED (already
+    // told, nothing new), or RESOLVED_NO_NOTIFICATION — none of these
+    // warrant a ping. The item was still observed above, so a genuinely
+    // later material change (a real status/payment transition) re-earns a
+    // real notification on its own next time this fires.
+    return
+  }
+
   const cfg = await loadScheduleConfig(input.workspaceId)
   const now = new Date()
   const scheduledFor = inQuietHours(now, cfg) ? nextDigestTime(now, cfg) : now
 
-  await enqueueOutbound({
+  const queued = await enqueueOutbound({
     workspaceId: input.workspaceId,
     kind: 'booking_created',
-    conversationId: input.conversationId ?? null,
-    payload: { guest, bookingId: input.bookingId, summary },
+    conversationId,
+    payload: { guest, bookingId: input.bookingId, summary, stateLabel },
     scheduledFor,
     idempotencyKey: `booking-${input.bookingId}`,
   })
+
+  if (queued) {
+    await markAttentionPending({
+      workspaceId: input.workspaceId,
+      subjectType: 'booking',
+      subjectId: input.bookingId,
+      queueId: queued.id,
+    })
+  }
+}
+
+/**
+ * Honest, ground-truth booking state language — never "Just booked" for a
+ * booking nobody has paid for. Mirrors the real booking_status Postgres
+ * enum (pending/confirmed/cancelled — see `enum_range(null::booking_status)`)
+ * plus payment_confirmed_at, which the enum alone doesn't capture. A native
+ * enum type, not a CHECK constraint, so lib/db/check-constraints.ts's guard
+ * doesn't cover it — if the enum ever grows a value, this needs a manual
+ * update too.
+ */
+function bookingStateLabel(status: string, paymentConfirmedAt: string | null): string {
+  if (status === 'cancelled') return 'Booking cancelled'
+  if (paymentConfirmedAt) return 'Booking confirmed & paid'
+  if (status === 'confirmed') return 'Booking confirmed'
+  return 'New pending booking'
 }
 
 function formatBookingSummary(args: {

@@ -172,6 +172,51 @@ describe('attention delta — news vs repetition', () => {
   })
 })
 
+describe('attention delta — operator-demonstrated awareness (2026-08-26 Autumn McNeill incident)', () => {
+  it('buckets a never-notified item as alreadyKnownToOperator, not unreported, when the operator showed they already know', async () => {
+    TABLE = [
+      row({
+        operator_aware_fingerprint: 'fp-1',
+        operator_aware_at: '2026-08-26T01:39:06Z',
+        operator_aware_summary: 'Operator sent a customer-facing reply in this conversation themselves.',
+      }),
+    ]
+    const delta = await loadAttentionDelta({ workspaceId: 'ws' })
+    expect(delta.unreported).toHaveLength(0)
+    expect(delta.alreadyKnownToOperator.map((i: AttentionItem) => i.subjectId)).toEqual(['esc-1'])
+    // Still not clear — the item is open, just not worth interrupting about.
+    expect(delta.allClear).toBe(false)
+  })
+
+  it('falls back to unreported when the operator-aware fingerprint is stale (state moved on since)', async () => {
+    TABLE = [
+      row({
+        state_fingerprint: 'fp-2', // moved since the operator last showed awareness
+        operator_aware_fingerprint: 'fp-1',
+        operator_aware_at: '2026-08-26T01:39:06Z',
+      }),
+    ]
+    const delta = await loadAttentionDelta({ workspaceId: 'ws' })
+    expect(delta.alreadyKnownToOperator).toHaveLength(0)
+    expect(delta.unreported.map((i: AttentionItem) => i.subjectId)).toEqual(['esc-1'])
+  })
+
+  it('an already-notified item is unaffected by operator awareness — notified/changed bucketing still wins', async () => {
+    TABLE = [
+      row({
+        last_notified_at: '2026-08-12T09:00:00Z',
+        notify_count: 1,
+        notified_fingerprint: 'fp-1',
+        operator_aware_fingerprint: 'fp-1',
+        operator_aware_at: '2026-08-26T01:39:06Z',
+      }),
+    ]
+    const delta = await loadAttentionDelta({ workspaceId: 'ws' })
+    expect(delta.alreadyKnownToOperator).toHaveLength(0)
+    expect(delta.unchanged.map((i: AttentionItem) => i.subjectId)).toEqual(['esc-1'])
+  })
+})
+
 describe('renderAttentionContext — what the composer is told', () => {
   it('states plainly that the owner is clear when nothing is open', async () => {
     TABLE = []
@@ -212,6 +257,23 @@ describe('renderAttentionContext — what the composer is told', () => {
     const text = renderAttentionContext(await loadAttentionDelta({ workspaceId: 'ws' }))
     expect(text).toMatch(/RESOLVED since last time/)
     expect(text).toMatch(/never present as outstanding/)
+  })
+
+  it('instructs the composer to say NOTHING about an operator-already-known item — not even "on your radar"', async () => {
+    // The second Autumn McNeill message: "Sonja's booking confirmed and
+    // Autumn's new pending are already on your radar; the resolved
+    // escalation needs nothing further." Announcing that nothing needs
+    // attention IS itself the interruption this instruction rules out.
+    TABLE = [
+      row({
+        operator_aware_fingerprint: 'fp-1',
+        operator_aware_at: '2026-08-26T01:39:06Z',
+      }),
+    ]
+    const text = renderAttentionContext(await loadAttentionDelta({ workspaceId: 'ws' }))
+    expect(text).toMatch(/ALREADY KNOWN TO THE OPERATOR/)
+    expect(text).toMatch(/Do NOT name these/)
+    expect(text).toMatch(/mentioning a non-event IS the interruption/)
   })
 })
 

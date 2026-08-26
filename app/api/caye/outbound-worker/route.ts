@@ -36,6 +36,7 @@ import { resyncTemplatesAfterParamMismatch } from '@/lib/whatsapp/template-sync'
 import { detectInternalLeak } from '@/lib/operator-text-guard'
 import { drainPendingOperationsSafely } from '@/lib/pending-operations-worker'
 import { markAttentionNotified, SUBJECT_CONVERSATION } from '@/lib/owner-attention'
+import { hasOperatorParticipatedInConversation } from '@/lib/whatsapp/operator-participation'
 
 // Kinds that represent Caye proactively messaging an operator about
 // something (as opposed to system plumbing like otp/welcome/ack) — these
@@ -508,6 +509,40 @@ async function processRow(row: QueueRow): Promise<RowOutcome> {
     }
   }
 
+  // Re-check booking_created rows at actual dispatch time, not just enqueue
+  // time (2026-08-26, Autumn McNeill incident). enqueueBookingCreated
+  // already checks operator awareness once, but quiet-hours deferral can
+  // put hours between that decision and this dispatch — a stale-worker
+  // race the enqueue-time check alone can't see. Same structural evidence,
+  // asked again right before the send actually goes out.
+  if (row.kind === 'booking_created') {
+    const bookingId = typeof row.payload.bookingId === 'string' ? row.payload.bookingId : null
+    if (bookingId) {
+      const { data: booking } = await supabase
+        .from('bookings')
+        .select('status, cancelled_at, conversation_id, created_at, updated_at')
+        .eq('id', bookingId)
+        .maybeSingle()
+      if (!booking || booking.status === 'cancelled') {
+        return cancel(row, 'booking cancelled before send')
+      }
+      const conversationId = booking.conversation_id ?? row.conversation_id
+      if (conversationId) {
+        // Same anchor enqueueBookingCreated used (booking.updated_at,
+        // falling back to created_at) — re-asked fresh at dispatch time
+        // rather than reusing the enqueue-time answer, since quiet-hours
+        // deferral can put hours between the two.
+        const participated = await hasOperatorParticipatedInConversation(
+          conversationId,
+          booking.updated_at ?? booking.created_at
+        )
+        if (participated) {
+          return cancel(row, 'operator handled directly')
+        }
+      }
+    }
+  }
+
   // Build & send.
   const { result: sendOutcome, phone } = await dispatch(row, config)
   return handleResult(row, config, sendOutcome, phone)
@@ -641,7 +676,13 @@ function fallbackPingLogBody(kind: string, payload: Record<string, unknown>): st
       return `Still sitting on this one — ${who} has been waiting a while now: ${summary}. Say the word and I'll send a holding reply, or let me know you've got it.`
     }
     case 'booking_created':
-      return `Just booked — ${str('guest', 'A guest')}, ${str('summary', 'details in the dashboard')}.`
+      // stateLabel is grounded in the booking's real status/payment fields
+      // (lib/whatsapp/triggers.ts's bookingStateLabel) — never "Just
+      // booked" for a booking nobody has paid for yet. A pending booking is
+      // a lead, not a completed sale; a genuinely confirmed/paid one says
+      // so honestly. 'New pending booking' is the fallback for queue rows
+      // enqueued before this field existed.
+      return `${str('stateLabel', 'New pending booking')} — ${str('guest', 'A guest')}, ${str('summary', 'details in the dashboard')}.`
     case 'morning_digest': {
       // Same as 'escalation' above — the narrative body is mirrored by
       // operatorPingLogBody, guarded. This branch is only the count-based
@@ -987,10 +1028,13 @@ async function templateForKind(
         placeholders: [str('service', 'a connected service'), str('reconnectUrl', '')],
       }
     case 'booking_created':
-      // No dedicated template in v1 — reuse urgent_hold's two-placeholder shape.
+      // No dedicated template in v1 — reuse urgent_hold's two-placeholder
+      // shape. stateLabel carries the real status (see fallbackPingLogBody's
+      // matching comment) — the default here is 'new booking', not 'just
+      // booked', for the same reason.
       return {
         name: 'caye_urgent_hold',
-        placeholders: [str('guest', 'A guest'), str('summary', 'just booked')],
+        placeholders: [str('guest', 'A guest'), `${str('stateLabel', 'New booking')} — ${str('summary', 'details in the dashboard')}`],
       }
     case 'escalation': {
       // Reuse the urgent_hold template — only reached when the window's
