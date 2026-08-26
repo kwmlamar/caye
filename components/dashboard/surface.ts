@@ -111,6 +111,19 @@ export const attentionSurface: CSSProperties = {
  *  threads) — a tonal hint, not a boxed table. */
 export const rowDivider = '1px solid rgba(255,255,255,0.045)'
 
+/** A near-invisible container boundary — hairline outline, almost no
+ *  fill — for a list/table that should read like Claude or ChatGPT's own
+ *  minimal surfaces (content grouped by whitespace + row dividers) rather
+ *  than a filled "card" floating on the page. Distinct from glass()/
+ *  popoverSurface() above, which are for panes that need to read as a
+ *  genuine physical layer (a popover, the composer); this is for content
+ *  that's still part of the page, just visually grouped — Operations
+ *  tables/lists (2026-08-26) moved off a flat CARD_BG fill onto this. */
+export const quietPanel: CSSProperties = {
+  background: 'rgba(255,255,255,0.015)',
+  boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.06)',
+}
+
 /** Baseline outline reset + focus-visible restoration. Applied once at
  *  the root; components don't need their own focus handling. */
 export const focusResetCss = `

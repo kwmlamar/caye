@@ -4,9 +4,9 @@ import { useState, useEffect } from 'react'
 import { getSession } from '@/lib/supabase'
 import { CayeLoadingPulse } from '@/components/dashboard/founder-home/CayeLoadingPulse'
 import { Pill } from '@/components/dashboard/founder-home/console-ui'
+import { attentionSurface, GOLD, TEXT, TEXT_MUTED, quietPanel } from '../surface'
 import type { CustomerStatus } from '@/types/database'
 
-const CARD_BG = '#1a1a1e'
 const LABEL_COLOR = '#71717a'
 
 const STATUS_LABEL: Record<CustomerStatus, string> = {
@@ -223,18 +223,25 @@ export default function GlobalPerformance() {
         Operations / Performance
       </div>
 
-      <div style={{
-        flexShrink: 0, borderRadius: 12, padding: '12px 14px',
-        background: 'rgba(255,228,175,0.035)', boxShadow: 'inset 0 0 0 1px rgba(255,228,175,0.07)',
-      }}>
-        <div style={{ fontSize: 12.5, fontWeight: 600, color: '#FFE4AF', marginBottom: 3 }}>
-          "Handled by Caye" isn&apos;t computable yet
+      {/* Same warm-attention recipe as AttentionCard (dot + mono eyebrow,
+          then a real headline, then body) — reused rather than a one-off
+          gold box, so this reads as "the same kind of thing Caye already
+          flags," not a new visual language for a footnote. */}
+      <div style={{ ...attentionSurface, flexShrink: 0, borderRadius: 14, padding: '14px 16px', maxWidth: 620 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 8 }}>
+          <span aria-hidden style={{ width: 6, height: 6, borderRadius: '50%', background: GOLD, boxShadow: `0 0 6px ${GOLD}88`, flexShrink: 0 }} />
+          <span style={{ fontSize: 10.5, fontWeight: 700, fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', textTransform: 'uppercase', color: GOLD }}>
+            Not yet computable
+          </span>
         </div>
-        <p style={{ fontSize: 11.5, color: LABEL_COLOR, lineHeight: 1.5, margin: 0, maxWidth: 560 }}>
-          The product number this page should lead with is an autonomous resolution rate — e.g. "41 of 45 resolved without your help."
-          That needs a per-conversation resolved-without-escalation flag and a real "situation" denominator, neither of which is persisted
-          today (only escalations — when Caye asked for help — are tracked). Shown below instead: real conversion and call-volume data,
-          which don&apos;t require that schema change.
+        <p style={{ fontSize: 13.5, fontWeight: 600, color: TEXT, margin: '0 0 6px', lineHeight: 1.4 }}>
+          &quot;Handled by Caye&quot; isn&apos;t computable yet
+        </p>
+        <p style={{ fontSize: 12.5, color: TEXT_MUTED, lineHeight: 1.65, margin: 0 }}>
+          The product number this page should lead with is an autonomous resolution rate — e.g. &quot;41 of 45 resolved without your help.&quot;
+          That needs a per-conversation resolved-without-escalation flag and a real &quot;situation&quot; denominator, neither of which is
+          persisted today (only escalations — when Caye asked for help — are tracked). Shown below instead: real conversion and
+          call-volume data, which don&apos;t require that schema change.
         </p>
       </div>
 
@@ -249,7 +256,7 @@ export default function GlobalPerformance() {
         </span>
       </div>
 
-      <div style={{ flex: 1, minHeight: 0, background: CARD_BG, borderRadius: 16, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ flex: 1, minHeight: 0, borderRadius: 14, overflow: 'hidden', display: 'flex', flexDirection: 'column', ...quietPanel }}>
         <div style={{
           display: 'grid', gridTemplateColumns: '20px 1fr 110px 130px 110px',
           padding: '10px 16px', background: 'rgba(255,255,255,0.025)',

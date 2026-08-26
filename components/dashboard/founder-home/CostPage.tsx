@@ -4,9 +4,9 @@ import { useState, useEffect } from 'react'
 import { getSession } from '@/lib/supabase'
 import { CayeLoadingPulse } from '@/components/dashboard/founder-home/CayeLoadingPulse'
 import { Pill } from '@/components/dashboard/founder-home/console-ui'
+import { quietPanel } from '@/components/dashboard/surface'
 import type { CustomerStatus } from '@/types/database'
 
-const CARD_BG = '#1a1a1e'
 const LABEL_COLOR = '#71717a'
 
 const STATUS_LABEL: Record<CustomerStatus, string> = {
@@ -108,7 +108,7 @@ export default function CostPage() {
         Meta/WhatsApp conversation-based cost isn&apos;t tracked yet — margin above reflects LLM cost only. Price/mo is a live Stripe lookup where a customer ID is on file (dot = ●), otherwise a manually-typed fallback (dot = ○) — see lib/workspace-pricing.ts.
       </div>
 
-      <div style={{ flex: 1, minHeight: 0, background: CARD_BG, borderRadius: 16, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ flex: 1, minHeight: 0, borderRadius: 14, overflow: 'hidden', display: 'flex', flexDirection: 'column', ...quietPanel }}>
         <div style={{
           display: 'grid', gridTemplateColumns: '1fr 100px 110px 110px 100px 100px 100px',
           padding: '10px 16px', background: 'rgba(255,255,255,0.025)',

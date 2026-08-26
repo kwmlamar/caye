@@ -6,7 +6,7 @@ import { startConnectFlow } from '@/lib/channels/connect-link-client'
 import type { ConnectChannel } from '@/lib/channels/channel-types'
 import { useWorkspaceChannels, type ChannelAccount } from '@/lib/useWorkspaceChannels'
 import { CayeLoadingPulse } from '@/components/dashboard/founder-home/CayeLoadingPulse'
-import { Pill, GhostButton } from '@/components/dashboard/founder-home/console-ui'
+import { GhostButton } from '@/components/dashboard/founder-home/console-ui'
 
 const LABEL_COLOR = '#71717a'
 
@@ -35,6 +35,22 @@ const REDIRECT_CONNECT: Record<string, ConnectChannel> = {
   instagram: 'instagram',
 }
 
+// A quiet dot instead of a "CONNECTED" pill — the same "green dot = alive"
+// language CommandSidebar already uses for an operator's live status, so a
+// connected channel and a live team conversation read as the same kind of
+// fact. No dot at all for a channel with no per-row action (WhatsApp/SMS,
+// "managed via onboarding") — a status indicator for a state nothing here
+// can change isn't information, it's decoration.
+function StatusDot({ tone }: { tone: 'connected' | 'attention' | 'idle' }) {
+  const color = tone === 'connected' ? '#34d399' : tone === 'attention' ? '#FFE4AF' : '#52525b'
+  return (
+    <span aria-hidden style={{
+      width: 6, height: 6, borderRadius: '50%', flexShrink: 0, background: color,
+      boxShadow: tone === 'idle' ? 'none' : `0 0 6px ${color}99`,
+    }} />
+  )
+}
+
 function ChannelRow({
   type, account, workspaceId, onDisconnected,
 }: {
@@ -43,6 +59,8 @@ function ChannelRow({
   workspaceId: string
   onDisconnected: () => void
 }) {
+  const [rowHover, setRowHover] = useState(false)
+  const [actionHover, setActionHover] = useState(false)
   const [busy, setBusy] = useState(false)
   const [connectErr, setConnectErr] = useState<string | null>(null)
   const meta = CHANNEL_META[type]
@@ -68,8 +86,29 @@ function ChannelRow({
     }
   }
 
+  const subtext = connectErr ?? handle ?? (connectChannel ? 'Not connected' : 'Managed via onboarding')
+  const dotTone: 'connected' | 'attention' | 'idle' | null =
+    !connectChannel ? null : needsReauth ? 'attention' : connected ? 'connected' : 'idle'
+
+  // Disconnecting is a rare, low-urgency action on an already-healthy
+  // channel — it only needs to exist once you're actually looking at this
+  // row, not as permanent chrome sitting next to a status that already
+  // says "this is fine." Connect/Reconnect are the opposite: an unresolved
+  // or broken channel is the thing this whole card exists to surface, so
+  // that action stays visible without requiring a hover to discover it.
+  const showQuietDisconnect = connectChannel && connected && !needsReauth
+
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '11px 2px', boxShadow: 'inset 0 -1px 0 rgba(255,255,255,0.045)' }}>
+    <div
+      onMouseEnter={() => setRowHover(true)}
+      onMouseLeave={() => setRowHover(false)}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 10, padding: '11px 8px', margin: '0 -8px',
+        borderRadius: 9, boxShadow: 'inset 0 -1px 0 rgba(255,255,255,0.045)',
+        background: rowHover ? 'rgba(255,255,255,0.025)' : 'transparent',
+        transition: 'background 0.15s ease',
+      }}
+    >
       <span style={{
         width: 26, height: 26, borderRadius: 8, flexShrink: 0,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -79,23 +118,27 @@ function ChannelRow({
       </span>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 13, fontWeight: 600, color: '#f4f4f5' }}>{meta.name}</div>
-        <div style={{ fontSize: 11, color: LABEL_COLOR, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-          {connectErr ?? handle ?? (connectChannel ? 'Not connected' : 'Managed via onboarding')}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 1 }}>
+          {dotTone && <StatusDot tone={dotTone} />}
+          <span style={{
+            fontSize: 11, color: dotTone === 'attention' ? '#FFE4AF' : LABEL_COLOR,
+            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+          }}>
+            {needsReauth ? `${subtext} — needs reauth` : subtext}
+          </span>
         </div>
       </div>
-      <Pill
-        color={needsReauth ? '#FFE4AF' : connected ? '#34d399' : '#52525b'}
-        label={needsReauth ? 'Reconnect' : connected ? 'Connected' : 'Not connected'}
-      />
       {connectChannel && (
-        connected && !needsReauth ? (
-          <GhostButton label="Disconnect" color="#fca5a5" onClick={handleDisconnect} disabled={busy} busy={busy} />
+        showQuietDisconnect ? (
+          <span style={{ opacity: rowHover || busy ? 1 : 0, transition: 'opacity 0.15s ease' }}>
+            <GhostButton label="Disconnect" color="#fca5a5" onClick={handleDisconnect} disabled={busy} busy={busy} />
+          </span>
         ) : (
-          <GhostButton
-            label={needsReauth ? 'Reconnect' : 'Connect'}
-            color="#4EBECE"
+          <button
+            type="button"
             disabled={busy}
-            busy={busy}
+            onMouseEnter={() => setActionHover(true)}
+            onMouseLeave={() => setActionHover(false)}
             onClick={async () => {
               setBusy(true)
               setConnectErr(null)
@@ -107,7 +150,21 @@ function ChannelRow({
                 setConnectErr(err)
               }
             }}
-          />
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 4, border: 'none', background: 'transparent',
+              cursor: busy ? 'default' : 'pointer', padding: '4px 2px',
+              fontSize: 12, fontWeight: 600, color: needsReauth ? '#FFE4AF' : '#4EBECE',
+              opacity: busy ? 0.5 : 1,
+            }}
+          >
+            {busy ? '···' : needsReauth ? 'Reconnect' : 'Connect'}
+            {!busy && (
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"
+                style={{ transform: actionHover ? 'translateX(2px)' : 'translateX(0)', transition: 'transform 0.15s ease' }}>
+                <path d="M5 12h14M13 6l6 6-6 6" />
+              </svg>
+            )}
+          </button>
         )
       )}
     </div>
