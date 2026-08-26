@@ -14,12 +14,13 @@ import InboxPage from './InboxPage'
 import PeoplePage from './PeoplePage'
 import WorkPage from './WorkPage'
 import MemoryPage from './MemoryPage'
+import DirectionPage from './DirectionPage'
 import SettingsPage from './SettingsPage'
 import SnapshotCard from './cards/SnapshotCard'
 import CommandSidebar, { type ActiveView, type ThreadListItem, type LiveOperator } from './CommandSidebar'
 import { ENV_BG, GRADIENT, focusResetCss } from '../surface'
 
-const PAGE_IDS: FounderRailId[] = ['inbox', 'people', 'work', 'memory', 'settings']
+const PAGE_IDS: FounderRailId[] = ['inbox', 'people', 'work', 'memory', 'direction', 'settings']
 
 function storageKey(workspaceId: string): string {
   return `caye-command-selected-thread:${workspaceId}`
@@ -312,6 +313,8 @@ export default function FounderHome() {
               <WorkPage workspaceId={workspaceId} onSelectConversation={goToConversation} />
             ) : activeView.id === 'memory' ? (
               <MemoryPage workspaceId={workspaceId} />
+            ) : activeView.id === 'direction' ? (
+              <DirectionPage workspaceId={workspaceId} />
             ) : (
               <SettingsPage workspaceId={workspaceId} />
             )

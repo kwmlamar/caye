@@ -46,6 +46,9 @@ import {
   scrubQuietSentinel,
 } from '@/lib/quiet-scan'
 import { getActivitySince, isActivityEmpty, type ActivitySince } from '@/lib/caye-agent/activity-since'
+import { listActiveEligibleGoals } from '@/lib/goals/goals'
+import { sortByPriorityScore } from '@/lib/goals/priority-score'
+import type { GoalRow } from '@/lib/goals/types'
 
 // Three passes a day, spread through waking hours — bounds LLM spend to a
 // handful of tool-loop invocations per workspace per day and avoids
@@ -159,7 +162,16 @@ async function processWorkspace(
     }
   }
 
-  const prompt = buildScanPrompt(row.last_opportunity_scan_summary, activity)
+  // Goal-aware context (2026-08-26) — purely informational. This does not
+  // change what Caye may act on: ACTION_INSTRUCTIONS below is unchanged,
+  // low-risk tools still execute directly and high-risk tools still stage
+  // through gateHighRisk. It only tells her WHY the workspace's current
+  // priorities are what they are, so a finding can be weighed against them
+  // instead of reported in a vacuum. Never operator/global-scope goals —
+  // listActiveEligibleGoals only ever returns this workspace's own rows.
+  const activeGoals = await listActiveEligibleGoals(row.workspace_id)
+
+  const prompt = buildScanPrompt(row.last_opportunity_scan_summary, activity, activeGoals)
 
   // The caller IS the recipient. This used to hardcode callerRole 'founder'
   // with no name, which made the prompt tell Caye the founder was listening
@@ -246,15 +258,9 @@ async function processWorkspace(
   ) {
     // finalTurnVisibility: 'internal' — a suppressed decision means Caye's
     // own concluding text ("already resolved" / "nothing new") is never
-    // meant to reach the operator. Without this it still landed as an
-    // ordinary chat bubble in Caye Direct with wa_delivery_status:
-    // 'not_sent' — nothing distinguished that from real content merely
-    // waiting on a closed window, so the "we correctly decided not to
-    // notify" transcript rendered as a notification anyway (2026-08-26
-    // Autumn McNeill incident, "already on your radar... needs nothing
-    // further"). The tool-loop turns are still persisted in full for audit/
-    // history-replay (claude_format is untouched); only the human-facing
-    // body of the final turn is swapped for the internal marker.
+    // meant to reach the operator. The tool-loop turns remain persisted in
+    // full for audit/history replay; only the human-facing final body is
+    // hidden. This preserves the owner-awareness invariant from #135.
     const inserted = await persistAgentTurns(
       supabase,
       row.workspace_id,
@@ -349,8 +355,9 @@ const ACTION_INSTRUCTIONS =
  * so a resolved or unchanged item can't get re-described just because
  * her read tools can still see it.
  */
-function buildScanPrompt(lastSummary: string | null, activity: ActivitySince | null): string {
+function buildScanPrompt(lastSummary: string | null, activity: ActivitySince | null, activeGoals: GoalRow[] = []): string {
   const intro = "This is your periodic self-initiated workspace scan, not a message from the operator. "
+  const goalsBlock = formatActiveGoalsForPrompt(activeGoals)
 
   if (!activity) {
     const lastSummaryBlock = lastSummary
@@ -365,7 +372,8 @@ function buildScanPrompt(lastSummary: string | null, activity: ActivitySince | n
       "have simply been sitting unchanged for a while and haven't gotten worse — aging backlog is " +
       "the morning briefing's job, not yours. " +
       `${SENTINEL_INSTRUCTIONS} ${REASONING_INSTRUCTIONS}` +
-      lastSummaryBlock
+      lastSummaryBlock +
+      goalsBlock
     )
   }
 
@@ -378,7 +386,36 @@ function buildScanPrompt(lastSummary: string | null, activity: ActivitySince | n
     "looked at it, and repeating it is exactly the stale-noise problem this scan used to have. You " +
     'may still call your read tools to get more detail on an item listed above (e.g. the full thread ' +
     `behind a new hold) before deciding what to say. ${ACTION_INSTRUCTIONS} ${SENTINEL_INSTRUCTIONS} ` +
-    REASONING_INSTRUCTIONS
+    REASONING_INSTRUCTIONS +
+    goalsBlock
+  )
+}
+
+/**
+ * Additive, informational-only context block (2026-08-26) — the smallest
+ * integration point for goal-aware proactive reasoning: it tells Caye WHY
+ * the workspace's current priorities are what they are, so a finding can be
+ * weighed against them ("this holds up the trial-conversion objective")
+ * instead of reported in a vacuum. It does not instruct her to invent new
+ * work, does not grant any new tool access, and does not change
+ * ACTION_INSTRUCTIONS/SENTINEL_INSTRUCTIONS above. Empty when the workspace
+ * has no active goals — every workspace that hasn't adopted goals yet sees
+ * an unchanged prompt, matching formatBusinessFactsBlock's empty-string
+ * convention in lib/business-facts.ts.
+ */
+function formatActiveGoalsForPrompt(activeGoals: GoalRow[]): string {
+  if (activeGoals.length === 0) return ''
+  const ranked = sortByPriorityScore(activeGoals)
+  const lines = ranked.slice(0, 8).map((g) => {
+    const target = g.targetValue !== null && g.unit ? `, target ${g.targetValue} ${g.unit}` : ''
+    return `  - ${g.title} (priority: ${g.priority}${target})`
+  })
+  return (
+    '\n\nCURRENT OBJECTIVES — for context only, this does not change what you may act on. These are ' +
+    "what this business is actively trying to accomplish right now; weigh what you notice against " +
+    'them (e.g. does a finding help or block one of these) but do not invent new work just because it ' +
+    "sounds aligned — evidence, authority, and the usual gates still apply:\n" +
+    lines.join('\n')
   )
 }
 

@@ -24,6 +24,7 @@ import { getPendingQuotes } from './read/get-pending-quotes'
 import { searchThreads } from './read/search-threads'
 import { queryBusinessKnowledge } from './read/query-business-knowledge'
 import { listStandingRules } from './read/list-standing-rules'
+import { listActiveGoals } from './read/list-active-goals'
 import { getServices } from './read/get-services'
 import { getTeamMembers } from './read/get-team-members'
 import { getChannelStatus } from './read/get-channel-status'
@@ -200,6 +201,7 @@ export const TOOL_REGISTRY: AnyTool[] = [
   searchThreads as AnyTool,
   queryBusinessKnowledge as AnyTool,
   listStandingRules as AnyTool,
+  listActiveGoals as AnyTool,
   getServices as AnyTool,
   getTeamMembers as AnyTool,
   getChannelStatus as AnyTool,
