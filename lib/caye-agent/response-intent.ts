@@ -17,6 +17,12 @@ import type { ToolStatus } from './tools/result'
  * IS being said, what shape of statement is it." The two compose — a
  * DECISION-tier item is usually rendered as needs_decision or
  * approval_required; a ROUTINE one as completed or result.
+ *
+ * CAY-139 composition note: draft_in_inbox failures are intentionally handled
+ * by orchestrator.ts before this generic classifier because their error_code
+ * distinguishes deterministic rejection from genuinely ambiguous provider
+ * state. Flattening those outcomes back to ToolStatus here would undo #142's
+ * evidence model.
  */
 export type ResponseIntent =
   | 'completed'
@@ -37,29 +43,27 @@ export interface ToolResponseClassification {
 }
 
 /**
- * Classify one tool outcome into an operator-response intent plus the
+ * Classify one generic tool outcome into an operator-response intent plus the
  * instruction that renders it.
  *
  * WHY THE INSTRUCTION CHANGED (CAY-140)
  * The previous instruction for a generic failure told the model to say
  * "it did not go through and that you are on it." By the time this function
- * runs, `runToolWithRecovery` has already exhausted this tool's entire retry
- * budget (see MAX_ATTEMPTS in orchestrator.ts) — there is no further attempt
- * happening this turn, so "you are on it" was always a promise nothing backs.
- * Live Bimini transcripts show exactly the failure mode that phrasing
- * invites: "Still on it — one sec" followed by an invented root cause
- * ("the staging system is down") and an invented escalation ("worth flagging
- * to the TropiTech team") — none of which the tool result actually said.
- * `failed` now says the failure plainly, forbids promising further work, and
- * forbids inventing a cause or an escalation this turn never performed.
- * `enforceActionGrounding` (action-claim-guard.ts) is the code-level backstop
- * if a model does it anyway — same belt-and-braces relationship as every
- * other guard in this codebase (operator-text-guard.ts, draft-claims.ts).
+ * runs, `runToolWithRecovery` has already exhausted this tool's retry budget —
+ * there is no further attempt happening this turn, so "you are on it" was a
+ * promise nothing backed. Live Bimini transcripts show the failure mode that
+ * phrasing invites: fake progress, an invented root cause, then an invented
+ * platform escalation.
+ *
+ * Real operator/owner messaging is different: send_operator_message and
+ * escalate_to_owner can genuinely reach people in the workspace. The ban
+ * below is therefore only about inventing TropiTech/engineering/support-side
+ * escalation that no tool performed.
  */
 export function classifyToolResponse(
   status: ToolStatus | undefined,
   deferred: boolean,
-  toolName?: string
+  _toolName?: string
 ): ToolResponseClassification | null {
   if (deferred) {
     return {
@@ -76,17 +80,10 @@ export function classifyToolResponse(
 
     case 'FAILED_RETRYABLE':
     case 'FAILED_PERMANENT':
-      if (toolName === 'draft_in_inbox') {
-        return {
-          intent: 'failed',
-          instruction:
-            "Say plainly that you couldn't save it to the inbox, and that you kept the draft here. Do not guess or state why — you were not told a cause, only that it failed. Do NOT offer to send it instead, do NOT ask the operator to copy it manually, and do NOT say this has been flagged, reported, or notified to anyone else (TropiTech, engineering, support) — no such action happened.",
-        }
-      }
       return {
         intent: 'failed',
         instruction:
-          'Say plainly that it did not go through. This turn already exhausted every retry — do not say you are on it, still working on it, still trying, or will retry; nothing further is happening right now. Do not guess or invent a reason (no "backend issue", no "the system is down", no naming any internal cause) — you were not told why, only that it failed. Do not say you notified, flagged, or escalated this to TropiTech, engineering, or any other team — you have no way to do that and no record that it happened. Never ask the operator to do it themselves, and never repeat raw error text.',
+          'Say plainly that it did not go through. This turn already exhausted every retry available for this operation — do not say you are on it, still working on it, still trying, or will retry; nothing further is happening right now. Do not guess or invent a reason (no "backend issue", no "the system is down", no naming an internal cause) — you were not told why, only that it failed. Do not claim you notified, flagged, or escalated this to TropiTech, engineering, developers, or support unless a real tool result proves that exact action. Never ask the operator to do the failed work themselves, and never repeat raw error text.',
       }
 
     case 'NOT_FOUND':
@@ -102,13 +99,6 @@ export function classifyToolResponse(
       }
 
     case 'NEEDS_HUMAN':
-      if (toolName === 'draft_in_inbox') {
-        return {
-          intent: 'blocked',
-          instruction:
-            'The requested email draft is blocked or uncertain. Preserve the completed draft text. Do NOT retry blindly, do NOT offer to send it instead, and do not turn this into a manual-copy request.',
-        }
-      }
       return {
         intent: 'blocked',
         instruction: 'A connection needs re-authorising. Say what is disconnected in plain words and offer to walk them through reconnecting.',
