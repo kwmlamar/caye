@@ -249,7 +249,13 @@ export async function runToolLoop(args: ToolLoopArgs): Promise<ToolLoopResult> {
       messages,
       tools,
       ...(forceToolUse ? { tool_choice: { type: 'any' as const } } : {}),
-    }, { source: 'lib/caye-agent/execute.ts:runToolLoop', workspaceId: args.ctx.workspaceId })
+    }, {
+      source: 'lib/caye-agent/execute.ts:runToolLoop',
+      workspaceId: args.ctx.workspaceId,
+      requestId: args.ctx.requestId,
+      callerRole: args.ctx.callerRole,
+      loopIteration: i + 1,
+    })
 
     const assistantTurn: Anthropic.MessageParam = {
       role: 'assistant',
