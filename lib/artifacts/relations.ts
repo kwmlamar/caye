@@ -97,6 +97,19 @@ export async function annotateArtifact(input: AnnotateArtifactInput): Promise<An
       .is('superseded_at', null)
       .maybeSingle()
 
+    // Supersede the PRIOR confirmed relation before inserting the new one —
+    // business_artifact_relations_confirmed_idx is a partial unique index on
+    // (artifact_id, target_entity_type, target_entity_id) WHERE
+    // status='confirmed' AND superseded_at IS NULL. Inserting the new
+    // confirmed row first (while the old one is still active) violates that
+    // constraint for real in Postgres — this ordering is not cosmetic.
+    if (priorRelation) {
+      await supabase
+        .from('business_artifact_relations')
+        .update({ superseded_at: new Date().toISOString() })
+        .eq('id', priorRelation.id)
+    }
+
     const { data: newRelation, error: relError } = await supabase
       .from('business_artifact_relations')
       .insert({
@@ -117,15 +130,16 @@ export async function annotateArtifact(input: AnnotateArtifactInput): Promise<An
       .select('id')
       .single()
 
-    if (!relError && newRelation) {
-      relationId = newRelation.id
-      if (priorRelation) {
-        await supabase
-          .from('business_artifact_relations')
-          .update({ superseded_at: new Date().toISOString() })
-          .eq('id', priorRelation.id)
-      }
+    if (relError || !newRelation) {
+      // The prior relation (if any) is already superseded at this point —
+      // never leave that silent. A genuinely failed insert here means no
+      // CURRENT confirmed relation exists for this target until retried;
+      // the operator-confirmed annotation observation above still stands
+      // as evidence either way (it isn't rolled back), but the caller must
+      // know this half didn't land rather than reporting a false ok:true.
+      return { ok: false, error: relError?.message ?? 'failed to save relation' }
     }
+    relationId = newRelation.id
   }
 
   return { ok: true, observationId: newObservation.id, relationId }

@@ -66,7 +66,11 @@ create table if not exists business_artifacts (
   -- mutually exclusive in practice but not enforced as such here — ingestion
   -- code sets exactly one based on source_channel.
   sender_contact_id uuid references public.contacts(id) on delete set null,
-  sender_operator_allowlist_id uuid references public.operator_allowlist(id) on delete set null,
+  -- operator_allowlist.id is bigint, not uuid — every other referenced
+  -- table's id in this migration is uuid, which is what made this the one
+  -- easy type to get wrong. Confirmed against the live schema before
+  -- fixing (information_schema.columns), not assumed.
+  sender_operator_allowlist_id bigint references public.operator_allowlist(id) on delete set null,
   -- Display fallback when neither FK resolves (e.g. a name Caye was told but
   -- couldn't match to a contact row yet).
   sender_label text,
@@ -291,7 +295,7 @@ create table if not exists business_artifact_relations (
     check (provenance in ('model_inferred', 'operator_confirmed', 'operator_corrected', 'system_derived')),
 
   source_observation_id uuid references business_artifact_observations(id) on delete set null,
-  confirmed_by_operator_allowlist_id uuid references public.operator_allowlist(id) on delete set null,
+  confirmed_by_operator_allowlist_id bigint references public.operator_allowlist(id) on delete set null,
   confirmed_at timestamptz,
 
   -- Supersession chain, same shape as business_artifact_observations.
