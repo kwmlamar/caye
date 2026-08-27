@@ -1,3 +1,5 @@
+import { enforceActionGrounding } from '@/lib/caye-agent/action-claim-guard'
+
 /** Safe, semantic result data for Caye Direct. Never contains executable UI. */
 export type RichResultBlock =
   | { type: 'metric'; label: string; value: string; detail?: string; resolved?: Record<string, string> }
@@ -96,6 +98,13 @@ export function validateRichResult(value: unknown): RichResult | null {
 
     return null
   }
+
+  // Rich blocks are presentation, not an alternate route around action-claim
+  // grounding. V1 therefore rejects any structured block text that would be
+  // considered an ungrounded completion claim with no tool evidence. A truly
+  // completed action can still be reported in the normal grounded narrative.
+  const displayText = JSON.stringify(blocks)
+  if (enforceActionGrounding(displayText, []).violations.length > 0) return null
 
   return { version: 1, narrative, blocks }
 }
