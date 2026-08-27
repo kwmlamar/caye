@@ -57,6 +57,23 @@ export interface BenchStepContext {
 export interface BenchAdapter {
   name: string
   handle(event: BenchInputEvent, context: BenchStepContext): Promise<BenchEffect[]> | BenchEffect[]
+  /**
+   * Optional lifecycle hook, called by `runBenchScenario` once, before the
+   * first event, whenever a scenario starts. `ScriptedBenchAdapter` has no
+   * state and doesn't need it. A stateful adapter (durable bookings,
+   * business facts, artifacts, per-actor conversation history) DOES need
+   * it: `runCayeBench` deliberately reuses one adapter instance across
+   * every scenario in a batch (so an adapter can amortize expensive setup
+   * across a run), and every canonical scenario in `scenarios.ts` shares
+   * `workspaceId: 'bench-bimini'` — without a reset hook, a stateful
+   * adapter's durable state from one scenario would silently leak into
+   * the next one that happens to reuse the same workspace id, and a
+   * "cross-workspace-leakage"-shaped bug would actually be a
+   * "cross-SCENARIO-leakage" bug hiding one level up from what the hard
+   * invariant gate can see. Optional and additive — no existing adapter
+   * or test needs to change.
+   */
+  reset?(scenario: BenchScenario): void | Promise<void>
 }
 
 export interface BenchScenarioAssertionContext {

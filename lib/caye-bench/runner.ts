@@ -17,6 +17,7 @@ export async function runBenchScenario(
   scenario: BenchScenario,
   adapter: BenchAdapter,
 ): Promise<BenchScenarioResult> {
+  if (adapter.reset) await adapter.reset(scenario)
   const clock = new BenchClock(scenario.initialTime)
   const gate = new BenchInvariantGate()
   const events: BenchInputEvent[] = []
