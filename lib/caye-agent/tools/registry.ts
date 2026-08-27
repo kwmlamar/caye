@@ -30,6 +30,8 @@ import { getTeamMembers } from './read/get-team-members'
 import { getChannelStatus } from './read/get-channel-status'
 import { getOutreachStatus } from './read/get-outreach-operational-status'
 import { getOutreachTargeting } from './read/get-outreach-targeting'
+import { getArtifact } from './read/get-artifact'
+import { searchArtifacts } from './read/search-artifacts'
 import { getConnectLink } from './write-low/get-connect-link'
 import { recordChannelIntake } from './write-low/record-channel-intake'
 import { markHandled } from './write-low/mark-handled'
@@ -65,6 +67,8 @@ import { addInternalNote } from './write-low/add-internal-note'
 import { sendPaymentConfirmation } from './write-low/send-payment-confirmation'
 import { notifyDriver } from './write-low/notify-driver'
 import { relateToDirectThread } from './write-low/relate-to-direct-thread'
+import { annotateArtifactTool } from './write-low/annotate-artifact'
+import { retrieveArtifactForOperator } from './write-low/retrieve-artifact-for-operator'
 import { getMyAssignments } from './read/get-my-assignments'
 import { getLogisticsFacts } from './read/get-logistics-facts'
 import { escalateDriverQuestion } from './write-low/escalate-driver-question'
@@ -207,6 +211,9 @@ export const TOOL_REGISTRY: AnyTool[] = [
   getChannelStatus as AnyTool,
   getOutreachStatus as AnyTool,
   getOutreachTargeting as AnyTool,
+  // Multimodal Business Memory (#87)
+  getArtifact as AnyTool,
+  searchArtifacts as AnyTool,
   // Low-risk write
   getConnectLink as AnyTool,
   recordChannelIntake as AnyTool,
@@ -243,6 +250,8 @@ export const TOOL_REGISTRY: AnyTool[] = [
   runOutreach as AnyTool,
   recoverOutreachOperations as AnyTool,
   relateToDirectThread as AnyTool,
+  annotateArtifactTool as AnyTool,
+  retrieveArtifactForOperator as AnyTool,
   // High-risk write — confirmation flow enforced in code (gateHighRisk,
   // #64), not just the prompt. See lib/caye-agent/tools/high-risk-gate.ts.
   // The ungated list lives in high-risk-registry.ts because
