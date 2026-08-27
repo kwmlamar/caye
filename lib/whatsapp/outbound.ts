@@ -120,6 +120,35 @@ export async function sendFreeFormWhatsApp(
   })
 }
 
+export type WhatsAppMediaType = 'image' | 'document' | 'audio' | 'video'
+
+/**
+ * Send a media message (image/document/audio/video) by link. Meta fetches
+ * the URL server-side at send time, so a short-lived signed URL from a
+ * PRIVATE bucket works without ever making the bucket/object public — see
+ * lib/artifacts/storage.ts's signArtifactUrl. Used for #87's "return the
+ * original artifact to the operator" path (retrieve_artifact_for_operator).
+ *
+ * Only valid within the 24h customer-service window, same constraint as
+ * sendFreeFormWhatsApp — this is operator-directed retrieval of the
+ * operator's own data over the back-office channel, never a customer send.
+ */
+export async function sendMediaWhatsApp(
+  toPhoneNumber: string,
+  mediaType: WhatsAppMediaType,
+  link: string,
+  caption: string | null,
+  idempotencyKey: string
+): Promise<SendResult> {
+  return postToMeta({
+    messaging_product: 'whatsapp',
+    to: normalizeE164(toPhoneNumber),
+    type: mediaType,
+    [mediaType]: caption ? { link, caption } : { link },
+    biz_opaque_callback_data: idempotencyKey,
+  })
+}
+
 /**
  * Send a template message. Always valid (regardless of 24h window) provided
  * the template is approved in WhatsApp Business Manager.
