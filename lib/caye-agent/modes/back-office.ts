@@ -92,8 +92,10 @@ const ROLE_DESCRIPTION: Record<Role, string> = {
  * code actually executes without confirmation. A tool added as `low`
  * tomorrow is covered by this paragraph the moment it's registered.
  */
-function autonomyBlock(mode: ToolMode, speaker: string): string[] {
-  const forMode = TOOL_REGISTRY.filter((t) => t.modes.includes(mode))
+function autonomyBlock(mode: ToolMode, speaker: string, callerRole: Role): string[] {
+  // Match the role-scoped model tool surface. This is explanatory prompt
+  // text only; runToolLoop still enforces the same role gate at execution.
+  const forMode = TOOL_REGISTRY.filter((t) => t.modes.includes(mode) && t.roles.includes(callerRole))
   const lowRisk = forMode.filter((t) => t.risk === 'low').map((t) => t.name)
   const highRisk = forMode.filter((t) => t.risk === 'high').map((t) => t.name)
 
@@ -474,7 +476,7 @@ export function buildBackOfficeSystemPrompt(args: {
   }
 
   lines.push('')
-  lines.push(...autonomyBlock('back-office', speaker))
+  lines.push(...autonomyBlock('back-office', speaker, callerRole))
 
   lines.push('')
   lines.push('UNDERSTAND THE REQUEST BEFORE YOU ACT ON IT')

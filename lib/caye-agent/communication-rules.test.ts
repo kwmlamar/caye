@@ -30,8 +30,9 @@ const prompt = (over: Partial<PromptArgs> = {}) =>
 
 describe('back-office prompt — autonomy is derived from the risk tiers', () => {
   const backOffice = TOOL_REGISTRY.filter((t) => t.modes.includes('back-office'))
-  const lowRisk = backOffice.filter((t) => t.risk === 'low').map((t) => t.name)
-  const highRisk = backOffice.filter((t) => t.risk === 'high').map((t) => t.name)
+  const ownerBackOffice = backOffice.filter((t) => t.roles.includes('owner'))
+  const lowRisk = ownerBackOffice.filter((t) => t.risk === 'low').map((t) => t.name)
+  const highRisk = ownerBackOffice.filter((t) => t.risk === 'high').map((t) => t.name)
 
   it('names every low-risk tool as execute-without-asking', () => {
     // Requirement 7, generalised. Derived from the registry, so a tool added
@@ -549,7 +550,7 @@ describe('autonomy model survives the new prompt blocks', () => {
     // Derived from TOOL_REGISTRY, so adding a tool without updating prose
     // cannot silently drop it out of the autonomy model.
     const p = prompt()
-    const low = TOOL_REGISTRY.filter((t) => t.modes.includes('back-office') && t.risk === 'low')
+    const low = TOOL_REGISTRY.filter((t) => t.modes.includes('back-office') && t.roles.includes('owner') && t.risk === 'low')
     expect(low.length).toBeGreaterThan(10)
     for (const t of low) expect(p, t.name).toContain(t.name)
   })
