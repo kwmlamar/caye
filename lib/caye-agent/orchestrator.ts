@@ -8,6 +8,7 @@ import {
   type ToolResult,
   type ToolStatus,
 } from './tools/result'
+import { classifyToolResponse } from './response-intent'
 
 /**
  * orchestrator.ts
@@ -237,9 +238,11 @@ export async function recordToolCall(entry: ToolCallRecord): Promise<void> {
 /**
  * Plain-language instruction for the model, derived from the outcome.
  *
- * Deliberately prescriptive. Left to its own devices with a failed write the
- * model has already been observed handing the job back to the owner; this
- * says what to do instead, in the words to do it in.
+ * CAY-140's response-intent layer owns generic result shaping. CAY-139's
+ * draft_in_inbox path remains error-code-specific here because its coarse
+ * ToolStatus is not enough to distinguish a known rejection from an
+ * ambiguous provider outcome. The two layers compose rather than flattening
+ * the stronger evidence model back into generic prose.
  */
 export function guidanceFor(
   status: ToolStatus | undefined,
@@ -247,29 +250,13 @@ export function guidanceFor(
   toolName?: string,
   errorCode?: string
 ): string | null {
-  if (deferred) {
-    return 'Saved. Confirm it is done and mention only that the calendar will catch up shortly. Do not ask the operator to record anything.'
-  }
   if (
     toolName === 'draft_in_inbox' &&
     (status === 'FAILED_RETRYABLE' || status === 'FAILED_PERMANENT' || status === 'NEEDS_HUMAN')
   ) {
     return draftInInboxFailureGuidance(errorCode)
   }
-  switch (status) {
-    case 'SUCCESS':
-    case undefined:
-      return null
-    case 'FAILED_RETRYABLE':
-    case 'FAILED_PERMANENT':
-      return 'This did not save. Say plainly that it did not go through and that you are on it. Never ask the operator to do it themselves, and never repeat error text.'
-    case 'NOT_FOUND':
-      return 'The record was not found. Ask which one they meant rather than guessing.'
-    case 'CONFLICT':
-      return 'This already exists. Say so and confirm the existing one instead of creating a second.'
-    case 'NEEDS_HUMAN':
-      return 'A connection needs re-authorising. Say what is disconnected in plain words and offer to walk them through reconnecting.'
-  }
+  return classifyToolResponse(status, deferred, toolName)?.instruction ?? null
 }
 
 /**
@@ -286,8 +273,9 @@ export function guidanceFor(
  * which any tool result ever said. This function is the fix at the layer
  * where that happened: give the model the true, narrow, evidence-backed
  * reason for each error_code so there is no gap left to improvise into.
- * The 'unsupported-outage-claim' rule in action-claim-guard.ts is the code
- * backstop underneath this in case the model ignores it anyway.
+ * The unsupported-infrastructure/platform-escalation rules in
+ * action-claim-guard.ts are the code backstop underneath this in case the
+ * model ignores it anyway.
  */
 function draftInInboxFailureGuidance(errorCode?: string): string {
   const commonBan =
@@ -310,15 +298,6 @@ function draftInInboxFailureGuidance(errorCode?: string): string {
         `running the one-time verification unblocks it. ${commonBan}`
       )
     case 'ZOHO_DRAFT_REJECTED':
-      // Class D (deterministic rejection) — the follow-up review that added
-      // this case explicitly required wording that reads as a DEFINITE,
-      // KNOWN failure, never a hedge: the provider answered synchronously
-      // and said no, so there is nothing ambiguous left to resolve. This
-      // must never share language with the ZOHO_DRAFT_CREATION_UNCERTAIN /
-      // ZOHO_DRAFT_ID_MISSING case below — no "uncertain," no "not sure
-      // whether," no "may or may not exist." Those words describe a
-      // genuinely different outcome (network/timeout/5xx/no-id) where the
-      // provider's actual state is unknown; here it is known.
       return (
         'The email provider rejected this draft save outright — a definite, known failure, not a maybe. Nothing ' +
         'was created on the provider side. Preserve the completed draft text and say plainly that the draft was ' +
