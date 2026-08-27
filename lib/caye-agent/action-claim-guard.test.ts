@@ -128,127 +128,123 @@ describe('enforceActionGrounding — booking handoffs', () => {
   })
 })
 
-describe('enforceActionGrounding — platform-escalation claims (CAY-140)', () => {
-  it('strips a claimed TropiTech escalation when no such tool exists to ground it', () => {
+describe('enforceActionGrounding — unsupported infrastructure claims (CAY-139, 2026-08-26 Bimini incident)', () => {
+  it('strips a "the system is down" claim even when a draft tool actually ran and failed', () => {
     const replyText =
-      "The draft didn't save. I flagged this to the TropiTech team so they can take a look."
-    const { text, violations } = enforceActionGrounding(replyText, [])
+      "I tried a few times but the staging system is down right now — I kept your draft here for when it's back."
+    const executed: ExecutedToolOutcome[] = [{ name: 'draft_in_inbox', ok: false }]
+    const { text, violations } = enforceActionGrounding(replyText, executed)
     expect(violations).toHaveLength(1)
-    expect(violations[0].category).toBe('platform-escalation')
-    expect(text).not.toMatch(/flagged this to the tropitech team/i)
-    expect(text).toContain("didn't save")
+    expect(violations[0].category).toBe('unsupported-infrastructure-claim')
+    expect(text).not.toMatch(/staging system is down/i)
   })
 
-  it('strips the bare recommendation form, not just a completed-action claim', () => {
-    // The real Bimini transcript line (2026-08-26 draft-failure incident):
-    // nothing was ever flagged anywhere, but the sentence implies a support
-    // queue exists on the other end.
-    const replyText = 'Still not going through. Worth flagging to the TropiTech team.'
+  it('strips a "backend issue" claim (test E)', () => {
+    const replyText = "Looks like there's a backend issue with saving drafts right now."
     const { text, violations } = enforceActionGrounding(replyText, [])
     expect(violations).toHaveLength(1)
-    expect(violations[0].category).toBe('platform-escalation')
-    expect(text).not.toMatch(/worth flagging/i)
+    expect(violations[0].category).toBe('unsupported-infrastructure-claim')
+    expect(text).not.toMatch(/backend issue/i)
   })
 
-  it('is not grounded by an unrelated successful tool call', () => {
-    const { violations } = enforceActionGrounding(
-      "I've notified engineering about the outage.",
-      [{ name: 'send_reply', ok: true }]
-    )
+  it('never grounds this claim on a successful tool call — nothing verifies platform health', () => {
+    const replyText = 'The backend issue should be resolved now.'
+    const executed: ExecutedToolOutcome[] = [{ name: 'draft_in_inbox', ok: true }]
+    const { violations } = enforceActionGrounding(replyText, executed)
     expect(violations).toHaveLength(1)
-    expect(violations[0].category).toBe('platform-escalation')
+  })
+
+  it('leaves ordinary failure copy untouched', () => {
+    const replyText = "I couldn't save it to the inbox. I kept the draft here."
+    const { text, violations } = enforceActionGrounding(replyText, [])
+    expect(violations).toHaveLength(0)
+    expect(text).toBe(replyText)
+  })
+
+  it('leaves an unrelated business "down" sentence untouched (not "system/backend/server/platform")', () => {
+    const replyText = 'Their WhatsApp number has been down since yesterday, according to Jeff.'
+    const { text, violations } = enforceActionGrounding(replyText, [])
+    expect(violations).toHaveLength(0)
+    expect(text).toBe(replyText)
+  })
+
+  it('removes the false clause without injecting draft-specific prose into an unrelated (non-draft) turn (test G)', () => {
+    // CAY-140 review finding: this backstop runs on every turn, with no
+    // knowledge of whether the turn was about a draft at all. Injecting
+    // "I couldn't save the draft to the inbox" here would itself be a false
+    // claim on a turn that was never about a draft.
+    const replyText = "The booking total is $450. Actually, the backend seems to be down for booking lookups too."
+    const { text, violations } = enforceActionGrounding(replyText, [])
+    expect(violations).toHaveLength(1)
+    expect(text).not.toMatch(/backend seems to be down/i)
+    expect(text).not.toMatch(/draft/i)
+    // The true, unrelated sentence survives untouched.
+    expect(text).toContain('The booking total is $450.')
   })
 })
 
-describe('enforceActionGrounding — platform-escalation must not corrupt real operator sends (#141 review)', () => {
-  // The first version of this rule matched a bare "the team", so a TRUE
-  // send_operator_message claim ("I've notified the team") was rewritten
-  // into a false denial — there is no groundedBy for this category (there
-  // really is no TropiTech-notification tool), so anything the pattern
-  // matched was unconditionally corrected. The fix requires an explicit
-  // platform noun (tropitech/engineering/support); a claim naming a real
-  // operator, or "the team" alone, never matches this rule at all.
-
-  it('A — a real send_operator_message claim about "the team" passes through untouched', () => {
-    const replyText = "I've notified the team."
-    const { text, violations } = enforceActionGrounding(replyText, [
-      { name: 'send_operator_message', ok: true },
-    ])
-    expect(violations).toHaveLength(0)
-    expect(text).toBe(replyText)
-  })
-
-  it('B — a real escalate_to_owner claim about the owner passes through untouched', () => {
-    const replyText = "I've escalated this to the owner."
-    const { text, violations } = enforceActionGrounding(replyText, [
-      { name: 'escalate_to_owner', ok: true },
-    ])
-    expect(violations).toHaveLength(0)
-    expect(text).toBe(replyText)
-  })
-
-  it('C — an engineering claim with no relevant tool is still stripped', () => {
-    const { text, violations } = enforceActionGrounding("I've notified engineering.", [])
+describe('enforceActionGrounding — unsupported platform-escalation claims (CAY-139/CAY-140, 2026-08-26)', () => {
+  it('strips an implied/suggested escalation to TropiTech even when not phrased as already-done', () => {
+    const replyText = 'This is probably worth flagging to the TropiTech team.'
+    const { violations } = enforceActionGrounding(replyText, [])
     expect(violations).toHaveLength(1)
-    expect(violations[0].category).toBe('platform-escalation')
+    expect(violations[0].category).toBe('unsupported-platform-escalation-claim')
+  })
+
+  it('strips a claim that TropiTech has already been notified (test D: unrelated send_reply does not ground it)', () => {
+    const replyText = "I've already flagged this to TropiTech — they'll take a look."
+    const executed: ExecutedToolOutcome[] = [{ name: 'send_reply', ok: true }]
+    const { text, violations } = enforceActionGrounding(replyText, executed)
+    expect(violations).toHaveLength(1)
+    expect(violations[0].category).toBe('unsupported-platform-escalation-claim')
+    expect(text).not.toMatch(/flagged this to TropiTech/i)
+  })
+
+  it('strips a claim that engineering was notified with no relevant execution (test C)', () => {
+    const replyText = "I've notified engineering."
+    const { text, violations } = enforceActionGrounding(replyText, [])
+    expect(violations).toHaveLength(1)
+    expect(violations[0].category).toBe('unsupported-platform-escalation-claim')
     expect(text).not.toMatch(/notified engineering/i)
   })
 
-  it('D — a TropiTech claim with no relevant tool is still stripped', () => {
-    const { text, violations } = enforceActionGrounding(
-      'I flagged this to the TropiTech team.',
-      []
-    )
-    expect(violations).toHaveLength(1)
-    expect(violations[0].category).toBe('platform-escalation')
-    expect(text).not.toMatch(/flagged this to the tropitech team/i)
+  it('CAY-140 regression: a TRUE completed send_operator_message notification to "the team" is NOT touched (test A)', () => {
+    const replyText = "I've notified the team."
+    const executed: ExecutedToolOutcome[] = [{ name: 'send_operator_message', ok: true }]
+    const { text, violations } = enforceActionGrounding(replyText, executed)
+    expect(violations).toHaveLength(0)
+    expect(text).toBe(replyText)
   })
 
-  it('E — an unrelated successful send_reply does not excuse a platform-escalation claim', () => {
-    const { violations } = enforceActionGrounding('Engineering has been notified.', [
-      { name: 'send_reply', ok: true },
-    ])
-    expect(violations).toHaveLength(1)
-    expect(violations[0].category).toBe('platform-escalation')
+  it('CAY-140 regression: a TRUE completed escalate_to_owner notification to "the owner" is NOT touched (test B)', () => {
+    const replyText = "I've notified the owner."
+    const executed: ExecutedToolOutcome[] = [{ name: 'escalate_to_owner', ok: true }]
+    const { text, violations } = enforceActionGrounding(replyText, executed)
+    expect(violations).toHaveLength(0)
+    expect(text).toBe(replyText)
   })
 
-  it('F — a future-tense offer about a real operator is never rewritten as a false completion claim', () => {
-    const replyText = 'I can notify Mrs. Max if you want.'
+  it('CAY-140 regression: "the founder" is a reachable destination (send_operator_message targets owner/founder) — never in the blocked list', () => {
+    const replyText = "I've let the founder know."
     const { text, violations } = enforceActionGrounding(replyText, [])
     expect(violations).toHaveLength(0)
     expect(text).toBe(replyText)
   })
 
-  it('G — existing send-claim behavior is unaffected', () => {
-    // Same fixture as the send-claims describe block above — pinned again
-    // here so a future edit to this rule can't silently break the
-    // pre-existing 'send' category.
-    const replyText = "Here's what I sent her on WhatsApp just now: Hi Mrs. Max."
-    const { violations } = enforceActionGrounding(replyText, [
-      { name: 'get_customer', ok: true },
-    ])
-    expect(violations.some((v) => v.category === 'send')).toBe(true)
+  it('does not misfire on a future-tense offer to notify a person (test F)', () => {
+    const replyText = 'I can notify Mrs. Max.'
+    const { text, violations } = enforceActionGrounding(replyText, [])
+    expect(violations).toHaveLength(0)
+    expect(text).toBe(replyText)
   })
-})
 
-describe('enforceActionGrounding — invented infrastructure causes (CAY-140)', () => {
-  it('strips an invented root cause for a generic tool failure', () => {
-    const replyText = "Still not going through — the staging system is still down."
+  it('removes the false clause without injecting draft-specific prose (test G)', () => {
+    const replyText = 'The booking is confirmed for Saturday. I also flagged this pricing question to support.'
     const { text, violations } = enforceActionGrounding(replyText, [])
     expect(violations).toHaveLength(1)
-    expect(violations[0].category).toBe('infra-cause-invention')
-    expect(text).not.toMatch(/staging system is still down/i)
-    expect(text).toContain("don't have a confirmed reason why")
-  })
-
-  it('strips a claimed backend issue with no evidence behind it', () => {
-    const { text, violations } = enforceActionGrounding(
-      "There's a backend issue — nothing goes out until it's fixed.",
-      []
-    )
-    expect(violations).toHaveLength(1)
-    expect(violations[0].category).toBe('infra-cause-invention')
-    expect(text).not.toMatch(/backend issue/i)
+    expect(text).not.toMatch(/flagged this pricing question to support/i)
+    expect(text).not.toMatch(/draft/i)
+    expect(text).toContain('The booking is confirmed for Saturday.')
   })
 })
 

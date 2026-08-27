@@ -1,7 +1,17 @@
 import 'server-only'
 import type { OperatorIntent } from './intent'
 
-export type ActiveWorkStatus = 'editing' | 'ready' | 'executing' | 'failed' | 'completed'
+/**
+ * 'uncertain' (CAY-139, 2026-08-26) — the provider did not confirm whether
+ * the write actually happened (a timeout/network failure with no HTTP
+ * status to classify), so the outcome genuinely cannot be told apart from a
+ * silent success. Distinct from 'failed': 'failed' means we KNOW nothing was
+ * created (a deterministic rejection, an auth block, an unverified-mode
+ * gate) and it is safe to say so plainly. Collapsing 'uncertain' into
+ * 'failed' would be a false claim the same way collapsing it into
+ * 'completed' would be — see draft-in-inbox.ts's failure classification.
+ */
+export type ActiveWorkStatus = 'editing' | 'ready' | 'executing' | 'failed' | 'completed' | 'uncertain'
 
 export interface ActiveWork {
   sourceMessageId: string
@@ -47,7 +57,7 @@ export function activeWorkFromIntent(intent: unknown): ActiveWork | null {
   if (!work || typeof work !== 'object') return null
   const row = work as IntentRecord
   if (typeof row.entityRef !== 'string' || row.operation !== 'customer_reply_draft') return null
-  if (!['editing', 'ready', 'executing', 'failed', 'completed'].includes(String(row.status))) return null
+  if (!['editing', 'ready', 'executing', 'failed', 'completed', 'uncertain'].includes(String(row.status))) return null
   return {
     sourceMessageId: '',
     entityRef: row.entityRef,

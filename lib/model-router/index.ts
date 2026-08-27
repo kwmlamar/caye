@@ -15,6 +15,7 @@ export { isLocalBridgeEnvironment } from './backends/local-bridge'
 export { AnthropicApiBackend } from './backends/anthropic-api'
 export { ClaudeSubscriptionBackend } from './backends/claude-subscription'
 export { OpenAICodexSubscriptionBackend } from './backends/openai-codex-subscription'
+export { OpenAIApiBackend, OpenRouterBackend } from './backends/openai-compatible'
 
 // Tool bridge — Option B founder-only orchestration loop. Reuses Caye's
 // existing TOOL_REGISTRY/orchestrator/action-claim-guard unchanged; see

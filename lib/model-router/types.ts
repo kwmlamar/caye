@@ -14,6 +14,7 @@ export type BackendId =
   | 'openai_codex_subscription'
   | 'anthropic_api'
   | 'openai_api'
+  | 'openrouter'
 
 export type RequestedMode = 'auto' | 'claude' | 'openai' | 'api'
 
@@ -127,7 +128,7 @@ export type ClassifiedError =
 
 export interface ModelBackend {
   id: BackendId
-  provider: 'anthropic' | 'openai'
+  provider: 'anthropic' | 'openai' | 'openrouter'
   authMode: 'subscription_cli' | 'api_key'
   capabilities: readonly Capability[]
   /** Cheap — must never spend a model prompt. See health.ts. */

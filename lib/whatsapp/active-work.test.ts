@@ -7,6 +7,8 @@ import {
   seedActiveWork,
   updateActiveWork,
   intentWithActiveWork,
+  activeWorkFromIntent,
+  loadActiveWork,
 } from './active-work'
 
 describe('active work precedence — Jeff Dworkin regression', () => {
@@ -78,5 +80,79 @@ If you have pictures, please share them with us.`
     const ok = await updateActiveWork({ supabase: { from: () => query }, workspaceId: 'ws', operatorId: 1, work: jeff, status: 'completed' })
     expect(ok).toBe(false)
     expect(updates).toHaveLength(0)
+  })
+})
+
+describe('active work — "uncertain" status (CAY-139, 2026-08-26 draft-execution ambiguity)', () => {
+  it('accepts "uncertain" as a valid persisted status', () => {
+    const work = activeWorkFromIntent({
+      active_work: {
+        entityRef: 'jeffd@jldhomes.com',
+        operation: 'customer_reply_draft',
+        artifact: 'draft text',
+        status: 'uncertain',
+        createdAt: '2026-08-26T00:00:00Z',
+      },
+    })
+    expect(work?.status).toBe('uncertain')
+  })
+
+  it('rejects an unrecognised status the same way it always has', () => {
+    const work = activeWorkFromIntent({
+      active_work: {
+        entityRef: 'jeffd@jldhomes.com',
+        operation: 'customer_reply_draft',
+        artifact: 'draft text',
+        status: 'bogus_status',
+        createdAt: '2026-08-26T00:00:00Z',
+      },
+    })
+    expect(work).toBeNull()
+  })
+
+  it('treats "uncertain" as still-active (not completed) so loadActiveWork resumes it', async () => {
+    const row = {
+      id: 'jeff-uncertain',
+      created_at: new Date().toISOString(),
+      intent: {
+        active_work: {
+          entityRef: 'jeffd@jldhomes.com',
+          operation: 'customer_reply_draft',
+          artifact: 'the exact attempted draft',
+          status: 'uncertain',
+          createdAt: new Date().toISOString(),
+        },
+      },
+    }
+    const query: any = {
+      select: () => query,
+      eq: () => query,
+      gte: () => query,
+      order: () => query,
+      limit: async () => ({ data: [row] }),
+    }
+    const work = await loadActiveWork({ supabase: { from: () => query }, workspaceId: 'ws', operatorId: 1 })
+    expect(work?.status).toBe('uncertain')
+    expect(work?.artifact).toBe('the exact attempted draft')
+  })
+
+  it('can transition an "uncertain" record to "completed" on a later successful attempt', async () => {
+    const work = { ...seedActiveWork('Draft a thank you to jeffd@jldhomes.com: hi', { kind: 'edit', instruction: 'x' })!, sourceMessageId: 'jeff-work', status: 'uncertain' as const }
+    const updates: Record<string, unknown>[] = []
+    let query: any
+    query = {
+      select: () => query,
+      eq: () => query,
+      maybeSingle: async () => ({ data: { id: 'jeff-work', intent: intentWithActiveWork({ kind: 'edit', instruction: 'x' }, work) } }),
+      update: (value: Record<string, unknown>) => { updates.push(value); return query },
+    }
+    const ok = await updateActiveWork({
+      supabase: { from: () => query }, workspaceId: 'ws', operatorId: 1, work,
+      artifact: 'reconciled/reattempted draft text', status: 'completed',
+    })
+    expect(ok).toBe(true)
+    const active = (updates[0].intent as { active_work: Record<string, unknown> }).active_work
+    expect(active.status).toBe('completed')
+    expect(active.artifact).toBe('reconciled/reattempted draft text')
   })
 })

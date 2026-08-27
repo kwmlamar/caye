@@ -8,5 +8,21 @@ export const metadata: Metadata = {
 }
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
-  return children
+  return (
+    <>
+      <style>{`
+        /* Caye Direct is already visually directional: founder turns are
+           right-aligned bubbles and Caye turns are open left-aligned text.
+           Repeating names/marks on every turn adds noise without information. */
+        .caye-direct-thread img[src="/caye-logo-icon.png"] {
+          display: none !important;
+        }
+        .caye-direct-thread .caye-working-mark,
+        .caye-direct-thread .caye-direct-sender {
+          display: none !important;
+        }
+      `}</style>
+      {children}
+    </>
+  )
 }
