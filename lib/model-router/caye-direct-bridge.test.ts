@@ -82,10 +82,10 @@ describe('runCayeDirectRouterTurn', () => {
     expect(call.requestedMode).toBe('auto')
   })
 
-  it('registers exactly the three real backends — claude_subscription, openai_codex_subscription, anthropic_api — and invents no openai_api class', async () => {
+  it('registers subscription, direct API, and optional OpenRouter backends in the existing router', async () => {
     await runCayeDirectRouterTurn(BASE_ARGS)
     const ids = firstCallArg().backends.map((b) => b.id)
-    expect(ids).toEqual(['claude_subscription', 'openai_codex_subscription', 'anthropic_api'])
+    expect(ids).toEqual(['claude_subscription', 'openai_codex_subscription', 'anthropic_api', 'openai_api', 'openrouter'])
   })
 
   it('never sets hints.needsToolUse — would silently filter subscription backends out of an Auto chain (see capabilities.ts)', async () => {

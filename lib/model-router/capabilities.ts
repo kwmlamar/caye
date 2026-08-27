@@ -43,6 +43,7 @@ export const BACKEND_CAPABILITIES: Record<BackendId, readonly Capability[]> = {
     'structured_output',
     'vision',
   ],
+  openrouter: ['general_reasoning', 'coding', 'tool_use', 'structured_output', 'vision'],
 }
 
 export function backendSupports(backend: BackendId, capability: Capability): boolean {

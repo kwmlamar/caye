@@ -33,7 +33,7 @@ describe('planChain', () => {
 
   it('auto appends API backends last when allowApiFallback is true', () => {
     const chain = planChain('auto', undefined)
-    expect(chain.slice(-2)).toEqual(['anthropic_api', 'openai_api'])
+    expect(chain.slice(-3)).toEqual(['anthropic_api', 'openai_api', 'openrouter'])
   })
 
   it('auto omits API backends entirely when allowApiFallback is false', () => {
@@ -55,7 +55,7 @@ describe('planChain', () => {
 
   it('manual api mode never includes a subscription backend', () => {
     const chain = planChain('api', undefined)
-    expect(chain).toEqual(['anthropic_api', 'openai_api'])
+    expect(chain).toEqual(['anthropic_api', 'openai_api', 'openrouter'])
   })
 
   it('manual api mode with allowApiFallback disabled yields an empty chain', () => {
