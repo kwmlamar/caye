@@ -36,8 +36,9 @@ vi.mock('@/lib/business-facts', () => ({
   fetchBusinessFacts: async () => mockState.businessFacts,
 }))
 
-import { runToolLoop } from './execute'
+import { runToolLoop, selectToolSurface } from './execute'
 import type { Tool, ToolContext } from './tools/types'
+import { TOOL_REGISTRY } from './tools/registry'
 
 // Vitest mocks the registry so we can inject a single, owner-only tool
 // and assert that a 'staff'-role caller is rejected with a structured
@@ -123,6 +124,9 @@ describe('runToolLoop role enforcement (#48)', () => {
       systemPrompt: 'You are a test agent.',
       initialMessages: [{ role: 'user', content: 'call the tool' }],
       ctx,
+      // Custom/replay surfaces stay unchanged; this verifies the execution
+      // gate remains authoritative even when a caller supplies a tool.
+      tools: TOOL_REGISTRY,
     })
 
     // The user turn carrying tool_results should contain a structured
@@ -160,6 +164,7 @@ describe('runToolLoop role enforcement (#48)', () => {
       systemPrompt: 'You are a test agent.',
       initialMessages: [{ role: 'user', content: 'call the tool' }],
       ctx,
+      tools: TOOL_REGISTRY,
     })
 
     const toolResultTurn = result.newTurns.find(
@@ -176,6 +181,27 @@ describe('runToolLoop role enforcement (#48)', () => {
     expect(block.is_error).toBe(false)
     const payload = JSON.parse(block.content)
     expect(payload.ok).toBe(true)
+  })
+})
+
+describe('runToolLoop production tool-surface selection', () => {
+  it('does not send a role-ineligible default schema, while preserving custom replay surfaces', () => {
+    const staffCtx: ToolContext = { workspaceId: 'ws_test', callerRole: 'staff', requestId: 'req_surface_staff' }
+    const defaultSurface = selectToolSurface({ ctx: staffCtx })
+    expect(defaultSurface.tools).toEqual([])
+    expect(defaultSurface.metrics.excludedByRoleCount).toBe(1)
+    expect(defaultSurface.metrics.excludedToolSchemaBytes).toBeGreaterThan(0)
+
+    const customSurface = selectToolSurface({ ctx: staffCtx, tools: TOOL_REGISTRY })
+    expect(customSurface.tools.map((tool) => tool.name)).toEqual(['owner_only_tool'])
+    expect(customSurface.metrics.usesCustomTools).toBe(true)
+  })
+
+  it('never removes a tool the active role is permitted to execute', () => {
+    const ownerCtx: ToolContext = { workspaceId: 'ws_test', callerRole: 'owner', requestId: 'req_surface_owner' }
+    const surface = selectToolSurface({ ctx: ownerCtx })
+    expect(surface.tools.map((tool) => tool.name)).toEqual(['owner_only_tool'])
+    expect(surface.metrics.excludedByRoleCount).toBe(0)
   })
 })
 

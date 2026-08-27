@@ -1,7 +1,7 @@
 import 'server-only'
 import type Anthropic from '@anthropic-ai/sdk'
 import { TOOL_REGISTRY } from './tools/registry'
-import { asAnthropicTool, type Tool, type ToolContext, type ToolMode } from './tools/types'
+import { asAnthropicTool, type Role, type Tool, type ToolContext, type ToolMode } from './tools/types'
 import { stripForModel } from './tools/result'
 import { runToolWithRecovery, guidanceFor } from './orchestrator'
 import { loggedMessagesCreate } from '@/lib/llm-telemetry'
@@ -96,6 +96,54 @@ export interface ToolLoopResult {
   ranOutOfIterations?: boolean
 }
 
+export interface ToolSurfaceMetrics {
+  mode: ToolMode
+  callerRole: Role
+  exposedToolCount: number
+  excludedByRoleCount: number
+  excludedByReadOnlyCount: number
+  exposedToolSchemaBytes: number
+  excludedToolSchemaBytes: number
+  /** Custom/replay registries preserve their caller-supplied surface exactly. */
+  usesCustomTools: boolean
+}
+
+/**
+ * Deterministically selects only tools this caller could execute. This is a
+ * prompt-surface optimization, not an authorization mechanism: the runtime
+ * role gate below remains authoritative, including for custom replay tools.
+ */
+export function selectToolSurface(args: Pick<ToolLoopArgs, 'tools' | 'mode' | 'readOnly' | 'ctx'>): {
+  tools: Tool<never>[]
+  metrics: ToolSurfaceMetrics
+} {
+  const mode: ToolMode = args.mode ?? 'back-office'
+  const usesCustomTools = Boolean(args.tools)
+  const modeScoped = args.tools ?? TOOL_REGISTRY.filter((tool) => tool.modes.includes(mode))
+  const roleEligible = usesCustomTools
+    ? modeScoped
+    : modeScoped.filter((tool) => tool.roles.includes(args.ctx.callerRole))
+  const selected = roleEligible.filter((tool) => !args.readOnly || tool.risk === 'read')
+  const excludedByRole = modeScoped.filter((tool) => !roleEligible.includes(tool))
+  const excludedByReadOnly = roleEligible.filter((tool) => !selected.includes(tool))
+  const schemaBytes = (tools: readonly Tool<never>[]) =>
+    tools.length === 0 ? 0 : Buffer.byteLength(JSON.stringify(tools.map(asAnthropicTool)), 'utf8')
+
+  return {
+    tools: selected,
+    metrics: {
+      mode,
+      callerRole: args.ctx.callerRole,
+      exposedToolCount: selected.length,
+      excludedByRoleCount: excludedByRole.length,
+      excludedByReadOnlyCount: excludedByReadOnly.length,
+      exposedToolSchemaBytes: schemaBytes(selected),
+      excludedToolSchemaBytes: schemaBytes([...excludedByRole, ...excludedByReadOnly]),
+      usesCustomTools,
+    },
+  }
+}
+
 /**
  * Run a Claude tool-use loop against the registered back-office tools.
  *
@@ -119,13 +167,12 @@ export async function runToolLoop(args: ToolLoopArgs): Promise<ToolLoopResult> {
   // is cached at 1h TTL alongside the tools. Locked 2026-06-24 (#46) —
   // previously this path shipped zero caching (raw string system, no
   // tool cache_control), giving ~0% cache reads on the back-office surface.
-  const mode: ToolMode = args.mode ?? 'back-office'
-  // The override registry (replay harness only — see ToolLoopArgs.tools) is
-  // used as-is, already scoped by whoever built it. The default path is
-  // byte-for-byte what ran before this field existed.
-  const toolRegistry: Tool<never>[] = (args.tools ?? TOOL_REGISTRY.filter((t) => t.modes.includes(mode))).filter(
-    (t) => !args.readOnly || t.risk === 'read'
-  )
+  const { tools: toolRegistry, metrics: toolSurface } = selectToolSurface(args)
+  const mode = toolSurface.mode
+  // Structured metadata only. This is intentionally emitted once per
+  // top-level loop, not per model turn, so it can measure surface changes
+  // without storing prompts, customer content, or tool arguments.
+  console.info('[caye-agent/execute] tool surface', toolSurface)
   const tools = toolRegistry.map(asAnthropicTool)
   if (tools.length > 0) {
     const last = tools[tools.length - 1]
