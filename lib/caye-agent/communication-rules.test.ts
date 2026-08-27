@@ -303,6 +303,49 @@ describe('back-office prompt — current-channel continuity', () => {
   })
 })
 
+describe('back-office prompt — CAY-140 operator-communication policy', () => {
+  it('tells Caye to lead a revision reply with the new artifact, not a fresh explanation', () => {
+    const p = prompt()
+    expect(p).toMatch(/YOUR REPLY ON A REVISION IS THE NEW DRAFT, NOT A NEW EXPLANATION/)
+    expect(p).toMatch(/one lead word \("Updated:"\)/)
+    expect(p).toMatch(/nothing about backend state, nothing re-explaining why an earlier attempt failed/)
+  })
+
+  it('caps a disambiguation question to the distinguishing detail, no essay', () => {
+    const p = prompt()
+    expect(p).toMatch(/give ONLY what's needed to tell the matches apart/)
+    expect(p).toMatch(/Jeff Dworkin — North Bimini Historical Tour/)
+    expect(p).toMatch(/Jeff A Montenaro — Golf Cart Guided Tour/)
+    expect(p).toMatch(/No essay recapping each thread/)
+  })
+
+  it('forbids fake progress narration once a tool result has already reported the outcome', () => {
+    const p = prompt()
+    expect(p).toMatch(/WHEN SOMETHING FAILS — SAY SO PLAINLY, ONCE, WITH NOTHING YOU DON'T KNOW/)
+    expect(p).toMatch(/Never say "still on it", "one sec", "still working on it", or "still trying"/)
+  })
+
+  it('forbids inventing a root cause for a failure', () => {
+    const p = prompt()
+    expect(p).toMatch(/Never invent a cause/)
+    expect(p).toMatch(/the backend has an issue/i)
+    expect(p).toMatch(/the staging system is down/i)
+    expect(p).toMatch(/there's a server problem/i)
+  })
+
+  it('forbids claiming or suggesting a TropiTech/engineering escalation that never happened', () => {
+    const p = prompt()
+    expect(p).toMatch(/Never say you flagged, reported, notified, or escalated something to TropiTech/)
+    expect(p).toMatch(/worth flagging to the TropiTech team/)
+    expect(p).toMatch(/there is no such queue on the other end of that sentence/)
+  })
+
+  it('gives the exact preserved-draft-failure shape from the regression fixture', () => {
+    const p = prompt()
+    expect(p).toMatch(/"I couldn't save it to the inbox\. I kept the draft here\." is the complete answer/)
+  })
+})
+
 describe('morning briefing prompt — no manufactured questions', () => {
   const CLEAR = 'ATTENTION STATE: nothing is open. The owner is genuinely clear.'
 

@@ -123,6 +123,36 @@ const RULES: readonly ClaimRule[] = [
     correction:
       'I’ll reconcile or create the booking here first, then I’ll report back. I’ll ask only if a required booking detail is genuinely missing.',
   },
+  {
+    // CAY-140: no tool in this registry lets Caye notify TropiTech,
+    // engineering, support, or "the developers" about anything — there is no
+    // such escalation path. No `groundedBy` is possible, so any sentence in
+    // this shape is always corrected, mirroring the booking-handoff rule
+    // above. Deliberately matches both a completed-action claim ("I flagged
+    // this to TropiTech") and a bare recommendation ("worth flagging to the
+    // TropiTech team") — the recommendation is just as misleading, since it
+    // implies a support channel the operator can expect to hear back from
+    // that does not exist. Live Bimini transcript: a draft-save failure
+    // ended with "Worth flagging to the TropiTech team" — nothing was
+    // flagged, and nothing about that failure was ever reported anywhere but
+    // that one sentence.
+    category: 'platform-escalation',
+    claimPattern:
+      /\b(?:worth\s+)?flagg?(?:ed|ing)?\b[\s\S]{0,30}\bto\s+(?:the\s+)?tropitech\b|\bi(?:'ve| have)?\s+(?:already\s+|just\s+)?(?:flagged|notified|escalated|reported)\b[\s\S]{0,30}\b(?:the\s+)?(?:tropitech|engineering|developers?|the\s+team)\b|\btropitech\s+(?:team|engineering|developers?|support)\b[\s\S]{0,30}\b(?:should|will|has been|is aware|knows|is looking)\b/i,
+    correction: "I don't have a way to notify anyone else about this — here's what I know:",
+  },
+  {
+    // CAY-140: nothing in this codebase gives Caye a health check on
+    // TropiTech's own infrastructure (no staging/production/backend-status
+    // tool exists), so a stated cause of this shape is always invented, not
+    // read from evidence. Live Bimini transcript, same incident as above:
+    // "the staging system is still down" was stated as fact after a single
+    // draft-save failure with no such information in the tool result.
+    category: 'infra-cause-invention',
+    claimPattern:
+      /\b(?:the\s+)?(?:staging|backend|production)\s+(?:system\s+)?(?:is|was|'?s)\s+(?:still\s+)?down\b|\b(?:a\s+)?backend\s+(?:issue|problem|error|glitch)\b|\bsystem(?:'?s)?\s+(?:having\s+)?(?:an?\s+)?(?:issue|glitch|problem)\b/i,
+    correction: "I don't have a confirmed reason why — only that it didn't go through.",
+  },
 ]
 
 /** Splits on sentence boundaries while keeping the original separators (including blank lines) so reconstruction is lossless. */

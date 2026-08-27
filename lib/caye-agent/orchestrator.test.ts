@@ -250,4 +250,39 @@ describe('guidanceFor', () => {
   it('steers a conflict toward confirming the existing record', () => {
     expect(guidanceFor('CONFLICT', false)).toMatch(/already exists/i)
   })
+
+  describe('CAY-140 — no fake progress, no invented cause, no invented escalation', () => {
+    // By the time guidanceFor runs, runToolWithRecovery has already exhausted
+    // this tool's retry budget — nothing further happens this turn. The old
+    // instruction ("say ... you are on it") promised otherwise, and the live
+    // Bimini transcript this closes out shows exactly where that promise led:
+    // "Still on it" -> an invented cause -> an invented escalation, none of
+    // it backed by the tool result.
+    it('bans, rather than issues, the "you are on it" progress promise', () => {
+      const permanent = guidanceFor('FAILED_PERMANENT', false)!
+      const retryable = guidanceFor('FAILED_RETRYABLE', false)!
+      for (const g of [permanent, retryable]) {
+        expect(g).toMatch(/do not say you are on it/i)
+        expect(g).toMatch(/exhausted every retry/i)
+      }
+    })
+
+    it('explicitly forbids inventing a root cause for a generic failure', () => {
+      const g = guidanceFor('FAILED_PERMANENT', false)!
+      expect(g).toMatch(/do not guess or invent a reason/i)
+      expect(g).toMatch(/backend issue/i)
+      expect(g).toMatch(/system is down/i)
+    })
+
+    it('explicitly forbids claiming an escalation to TropiTech/engineering', () => {
+      const g = guidanceFor('FAILED_PERMANENT', false)!
+      expect(g).toMatch(/do not say you notified, flagged, or escalated this to tropitech/i)
+    })
+
+    it('carries the same anti-invention rules into the draft_in_inbox failure path', () => {
+      const g = guidanceFor('FAILED_PERMANENT', false, 'draft_in_inbox')!
+      expect(g).toMatch(/do not guess or state why/i)
+      expect(g).toMatch(/do not say this has been flagged, reported, or notified/i)
+    })
+  })
 })

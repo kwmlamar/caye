@@ -8,6 +8,7 @@ import {
   type ToolResult,
   type ToolStatus,
 } from './tools/result'
+import { classifyToolResponse } from './response-intent'
 
 /**
  * orchestrator.ts
@@ -240,27 +241,13 @@ export async function recordToolCall(entry: ToolCallRecord): Promise<void> {
  * Deliberately prescriptive. Left to its own devices with a failed write the
  * model has already been observed handing the job back to the owner; this
  * says what to do instead, in the words to do it in.
+ *
+ * Thin wrapper over classifyToolResponse (response-intent.ts) — that module
+ * owns the actual intent/instruction pairing (CAY-140) and is the place a
+ * caller that wants the intent, not just the string, should import from.
+ * Kept as its own export so every existing call site (execute.ts) is
+ * untouched.
  */
 export function guidanceFor(status: ToolStatus | undefined, deferred: boolean, toolName?: string): string | null {
-  if (deferred) {
-    return 'Saved. Confirm it is done and mention only that the calendar will catch up shortly. Do not ask the operator to record anything.'
-  }
-  switch (status) {
-    case 'SUCCESS':
-    case undefined:
-      return null
-    case 'FAILED_RETRYABLE':
-    case 'FAILED_PERMANENT':
-      return toolName === 'draft_in_inbox'
-        ? 'The requested email draft did not save. Preserve the completed draft text, say the email-draft operation is blocked, and do NOT offer to send it instead or ask the operator to copy it manually.'
-        : 'This did not save. Say plainly that it did not go through and that you are on it. Never ask the operator to do it themselves, and never repeat error text.'
-    case 'NOT_FOUND':
-      return 'The record was not found. Ask which one they meant rather than guessing.'
-    case 'CONFLICT':
-      return 'This already exists. Say so and confirm the existing one instead of creating a second.'
-    case 'NEEDS_HUMAN':
-      return toolName === 'draft_in_inbox'
-        ? 'The requested email draft is blocked or uncertain. Preserve the completed draft text. Do NOT retry blindly, do NOT offer to send it instead, and do not turn this into a manual-copy request.'
-        : 'A connection needs re-authorising. Say what is disconnected in plain words and offer to walk them through reconnecting.'
-  }
+  return classifyToolResponse(status, deferred, toolName)?.instruction ?? null
 }

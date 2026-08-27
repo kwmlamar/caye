@@ -128,6 +128,59 @@ describe('enforceActionGrounding — booking handoffs', () => {
   })
 })
 
+describe('enforceActionGrounding — platform-escalation claims (CAY-140)', () => {
+  it('strips a claimed TropiTech escalation when no such tool exists to ground it', () => {
+    const replyText =
+      "The draft didn't save. I flagged this to the TropiTech team so they can take a look."
+    const { text, violations } = enforceActionGrounding(replyText, [])
+    expect(violations).toHaveLength(1)
+    expect(violations[0].category).toBe('platform-escalation')
+    expect(text).not.toMatch(/flagged this to the tropitech team/i)
+    expect(text).toContain("didn't save")
+  })
+
+  it('strips the bare recommendation form, not just a completed-action claim', () => {
+    // The real Bimini transcript line (2026-08-26 draft-failure incident):
+    // nothing was ever flagged anywhere, but the sentence implies a support
+    // queue exists on the other end.
+    const replyText = 'Still not going through. Worth flagging to the TropiTech team.'
+    const { text, violations } = enforceActionGrounding(replyText, [])
+    expect(violations).toHaveLength(1)
+    expect(violations[0].category).toBe('platform-escalation')
+    expect(text).not.toMatch(/worth flagging/i)
+  })
+
+  it('is not grounded by an unrelated successful tool call', () => {
+    const { violations } = enforceActionGrounding(
+      "I've notified engineering about the outage.",
+      [{ name: 'send_reply', ok: true }]
+    )
+    expect(violations).toHaveLength(1)
+    expect(violations[0].category).toBe('platform-escalation')
+  })
+})
+
+describe('enforceActionGrounding — invented infrastructure causes (CAY-140)', () => {
+  it('strips an invented root cause for a generic tool failure', () => {
+    const replyText = "Still not going through — the staging system is still down."
+    const { text, violations } = enforceActionGrounding(replyText, [])
+    expect(violations).toHaveLength(1)
+    expect(violations[0].category).toBe('infra-cause-invention')
+    expect(text).not.toMatch(/staging system is still down/i)
+    expect(text).toContain("don't have a confirmed reason why")
+  })
+
+  it('strips a claimed backend issue with no evidence behind it', () => {
+    const { text, violations } = enforceActionGrounding(
+      "There's a backend issue — nothing goes out until it's fixed.",
+      []
+    )
+    expect(violations).toHaveLength(1)
+    expect(violations[0].category).toBe('infra-cause-invention')
+    expect(text).not.toMatch(/backend issue/i)
+  })
+})
+
 describe('enforceActionGrounding — general behavior', () => {
   it('passes claim-free text through completely untouched', () => {
     const replyText = 'Rayna is one reply away from booking. Want me to draft a nudge?'
