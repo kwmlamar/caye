@@ -12,6 +12,7 @@ type Config = {
 }
 
 type Usage = { inputTokens?: number; outputTokens?: number }
+type OpenAiMessage = Record<string, unknown>
 
 /** Small native OpenAI-compatible adapter. It owns no routing policy. */
 export class OpenAICompatibleBackend implements ToolCapableBackend {
@@ -65,13 +66,7 @@ export class OpenAICompatibleBackend implements ToolCapableBackend {
     const json = await this.call(
       {
         model: this.config.model,
-        messages: [
-          { role: 'system', content: req.system },
-          ...req.messages.map((m) => ({
-            role: m.role,
-            content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
-          })),
-        ],
+        messages: [{ role: 'system', content: req.system }, ...toOpenAiMessages(req.messages)],
         tools,
         max_tokens: req.maxOutputTokens,
       },
@@ -140,6 +135,51 @@ export class OpenAICompatibleBackend implements ToolCapableBackend {
       }
     ).catch((err) => console.error('[model-router/openai-compatible] usage log failed:', err))
   }
+}
+
+/** Convert Caye's canonical Anthropic-style history into native OpenAI tool history. */
+export function toOpenAiMessages(messages: ToolTurnRequest['messages']): OpenAiMessage[] {
+  const out: OpenAiMessage[] = []
+  for (const message of messages) {
+    if (typeof message.content === 'string') {
+      out.push({ role: message.role, content: message.content })
+      continue
+    }
+
+    if (message.role === 'assistant') {
+      const textParts: string[] = []
+      const toolCalls: OpenAiMessage[] = []
+      for (const block of message.content as any[]) {
+        if (block?.type === 'text' && typeof block.text === 'string') textParts.push(block.text)
+        if (block?.type === 'tool_use' && typeof block.id === 'string' && typeof block.name === 'string') {
+          toolCalls.push({
+            id: block.id,
+            type: 'function',
+            function: { name: block.name, arguments: JSON.stringify(block.input ?? {}) },
+          })
+        }
+      }
+      out.push({
+        role: 'assistant',
+        content: textParts.length ? textParts.join('\n') : null,
+        ...(toolCalls.length ? { tool_calls: toolCalls } : {}),
+      })
+      continue
+    }
+
+    let userText = ''
+    const toolResults: OpenAiMessage[] = []
+    for (const block of message.content as any[]) {
+      if (block?.type === 'text' && typeof block.text === 'string') userText += `${userText ? '\n' : ''}${block.text}`
+      if (block?.type === 'tool_result' && typeof block.tool_use_id === 'string') {
+        const content = typeof block.content === 'string' ? block.content : JSON.stringify(block.content ?? '')
+        toolResults.push({ role: 'tool', tool_call_id: block.tool_use_id, content })
+      }
+    }
+    if (userText) out.push({ role: 'user', content: userText })
+    out.push(...toolResults)
+  }
+  return out
 }
 
 const safeJson = (s: unknown): Record<string, unknown> => {
