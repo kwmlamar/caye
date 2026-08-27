@@ -9,6 +9,7 @@ export type RichResultBlock =
   | { type: 'goal_reference'; id: string; resolved?: Record<string, string> }
   | { type: 'work_reference'; id: string; resolved?: Record<string, string> }
   | { type: 'artifact_reference'; id: string; name: string; mimeType?: string }
+  | { type: 'engineering_artifact'; artifactId: string }
 
 export interface ArtifactReference { id: string; name: string; mimeType?: string }
 export interface RichResultProvenance {
@@ -95,6 +96,8 @@ export function validateRichResult(value: unknown): RichResult | null {
       blocks.push({ type: 'artifact_reference', id: b.id as string, name, ...(mimeType ? { mimeType } : {}) })
       continue
     }
+    // Only server orchestration can introduce this trusted semantic block.
+    if (b.type === 'engineering_artifact') return null
 
     return null
   }

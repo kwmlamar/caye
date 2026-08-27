@@ -56,6 +56,7 @@ export interface CayeDirectRouterTurnArgs {
    * tools to a live subscription model.
    */
   restrictToToolNames?: readonly string[]
+  engineeringOrigin?: { threadId: string; messageId: string }
 }
 
 export interface CayeDirectRouterTurnResult {
@@ -65,6 +66,7 @@ export interface CayeDirectRouterTurnResult {
   backend?: BackendId
   model?: string
   richResult?: RichResult
+  engineeringArtifactIds?: string[]
 }
 
 function backendsFor(): ToolCapableBackend[] {
@@ -93,12 +95,15 @@ export async function runCayeDirectRouterTurn(args: CayeDirectRouterTurnArgs): P
   }
 
   const directThreadLinks: string[] = []
+  const engineeringArtifactIds: string[] = []
   const toolCtx: ToolContext = {
     workspaceId: args.workspaceId,
     callerRole: 'founder',
     operatorId: args.operatorId,
     requestId: randomUUID(),
     directThreadLinks,
+    engineeringOrigin: args.engineeringOrigin,
+    engineeringArtifactIds,
   }
 
   // Deliberately no `hints` — see capabilities.ts: setting needsToolUse
@@ -147,6 +152,7 @@ export async function runCayeDirectRouterTurn(args: CayeDirectRouterTurnArgs): P
       newTurns: result.newTurns,
       linkedThreadIds: result.linkedThreadIds,
       backend: decision.selected,
+      ...([...new Set(engineeringArtifactIds)].length ? { engineeringArtifactIds: [...new Set(engineeringArtifactIds)] } : {}),
       richResult: result.richResult ? { ...result.richResult, provenance: { requestedMode: args.requestedMode, selectedBackend: decision.selected, provider: decision.selected?.includes('anthropic') || decision.selected === 'claude_subscription' ? 'anthropic' : decision.selected === 'openrouter' ? 'openrouter' : 'openai', model: result.model, fallbackSequence: decision.fallbacksTried, latencyMs: result.latencyMs ?? Date.now() - start, usage: result.usage } } : undefined,
     }
   } catch (err) {

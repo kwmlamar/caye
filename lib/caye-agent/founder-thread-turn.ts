@@ -15,6 +15,7 @@ import { maybeGenerateThreadTitle, maybeRefreshThreadSummary } from '@/lib/caye-
 import { runCayeDirectRouterTurn } from '@/lib/model-router/caye-direct-bridge'
 import type { BackendId, RequestedMode } from '@/lib/model-router/types'
 import type { RichResult } from '@/lib/caye-direct-rich-results'
+import { engineeringRichResult } from '@/lib/engineering/rich-result'
 
 export interface FounderThreadTurnResult {
   replyText: string
@@ -91,7 +92,8 @@ export async function runFounderThreadTurn(
     })
     .select('id')
     .single()
-  if (inboundRow?.id) await linkMessageToThread(supabase, threadId, inboundRow.id, 'founder')
+  if (!inboundRow?.id) throw new Error('Could not persist founder message')
+  await linkMessageToThread(supabase, threadId, inboundRow.id, 'founder')
 
   // Persists one pass's turns immediately, rather than accumulating turns
   // across an entire (possibly multi-pass) investigation in memory and
@@ -103,9 +105,9 @@ export async function runFounderThreadTurn(
   // durable per tool call regardless; this is about the founder-visible
   // conversational transcript in caye_operator_messages, which previously
   // only existed in memory until the very last line of this function.
-  async function persistPassTurns(turns: Anthropic.MessageParam[], linkedThreadIds: string[]): Promise<void> {
+  async function persistPassTurns(turns: Anthropic.MessageParam[], linkedThreadIds: string[], engineeringArtifactIds: string[] = []): Promise<void> {
     if (turns.length === 0) return
-    const inserted = await persistAgentTurns(supabase, workspaceId, turns, operator, undefined, undefined, 'dashboard')
+    const inserted = await persistAgentTurns(supabase, workspaceId, turns, operator, undefined, undefined, 'dashboard', 'visible', engineeringRichResult(engineeringArtifactIds))
     const insertedIds = inserted.map((r) => r.id)
     await Promise.all([
       ...insertedIds.map((id) => linkMessageToThread(supabase, threadId, id, 'founder')),
@@ -129,14 +131,16 @@ export async function runFounderThreadTurn(
       operatorId: operator?.id ?? null,
       message,
       requestedMode: options!.requestedMode!,
+      engineeringOrigin: { threadId, messageId: inboundRow.id },
     })
-    const inserted = await persistAgentTurns(supabase, workspaceId, routerResult.newTurns, operator, undefined, undefined, 'dashboard', 'visible', routerResult.richResult)
+    const richResult = engineeringRichResult(routerResult.engineeringArtifactIds ?? []) ?? routerResult.richResult
+    const inserted = await persistAgentTurns(supabase, workspaceId, routerResult.newTurns, operator, undefined, undefined, 'dashboard', 'visible', richResult)
     const insertedIds = inserted.map((r) => r.id)
     await Promise.all([...insertedIds.map((id) => linkMessageToThread(supabase, threadId, id, 'founder')), linkInsertedMessagesToThreads(supabase, insertedIds, routerResult.linkedThreadIds)])
     await touchThread(supabase, threadId)
     await maybeGenerateThreadTitle(workspaceId, threadId)
     void maybeRefreshThreadSummary(workspaceId, threadId).catch(() => {})
-    return { replyText: routerResult.replyText, threadId, backend: routerResult.backend, richResult: routerResult.richResult }
+    return { replyText: routerResult.replyText, threadId, backend: routerResult.backend, richResult }
   }
 
   // Bounded automatic continuation (2026-08-17 Bimini revenue-audit fix) —
@@ -144,7 +148,7 @@ export async function runFounderThreadTurn(
   // continuation budget and grounded exhaustion summary work).
   const agentResult = await runInvestigation(
     supabase,
-    { workspaceId, threadId, message, callerName, operatorId: operator?.id ?? null },
+    { workspaceId, threadId, message, callerName, operatorId: operator?.id ?? null, engineeringOrigin: { threadId, messageId: inboundRow.id } },
     persistPassTurns
   )
 
@@ -152,5 +156,5 @@ export async function runFounderThreadTurn(
   await maybeGenerateThreadTitle(workspaceId, threadId)
   void maybeRefreshThreadSummary(workspaceId, threadId).catch(() => {})
 
-  return { replyText: agentResult.replyText, threadId }
+  return { replyText: agentResult.replyText, threadId, richResult: engineeringRichResult(agentResult.engineeringArtifactIds ?? []) }
 }

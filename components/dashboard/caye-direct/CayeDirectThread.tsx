@@ -815,7 +815,7 @@ export default function CayeDirectThread(props: Props) {
                         // voices still read as visually distinct.
                         <div style={{ padding: '1px 0' }}>
                           <FormattedReplyText text={m.body} style={{ fontSize: 14, lineHeight: 1.6, color: '#f4f4f5' }} />
-                          {m.rich_result && <RichResultRenderer result={m.rich_result} />}
+                          {m.rich_result && <RichResultRenderer result={m.rich_result} workspaceId={workspaceId} />}
                         </div>
                       ) : (
                         <div style={{

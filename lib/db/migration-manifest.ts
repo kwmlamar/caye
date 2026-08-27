@@ -131,4 +131,5 @@ export const REPO_MIGRATIONS: readonly string[] = [
   '20260826g_caye_goals_substrate',
   '20260826h_goals_trigger_function_privileges',
   '20260826i_caye_direct_rich_results',
+  '20260827_engineering_runtime_v1',
 ]

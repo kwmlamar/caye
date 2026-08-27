@@ -77,6 +77,8 @@ import { checkAvailabilityTool } from './read/front-desk/check-availability'
 import { lookupPriceTool } from './read/front-desk/lookup-price'
 import { findBookingsTool } from './read/front-desk/find-bookings'
 import { sendCustomerReply } from './write-high/send-customer-reply'
+import { createParametricPart } from './write-low/create-parametric-part'
+import { reviseParametricPart } from './write-low/revise-parametric-part'
 
 /**
  * All tools available to the back-office agent.
@@ -243,6 +245,10 @@ export const TOOL_REGISTRY: AnyTool[] = [
   runOutreach as AnyTool,
   recoverOutreachOperations as AnyTool,
   relateToDirectThread as AnyTool,
+  // Engineering V1 is intentionally founder-only and constrained to a fixed
+  // CAD template; it is not a generic code execution surface.
+  createParametricPart as AnyTool,
+  reviseParametricPart as AnyTool,
   // High-risk write — confirmation flow enforced in code (gateHighRisk,
   // #64), not just the prompt. See lib/caye-agent/tools/high-risk-gate.ts.
   // The ungated list lives in high-risk-registry.ts because
