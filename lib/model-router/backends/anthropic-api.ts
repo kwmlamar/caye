@@ -72,12 +72,11 @@ export class AnthropicApiBackend implements ToolCapableBackend {
 
   /**
    * Native Anthropic tool-calling — zero translation. Same asAnthropicTool
-   * mapping and same cache_control-on-last-tool pattern runToolLoop uses
-   * (lib/caye-agent/execute.ts:106-113), reproduced here rather than
-   * imported since runToolLoop's version is inline in that function, not
-   * an exported helper — this is the one place duplicating a few lines of
-   * request-shaping was cheaper than exporting a new seam from the shared
-   * production file for a single caller.
+   * mapping and same cache_control-on-last-tool pattern runToolLoop uses.
+   * The stable tool schema keeps a 1h TTL; the request-varying Caye Direct
+   * system prompt uses 5m so fast multi-turn tool loops still hit cache
+   * without paying the 1h write premium for context that changes between
+   * human turns.
    */
   async invokeTurn(req: ToolTurnRequest, signal: AbortSignal): Promise<ToolTurnResult> {
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
@@ -96,7 +95,7 @@ export class AnthropicApiBackend implements ToolCapableBackend {
       {
         model: MODEL,
         max_tokens: req.maxOutputTokens,
-        system: [{ type: 'text', text: req.system, cache_control: { type: 'ephemeral', ttl: '1h' } }],
+        system: [{ type: 'text', text: req.system, cache_control: { type: 'ephemeral', ttl: '5m' } }],
         messages: req.messages,
         tools,
       },
