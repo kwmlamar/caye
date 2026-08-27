@@ -4,7 +4,7 @@ import { createZohoReplyDraft } from '@/lib/email-ai'
 import { checkZohoDraftGate, ZOHO_DRAFT_VERIFIED_KEY } from '@/lib/zoho-draft-gate'
 import type { Tool } from '../types'
 import { assertConversationOwnedByWorkspace } from '../write-low/_guards'
-import { failedRetryable, needsHuman } from '../result'
+import { failedPermanent, failedRetryable, needsHuman, httpStatusFrom } from '../result'
 import { updateActiveWork } from '@/lib/whatsapp/active-work'
 
 interface DraftInInboxInput {
@@ -48,6 +48,39 @@ interface DraftInInboxInput {
  * and is repeated before confirm_pending_action claims the staged row, so a
  * transient history-read failure cannot occur after the action has been
  * atomically marked executed.
+ *
+ * FAILURE CLASSIFICATION (CAY-139, 2026-08-26 — repeated live Bimini draft
+ * failure reported as "the staging system is down" / "backend issue" with no
+ * evidence behind either claim)
+ * The catch block below and the gate check above it distinguish FOUR outcomes,
+ * not one generic failure:
+ *   - rate limited (429/"too many requests") — Zoho rejected the request
+ *     BEFORE creating anything. Safe to retry; see orchestrator.ts's
+ *     MAX_ATTEMPTS override for this tool name.
+ *   - auth required (401/403/"unauthorized") — nothing was created, and no
+ *     retry can fix an expired/missing token. Actionable: reconnect.
+ *   - deterministically rejected (an explicit 4xx Zoho returned synchronously,
+ *     other than 401/403/429) — nothing was created. Not ambiguous: a 4xx
+ *     means Zoho validated and definitely rejected the request before
+ *     creating anything.
+ *   - creation uncertain (no HTTP status at all — network/timeout/parse
+ *     failure — OR an explicit 5xx) — Zoho may have received and processed
+ *     the request before our side lost the response (network/timeout), or
+ *     may have persisted the write before failing server-side (5xx). Either
+ *     way there is no way to prove nothing was created. This is the ONLY
+ *     class that marks active work 'uncertain' rather than 'failed', and the
+ *     only class this tool refuses to retry even when the orchestrator's
+ *     budget would otherwise allow it (status NEEDS_HUMAN, not
+ *     FAILED_RETRYABLE). A successful-looking response with no draft id at
+ *     all (draftId: null) is treated the same way — see the `!draftId`
+ *     check below.
+ * The verification-gate block above (checkZohoDraftGate) is its own fifth,
+ * always-deterministic case: never ambiguous, never retryable, and distinct
+ * from a live provider failure — it means the one-time safety check has
+ * never been run on this workspace, not that anything is broken.
+ * lib/caye-agent/orchestrator.ts's draftInInboxFailureGuidance() turns each
+ * of these into the exact, narrow, evidence-backed sentence the model is
+ * told to say — no gap left for it to fill with "the system is down."
  */
 export const draftInInbox: Tool<DraftInInboxInput> = {
   name: 'draft_in_inbox',
@@ -102,7 +135,22 @@ Email threads only — the operator's mailbox is the delivery surface, so this d
       .eq('key', ZOHO_DRAFT_VERIFIED_KEY)
       .maybeSingle()
     const gate = checkZohoDraftGate(setting?.value)
-    if (!gate.allowed) return { ok: false, error: gate.reason }
+    if (!gate.allowed) {
+      // Deterministic, permanent, and NOT a live provider/system failure —
+      // give it its own error_code (rather than falling through to a bare
+      // {ok:false} that normalizeResult would flatten into a generic
+      // FAILED_PERMANENT) so guidanceFor can tell the model exactly what
+      // this is instead of leaving it to guess "backend issue."
+      await updateActiveWork({
+        supabase,
+        workspaceId: ctx.workspaceId,
+        operatorId: ctx.operatorId,
+        work: ctx.activeWork,
+        artifact: body,
+        status: 'failed',
+      })
+      return failedPermanent('ZOHO_DRAFT_MODE_NOT_VERIFIED', gate.reason ?? 'Draft mode is not verified.')
+    }
 
     const { data: conv } = await supabase
       .from('unified_conversations')
@@ -131,10 +179,31 @@ Email threads only — the operator's mailbox is the delivery surface, so this d
         ctx.workspaceId
       )
 
+      if (!draftId) {
+        // Zoho answered 200/201 (createZohoReplyDraft only returns instead
+        // of throwing on that) but the response carried no message id to
+        // point back at — we cannot prove a specific draft exists, only
+        // that Zoho didn't reject the request. Product invariant #1 (CAY-139):
+        // "draft in inbox" must mean a real provider-side draft that can be
+        // retrieved/identified afterward, so an HTTP success with no
+        // identity is NOT reported as unconditional success — it is the
+        // same honest 'uncertain' outcome as a request that never got a
+        // response at all, not a false positive.
+        await updateActiveWork({ supabase, workspaceId: ctx.workspaceId, operatorId: ctx.operatorId, work: ctx.activeWork, artifact: body, status: 'uncertain' })
+        return {
+          ...needsHuman(
+            'ZOHO_DRAFT_ID_MISSING',
+            'The email provider accepted the request but did not return a draft id, so this cannot be confirmed.'
+          ),
+          data: { conversation_id: args.conversation_id, draft_body: body, sent: false },
+        }
+      }
+
       await updateActiveWork({ supabase, workspaceId: ctx.workspaceId, operatorId: ctx.operatorId, work: ctx.activeWork, artifact: body, status: 'completed' })
 
       return {
         ok: true,
+        status: 'SUCCESS',
         data: {
           conversation_id: args.conversation_id,
           drafted_for: conv.customer_name ?? conv.customer_id,
@@ -149,18 +218,54 @@ Email threads only — the operator's mailbox is the delivery surface, so this d
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
-      // A provider timeout is not proof that no draft was created. Retrying
-      // that case can create duplicate drafts, so it is intentionally a
-      // reconciliation/blocking outcome. Explicit throttling/rejection is
-      // safe to retry because Zoho returned before accepting a draft.
       const preserved = { conversation_id: args.conversation_id, draft_body: body, sent: false }
-      await updateActiveWork({ supabase, workspaceId: ctx.workspaceId, operatorId: ctx.operatorId, work: ctx.activeWork, artifact: body, status: 'failed' })
+
+      // Explicit throttling — Zoho rejected the request BEFORE creating
+      // anything. Safe to retry: see orchestrator.ts's MAX_ATTEMPTS override
+      // for this tool name (budget 2, only for FAILED_RETRYABLE).
       if (/\b(?:429|rate limit|too many requests)\b/i.test(msg)) {
+        await updateActiveWork({ supabase, workspaceId: ctx.workspaceId, operatorId: ctx.operatorId, work: ctx.activeWork, artifact: body, status: 'failed' })
         return { ...failedRetryable('ZOHO_DRAFT_RATE_LIMITED', 'The email provider temporarily rejected this draft save.'), data: preserved }
       }
-      if (/\b(?:401|403|unauthori[sz]ed|forbidden|re-?authori[sz])\b/i.test(msg)) {
+
+      // Auth/connection is broken. Nothing was created, and retrying blindly
+      // cannot fix a missing/expired token — actionable, not ambiguous.
+      // Covers both a live 401/403 from Zoho AND the pre-network throws
+      // getZohoContext (lib/zoho-token.ts) raises before any HTTP call is
+      // even made — "No active Zoho account...", "No refresh token...",
+      // "Token refresh failed...". Those three carry no HTTP status at all,
+      // so without matching their exact wording here they would have fallen
+      // through to the httpStatusFrom check below (also no match, since
+      // there's no status to find) and landed in the 'uncertain' bucket —
+      // wrongly implying a draft might exist when nothing was ever attempted.
+      if (
+        /\b(?:401|403|unauthori[sz]ed|forbidden|re-?authori[sz]|reconnect)\b/i.test(msg) ||
+        /no active .{0,30}account|no refresh token|token refresh failed/i.test(msg)
+      ) {
+        await updateActiveWork({ supabase, workspaceId: ctx.workspaceId, operatorId: ctx.operatorId, work: ctx.activeWork, artifact: body, status: 'failed' })
         return { ...needsHuman('ZOHO_DRAFT_AUTH_REQUIRED', 'The email connection needs to be reconnected before this draft can be saved.'), data: preserved }
       }
+
+      // An explicit 4xx (400/404/409/422...) means Zoho validated and
+      // synchronously rejected the request as malformed/invalid before
+      // creating anything — deterministic, not ambiguous. No draft exists;
+      // safe to report as a plain failure, same as the two branches above.
+      const status = httpStatusFrom(msg)
+      if (status !== null && status >= 400 && status < 500) {
+        await updateActiveWork({ supabase, workspaceId: ctx.workspaceId, operatorId: ctx.operatorId, work: ctx.activeWork, artifact: body, status: 'failed' })
+        return { ...failedPermanent('ZOHO_DRAFT_REJECTED', 'The email provider rejected this draft.'), data: preserved }
+      }
+
+      // Either no HTTP status was found at all (network error, timeout,
+      // unparseable response) OR an explicit 5xx server error. Neither
+      // proves nothing was created: a 5xx can fire after the provider has
+      // already processed and persisted the write, and a network/timeout
+      // failure means we simply never heard back. There is genuinely no way
+      // to tell from here. Never retry this automatically (a blind retry
+      // risks a real duplicate draft on the customer's thread) and never
+      // report it as a definite failure — mark active work 'uncertain', not
+      // 'failed'. See lib/whatsapp/active-work.ts.
+      await updateActiveWork({ supabase, workspaceId: ctx.workspaceId, operatorId: ctx.operatorId, work: ctx.activeWork, artifact: body, status: 'uncertain' })
       return {
         ...needsHuman('ZOHO_DRAFT_CREATION_UNCERTAIN', 'The email provider did not confirm whether the draft was created.'),
         data: preserved,
