@@ -26,16 +26,40 @@ export type BenchModelRound =
   | { toolCalls: Array<{ name: string; args: unknown }> }
   | { text: string }
 
+/**
+ * `current` receives the real `client` `loggedMessagesCreate` was called
+ * with, not just `params` — v1 never needed it (every v1 turn is
+ * scripted, so `client` is always the harmless `{} as never}` placeholder
+ * `turn-runner.ts` passes by default), but v2's live replay mode needs a
+ * genuine Anthropic client to make a real call. See `liveModelRunner`
+ * below for the live-mode implementation; `scriptedRounds` (unchanged)
+ * for the deterministic one — both satisfy this same signature, so
+ * `modelDouble.current` can be swapped between them without either
+ * caller (`turn-runner.ts`, any test) knowing which one is active.
+ */
 export interface ModelDoubleController {
-  current: (params: { messages: Anthropic.MessageParam[] }) => Anthropic.Message
+  current: (client: Anthropic, params: Anthropic.MessageCreateParamsNonStreaming) => Promise<Anthropic.Message> | Anthropic.Message
 }
 
 export const modelDouble: ModelDoubleController = {
   current: () => {
     throw new Error(
-      'caye-bench: loggedMessagesCreate was invoked with no model script set — every production-adapter turn must call scriptedRounds() first.'
+      'caye-bench: loggedMessagesCreate was invoked with no model script set — call scriptedRounds() (deterministic) or liveModelRunner (real API) first.'
     )
   },
+}
+
+/**
+ * The live-mode counterpart to `scriptedRounds`: makes a genuine call
+ * against the real Anthropic SDK. Used ONLY by `replay/cli-runner.test.ts`
+ * when a replay trace has no hand-written script — i.e. only by the
+ * manually-invoked replay CLI, never by `npm test`'s default run. Every
+ * other seam a replay turn touches (Supabase) stays mocked even in this
+ * mode — see cli-runner.test.ts's own header comment for why calling the
+ * real model is safe here but calling real Supabase never is.
+ */
+export function liveModelRunner(): ModelDoubleController['current'] {
+  return (client, params) => client.messages.create(params)
 }
 
 let callSeq = 0
@@ -75,7 +99,7 @@ function fakeMessage(content: Anthropic.ContentBlock[], stopReason: Anthropic.Me
 export function scriptedRounds(rounds: BenchModelRound[]): ModelDoubleController['current'] {
   if (rounds.length === 0) throw new Error('scriptedRounds: at least one round is required')
   let i = 0
-  return () => {
+  return (_client: Anthropic) => {
     const round = rounds[Math.min(i, rounds.length - 1)]
     i += 1
     if ('text' in round) return fakeMessage([{ type: 'text', text: round.text, citations: [] }], 'end_turn')

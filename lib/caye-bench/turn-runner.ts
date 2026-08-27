@@ -54,6 +54,14 @@ export interface RunTurnArgs {
   maxTokens?: number
   businessName?: string
   timezone?: string
+  /** Pre-rendered attention-delta string — the caller's job to produce
+   *  (typically `renderAttentionContext(await loadAttentionDelta(...))`,
+   *  see replay/attention-fake.ts for how v2 wires the real functions
+   *  against isolated seed data) since owner-attention specifics don't
+   *  belong in this generic turn runner. Back-office only; ignored for
+   *  front-desk turns, matching `buildBackOfficeSystemPrompt`'s own
+   *  `attentionContext` field. */
+  attentionContext?: string | null
 }
 
 const DEFAULT_BUSINESS_NAME = 'Bimini Bench Tours'
@@ -85,6 +93,7 @@ export async function runProductionTurn(args: RunTurnArgs): Promise<{ replyText:
     systemPrompt = buildBackOfficeSystemPrompt({
       profile: { operatorName: args.operatorName ?? 'Operator', businessName },
       caller: { role: args.callerRole, name: args.operatorName ?? 'Operator' },
+      attentionContext: args.attentionContext,
     })
     initialMessages = history
   }
