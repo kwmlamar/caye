@@ -22,7 +22,7 @@ create index if not exists engineering_jobs_workspace_thread_idx on public.engin
 create table if not exists public.engineering_artifacts (
   id uuid primary key default gen_random_uuid(),
   workspace_id uuid not null references public.customers(id) on delete cascade,
-  job_id uuid not null references public.engineering_jobs(id) on delete restrict,
+  job_id uuid not null unique references public.engineering_jobs(id) on delete restrict,
   -- A lineage is identity; name is only mutable/display metadata.
   lineage_id uuid not null,
   parent_artifact_id uuid references public.engineering_artifacts(id) on delete restrict,
@@ -64,6 +64,8 @@ on conflict (id) do update set public = false, file_size_limit = excluded.file_s
 
 -- The database half of finalization is one transaction: a row cannot be
 -- discovered unless all four metadata rows exist and the job is completed.
+-- Repeating the exact finalization after an ambiguous transport failure is
+-- idempotent: the already-committed artifact/revision is returned.
 create or replace function public.caye_finalize_engineering_artifact(
   p_job_id uuid,
   p_workspace_id uuid,
@@ -81,10 +83,12 @@ create or replace function public.caye_finalize_engineering_artifact(
 language plpgsql security definer set search_path = public as $$
 declare
   v_parent engineering_artifacts%rowtype;
+  v_existing engineering_artifacts%rowtype;
   v_revision integer;
   v_file jsonb;
   v_count integer;
   v_kind_count integer;
+  v_existing_file engineering_artifact_files%rowtype;
 begin
   if jsonb_typeof(p_files) <> 'array' or jsonb_array_length(p_files) <> 4 then
     raise exception 'engineering artifact must have exactly four files';
@@ -94,7 +98,47 @@ begin
   if v_count <> 4 or v_kind_count <> 4 or not (p_files @> '[{"kind":"source"},{"kind":"preview_geometry"},{"kind":"export_geometry"},{"kind":"metadata"}]'::jsonb) then
     raise exception 'engineering artifact is missing a required file kind';
   end if;
+
   perform pg_advisory_xact_lock(hashtextextended(p_lineage_id::text, 0));
+
+  -- Reconciliation/idempotency path. If this artifact/job already committed,
+  -- only an exact semantic retry is accepted.
+  select * into v_existing from engineering_artifacts
+    where id = p_artifact_id and job_id = p_job_id and workspace_id = p_workspace_id;
+  if found then
+    if v_existing.lineage_id <> p_lineage_id
+      or v_existing.parent_artifact_id is distinct from p_parent_artifact_id
+      or v_existing.name <> p_name
+      or v_existing.parameters <> p_parameters
+      or v_existing.assumptions <> p_assumptions
+      or v_existing.dimensions <> p_dimensions
+      or v_existing.calculation_metadata <> p_calculation_metadata then
+      raise exception 'engineering finalization retry conflicts with committed artifact';
+    end if;
+    if not exists (select 1 from engineering_jobs where id = p_job_id and workspace_id = p_workspace_id and status = 'completed') then
+      raise exception 'committed engineering artifact has inconsistent job state';
+    end if;
+    for v_file in select value from jsonb_array_elements(p_files) loop
+      select * into v_existing_file from engineering_artifact_files
+        where artifact_id = p_artifact_id and kind = v_file->>'kind';
+      if not found
+        or v_existing_file.storage_path <> v_file->>'storage_path'
+        or v_existing_file.media_type <> v_file->>'media_type'
+        or v_existing_file.byte_size <> (v_file->>'byte_size')::integer
+        or v_existing_file.checksum <> v_file->>'checksum' then
+        raise exception 'engineering finalization retry conflicts with committed file metadata';
+      end if;
+    end loop;
+    return query select p_artifact_id, v_existing.revision;
+    return;
+  end if;
+
+  -- A job may finalize at most one artifact. This catches a retry that changes
+  -- artifact id rather than silently producing another revision.
+  if exists (select 1 from engineering_artifacts where job_id = p_job_id) then
+    raise exception 'engineering job was already finalized with a different artifact';
+  end if;
+
   if p_parent_artifact_id is null then
     v_revision := 1;
   else
@@ -107,11 +151,14 @@ begin
     end if;
     v_revision := v_parent.revision + 1;
   end if;
+
   update engineering_jobs set status = 'completed', completed_at = now()
     where id = p_job_id and workspace_id = p_workspace_id and status = 'running';
   if not found then raise exception 'engineering job is not running'; end if;
+
   insert into engineering_artifacts (id, workspace_id, job_id, lineage_id, parent_artifact_id, revision, name, parameters, assumptions, dimensions, calculation_metadata, provenance)
     values (p_artifact_id, p_workspace_id, p_job_id, p_lineage_id, p_parent_artifact_id, v_revision, p_name, p_parameters, p_assumptions, p_dimensions, p_calculation_metadata, p_provenance);
+
   for v_file in select value from jsonb_array_elements(p_files) loop
     if coalesce(v_file->>'storage_path', '') = '' or coalesce(v_file->>'media_type', '') = '' or coalesce(v_file->>'checksum', '') = '' or coalesce((v_file->>'byte_size')::integer, 0) < 1 then
       raise exception 'invalid engineering artifact file';
