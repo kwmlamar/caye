@@ -287,3 +287,52 @@ describe('revalidateHistory — the full sliding-window replay path', () => {
     expect(revalidateHistory([])).toEqual([])
   })
 })
+
+// Multimodal Caye Direct follow-up (#87). Mirrors execute.ts's live
+// special case for the historical-replay path — a stored
+// retrieve_artifact_for_operator success only grounds a "sent" claim when
+// its tool_result actually carried delivery: 'whatsapp'.
+describe('extractExecutedToolsFromGroup / revalidateLoopGroup — retrieve_artifact_for_operator delivery', () => {
+  function groupFor(deliveryData: Record<string, unknown>, replyText: string): StoredTurnRow[] {
+    return [
+      row('inbound', '2026-08-27T10:00:00Z', { role: 'user', content: 'send me that photo of max' }),
+      row('outbound', '2026-08-27T10:00:01Z', {
+        role: 'assistant',
+        content: [{ id: 'toolu_1', name: 'retrieve_artifact_for_operator', type: 'tool_use', input: { artifact_id: 'artifact-1' } }],
+      }),
+      row('inbound', '2026-08-27T10:00:02Z', {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: 'toolu_1', is_error: false, content: JSON.stringify({ ok: true, data: deliveryData }) }],
+      }),
+      row('outbound', '2026-08-27T10:00:03Z', { role: 'assistant', content: [{ type: 'text', text: replyText }] }),
+    ]
+  }
+
+  it('reconstructs the delivery-qualified entry for a real WhatsApp delivery', () => {
+    const group = groupFor({ artifact_id: 'artifact-1', delivery: 'whatsapp', sent: true }, 'sent')
+    const executed = extractExecutedToolsFromGroup(group)
+    expect(executed).toContainEqual({ name: 'retrieve_artifact_for_operator:whatsapp', ok: true, pendingOnly: false })
+  })
+
+  it('does NOT reconstruct the qualified entry for an inline Caye Direct delivery', () => {
+    const group = groupFor({ artifact_id: 'artifact-1', delivery: 'inline' }, 'sent')
+    const executed = extractExecutedToolsFromGroup(group)
+    expect(executed.some((e) => e.name === 'retrieve_artifact_for_operator:whatsapp')).toBe(false)
+    expect(executed).toContainEqual({ name: 'retrieve_artifact_for_operator', ok: true, pendingOnly: false })
+  })
+
+  it('a historical "sent" claim about a real WhatsApp delivery replays untouched', () => {
+    const group = groupFor({ artifact_id: 'artifact-1', delivery: 'whatsapp', sent: true }, "I've sent that photo of Max over.")
+    const corrected = revalidateLoopGroup(group)
+    expect(corrected[corrected.length - 1]).toEqual(group[group.length - 1])
+  })
+
+  it('a historical "sent" claim about an inline-only delivery is corrected on replay, same as a live one', () => {
+    const group = groupFor({ artifact_id: 'artifact-1', delivery: 'inline' }, 'I sent you the photo of Max.')
+    const corrected = revalidateLoopGroup(group)
+    const lastCf = corrected[corrected.length - 1].claude_format!
+    const text = typeof lastCf.content === 'string' ? lastCf.content : (lastCf.content.find((b) => (b as { type?: string }).type === 'text') as { text?: string } | undefined)?.text
+    expect(text).not.toContain('I sent you the photo of Max')
+    expect(text).toContain('I have not actually sent anything')
+  })
+})

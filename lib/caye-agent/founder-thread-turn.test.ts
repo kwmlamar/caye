@@ -67,6 +67,7 @@ interface MockCayeAgentResult {
   newTurns: Anthropic.MessageParam[]
   linkedThreadIds: string[]
   ranOutOfIterations?: boolean
+  businessArtifactIds?: string[]
 }
 const cayeAgentMock = vi.fn(
   (..._args: unknown[]): Promise<MockCayeAgentResult> =>
@@ -81,6 +82,14 @@ const runCayeDirectRouterTurnMock = vi.fn((..._args: unknown[]) =>
 )
 vi.mock('@/lib/model-router/caye-direct-bridge', () => ({
   runCayeDirectRouterTurn: (...args: unknown[]) => runCayeDirectRouterTurnMock(...args),
+}))
+
+const resolveWorkspaceAttachmentsMock = vi.fn()
+const buildAttachmentContentBlocksMock = vi.fn()
+vi.mock('@/lib/artifacts/attachments', () => ({
+  resolveWorkspaceAttachments: (...args: unknown[]) => resolveWorkspaceAttachmentsMock(...args),
+  buildAttachmentContentBlocks: (...args: unknown[]) => buildAttachmentContentBlocksMock(...args),
+  MAX_ATTACHMENTS_PER_TURN: 6,
 }))
 
 // './investigation' is NOT mocked: runInvestigation lives there and calls
@@ -98,6 +107,8 @@ describe('runFounderThreadTurn — the single path both typed and voice turns sh
     persistAgentTurnsMock.mockResolvedValue([{ id: 'turn-1' }, { id: 'turn-2' }])
     cayeAgentMock.mockResolvedValue({ replyText: 'Here you go.', newTurns: [], linkedThreadIds: [] })
     toolCallRows = []
+    resolveWorkspaceAttachmentsMock.mockReset().mockResolvedValue({ resolved: [], invalidIds: [] })
+    buildAttachmentContentBlocksMock.mockReset().mockResolvedValue({ blocks: [], unreadableNote: null })
   })
 
   it('throws "Thread not found" when the thread does not exist for this workspace', async () => {
@@ -247,6 +258,10 @@ describe('runFounderThreadTurn — bounded investigation continuation (2026-08-1
     // pass 1's turns durable in caye_operator_messages, instead of losing
     // everything back to the start of the investigation.
     expect(persistAgentTurnsMock).toHaveBeenCalledTimes(2)
+    // Pre-existing staleness fix (unrelated to the multimodal feature this
+    // suite otherwise adds): these two assertions predate persistAgentTurns
+    // gaining its finalTurnVisibility/richResult params and were never
+    // updated — trailing args below just complete the real call shape.
     expect(persistAgentTurnsMock).toHaveBeenNthCalledWith(
       1,
       supabaseStub,
@@ -255,7 +270,9 @@ describe('runFounderThreadTurn — bounded investigation continuation (2026-08-1
       expect.anything(),
       undefined,
       undefined,
-      'dashboard'
+      'dashboard',
+      'visible',
+      undefined
     )
     expect(persistAgentTurnsMock).toHaveBeenNthCalledWith(
       2,
@@ -265,7 +282,9 @@ describe('runFounderThreadTurn — bounded investigation continuation (2026-08-1
       expect.anything(),
       undefined,
       undefined,
-      'dashboard'
+      'dashboard',
+      'visible',
+      undefined
     )
   })
 
@@ -392,5 +411,145 @@ describe('runFounderThreadTurn — bounded investigation continuation (2026-08-1
     const persistedTurns = persistAgentTurnsMock.mock.calls.flatMap((call) => call[2] as unknown[])
     expect(persistedTurns).toHaveLength(firstPassTurns.length + secondPassTurns.length)
     for (const t of [...firstPassTurns, ...secondPassTurns]) expect(persistedTurns).toContain(t)
+  })
+})
+
+// Multimodal Caye Direct follow-up (#87). Attachments are business_artifacts
+// the client already uploaded via app/api/founder/caye-direct/attachments —
+// this suite exercises how runFounderThreadTurn wires them into the inbound
+// row, the live model turn, and its choice of execution path.
+describe('runFounderThreadTurn — attachments (multimodal Caye Direct follow-up)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    getThreadMock.mockResolvedValue({ id: 'thread-1', status: 'active' })
+    resolveFounderOperatorMock.mockResolvedValue({ id: 7, name: 'Lamar', role: 'founder' })
+    persistAgentTurnsMock.mockResolvedValue([{ id: 'turn-1' }, { id: 'turn-2' }])
+    cayeAgentMock.mockResolvedValue({ replyText: 'Here it is.', newTurns: [], linkedThreadIds: [] })
+    resolveWorkspaceAttachmentsMock.mockReset()
+    buildAttachmentContentBlocksMock.mockReset()
+  })
+
+  const imageArtifact = { artifact: { id: 'artifact-1', filename: 'max.png', modality: 'image' } }
+  const imageBlock = { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } }
+
+  it('allows an empty message when at least one attachment is present', async () => {
+    resolveWorkspaceAttachmentsMock.mockResolvedValue({ resolved: [imageArtifact], invalidIds: [] })
+    buildAttachmentContentBlocksMock.mockResolvedValue({ blocks: [imageBlock], unreadableNote: null })
+    const result = await runFounderThreadTurn('ws-1', 'thread-1', '', undefined, ['artifact-1'])
+    expect(result.threadId).toBe('thread-1')
+    expect(cayeAgentMock).toHaveBeenCalled()
+  })
+
+  it('re-verifies every attachment id against THIS workspace before using it — never trusts the client-supplied id alone', async () => {
+    resolveWorkspaceAttachmentsMock.mockResolvedValue({ resolved: [imageArtifact], invalidIds: [] })
+    buildAttachmentContentBlocksMock.mockResolvedValue({ blocks: [imageBlock], unreadableNote: null })
+    await runFounderThreadTurn('ws-1', 'thread-1', 'this is Max', undefined, ['artifact-1'])
+    expect(resolveWorkspaceAttachmentsMock).toHaveBeenCalledWith('ws-1', ['artifact-1'])
+  })
+
+  it('throws "Invalid attachment" and never persists anything when an id does not resolve to this workspace (forged/foreign id)', async () => {
+    resolveWorkspaceAttachmentsMock.mockResolvedValue({ resolved: [], invalidIds: ['not-mine'] })
+    await expect(
+      runFounderThreadTurn('ws-1', 'thread-1', 'this is Max', undefined, ['not-mine'])
+    ).rejects.toThrow('Invalid attachment')
+    expect(cayeAgentMock).not.toHaveBeenCalled()
+    expect(persistAgentTurnsMock).not.toHaveBeenCalled()
+  })
+
+  it('passes the real image content blocks (not just text) as userMessage for the first pass — mirrors the WhatsApp inline vision turn', async () => {
+    resolveWorkspaceAttachmentsMock.mockResolvedValue({ resolved: [imageArtifact], invalidIds: [] })
+    buildAttachmentContentBlocksMock.mockResolvedValue({ blocks: [imageBlock], unreadableNote: null })
+    await runFounderThreadTurn('ws-1', 'thread-1', 'this is Max', undefined, ['artifact-1'])
+    const firstCallArgs = cayeAgentMock.mock.calls[0][0] as { userMessage: unknown }
+    expect(firstCallArgs.userMessage).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'image' })]))
+  })
+
+  it('stamps the inbound row with a business_artifact rich_result referencing the resolved artifact — never a raw URL', async () => {
+    resolveWorkspaceAttachmentsMock.mockResolvedValue({ resolved: [imageArtifact], invalidIds: [] })
+    buildAttachmentContentBlocksMock.mockResolvedValue({ blocks: [imageBlock], unreadableNote: null })
+    await runFounderThreadTurn('ws-1', 'thread-1', 'this is Max', undefined, ['artifact-1'])
+    const insertCall = (supabaseStub.from as ReturnType<typeof vi.fn>).mock.results.find(
+      (r) => typeof r.value?.insert === 'function'
+    )
+    expect(insertCall).toBeDefined()
+    const insertedPayload = insertCall!.value.insert.mock.calls[0][0]
+    expect(insertedPayload.rich_result).toEqual({
+      version: 1,
+      narrative: '',
+      blocks: [{ type: 'business_artifact', artifactId: 'artifact-1' }],
+    })
+    expect(JSON.stringify(insertedPayload.rich_result)).not.toMatch(/https?:\/\//)
+  })
+
+  it('never runs the model-router path when attachments are present, even if a requestedMode was chosen — live image reading is only wired for the production path', async () => {
+    resolveWorkspaceAttachmentsMock.mockResolvedValue({ resolved: [imageArtifact], invalidIds: [] })
+    buildAttachmentContentBlocksMock.mockResolvedValue({ blocks: [imageBlock], unreadableNote: null })
+    await runFounderThreadTurn('ws-1', 'thread-1', 'this is Max', { requestedMode: 'claude', founderUserId: 'f-1' }, ['artifact-1'])
+    expect(runCayeDirectRouterTurnMock).not.toHaveBeenCalled()
+    expect(cayeAgentMock).toHaveBeenCalled()
+  })
+
+  // ATTACHMENT-ROUTING INVARIANT (adversarial review). "attachment present"
+  // must never reach a path that can't see it, for ANY requestedMode value —
+  // not just the one case above. Exhaustive over every value the composer's
+  // model selector can actually send, plus the omitted-options shape voice
+  // uses, so a future mode added to RequestedMode can't slip through
+  // untested.
+  it.each(['auto', 'claude', 'openai', 'api'] as const)(
+    'attachment-routing invariant: requestedMode=%s + attachment always uses the real multimodal path, never the router',
+    async (requestedMode) => {
+      resolveWorkspaceAttachmentsMock.mockResolvedValue({ resolved: [imageArtifact], invalidIds: [] })
+      buildAttachmentContentBlocksMock.mockResolvedValue({ blocks: [imageBlock], unreadableNote: null })
+      await runFounderThreadTurn('ws-1', 'thread-1', 'this is Max', { requestedMode, founderUserId: 'f-1' }, ['artifact-1'])
+      expect(runCayeDirectRouterTurnMock).not.toHaveBeenCalled()
+      expect(cayeAgentMock).toHaveBeenCalledTimes(1)
+      // Not merely "cayeAgent was called" — it must have actually RECEIVED
+      // the real bytes, not just the text.
+      const firstCallArgs = cayeAgentMock.mock.calls[0][0] as { userMessage: unknown }
+      expect(firstCallArgs.userMessage).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'image' })]))
+    }
+  )
+
+  it('attachment-routing invariant: an attachment with NO options object at all (voice-shaped call) still reaches the real multimodal path', async () => {
+    resolveWorkspaceAttachmentsMock.mockResolvedValue({ resolved: [imageArtifact], invalidIds: [] })
+    buildAttachmentContentBlocksMock.mockResolvedValue({ blocks: [imageBlock], unreadableNote: null })
+    await runFounderThreadTurn('ws-1', 'thread-1', 'this is Max', undefined, ['artifact-1'])
+    expect(runCayeDirectRouterTurnMock).not.toHaveBeenCalled()
+    const firstCallArgs = cayeAgentMock.mock.calls[0][0] as { userMessage: unknown }
+    expect(firstCallArgs.userMessage).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'image' })]))
+  })
+
+  it('takes the router path as usual when no attachments are present, unchanged', async () => {
+    await runFounderThreadTurn('ws-1', 'thread-1', 'hello', { requestedMode: 'claude', founderUserId: 'f-1' })
+    expect(runCayeDirectRouterTurnMock).toHaveBeenCalled()
+    expect(cayeAgentMock).not.toHaveBeenCalled()
+  })
+
+  it('rejects more than MAX_ATTACHMENTS_PER_TURN attachments outright — never silently truncates the list', async () => {
+    const tooMany = Array.from({ length: 7 }, (_, i) => `artifact-${i}`)
+    await expect(
+      runFounderThreadTurn('ws-1', 'thread-1', 'here are some files', undefined, tooMany)
+    ).rejects.toThrow('Too many attachments')
+    expect(resolveWorkspaceAttachmentsMock).not.toHaveBeenCalled()
+    expect(cayeAgentMock).not.toHaveBeenCalled()
+  })
+
+  it('attachment-routing invariant: fails the turn explicitly rather than answering silently when every attachment is unreadable (storage outage) — never a false "I don\'t see anything"', async () => {
+    resolveWorkspaceAttachmentsMock.mockResolvedValue({ resolved: [imageArtifact], invalidIds: [] })
+    buildAttachmentContentBlocksMock.mockResolvedValue({ blocks: [], unreadableNote: 'Saved but could not be read live this turn: max.png.' })
+    await expect(
+      runFounderThreadTurn('ws-1', 'thread-1', 'this is Max', undefined, ['artifact-1'])
+    ).rejects.toThrow('Attachment unreadable')
+    expect(cayeAgentMock).not.toHaveBeenCalled()
+    expect(persistAgentTurnsMock).not.toHaveBeenCalled()
+  })
+
+  it('merges a business_artifact result from retrieve_artifact_for_operator into the persisted rich_result', async () => {
+    cayeAgentMock.mockResolvedValue({ replyText: 'Here it is.', newTurns: [{ role: 'assistant', content: [{ type: 'text', text: 'Here it is.' }] }], linkedThreadIds: [], businessArtifactIds: ['artifact-2'] })
+    await runFounderThreadTurn('ws-1', 'thread-1', 'show me that photo of max')
+    expect(persistAgentTurnsMock).toHaveBeenCalledWith(
+      supabaseStub, 'ws-1', expect.any(Array), expect.anything(), undefined, undefined, 'dashboard', 'visible',
+      expect.objectContaining({ blocks: expect.arrayContaining([{ type: 'business_artifact', artifactId: 'artifact-2' }]) })
+    )
   })
 })

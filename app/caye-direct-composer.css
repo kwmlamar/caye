@@ -1,0 +1,43 @@
+/* Caye Direct composer controls: keep utility actions visually quiet and reserve the filled treatment for Send. */
+.caye-direct-composer-shell button[aria-label="Attach a file"],
+.caye-direct-composer-shell button[aria-label="Start voice conversation with Caye"] {
+  width: 32px !important;
+  height: 32px !important;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+.caye-direct-composer-shell button[aria-label="Attach a file"]:hover:not(:disabled),
+.caye-direct-composer-shell button[aria-label="Start voice conversation with Caye"]:hover:not(:disabled) {
+  background: transparent !important;
+  border-color: transparent !important;
+}
+
+/* Chat-style plus affordance instead of a visually heavy paperclip button. */
+.caye-direct-composer-shell button[aria-label="Attach a file"] svg {
+  display: none;
+}
+
+.caye-direct-composer-shell button[aria-label="Attach a file"]::before {
+  content: "+";
+  color: rgba(244, 244, 245, 0.72);
+  font: 300 27px/1 var(--font-sans);
+  transform: translateY(-1px);
+}
+
+/* Send is the single primary action: a fully filled Caye-accent circle. */
+.caye-direct-composer-shell button[aria-label="Send message"].caye-direct-send.is-ready {
+  background: #4EBECE !important;
+  border-color: #4EBECE !important;
+  box-shadow: none !important;
+}
+
+.caye-direct-composer-shell button[aria-label="Send message"].caye-direct-send.is-ready:hover:not(:disabled) {
+  background: #65c8d5 !important;
+  border-color: #65c8d5 !important;
+}
+
+.caye-direct-composer-shell button[aria-label="Send message"].caye-direct-send.is-ready svg {
+  stroke: #071012 !important;
+}

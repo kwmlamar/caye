@@ -100,6 +100,12 @@ const RULES: readonly ClaimRule[] = [
       'notify_driver',
       'escalate_to_owner',
       'send_operator_message',
+      // Delivery-qualified, not the bare tool name — execute.ts only ever
+      // pushes this entry when retrieve_artifact_for_operator's result
+      // carried delivery: 'whatsapp' (a real external send). An inline
+      // Caye Direct rendering never grounds a "sent" claim this way, even
+      // though the same tool ran and succeeded — see execute.ts's comment.
+      'retrieve_artifact_for_operator:whatsapp',
     ],
     correction:
       "I have not actually sent anything — I don't have a tool that lets me message an operator directly on my own. Here's the draft, for you to send yourself or ask me to relay a different way:",

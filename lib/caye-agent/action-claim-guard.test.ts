@@ -246,6 +246,32 @@ describe('enforceActionGrounding — unsupported platform-escalation claims (CAY
     expect(text).not.toMatch(/draft/i)
     expect(text).toContain('The booking is confirmed for Saturday.')
   })
+
+  // Multimodal Caye Direct follow-up (#87). retrieve_artifact_for_operator's
+  // delivery is channel-decided, not model-decided — execute.ts only ever
+  // pushes the delivery-qualified 'retrieve_artifact_for_operator:whatsapp'
+  // entry when the tool result actually carried delivery: 'whatsapp'. This
+  // suite tests enforceActionGrounding's OWN behavior against that entry
+  // shape directly (execute.ts's construction of it is covered separately
+  // in execute.test.ts).
+  it('grounds a "sent" claim when retrieve_artifact_for_operator delivered over WhatsApp', () => {
+    const replyText = "I've sent that pickup map over."
+    const executed: ExecutedToolOutcome[] = [{ name: 'retrieve_artifact_for_operator:whatsapp', ok: true }]
+    const { text, violations } = enforceActionGrounding(replyText, executed)
+    expect(violations).toHaveLength(0)
+    expect(text).toBe(replyText)
+  })
+
+  it('does NOT ground a "sent" claim from the bare (undelivered/inline) retrieve_artifact_for_operator entry alone', () => {
+    const replyText = 'I sent you the photo of Max.'
+    // What execute.ts actually pushes for an INLINE Caye Direct delivery:
+    // the bare tool name only, never the ':whatsapp' qualified entry.
+    const executed: ExecutedToolOutcome[] = [{ name: 'retrieve_artifact_for_operator', ok: true }]
+    const { text, violations } = enforceActionGrounding(replyText, executed)
+    expect(violations).toHaveLength(1)
+    expect(violations[0].category).toBe('send')
+    expect(text).not.toContain('I sent you the photo of Max')
+  })
 })
 
 describe('enforceActionGrounding — general behavior', () => {

@@ -455,6 +455,14 @@ export async function runFounderToolLoop(args: FounderToolLoopArgs): Promise<Fou
       if (typeof confirmedToolName === 'string') {
         executedTools.push({ name: confirmedToolName, ok: toolResult.ok, pendingOnly: false })
       }
+      // Mirrors lib/caye-agent/execute.ts's identical special case — a
+      // retrieve_artifact_for_operator success only grounds a "sent" claim
+      // when it was a real external send (delivery: 'whatsapp'), never an
+      // inline Caye Direct rendering. Router turns don't carry attachments
+      // but CAN still call this tool for an ordinary retrieval.
+      if (block.name === 'retrieve_artifact_for_operator' && toolResult.ok && resultData?.delivery === 'whatsapp') {
+        executedTools.push({ name: 'retrieve_artifact_for_operator:whatsapp', ok: true, pendingOnly: false })
+      }
       if (tool.terminatesTurn && toolResult.ok && terminalReplyText === null) {
         const data = toolResult.data as { delivered_text?: unknown } | undefined
         terminalReplyText = typeof data?.delivered_text === 'string' ? data.delivered_text : ''

@@ -72,9 +72,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const body = await req.json().catch(() => null)
   if (!body) return NextResponse.json({ error: 'Invalid request body' }, { status: 400 })
 
-  const { workspaceId, message, model } = body as { workspaceId?: string; message?: string; model?: string }
-  if (!workspaceId || !message?.trim()) {
-    return NextResponse.json({ error: 'workspaceId and message are required' }, { status: 400 })
+  const { workspaceId, message, model, attachmentArtifactIds } = body as {
+    workspaceId?: string
+    message?: string
+    model?: string
+    attachmentArtifactIds?: unknown
+  }
+  const attachments = Array.isArray(attachmentArtifactIds)
+    ? attachmentArtifactIds.filter((id): id is string => typeof id === 'string' && id.length > 0)
+    : undefined
+  if (!workspaceId || (!message?.trim() && !attachments?.length)) {
+    return NextResponse.json({ error: 'workspaceId and a message or attachment are required' }, { status: 400 })
   }
 
   const user = await requireFounder(req)
@@ -93,13 +101,21 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const result = await runFounderThreadTurn(
       workspaceId,
       threadId,
-      message,
-      requestedMode ? { requestedMode, founderUserId: user.id } : undefined
+      message ?? '',
+      requestedMode ? { requestedMode, founderUserId: user.id } : undefined,
+      attachments
     )
     return NextResponse.json(result)
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Agent failed'
     if (msg === 'Thread not found') return NextResponse.json({ error: msg }, { status: 404 })
+    if (msg === 'Invalid attachment') return NextResponse.json({ error: msg }, { status: 400 })
+    if (msg === 'Too many attachments') return NextResponse.json({ error: `Send at most a few files at once.` }, { status: 400 })
+    // Not a client input problem (the id was valid and workspace-scoped) —
+    // bytes just couldn't be read back from storage this attempt. Never
+    // silently answer without them (see runFounderThreadTurn's hard
+    // invariant) — surface it as a real, retryable failure instead.
+    if (msg === 'Attachment unreadable') return NextResponse.json({ error: "Couldn't read that attachment right now — try again in a moment." }, { status: 502 })
     return NextResponse.json({ error: msg }, { status: 500 })
   }
 }

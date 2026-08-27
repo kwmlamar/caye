@@ -57,6 +57,8 @@ export interface CayeDirectRouterTurnArgs {
    */
   restrictToToolNames?: readonly string[]
   engineeringOrigin?: { threadId: string; messageId: string }
+  /** Which Caye surface originated this turn — see ToolContext.channel's doc comment. Always 'dashboard' on this bridge (it is Caye Direct's own router path), threaded explicitly rather than assumed so toolCtx construction stays honest about where the value comes from. */
+  channel?: 'dashboard'
 }
 
 export interface CayeDirectRouterTurnResult {
@@ -67,6 +69,8 @@ export interface CayeDirectRouterTurnResult {
   model?: string
   richResult?: RichResult
   engineeringArtifactIds?: string[]
+  /** business_artifacts ids retrieve_artifact_for_operator resolved for inline Direct delivery this turn — see ToolContext.businessArtifactIds. */
+  businessArtifactIds?: string[]
 }
 
 function backendsFor(): ToolCapableBackend[] {
@@ -96,6 +100,7 @@ export async function runCayeDirectRouterTurn(args: CayeDirectRouterTurnArgs): P
 
   const directThreadLinks: string[] = []
   const engineeringArtifactIds: string[] = []
+  const businessArtifactIds: string[] = []
   const toolCtx: ToolContext = {
     workspaceId: args.workspaceId,
     callerRole: 'founder',
@@ -103,7 +108,9 @@ export async function runCayeDirectRouterTurn(args: CayeDirectRouterTurnArgs): P
     requestId: randomUUID(),
     directThreadLinks,
     engineeringOrigin: args.engineeringOrigin,
+    channel: args.channel,
     engineeringArtifactIds,
+    businessArtifactIds,
   }
 
   // Deliberately no `hints` — see capabilities.ts: setting needsToolUse
@@ -153,6 +160,7 @@ export async function runCayeDirectRouterTurn(args: CayeDirectRouterTurnArgs): P
       linkedThreadIds: result.linkedThreadIds,
       backend: decision.selected,
       ...([...new Set(engineeringArtifactIds)].length ? { engineeringArtifactIds: [...new Set(engineeringArtifactIds)] } : {}),
+      ...([...new Set(businessArtifactIds)].length ? { businessArtifactIds: [...new Set(businessArtifactIds)] } : {}),
       richResult: result.richResult ? { ...result.richResult, provenance: { requestedMode: args.requestedMode, selectedBackend: decision.selected, provider: decision.selected?.includes('anthropic') || decision.selected === 'claude_subscription' ? 'anthropic' : decision.selected === 'openrouter' ? 'openrouter' : 'openai', model: result.model, fallbackSequence: decision.fallbacksTried, latencyMs: result.latencyMs ?? Date.now() - start, usage: result.usage } } : undefined,
     }
   } catch (err) {

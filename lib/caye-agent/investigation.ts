@@ -279,6 +279,19 @@ export interface RunInvestigationInput {
   callerName: string
   operatorId: number | null
   engineeringOrigin?: { threadId: string; messageId: string }
+  /** Which Caye surface originated this turn — see ToolContext.channel's doc comment. Passed through to every pass (first and continuations), unlike engineeringOrigin, which only ever mattered for the first. */
+  channel?: 'dashboard'
+  /**
+   * When set, overrides what the FIRST cayeAgent() pass actually sees as
+   * `userMessage` — e.g. inline image/document content blocks alongside
+   * the founder's text, built by lib/artifacts/attachments.ts for a Caye
+   * Direct attachment. `message` (plain text) stays the investigation's
+   * durable objective/continuation-prompt text regardless — a continuation
+   * pass never needs to re-see attachment bytes any more than the WhatsApp
+   * path re-shows an image on a later turn (see that path's own comment on
+   * why images are only ever seen on the turn they arrive).
+   */
+  userMessageOverride?: Anthropic.MessageParam['content']
 }
 
 /**
@@ -297,7 +310,7 @@ export interface RunInvestigationInput {
 export async function runInvestigation(
   supabase: SupabaseClient,
   input: RunInvestigationInput,
-  persistPassTurns: (turns: Anthropic.MessageParam[], linkedThreadIds: string[], engineeringArtifactIds?: string[]) => Promise<void>
+  persistPassTurns: (turns: Anthropic.MessageParam[], linkedThreadIds: string[], engineeringArtifactIds?: string[], businessArtifactIds?: string[]) => Promise<void>
 ): Promise<CayeAgentResult> {
   // Generated once, up front, and reused for every continuation of this
   // same logical investigation — this is the key that
@@ -312,15 +325,16 @@ export async function runInvestigation(
   let agentResult: CayeAgentResult = await cayeAgent({
     mode: 'back-office',
     workspaceId: input.workspaceId,
-    userMessage: input.message,
+    userMessage: input.userMessageOverride ?? input.message,
     callerRole: 'founder',
     callerName: input.callerName,
     operatorId: input.operatorId,
     threadId: input.threadId,
     investigation: { id: investigationId, isContinuation: false, objective: input.message },
     engineeringOrigin: input.engineeringOrigin,
+    channel: input.channel,
   })
-  await persistPassTurns(agentResult.newTurns, agentResult.linkedThreadIds, agentResult.engineeringArtifactIds)
+  await persistPassTurns(agentResult.newTurns, agentResult.linkedThreadIds, agentResult.engineeringArtifactIds, agentResult.businessArtifactIds)
 
   // A recoverable "ran out of room in one round" is never surfaced to the
   // founder as a question — the founder already authorized this
@@ -339,8 +353,9 @@ export async function runInvestigation(
       operatorId: input.operatorId,
       threadId: input.threadId,
       investigation: { id: investigationId, isContinuation: true, objective: input.message },
+      channel: input.channel,
     })
-    await persistPassTurns(agentResult.newTurns, agentResult.linkedThreadIds, agentResult.engineeringArtifactIds)
+    await persistPassTurns(agentResult.newTurns, agentResult.linkedThreadIds, agentResult.engineeringArtifactIds, agentResult.businessArtifactIds)
   }
 
   if (agentResult.ranOutOfIterations) {

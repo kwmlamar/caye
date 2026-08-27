@@ -217,10 +217,44 @@ export interface ToolContext {
     entityRef: string
     operation: 'customer_reply_draft'
   } | null
-  /** Set only by the founder Direct path after its inbound row is durable. */
+  /**
+   * Set only by the founder Direct path after its inbound row is durable —
+   * an engineering-artifact-specific payload (thread/message id), used only
+   * to gate/scope CAD artifact creation (create-parametric-part.ts,
+   * revise-parametric-part.ts) to Direct threads. NOT a general channel
+   * signal — see `channel` below for that. Kept narrowly engineering-
+   * scoped on purpose after an adversarial review flagged the previous
+   * revision's reuse of this field as a general "is this Direct" check for
+   * retrieve_artifact_for_operator as an overloaded, easily-misread signal.
+   */
   engineeringOrigin?: { threadId: string; messageId: string }
   /** Durable artifact ids created during this single turn, never client supplied. */
   engineeringArtifactIds?: string[]
+  /**
+   * Which Caye surface originated this turn, distinct from `mode` (which
+   * back-office tools are visible at all) — set ONLY by the founder Direct
+   * call path (lib/caye-agent/founder-thread-turn.ts, both the production
+   * and model-router branches), at the exact same two call sites that used
+   * to set engineeringOrigin for this purpose. Undefined on every WhatsApp
+   * operator turn, driver turn, admin-shell turn, and cron/scan invocation.
+   * The one current consumer is retrieve_artifact_for_operator, which
+   * branches on `channel === 'dashboard'` to decide delivery transport
+   * deterministically (WhatsApp media send vs. inline Direct rendering)
+   * without the model ever choosing transport itself — see that tool's doc
+   * comment. Add new channel-aware tools against this field, not against
+   * engineeringOrigin's presence.
+   */
+  channel?: 'dashboard'
+  /**
+   * Durable business_artifacts ids retrieve_artifact_for_operator resolved
+   * for INLINE Caye Direct delivery this turn (i.e. ctx.channel ===
+   * 'dashboard', so no WhatsApp send happened). Mirrors
+   * engineeringArtifactIds' shape/purpose exactly — see
+   * founder-thread-turn.ts, which turns this into a rich_result
+   * 'business_artifact' block after the turn completes. Undefined/unused
+   * on the WhatsApp path.
+   */
+  businessArtifactIds?: string[]
 }
 
 /**
