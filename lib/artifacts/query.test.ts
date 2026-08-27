@@ -18,7 +18,10 @@ interface FakeArtifact {
  * applied eq() filter — so a query missing the workspace_id filter would be
  * caught by returning the OTHER workspace's rows too.
  */
-function fakeSupabase(artifacts: FakeArtifact[]) {
+function fakeSupabase(
+  artifacts: FakeArtifact[],
+  opts: { observations?: Record<string, unknown>[]; relations?: Record<string, unknown>[] } = {}
+) {
   const eqLog: Array<{ table: string; col: string; val: unknown }> = []
 
   function filterTable(table: string, rows: Record<string, unknown>[]) {
@@ -47,8 +50,8 @@ function fakeSupabase(artifacts: FakeArtifact[]) {
   const from = vi.fn((table: string) => ({
     select: vi.fn(() => {
       if (table === 'business_artifacts') return filterTable(table, artifacts as unknown as Record<string, unknown>[])
-      if (table === 'business_artifact_observations') return filterTable(table, [])
-      if (table === 'business_artifact_relations') return filterTable(table, [])
+      if (table === 'business_artifact_observations') return filterTable(table, opts.observations ?? [])
+      if (table === 'business_artifact_relations') return filterTable(table, opts.relations ?? [])
       throw new Error(`unexpected table ${table}`)
     }),
   }))
@@ -87,7 +90,7 @@ describe('workspace isolation (#87 mandatory test — search/get/recent must nev
 
     const results = await searchArtifacts({ workspaceId: 'ws-a' })
 
-    expect(results.map((r) => r.artifact.id)).toEqual(['artifact-a'])
+    expect(results.items.map((r) => r.artifact.id)).toEqual(['artifact-a'])
     expect(fake.eqLog).toContainEqual({ table: 'business_artifacts', col: 'workspace_id', val: 'ws-a' })
   })
 
@@ -136,7 +139,7 @@ describe('storage durability guard (#87 test I — retrieval refuses an artifact
     currentClient = fake.client
 
     const results = await searchArtifacts({ workspaceId: 'ws-a' })
-    expect(results.map((r) => r.artifact.id)).toEqual(['artifact-a'])
+    expect(results.items.map((r) => r.artifact.id)).toEqual(['artifact-a'])
   })
 
   it('N: still returns the durable original when UNDERSTANDING failed — storage durability and processing success are independent', async () => {
@@ -179,8 +182,9 @@ describe('ordinal resolution — "that image"/"the second photo" (#87 conversati
     currentClient = fake.client
 
     const results = await searchArtifacts({ workspaceId: 'ws-a', ordinal: 'latest' })
-    expect(results).toHaveLength(1)
-    expect(results[0].artifact.id).toBe('older') // first row in the fake's base order stands in for "already ordered desc"
+    expect(results.items).toHaveLength(1)
+    expect(results.items[0].artifact.id).toBe('older') // first row in the fake's base order stands in for "already ordered desc"
+    expect(results.ambiguous).toBe(false) // ordinal lookups are never flagged ambiguous — the request is already unambiguous
   })
 
   it('ordinal=second_most_recent skips the first result', async () => {
@@ -190,7 +194,39 @@ describe('ordinal resolution — "that image"/"the second photo" (#87 conversati
     currentClient = fake.client
 
     const results = await searchArtifacts({ workspaceId: 'ws-a', ordinal: 'second_most_recent' })
-    expect(results).toHaveLength(1)
-    expect(results[0].artifact.id).toBe('second')
+    expect(results.items).toHaveLength(1)
+    expect(results.items[0].artifact.id).toBe('second')
+  })
+})
+
+describe('retrieval ambiguity (#87 review pass 2, item D) — a tied top score is a question, not a ranking', () => {
+  it('D3: two equally-plausible pickup photos for "pickup picture" are flagged ambiguous, not silently resolved to one', async () => {
+    const casinoTramStop: FakeArtifact = { ...WORKSPACE_A_ARTIFACT, id: 'casino-tram-photo', filename: 'IMG_001.jpg' }
+    const pinkBuildingByDock: FakeArtifact = { ...WORKSPACE_A_ARTIFACT, id: 'pink-building-photo', filename: 'IMG_002.jpg' }
+    // Both artifacts have a confirmed relation label mentioning "pickup" —
+    // the term-overlap scorer weighs confirmed labels most heavily, and
+    // both match the query term equally, producing a genuine tie.
+    const fake = fakeSupabase([casinoTramStop, pinkBuildingByDock], {
+      relations: [
+        { artifact_id: 'casino-tram-photo', status: 'confirmed', superseded_at: null, label: 'Casino Tram Stop pickup point' },
+        { artifact_id: 'pink-building-photo', status: 'confirmed', superseded_at: null, label: 'Pink building by dock pickup point' },
+      ],
+    })
+    currentClient = fake.client
+
+    const results = await searchArtifacts({ workspaceId: 'ws-a', query: 'pickup picture' })
+
+    expect(results.items).toHaveLength(2)
+    expect(results.ambiguous).toBe(true)
+  })
+
+  it('a query that clearly favors one artifact over another is NOT flagged ambiguous', async () => {
+    const casinoTramStop: FakeArtifact = { ...WORKSPACE_A_ARTIFACT, id: 'casino-tram-photo', filename: 'IMG_001.jpg' }
+    const unrelatedReceipt: FakeArtifact = { ...WORKSPACE_A_ARTIFACT, id: 'receipt-photo', filename: 'IMG_002.jpg', modality: 'document' }
+    const fake = fakeSupabase([casinoTramStop, unrelatedReceipt])
+    currentClient = fake.client
+
+    const results = await searchArtifacts({ workspaceId: 'ws-a', query: 'IMG_001' })
+    expect(results.ambiguous).toBe(false)
   })
 })

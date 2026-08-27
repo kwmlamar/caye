@@ -7,6 +7,7 @@ import {
   sha256Hex,
   uploadArtifactBytes,
 } from './storage'
+import { processArtifact } from './process'
 import { CHANNEL_SIZE_LIMITS_BYTES, modalityFromMimeType, type BusinessArtifactRow } from './types'
 
 /**
@@ -40,7 +41,12 @@ import { CHANNEL_SIZE_LIMITS_BYTES, modalityFromMimeType, type BusinessArtifactR
  * 'stored' in THIS call — never before, and the enqueue is itself idempotent
  * (stable idempotency key per artifact+processing_version), so a retry that
  * re-confirms already-stored bytes safely re-enqueues without duplicating
- * the queue entry.
+ * the queue entry. If the enqueue call itself fails (this is the only call
+ * site that ever enqueues 'artifact_process' — nothing else scans for
+ * orphaned stored-but-unprocessed rows), this falls back to processing the
+ * artifact inline right here rather than leaving durably-stored bytes with
+ * no path to ever being understood. processArtifact's own atomic claim
+ * makes that safe even if a delayed retry of the same enqueue also lands.
  */
 
 export interface IngestArtifactInput {
@@ -203,12 +209,32 @@ export async function ingestArtifact(input: IngestArtifactInput): Promise<Ingest
 
   // Idempotent: a retry that re-confirms already-attempted bytes re-enqueues
   // safely — the unique idempotency key makes the second enqueue a no-op.
-  await enqueueOperation({
+  const enqueueResult = await enqueueOperation({
     workspaceId: input.workspaceId,
     operation: 'artifact_process',
     payload: { artifact_id: stored.id, processing_version: stored.processing_version },
     idempotencyKey: `artifact_process:${stored.id}:v${stored.processing_version}`,
   })
+
+  // Bytes are durably stored regardless of what happens below — that
+  // contract is already satisfied. But an enqueue failure here (as opposed
+  // to enqueueOperation's normal 23505 "already queued" no-op) would
+  // otherwise leave a 'stored' artifact with NO path to ever being
+  // understood: nothing re-scans business_artifacts for orphaned rows, and
+  // this is the only call site that enqueues 'artifact_process' at all.
+  // Fall back to processing it inline, right here, rather than leaving that
+  // gap — processArtifact's own atomic claim makes this safe to attempt
+  // even if a delayed/retried enqueue also eventually lands.
+  if (!enqueueResult.queued) {
+    console.error(
+      `[ingest] enqueue failed for artifact ${stored.id} (workspace ${input.workspaceId}): ${enqueueResult.reason} — falling back to inline processing`
+    )
+    try {
+      await processArtifact(stored.id)
+    } catch (err) {
+      console.error(`[ingest] inline processing fallback also failed for artifact ${stored.id}:`, err)
+    }
+  }
 
   return { ok: true, artifact: stored, deduped: reused }
 }

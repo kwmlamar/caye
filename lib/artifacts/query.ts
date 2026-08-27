@@ -47,6 +47,20 @@ export interface ArtifactSearchResultItem {
   score: number
 }
 
+export interface ArtifactSearchResult {
+  items: ArtifactSearchResultItem[]
+  /**
+   * True when the top two results are tied on score — e.g. two pickup
+   * photos (Casino Tram Stop, pink building by dock) both matching "pickup
+   * picture" equally. A tied top score is not a preference, it's an
+   * unresolved question; the caller (search_artifacts tool) surfaces this
+   * so the agent asks the operator which one rather than picking either.
+   * Deliberately NOT computed for ordinal/no-query lookups, where the
+   * request is already unambiguous by construction.
+   */
+  ambiguous: boolean
+}
+
 function scoreText(query: string, haystack: string): number {
   const terms = query
     .toLowerCase()
@@ -64,7 +78,7 @@ function activeRetentionFilter<T extends { retention_status: string }>(rows: T[]
   return rows.filter((r) => r.retention_status === 'active')
 }
 
-export async function searchArtifacts(filters: ArtifactSearchFilters): Promise<ArtifactSearchResultItem[]> {
+export async function searchArtifacts(filters: ArtifactSearchFilters): Promise<ArtifactSearchResult> {
   const supabase = createServiceClient()
   let q = supabase
     .from('business_artifacts')
@@ -84,10 +98,10 @@ export async function searchArtifacts(filters: ArtifactSearchFilters): Promise<A
   if (filters.dateToISO) q = q.lte('received_at', filters.dateToISO)
 
   const { data, error } = await q.order('received_at', { ascending: false }).limit(200)
-  if (error || !data) return []
+  if (error || !data) return { items: [], ambiguous: false }
 
   const artifacts = activeRetentionFilter(data as BusinessArtifactRow[])
-  if (artifacts.length === 0) return []
+  if (artifacts.length === 0) return { items: [], ambiguous: false }
 
   const artifactIds = artifacts.map((a) => a.id)
   const [{ data: observations }, { data: relations }] = await Promise.all([
@@ -141,7 +155,15 @@ export async function searchArtifacts(filters: ArtifactSearchFilters): Promise<A
   if (filters.ordinal === 'latest') results = results.slice(0, 1)
   if (filters.ordinal === 'second_most_recent') results = results.slice(1, 2)
 
-  return results.slice(0, filters.limit ?? 10)
+  const items = results.slice(0, filters.limit ?? 10)
+
+  // A tied top score on a free-text query (never on an ordinal lookup,
+  // which is already unambiguous by construction) means the query does not
+  // actually distinguish the top candidates — e.g. two pickup photos both
+  // matching "pickup picture" equally. That is a question, not a ranking.
+  const ambiguous = !!filters.query && !filters.ordinal && items.length > 1 && items[0].score === items[1].score
+
+  return { items, ambiguous }
 }
 
 export async function getArtifactDetail(

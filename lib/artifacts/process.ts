@@ -171,6 +171,20 @@ export async function processArtifact(artifactId: string): Promise<ProcessArtifa
   }
 }
 
+/**
+ * True for the unique-index violation on
+ * (artifact_id, observation_type, model_version) WHERE superseded_at IS NULL
+ * — i.e. another worker's insert for this exact observation already won.
+ * This is the actual enforcement behind hasActiveModelObservation's
+ * check-then-insert, which alone has a race window (a lease can expire
+ * while a legitimate worker is still running; see the migration's comment
+ * on this index). Losing this race is not a failure — it's the safety net
+ * catching exactly the case it exists for.
+ */
+function isBenignDuplicateObservation(error: { code?: string } | null): boolean {
+  return error?.code === '23505'
+}
+
 /** True when an active (non-superseded) model observation of this type/version already exists — guards against re-inserting a duplicate set after a claim/release race or a crash between insert and release. */
 async function hasActiveModelObservation(
   supabase: ReturnType<typeof createServiceClient>,
@@ -224,8 +238,11 @@ async function processImage(
   // Never let a partial write pass as success — releaseClaim must mark
   // 'failed' (retryable), not 'completed', when an observation didn't
   // actually land. hasActiveModelObservation's guard on retry means this
-  // never inserts a duplicate description on the next attempt.
-  if (descError) throw new Error(`failed to save visual_description observation: ${descError.message}`)
+  // never inserts a duplicate description on the next attempt. A 23505 here
+  // means another worker's insert already won this exact race — benign.
+  if (descError && !isBenignDuplicateObservation(descError)) {
+    throw new Error(`failed to save visual_description observation: ${descError.message}`)
+  }
 
   if (result.value.visible_text) {
     const { error: textError } = await supabase.from('business_artifact_observations').insert({
@@ -239,7 +256,9 @@ async function processImage(
       derived_by: 'model:claude-sonnet-4-6',
       model_version: modelVersion,
     })
-    if (textError) throw new Error(`failed to save visible_text observation: ${textError.message}`)
+    if (textError && !isBenignDuplicateObservation(textError)) {
+      throw new Error(`failed to save visible_text observation: ${textError.message}`)
+    }
   }
 }
 
@@ -284,7 +303,9 @@ async function processDocument(
       derived_by: 'model:claude-sonnet-4-6',
       model_version: modelVersion,
     })
-    if (extractionError) throw new Error(`failed to save document_extraction observation: ${extractionError.message}`)
+    if (extractionError && !isBenignDuplicateObservation(extractionError)) {
+      throw new Error(`failed to save document_extraction observation: ${extractionError.message}`)
+    }
   }
 
   if (!hasSummary) {
@@ -299,6 +320,8 @@ async function processDocument(
       derived_by: 'model:claude-sonnet-4-6',
       model_version: modelVersion,
     })
-    if (summaryError) throw new Error(`failed to save summary observation: ${summaryError.message}`)
+    if (summaryError && !isBenignDuplicateObservation(summaryError)) {
+      throw new Error(`failed to save summary observation: ${summaryError.message}`)
+    }
   }
 }

@@ -107,11 +107,34 @@ export async function uploadArtifactBytes(params: {
     upsert: false,
   })
   if (error) {
-    // Same object re-uploaded (retry after a partial failure) is fine.
-    if (/already exists|duplicate/i.test(error.message)) return { ok: true }
-    return { ok: false, error: error.message }
+    // Same object re-uploaded (retry after a partial failure) is fine —
+    // but only once we've actually confirmed it's there (see below), not
+    // just because the provider's error message pattern-matches "exists".
+    if (!/already exists|duplicate/i.test(error.message)) {
+      return { ok: false, error: error.message }
+    }
+  }
+
+  // Never trust a success response alone — a caller commits storage_state=
+  // 'stored' off this return value, and that commitment must mean the
+  // object is actually retrievable, not just that the API call didn't
+  // error. Cheap (metadata-only, no bytes transferred).
+  const exists = await objectExists(params.path)
+  if (!exists) {
+    return { ok: false, error: 'upload reported success but the object could not be verified in storage' }
   }
   return { ok: true }
+}
+
+/** Metadata-only existence check — never downloads bytes. */
+export async function objectExists(path: string): Promise<boolean> {
+  const supabase = createServiceClient()
+  const lastSlash = path.lastIndexOf('/')
+  const dir = path.slice(0, lastSlash)
+  const filename = path.slice(lastSlash + 1)
+  const { data, error } = await supabase.storage.from(ARTIFACT_BUCKET).list(dir, { search: filename })
+  if (error || !data) return false
+  return data.some((entry) => entry.name === filename)
 }
 
 export async function downloadArtifactBytes(path: string): Promise<Buffer | null> {

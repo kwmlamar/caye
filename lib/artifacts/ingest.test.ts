@@ -11,6 +11,9 @@ vi.mock('./storage', async (importOriginal) => {
   return { ...actual, uploadArtifactBytes }
 })
 
+const processArtifact = vi.hoisted(() => vi.fn().mockResolvedValue({ ok: true, status: 'completed', skipped: false }))
+vi.mock('./process', () => ({ processArtifact }))
+
 /**
  * Minimal thenable query-builder fake tailored to ingest.ts's exact chains:
  *   dedup lookup: .from('business_artifacts').select('*').eq().eq().eq().maybeSingle()
@@ -118,8 +121,9 @@ import { ingestArtifact } from './ingest'
 const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4])
 
 beforeEach(() => {
-  enqueueOperation.mockClear()
+  enqueueOperation.mockClear().mockResolvedValue({ queued: true, alreadyQueued: false })
   uploadArtifactBytes.mockClear().mockResolvedValue({ ok: true })
+  processArtifact.mockClear().mockResolvedValue({ ok: true, status: 'completed', skipped: false })
 })
 
 describe('ingestArtifact — idempotent ingestion (#87 acceptance test 1)', () => {
@@ -337,5 +341,45 @@ describe('BLOCKER 1 — storage-upload self-heal (#87 tests A/B)', () => {
     expect(fake.rows).toHaveLength(1)
     expect(fake.rows[0].storage_state).toBe('stored')
     expect(enqueueOperation).toHaveBeenCalledTimes(1)
+  })
+
+  it('adversarial scenario 6: bytes stored but the enqueue itself fails — falls back to inline processing rather than leaving the artifact permanently unprocessed', async () => {
+    const fake = fakeSupabase([])
+    currentClient = fake.client
+    enqueueOperation.mockResolvedValueOnce({ queued: false, alreadyQueued: false, reason: 'transient DB error' })
+
+    const result = await ingestArtifact({
+      workspaceId: 'ws-1',
+      sourceChannel: 'whatsapp_operator',
+      bytes: PNG_BYTES,
+      declaredMimeType: 'image/png',
+      filename: null,
+      providerAttachmentId: 'wamid.enqueue-fails',
+    })
+
+    // Bytes are durably stored regardless — that contract holds even though
+    // the queue entry never landed.
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error('unreachable')
+    expect(fake.rows[0].storage_state).toBe('stored')
+    // The gap is closed inline rather than left as an orphaned 'stored'
+    // row with no path to ever being understood.
+    expect(processArtifact).toHaveBeenCalledWith(result.artifact.id)
+  })
+
+  it('does not fall back to inline processing when the enqueue succeeds normally', async () => {
+    const fake = fakeSupabase([])
+    currentClient = fake.client
+
+    await ingestArtifact({
+      workspaceId: 'ws-1',
+      sourceChannel: 'whatsapp_operator',
+      bytes: PNG_BYTES,
+      declaredMimeType: 'image/png',
+      filename: null,
+      providerAttachmentId: null,
+    })
+
+    expect(processArtifact).not.toHaveBeenCalled()
   })
 })

@@ -4,6 +4,7 @@ import { getArtifactDetail } from '@/lib/artifacts/query'
 import { signArtifactUrl } from '@/lib/artifacts/storage'
 import { isWhatsAppWindowOpen } from '@/lib/whatsapp/window'
 import { sendMediaWhatsApp, type WhatsAppMediaType } from '@/lib/whatsapp/outbound'
+import { failedPermanent, needsHuman, succeeded } from '../result'
 import type { Tool } from '../types'
 
 interface RetrieveArtifactForOperatorInput {
@@ -81,18 +82,35 @@ export const retrieveArtifactForOperator: Tool<RetrieveArtifactForOperatorInput>
     )
 
     if (result.status === 'failed') {
-      return { ok: false, error: `Send failed: ${result.error}` }
+      if (result.blocked) {
+        return needsHuman('WHATSAPP_BLOCKED', "That operator's WhatsApp isn't reachable right now — check their number/connection before trying again.")
+      }
+      if (result.transient) {
+        // A network-level failure here does NOT mean the send definitely
+        // didn't happen — Meta may have received it before the timeout/
+        // reset. Never claim a confident "it failed" (that could prompt an
+        // immediate retry and a real duplicate send if it actually went
+        // through), and never mark this retryable — a system-level retry
+        // is exactly the blind-retry-on-ambiguous-outcome this must avoid.
+        // A human deciding to try again, having checked, is fine; an
+        // automatic retry loop is not.
+        return failedPermanent(
+          'SEND_OUTCOME_UNCERTAIN',
+          "I couldn't confirm whether that actually sent — the connection dropped before I got a response. Check WhatsApp before asking me to send it again, so we don't risk sending it twice."
+        )
+      }
+      return failedPermanent('SEND_FAILED', `Send failed: ${result.error}`)
     }
 
-    return {
-      ok: true,
-      data: {
-        artifact_id: detail.artifact.id,
-        sent: true,
-        filename: detail.artifact.filename,
-        source_channel: detail.artifact.source_channel,
-        received_at: detail.artifact.received_at,
-      },
-    }
+    return succeeded({
+      artifact_id: detail.artifact.id,
+      sent: true,
+      // Provider evidence for this exact send — not a re-derivable value,
+      // the durable trace that THIS message actually went out.
+      provider_message_id: result.messageId,
+      filename: detail.artifact.filename,
+      source_channel: detail.artifact.source_channel,
+      received_at: detail.artifact.received_at,
+    })
   },
 }

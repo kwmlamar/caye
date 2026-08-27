@@ -1,8 +1,66 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 vi.mock('server-only', () => ({}))
 
-import { detectMimeType, sha256Hex, buildStoragePath } from './storage'
+/** Fake storage bucket keyed by object path, tailored to .upload()/.list() only. */
+const uploadCalls = vi.hoisted(() => [] as Array<{ path: string }>)
+const bucketFiles = vi.hoisted(() => new Set<string>())
+const forcedUploadError = vi.hoisted(() => ({ value: null as string | null }))
+const forcedListMiss = vi.hoisted(() => ({ value: false }))
+
+vi.mock('@/lib/supabase-server', () => ({
+  createServiceClient: () => ({
+    storage: {
+      from: () => ({
+        upload: (path: string) => {
+          uploadCalls.push({ path })
+          if (forcedUploadError.value) return Promise.resolve({ data: null, error: { message: forcedUploadError.value } })
+          bucketFiles.add(path)
+          return Promise.resolve({ data: { path }, error: null })
+        },
+        list: (dir: string, opts: { search: string }) => {
+          if (forcedListMiss.value) return Promise.resolve({ data: [], error: null })
+          const matches = [...bucketFiles]
+            .filter((p) => p.startsWith(`${dir}/`) && p.slice(dir.length + 1) === opts.search)
+            .map((p) => ({ name: p.slice(dir.length + 1) }))
+          return Promise.resolve({ data: matches, error: null })
+        },
+      }),
+    },
+  }),
+}))
+
+import { detectMimeType, sha256Hex, buildStoragePath, uploadArtifactBytes, objectExists } from './storage'
+
+beforeEach(() => {
+  uploadCalls.length = 0
+  bucketFiles.clear()
+  forcedUploadError.value = null
+  forcedListMiss.value = false
+})
+
+describe('uploadArtifactBytes — adversarial scenario 14: never trust a bare success response (#87 review pass 2)', () => {
+  it('confirms the object is actually listable before reporting ok:true', async () => {
+    const result = await uploadArtifactBytes({ path: 'ws-1/artifact-1/original.png', bytes: Buffer.from('x'), mimeType: 'image/png' })
+    expect(result.ok).toBe(true)
+    expect(await objectExists('ws-1/artifact-1/original.png')).toBe(true)
+  })
+
+  it('reports failure when the upload API claims success but the object cannot be verified afterward', async () => {
+    forcedListMiss.value = true
+    const result = await uploadArtifactBytes({ path: 'ws-1/artifact-1/original.png', bytes: Buffer.from('x'), mimeType: 'image/png' })
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error('unreachable')
+    expect(result.error).toMatch(/could not be verified/i)
+  })
+
+  it('a retry hitting "already exists" is treated as success ONLY when the object is actually confirmed present', async () => {
+    forcedUploadError.value = 'The resource already exists'
+    forcedListMiss.value = true // simulates "exists" error without the object actually being there — should NOT be trusted
+    const result = await uploadArtifactBytes({ path: 'ws-1/artifact-1/original.png', bytes: Buffer.from('x'), mimeType: 'image/png' })
+    expect(result.ok).toBe(false)
+  })
+})
 
 describe('detectMimeType — never trust the extension/declared type', () => {
   it('sniffs a real PNG even when declared as something else', () => {

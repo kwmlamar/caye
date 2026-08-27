@@ -1,5 +1,6 @@
 import 'server-only'
 import { searchArtifacts as runSearch } from '@/lib/artifacts/query'
+import { quarantineUntrustedText } from '@/lib/artifacts/prompt-format'
 import type { ArtifactModality } from '@/lib/artifacts/types'
 import type { Tool } from '../types'
 
@@ -22,7 +23,12 @@ export const searchArtifacts: Tool<SearchArtifactsInput> = {
     'Returns a ranked list of matches with id, filename, modality, current understanding, and ' +
     'sender/date provenance. Follow up with get_artifact for full detail, or ' +
     'retrieve_artifact_for_operator to actually send the original file back. Do not guess an ' +
-    'artifact_id — always search or use ordinal first.',
+    'artifact_id — always search or use ordinal first.\n\n' +
+    'If the response has ambiguous=true, the top matches scored EQUALLY — the query genuinely ' +
+    "does not distinguish them (e.g. two different pickup-location photos both matching \"pickup " +
+    'picture\"). Do NOT pick one arbitrarily and do not silently guess. Ask the operator a single ' +
+    'focused clarifying question (e.g. name the distinguishing options) instead, unless the ' +
+    'surrounding conversation already makes the intended one unambiguous.',
   risk: 'read',
   roles: ['owner', 'staff', 'founder'],
   modes: ['back-office'],
@@ -51,7 +57,7 @@ export const searchArtifacts: Tool<SearchArtifactsInput> = {
   },
   async execute(args, ctx) {
     const wantsOperatorScope = args.ordinal && args.from_operator_only !== false
-    const results = await runSearch({
+    const { items, ambiguous } = await runSearch({
       workspaceId: ctx.workspaceId,
       query: args.query,
       modality: args.modality,
@@ -60,15 +66,19 @@ export const searchArtifacts: Tool<SearchArtifactsInput> = {
       limit: 10,
     })
 
-    if (results.length === 0) {
-      return { ok: true, data: { matched: 0, items: [] } }
+    if (items.length === 0) {
+      return { ok: true, data: { matched: 0, items: [], ambiguous: false } }
     }
 
     return {
       ok: true,
       data: {
-        matched: results.length,
-        items: results.map((r) => ({
+        matched: items.length,
+        ambiguous,
+        ...(ambiguous
+          ? { ambiguity_note: 'The top matches scored equally — ask the operator which one they mean rather than picking one.' }
+          : {}),
+        items: items.map((r) => ({
           artifact_id: r.artifact.id,
           filename: r.artifact.filename,
           modality: r.artifact.modality,
@@ -77,19 +87,26 @@ export const searchArtifacts: Tool<SearchArtifactsInput> = {
           sender_operator_allowlist_id: r.artifact.sender_operator_allowlist_id,
           processing_status: r.artifact.processing_status,
           top_observation: summarizeObservation(r.matchedObservations[0]),
-          confirmed_meaning: r.confirmedRelations[0]?.label ?? null,
+          confirmed_meaning: r.confirmedRelations[0]?.label ? quarantineUntrustedText('operator_annotation', r.confirmedRelations[0].label) : null,
         })),
       },
     }
   },
 }
 
+/**
+ * Every string surfaced here is quarantined before it leaves this function —
+ * this tool result is a model-prompt boundary exactly like get_artifact's,
+ * and artifact-derived text (a PDF's extracted content, a model's visual
+ * description) must never reach the model unquoted, here or anywhere else
+ * observation content is surfaced.
+ */
 function summarizeObservation(o?: { observation_type: string; content: Record<string, unknown> }): string | null {
   if (!o) return null
   const content = o.content
-  if (typeof content.description === 'string') return content.description
-  if (typeof content.summary === 'string') return content.summary
-  if (typeof content.meaning === 'string') return content.meaning
-  if (typeof content.text === 'string') return content.text.slice(0, 200)
+  if (typeof content.description === 'string') return quarantineUntrustedText(o.observation_type, content.description)
+  if (typeof content.summary === 'string') return quarantineUntrustedText(o.observation_type, content.summary)
+  if (typeof content.meaning === 'string') return quarantineUntrustedText(o.observation_type, content.meaning)
+  if (typeof content.text === 'string') return quarantineUntrustedText(o.observation_type, content.text.slice(0, 200))
   return null
 }

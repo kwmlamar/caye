@@ -107,6 +107,21 @@ function fakeSupabase(opts: {
     update: vi.fn((payload: Record<string, unknown>) => makeUpdateChain(table, payload)),
     insert: vi.fn((payload: Record<string, unknown>) => {
       insertCalls.push({ table, payload })
+      // Mirrors business_artifact_observations_active_model_unique_idx: one
+      // active row per (artifact_id, observation_type, model_version) where
+      // model_version is not null. This is the actual enforcement behind
+      // the "expired lease reclaimed while original worker still running"
+      // scenario — see the "L2" test below.
+      if (table === 'business_artifact_observations' && payload.model_version != null) {
+        const conflict = tables[table].some(
+          (r) =>
+            r.artifact_id === payload.artifact_id &&
+            r.observation_type === payload.observation_type &&
+            r.model_version === payload.model_version &&
+            r.superseded_at == null
+        )
+        if (conflict) return Promise.resolve({ error: { code: '23505', message: 'duplicate key' } })
+      }
       tables[table].push({ id: `row-${tables[table].length + 1}`, ...payload })
       return Promise.resolve({ error: null })
     }),
@@ -257,6 +272,59 @@ describe('BLOCKER 2 — atomic processing claim (#87 tests E/F/G/H/K/L)', () => 
     // The row is untouched by the stale caller — still at the newer generation.
     expect(fake.tables.business_artifacts[0].processing_version).toBe(2)
     expect(fake.tables.business_artifacts[0].processing_claim_token).toBeFalsy()
+  })
+
+  it('scenario 9: an old worker finishing AFTER a newer worker reclaimed the lease cannot clobber the newer state or duplicate the observation', async () => {
+    const fake = fakeSupabase({ artifacts: [baseArtifact()] })
+    currentClient = fake.client
+
+    // Worker A claims first, then pauses mid-model-call (deferred, under our
+    // control) — simulating a legitimately slow understanding pass.
+    let resolveA!: (v: unknown) => void
+    const deferredA = new Promise((resolve) => {
+      resolveA = resolve
+    })
+    describeImage.mockImplementationOnce(() => deferredA)
+
+    const promiseA = processArtifact('artifact-1')
+    await new Promise((r) => setTimeout(r, 0)) // let A reach its describeImage call and pause there
+    expect(describeImage).toHaveBeenCalledTimes(1)
+    expect(fake.tables.business_artifacts[0].processing_status).toBe('processing')
+    const tokenA = fake.tables.business_artifacts[0].processing_claim_token
+    expect(tokenA).toBeTruthy()
+
+    // Simulate A's lease expiring (it's been "running" longer than LEASE_MS)
+    // while it is still legitimately in flight.
+    fake.tables.business_artifacts[0].processing_claimed_at = new Date(Date.now() - 6 * 60 * 1000).toISOString()
+
+    // Worker B reclaims and completes normally — its own describeImage call
+    // falls through to the default (immediate) mock from beforeEach.
+    const resultB = await processArtifact('artifact-1')
+    expect(resultB.ok).toBe(true)
+    if (!resultB.ok) throw new Error('unreachable')
+    expect(resultB.skipped).toBe(false)
+    expect(fake.tables.business_artifacts[0].processing_status).toBe('completed')
+    const tokenAfterB = fake.tables.business_artifacts[0].processing_claim_token
+
+    // NOW worker A finishes its (stale) model call and tries to land its result.
+    resolveA({ ok: true, value: { description: 'a photo (from A)', visible_text: null, business_observations: [], confidence: 0.8 } })
+    const resultA = await promiseA
+    expect(resultA.ok).toBe(true)
+
+    // The row must still reflect B's completion — A's release used a token
+    // that no longer matches (B's release already cleared/overwrote it), so
+    // A's own release update is a structural no-op.
+    expect(fake.tables.business_artifacts[0].processing_status).toBe('completed')
+    expect(fake.tables.business_artifacts[0].processing_claim_token).toBe(tokenAfterB)
+
+    // Exactly ONE active visual_description observation exists — A's insert
+    // collided with B's on the unique (artifact_id, observation_type,
+    // model_version) index and was correctly treated as a benign duplicate,
+    // never a second active observation.
+    const activeDescriptions = fake.tables.business_artifact_observations.filter(
+      (o) => o.observation_type === 'visual_description' && o.superseded_at == null
+    )
+    expect(activeDescriptions).toHaveLength(1)
   })
 })
 

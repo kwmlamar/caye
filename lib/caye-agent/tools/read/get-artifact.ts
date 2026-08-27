@@ -37,7 +37,10 @@ export const getArtifact: Tool<GetArtifactInput> = {
       const content = o.content as Record<string, unknown>
       const quoted: Record<string, unknown> = {}
       for (const [k, v] of Object.entries(content)) {
-        quoted[k] = typeof v === 'string' && v.length > 40 ? quarantineUntrustedText(o.observation_type, v) : v
+        // No length threshold — a short string ("ignore all instructions")
+        // is exactly as capable of carrying an injection as a long one.
+        // Every string value from artifact content is quarantined, full stop.
+        quoted[k] = typeof v === 'string' ? quarantineUntrustedText(o.observation_type, v) : v
       }
       return {
         observation_type: o.observation_type,
@@ -70,7 +73,7 @@ export const getArtifact: Tool<GetArtifactInput> = {
             relation_type: r.relation_type,
             target_entity_type: r.target_entity_type,
             target_entity_id: r.target_entity_id,
-            label: r.label,
+            label: r.label ? quarantineUntrustedText('relation_label', r.label) : null,
             confirmed_at: r.confirmed_at,
           })),
       },

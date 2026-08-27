@@ -16,19 +16,32 @@ function fakeSupabase(opts: {
   artifactExists?: boolean
   priorAnnotationId?: string | null
   priorRelationId?: string | null
+  /** Simulates a real per-workspace row: the artifact lookup only matches when EVERY applied eq() filter agrees. */
+  realArtifactRow?: { workspace_id: string; id: string }
 }) {
   const updateCalls: Array<{ table: string; payload: unknown; id: unknown }> = []
   const insertCalls: Array<{ table: string; payload: unknown }> = []
+  const artifactEqLog: Array<[string, unknown]> = []
   let obsSeq = 0
   let relSeq = 0
 
   const from = vi.fn((table: string) => ({
     select: vi.fn(() => {
+      const filters: Array<[string, unknown]> = []
       const chain: Record<string, unknown> = {}
-      chain.eq = vi.fn(() => chain)
+      chain.eq = vi.fn((col: string, val: unknown) => {
+        filters.push([col, val])
+        if (table === 'business_artifacts') artifactEqLog.push([col, val])
+        return chain
+      })
       chain.is = vi.fn(() => chain)
       chain.maybeSingle = vi.fn(() => {
         if (table === 'business_artifacts') {
+          if (opts.realArtifactRow) {
+            const row = opts.realArtifactRow as Record<string, unknown>
+            const matches = filters.every(([col, val]) => row[col] === val)
+            return Promise.resolve({ data: matches ? { id: row.id } : null })
+          }
           return Promise.resolve({ data: opts.artifactExists === false ? null : { id: 'artifact-1' } })
         }
         if (table === 'business_artifact_observations') {
@@ -51,7 +64,7 @@ function fakeSupabase(opts: {
     })),
   }))
 
-  return { client: { from }, insertCalls, updateCalls }
+  return { client: { from }, insertCalls, updateCalls, artifactEqLog }
 }
 
 let currentClient: ReturnType<typeof fakeSupabase>['client']
@@ -127,5 +140,43 @@ describe('annotateArtifact — operator correction supersedes prior understandin
 
     const relInsert = fake.insertCalls.find((c) => c.table === 'business_artifact_relations')
     expect(relInsert?.payload).toMatchObject({ provenance: 'operator_corrected', corrected_from_relation_id: 'rel-old' })
+  })
+
+  it('workspace tenancy (#87 review pass 2): cannot annotate a REAL artifact that belongs to a different workspace', async () => {
+    // A genuinely existing artifact — just owned by workspace B, not the
+    // caller's workspace A. Not a "doesn't exist" case: the row is real.
+    const fake = fakeSupabase({ realArtifactRow: { workspace_id: 'ws-b', id: 'artifact-shared-id' } })
+    currentClient = fake.client
+
+    const result = await annotateArtifact({
+      workspaceId: 'ws-a',
+      artifactId: 'artifact-shared-id',
+      operatorAllowlistId: 7,
+      meaning: 'trying to annotate a file that is not mine',
+    })
+
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error('unreachable')
+    expect(result.error).toMatch(/not found/i)
+    // Confirms the query actually applied both filters — not merely a
+    // coincidental true "wasn't found" ignoring workspace_id entirely.
+    expect(fake.artifactEqLog).toContainEqual(['workspace_id', 'ws-a'])
+    expect(fake.artifactEqLog).toContainEqual(['id', 'artifact-shared-id'])
+    // No observation/relation was written for the wrong-workspace artifact.
+    expect(fake.insertCalls).toHaveLength(0)
+  })
+
+  it('the SAME real artifact IS annotatable by its actual owning workspace', async () => {
+    const fake = fakeSupabase({ realArtifactRow: { workspace_id: 'ws-b', id: 'artifact-shared-id' } })
+    currentClient = fake.client
+
+    const result = await annotateArtifact({
+      workspaceId: 'ws-b',
+      artifactId: 'artifact-shared-id',
+      operatorAllowlistId: 7,
+      meaning: 'the real owner annotating their own file',
+    })
+
+    expect(result.ok).toBe(true)
   })
 })

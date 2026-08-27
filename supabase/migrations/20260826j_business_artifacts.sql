@@ -239,6 +239,21 @@ create index if not exists business_artifact_observations_active_idx
   on business_artifact_observations (artifact_id, observation_type)
   where superseded_at is null;
 
+-- Closes a real race the app-level idempotency check (hasActiveModelObservation
+-- in lib/artifacts/process.ts) cannot fully close on its own: if a processing
+-- lease expires while a legitimate worker is still (slowly) running, a second
+-- worker can reclaim, and both can independently pass the "does this
+-- observation already exist?" check before either has inserted. This unique
+-- index is the actual enforcement — the loser's insert hits 23505 and is
+-- treated as a benign no-op (see process.ts), never a duplicate active row.
+-- NULL model_version (operator_annotation, which has no model version at
+-- all) is intentionally excluded — annotateArtifact's own supersession
+-- logic already governs that one row per artifact independently, and SQL
+-- NULL<>NULL semantics would make this index a no-op for it anyway.
+create unique index if not exists business_artifact_observations_active_model_unique_idx
+  on business_artifact_observations (artifact_id, observation_type, model_version)
+  where superseded_at is null and model_version is not null;
+
 create index if not exists business_artifact_observations_workspace_idx
   on business_artifact_observations (workspace_id);
 
