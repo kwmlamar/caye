@@ -30,6 +30,7 @@ interface HealthData {
   whatsapp: { healthy: boolean; items: WhatsAppItem[] }
   migrations: { healthy: boolean; missing: string[]; repo_count: number; applied_count: number; error?: string }
   llm_activity: { healthy: boolean; last_call_at: string | null; stale: boolean }
+  model_backends: { name: string; state: string; detail?: string }[]
 }
 
 function fmtAgo(iso: string | null): string {
@@ -201,6 +202,9 @@ export default function HealthPage() {
         healthy={data.llm_activity.healthy}
         statusLine={data.llm_activity.last_call_at ? `Last call ${fmtAgo(data.llm_activity.last_call_at)}` : 'No LLM calls recorded'}
       />
+      <OrganCard icon={<path d="M5 12h14M12 5v14" />} name="Mind — model backends" healthy={data.model_backends.some((b) => b.state === 'available' || b.state === 'healthy')} statusLine={data.model_backends.map((b) => `${b.name}: ${b.state.replace('_', ' ')}`).join(' · ')}>
+        {data.model_backends.map((b) => <DetailRow key={b.name} label={b.name} value={b.detail ?? b.state.replace('_', ' ')} color={b.state === 'available' || b.state === 'healthy' ? OK_COLOR : BAD_COLOR} />)}
+      </OrganCard>
     </div>
   )
 }

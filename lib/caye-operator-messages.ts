@@ -4,6 +4,7 @@ import { createServiceClient } from '@/lib/supabase-server'
 import type { OperatorIdentity } from '@/lib/operator-identity'
 import { deliveryFieldsFromResult, type SendResult } from '@/lib/whatsapp/outbound'
 import { stripToolMarkers } from '@/lib/operator-text-guard'
+import type { RichResult } from './caye-direct-rich-results'
 
 /**
  * Render a one-line body summary for a Claude MessageParam — used for
@@ -158,7 +159,8 @@ export async function persistAgentTurns(
   finalSendResult?: SendResult,
   notSentReason?: string,
   origin: 'whatsapp' | 'dashboard' = 'whatsapp',
-  finalTurnVisibility: 'visible' | 'internal' = 'visible'
+  finalTurnVisibility: 'visible' | 'internal' = 'visible',
+  richResult?: RichResult
 ): Promise<{ id: string }[]> {
   const lastAssistantIndex = turns.map((t) => t.role).lastIndexOf('assistant')
   const inserted: { id: string }[] = []
@@ -187,6 +189,7 @@ export async function persistAgentTurns(
         operator_name: operator?.name ?? null,
         operator_role: operator?.role ?? null,
         origin,
+        rich_result: isLastAssistant ? (richResult ?? null) : null,
       })
       .select('id')
       .single()

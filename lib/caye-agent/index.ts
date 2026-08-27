@@ -56,6 +56,7 @@ export interface CayeAgentInput {
     isContinuation: boolean
     objective: string
   }
+  engineeringOrigin?: { threadId: string; messageId: string }
 }
 
 export interface CayeAgentResult {
@@ -64,6 +65,7 @@ export interface CayeAgentResult {
   linkedThreadIds: string[]
   /** See ToolLoopResult.ranOutOfIterations. Undefined/false on every ordinary turn. */
   ranOutOfIterations?: boolean
+  engineeringArtifactIds?: string[]
 }
 
 async function reconciledAttention(workspaceId: string) {
@@ -262,6 +264,7 @@ export async function cayeAgent(input: CayeAgentInput): Promise<CayeAgentResult>
 
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
   const directThreadLinks: string[] = []
+  const engineeringArtifactIds: string[] = []
   const { replyText, newTurns, ranOutOfIterations } = await runToolLoop({
     client,
     model: MODEL,
@@ -278,6 +281,8 @@ export async function cayeAgent(input: CayeAgentInput): Promise<CayeAgentResult>
       investigationId: input.investigation?.id ?? null,
       workspaceTimezone,
       activeWork,
+      engineeringOrigin: input.engineeringOrigin,
+      engineeringArtifactIds,
     },
     mode: 'back-office',
     // Structural write-exclusion for continuation passes — see
@@ -291,6 +296,7 @@ export async function cayeAgent(input: CayeAgentInput): Promise<CayeAgentResult>
     newTurns,
     linkedThreadIds: [...new Set(directThreadLinks)],
     ranOutOfIterations,
+    engineeringArtifactIds: [...new Set(engineeringArtifactIds)],
   }
 }
 

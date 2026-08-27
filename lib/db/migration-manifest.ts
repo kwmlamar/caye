@@ -128,7 +128,9 @@ export const REPO_MIGRATIONS: readonly string[] = [
   '20260826d_business_facts_canonical_key_scope_by_service',
   '20260826e_owner_attention_operator_awareness',
   '20260826f_owner_attention_first_state_fingerprint',
-  '20260826g_business_artifacts',
   '20260826g_caye_goals_substrate',
   '20260826h_goals_trigger_function_privileges',
+  '20260826i_caye_direct_rich_results',
+  '20260826j_business_artifacts',
+  '20260827_engineering_runtime_v1',
 ]

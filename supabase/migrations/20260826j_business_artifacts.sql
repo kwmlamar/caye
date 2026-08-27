@@ -136,7 +136,7 @@ create table if not exists business_artifacts (
 );
 
 comment on table business_artifacts is
-  'Canonical workspace-scoped evidence record for an ingested/generated file (image/document/audio/video). Immutable-ish: bytes never change after ingestion. Service-role only — see 20260826g header for the RLS convention this follows.';
+  'Canonical workspace-scoped evidence record for an ingested/generated file (image/document/audio/video). Immutable-ish: bytes never change after ingestion. Service-role only — see 20260826j header for the RLS convention this follows.';
 comment on column business_artifacts.provider_attachment_id is
   'Idempotency anchor. A webhook retry or reconnect replay for the same provider attachment must resolve to the SAME row, never a second one — see the unique index below.';
 comment on column business_artifacts.detected_mime_type is

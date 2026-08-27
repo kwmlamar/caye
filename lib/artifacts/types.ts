@@ -2,7 +2,7 @@
  * Shared types for the multimodal Business Memory artifact system (#87).
  *
  * Mirrors the check constraints in
- * supabase/migrations/20260826g_business_artifacts.sql. Closed-world states
+ * supabase/migrations/20260826j_business_artifacts.sql. Closed-world states
  * (origin, modality, processing_status, retention_status, provenance_status,
  * relation status/provenance) are typed unions here; open-ended vocabularies
  * (source_channel, relation_type, target_entity_type) stay `string` on

@@ -33,6 +33,10 @@ import { requireFounder } from '@/lib/founder'
 import { MONITORED_CRONS } from '@/lib/cron-run-log'
 import { checkMigrationDrift } from '@/lib/db/migration-drift'
 import { OPERATOR_LOGGABLE_KINDS } from '@/app/api/caye/outbound-worker/route'
+import { ClaudeSubscriptionBackend } from '@/lib/model-router/backends/claude-subscription'
+import { OpenAICodexSubscriptionBackend } from '@/lib/model-router/backends/openai-codex-subscription'
+import { AnthropicApiBackend } from '@/lib/model-router/backends/anthropic-api'
+import { OpenAIApiBackend, OpenRouterBackend } from '@/lib/model-router/backends/openai-compatible'
 
 const WHATSAPP_LOOKBACK_HOURS = 48
 const LLM_ACTIVITY_STALE_MINUTES = 30
@@ -42,6 +46,10 @@ export async function GET(req: NextRequest) {
   if (!user) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
   const supabase = createServiceClient()
+  const modelHealth = await Promise.all([
+    ['Claude subscription', new ClaudeSubscriptionBackend()], ['Codex subscription', new OpenAICodexSubscriptionBackend()],
+    ['Anthropic API', new AnthropicApiBackend()], ['OpenAI API', new OpenAIApiBackend()], ['OpenRouter', new OpenRouterBackend()],
+  ].map(async ([name, backend]) => ({ name: name as string, ...(await (backend as any).checkHealth()) })))
 
   const [
     { data: cronRows, error: cronErr },
@@ -140,5 +148,6 @@ export async function GET(req: NextRequest) {
     whatsapp: { healthy: whatsappHealthy, items: whatsapp },
     migrations: { healthy: migrationDrift.ok, ...migrationDrift },
     llm_activity: { healthy: !llmActivity.stale, ...llmActivity },
+    model_backends: modelHealth,
   })
 }

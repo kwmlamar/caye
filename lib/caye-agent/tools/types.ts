@@ -217,6 +217,10 @@ export interface ToolContext {
     entityRef: string
     operation: 'customer_reply_draft'
   } | null
+  /** Set only by the founder Direct path after its inbound row is durable. */
+  engineeringOrigin?: { threadId: string; messageId: string }
+  /** Durable artifact ids created during this single turn, never client supplied. */
+  engineeringArtifactIds?: string[]
 }
 
 /**

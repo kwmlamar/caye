@@ -8,6 +8,7 @@ import {
   type ToolResult,
   type ToolStatus,
 } from './tools/result'
+import { classifyToolResponse } from './response-intent'
 
 /**
  * orchestrator.ts
@@ -237,30 +238,82 @@ export async function recordToolCall(entry: ToolCallRecord): Promise<void> {
 /**
  * Plain-language instruction for the model, derived from the outcome.
  *
- * Deliberately prescriptive. Left to its own devices with a failed write the
- * model has already been observed handing the job back to the owner; this
- * says what to do instead, in the words to do it in.
+ * CAY-140's response-intent layer owns generic result shaping. CAY-139's
+ * draft_in_inbox path remains error-code-specific here because its coarse
+ * ToolStatus is not enough to distinguish a known rejection from an
+ * ambiguous provider outcome. The two layers compose rather than flattening
+ * the stronger evidence model back into generic prose.
  */
-export function guidanceFor(status: ToolStatus | undefined, deferred: boolean, toolName?: string): string | null {
-  if (deferred) {
-    return 'Saved. Confirm it is done and mention only that the calendar will catch up shortly. Do not ask the operator to record anything.'
+export function guidanceFor(
+  status: ToolStatus | undefined,
+  deferred: boolean,
+  toolName?: string,
+  errorCode?: string
+): string | null {
+  if (
+    toolName === 'draft_in_inbox' &&
+    (status === 'FAILED_RETRYABLE' || status === 'FAILED_PERMANENT' || status === 'NEEDS_HUMAN')
+  ) {
+    return draftInInboxFailureGuidance(errorCode)
   }
-  switch (status) {
-    case 'SUCCESS':
-    case undefined:
-      return null
-    case 'FAILED_RETRYABLE':
-    case 'FAILED_PERMANENT':
-      return toolName === 'draft_in_inbox'
-        ? 'The requested email draft did not save. Preserve the completed draft text, say the email-draft operation is blocked, and do NOT offer to send it instead or ask the operator to copy it manually.'
-        : 'This did not save. Say plainly that it did not go through and that you are on it. Never ask the operator to do it themselves, and never repeat error text.'
-    case 'NOT_FOUND':
-      return 'The record was not found. Ask which one they meant rather than guessing.'
-    case 'CONFLICT':
-      return 'This already exists. Say so and confirm the existing one instead of creating a second.'
-    case 'NEEDS_HUMAN':
-      return toolName === 'draft_in_inbox'
-        ? 'The requested email draft is blocked or uncertain. Preserve the completed draft text. Do NOT retry blindly, do NOT offer to send it instead, and do not turn this into a manual-copy request.'
-        : 'A connection needs re-authorising. Say what is disconnected in plain words and offer to walk them through reconnecting.'
+  return classifyToolResponse(status, deferred, toolName)?.instruction ?? null
+}
+
+/**
+ * draft_in_inbox-specific failure guidance, keyed by the tool's own
+ * error_code rather than the coarser ToolStatus (CAY-139, 2026-08-26).
+ *
+ * WHY THIS EXISTS
+ * Before this, every draft_in_inbox failure — rate-limited, auth-blocked,
+ * deterministically rejected, and genuinely ambiguous (provider never
+ * confirmed) — got the SAME generic "blocked or uncertain" sentence. Left
+ * that vague, the model filled the gap itself: a live Bimini incident
+ * (2026-08-26, this ticket) had it telling the owner "the staging system is
+ * down" / "backend issue" / implying TropiTech should be notified — none of
+ * which any tool result ever said. This function is the fix at the layer
+ * where that happened: give the model the true, narrow, evidence-backed
+ * reason for each error_code so there is no gap left to improvise into.
+ * The unsupported-infrastructure/platform-escalation rules in
+ * action-claim-guard.ts are the code backstop underneath this in case the
+ * model ignores it anyway.
+ */
+function draftInInboxFailureGuidance(errorCode?: string): string {
+  const commonBan =
+    'Never describe this as a system outage, a backend problem, or a bug, and never say anyone was notified or flagged about it unless a tool result actually says so.'
+  switch (errorCode) {
+    case 'ZOHO_DRAFT_RATE_LIMITED':
+      return (
+        'The email provider temporarily rejected this save (rate limited) — nothing was created. Preserve the ' +
+        `completed draft text and say plainly it has not saved yet; a fresh attempt is safe since nothing was created. ${commonBan}`
+      )
+    case 'ZOHO_DRAFT_AUTH_REQUIRED':
+      return (
+        'The email connection is not authorised — nothing was created and retrying will not fix it. Preserve the ' +
+        `completed draft text and tell the operator plainly that the email connection needs to be reconnected. ${commonBan}`
+      )
+    case 'ZOHO_DRAFT_MODE_NOT_VERIFIED':
+      return (
+        'Saving drafts to the inbox has not been safety-verified on this workspace yet — nothing was created. ' +
+        'Preserve the completed draft text and say plainly this cannot be saved to the inbox yet; only the founder ' +
+        `running the one-time verification unblocks it. ${commonBan}`
+      )
+    case 'ZOHO_DRAFT_REJECTED':
+      return (
+        'The email provider rejected this draft save outright — a definite, known failure, not a maybe. Nothing ' +
+        'was created on the provider side. Preserve the completed draft text and say plainly that the draft was ' +
+        `rejected and nothing was saved. Do NOT retry blindly, and do NOT offer to send it instead. ${commonBan}`
+      )
+    case 'ZOHO_DRAFT_CREATION_UNCERTAIN':
+    case 'ZOHO_DRAFT_ID_MISSING':
+      return (
+        'The email provider did not confirm whether the draft was created — it may or may not exist. Preserve the ' +
+        'completed draft text. Say plainly that you are not sure whether it saved and that you deliberately did not ' +
+        `retry, to avoid creating a duplicate. Do NOT say it failed, and do NOT offer to send it instead. ${commonBan}`
+      )
+    default:
+      return (
+        'The requested email draft is blocked or uncertain. Preserve the completed draft text. Do NOT retry blindly, ' +
+        `do NOT offer to send it instead, and do not turn this into a manual-copy request. ${commonBan}`
+      )
   }
 }

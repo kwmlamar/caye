@@ -278,6 +278,7 @@ export interface RunInvestigationInput {
   message: string
   callerName: string
   operatorId: number | null
+  engineeringOrigin?: { threadId: string; messageId: string }
 }
 
 /**
@@ -296,7 +297,7 @@ export interface RunInvestigationInput {
 export async function runInvestigation(
   supabase: SupabaseClient,
   input: RunInvestigationInput,
-  persistPassTurns: (turns: Anthropic.MessageParam[], linkedThreadIds: string[]) => Promise<void>
+  persistPassTurns: (turns: Anthropic.MessageParam[], linkedThreadIds: string[], engineeringArtifactIds?: string[]) => Promise<void>
 ): Promise<CayeAgentResult> {
   // Generated once, up front, and reused for every continuation of this
   // same logical investigation — this is the key that
@@ -317,8 +318,9 @@ export async function runInvestigation(
     operatorId: input.operatorId,
     threadId: input.threadId,
     investigation: { id: investigationId, isContinuation: false, objective: input.message },
+    engineeringOrigin: input.engineeringOrigin,
   })
-  await persistPassTurns(agentResult.newTurns, agentResult.linkedThreadIds)
+  await persistPassTurns(agentResult.newTurns, agentResult.linkedThreadIds, agentResult.engineeringArtifactIds)
 
   // A recoverable "ran out of room in one round" is never surfaced to the
   // founder as a question — the founder already authorized this
@@ -338,7 +340,7 @@ export async function runInvestigation(
       threadId: input.threadId,
       investigation: { id: investigationId, isContinuation: true, objective: input.message },
     })
-    await persistPassTurns(agentResult.newTurns, agentResult.linkedThreadIds)
+    await persistPassTurns(agentResult.newTurns, agentResult.linkedThreadIds, agentResult.engineeringArtifactIds)
   }
 
   if (agentResult.ranOutOfIterations) {

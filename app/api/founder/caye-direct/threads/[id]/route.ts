@@ -33,6 +33,7 @@ import {
 } from '@/lib/caye-direct-threads'
 import { runFounderThreadTurn } from '@/lib/caye-agent/founder-thread-turn'
 import type { RequestedMode } from '@/lib/model-router/types'
+import { resolveRichResultReferences } from '@/lib/caye-direct-rich-result-resolution'
 
 const VALID_REQUESTED_MODES: readonly RequestedMode[] = ['auto', 'claude', 'openai', 'api']
 
@@ -58,11 +59,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     entities.map(async (e) => ({ ...e, label: await describeEntity(supabase, e) }))
   )
 
-  const messages = dedupeConsecutive(
+  const messages = await Promise.all(dedupeConsecutive(
     rawMessages
       .filter((m) => !isInternalTurnBody(m.body))
       .map((m) => ({ ...m, body: visibleBody(m.body) }))
-  )
+  ).map(async m => ({ ...m, rich_result: await resolveRichResultReferences(supabase, workspaceId, m.rich_result) })))
 
   return NextResponse.json({ thread, linkedEntities, messages })
 }
