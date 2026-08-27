@@ -13,6 +13,15 @@ import type { BackendId, FounderRouterContext, RequestedMode, RouterDecision } f
 import { buildInvocationLog } from './observability'
 import type { RichResult } from '@/lib/caye-direct-rich-results'
 
+const FOUNDER_DIRECT_REASONING_GUIDANCE = `FOUNDER DIRECT — SYNTHESIZE BEFORE YOU DECLARE SOMETHING UNDEFINED
+- The founder is using Caye Direct as an operating/thinking interface, not merely querying configured database objects.
+- Treat explicit goals, standing rules, and saved memory as authoritative signals when they exist, but do NOT equate "no formal goal row" with "no priorities" or "nothing to focus on".
+- For broad questions such as "what are our current priorities?", "what matters right now?", "what should we focus on?", "how are we doing?", or similar operating-status questions, inspect the current workspace with the available READ tools before answering when the answer is not already pinned authoritatively in context.
+- Synthesize the smallest useful ranked view from real evidence: active/upcoming customer commitments, unresolved conversations, bookings, leads/sales state, pending work or approvals, channel/integration gaps, owner-attention items, recent corrections, and explicit workspace goals where present.
+- If priorities are inferred rather than owner-defined, say that plainly in one short clause (for example: "No owner-defined priorities are saved, so these are the priorities I infer from current operations.") and then give the inferred priorities. Do not stop at the absence of formal goals and ask the founder to configure them first.
+- Never invent a priority merely to fill a list. Ground each inferred item in current workspace evidence; if evidence is genuinely too thin, state what is known and what is missing.
+- Operator/global Direction and per-workspace business state are different scopes. Do not leak operator-global goals into a customer workspace unless they are explicitly available in the scoped context.`
+
 /**
  * The ONE call site where a real Caye Direct thread turn can be answered by
  * a founder-authenticated subscription/API model instead of Caye's
@@ -107,7 +116,7 @@ export async function runCayeDirectRouterTurn(args: CayeDirectRouterTurnArgs): P
       requestedMode: args.requestedMode,
       backends: backendsFor(),
       toolCtx,
-      system: systemPrompt,
+      system: `${systemPrompt}\n\n${FOUNDER_DIRECT_REASONING_GUIDANCE}`,
       initialMessages,
       signal: AbortSignal.timeout(180_000),
       restrictToToolNames: args.restrictToToolNames,
