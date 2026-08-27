@@ -64,8 +64,8 @@ async function logCallUsage(
       model: response.model,
       inputTokens: usage.input_tokens,
       outputTokens: usage.output_tokens,
-      cacheReadTokens: usage.cache_read_input_tokens,
-      cacheCreationTokens: usage.cache_creation_input_tokens,
+      cacheReadTokens: usage.cache_read_input_tokens ?? undefined,
+      cacheCreationTokens: usage.cache_creation_input_tokens ?? undefined,
     },
     ctx
   )
