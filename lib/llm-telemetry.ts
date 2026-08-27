@@ -17,6 +17,12 @@ import { createServiceClient } from './supabase-server'
 export interface LoggedCallContext {
   source: string
   workspaceId?: string | null
+  /** Stable top-level request id when the caller has one. Metadata only. */
+  requestId?: string | null
+  /** Caller role for request-level cost attribution. */
+  callerRole?: 'owner' | 'staff' | 'founder' | 'driver' | null
+  /** 1-based model turn within a bounded loop. */
+  loopIteration?: number | null
 }
 
 export interface GenericLlmUsage {
@@ -51,6 +57,9 @@ export async function logGenericLlmUsage(usage: GenericLlmUsage, ctx: LoggedCall
     cache_read_tokens: usage.cacheReadTokens ?? 0,
     cache_creation_tokens: usage.cacheCreationTokens ?? 0,
     workspace_id: ctx.workspaceId ?? null,
+    request_id: ctx.requestId ?? null,
+    caller_role: ctx.callerRole ?? null,
+    loop_iteration: ctx.loopIteration ?? null,
   })
 }
 
