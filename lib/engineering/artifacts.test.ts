@@ -1,15 +1,29 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const state = vi.hoisted(() => ({ uploadAt: -1, uploadCalls: [] as string[], removeCalls: [] as string[][], rpcError: null as string | null, completionFailure: false, rpcCalls: 0, parent: null as null | Record<string, unknown>, rpcParams: null as null | Record<string, unknown> }))
+const state = vi.hoisted(() => ({ uploadAt: -1, uploadCalls: [] as string[], removeCalls: [] as string[][], rpcError: null as string | null, completionFailure: false, rpcCalls: 0, parent: null as null | Record<string, unknown>, rpcParams: null as null | Record<string, unknown>, jobStatus: 'running' as string }))
 vi.mock('server-only', () => ({}))
 vi.mock('@/lib/engineering/runtime', () => ({ generateCadInSandbox: vi.fn(async () => ({ source: 'source', stl: Buffer.from('stl'), step: Buffer.from('step'), metadata: { bounds_mm: { x: 120, y: 40, z: 80 }, volume_mm3: 10_000 } })) }))
+// Mirrors the real reconciliation shape: an RPC failure (simulating an
+// aborted Postgres transaction) never advances jobStatus or produces a
+// discoverable artifact row, so reconcileFinalization's authoritative
+// queries must be able to observe "still running, nothing committed" —
+// not just the two RPC-path calls (insert/update) the mock covered before
+// reconcileFinalization existed.
 vi.mock('@/lib/supabase-server', () => ({ createServiceClient: () => {
   const jobs = {
-    insert: () => ({ select: () => ({ single: async () => ({ data: { id: 'job-1' }, error: null }) }) }),
-    update: () => ({ eq: () => ({ eq: () => ({ select: () => ({ maybeSingle: async () => state.completionFailure ? { data: null, error: null } : { data: { id: 'job-1' }, error: null } }) }) }) }),
+    insert: () => ({ select: () => ({ single: async () => { state.jobStatus = 'running'; return { data: { id: 'job-1' }, error: null } } }) }),
+    update: (patch: { status?: string }) => ({ eq: () => ({ eq: () => ({ select: () => ({ maybeSingle: async () => {
+      if (state.completionFailure) return { data: null, error: null }
+      if (patch.status) state.jobStatus = patch.status
+      return { data: { id: 'job-1' }, error: null }
+    } }) }) }) }),
+    select: () => ({ eq: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { id: 'job-1', status: state.jobStatus }, error: null }) }) }) }),
+  }
+  const artifacts = {
+    select: () => ({ eq: (_col: string, id: string) => ({ eq: () => ({ maybeSingle: async () => ({ data: state.parent && id === state.parent.id ? state.parent : null, error: null }) }) }) }),
   }
   return {
-    from: (table: string) => table === 'engineering_jobs' ? jobs : { select: () => ({ eq: () => ({ eq: () => ({ maybeSingle: async () => ({ data: state.parent, error: null }) }) }) }) },
+    from: (table: string) => table === 'engineering_jobs' ? jobs : artifacts,
     rpc: async (_name: string, params: Record<string, unknown>) => { state.rpcCalls++; state.rpcParams = params; return state.rpcError ? { data: null, error: { message: state.rpcError } } : { data: [{ artifact_id: 'artifact-1', revision: 1 }], error: null } },
     storage: { from: () => ({
       upload: async (path: string) => { state.uploadCalls.push(path); return state.uploadAt === state.uploadCalls.length ? { error: { message: 'upload failed' } } : { error: null } },
@@ -24,7 +38,7 @@ const spec = { type: 'parametric_part' as const, units: 'mm' as const, name: 'wa
 const args = { workspaceId: 'ws-1', threadId: 'thread-1', messageId: 'message-1', spec, taskType: 'create_parametric_part' as const }
 
 describe('engineering artifact finalization', () => {
-  beforeEach(() => { state.uploadAt = -1; state.uploadCalls = []; state.removeCalls = []; state.rpcError = null; state.completionFailure = false; state.rpcCalls = 0; state.parent = null; state.rpcParams = null })
+  beforeEach(() => { state.uploadAt = -1; state.uploadCalls = []; state.removeCalls = []; state.rpcError = null; state.completionFailure = false; state.rpcCalls = 0; state.parent = null; state.rpcParams = null; state.jobStatus = 'running' })
   it('first upload failure leaves no finalization and no discoverable artifact', async () => {
     state.uploadAt = 1
     await expect(createEngineeringArtifact(args)).rejects.toThrow('Could not stage')

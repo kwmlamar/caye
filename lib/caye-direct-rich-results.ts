@@ -117,18 +117,35 @@ export function validateRichResult(value: unknown): RichResult | null {
  * We inspect all fences and accept exactly one block that validates as a
  * RichResult. Ordinary markdown/code fences are ignored rather than being
  * mistaken for UI data. Plain text remains fully compatible.
+ *
+ * A fence that parses as JSON and carries the envelope shape
+ * ({version:1, blocks:[...]}) but fails validateRichResult — e.g. a model
+ * trying to author an engineering_artifact block, which is server-only by
+ * design (see validateRichResult's comment) — is a protocol artifact, not
+ * reader content. Left in place, it renders as a raw JSON dump alongside
+ * the trusted block the server attaches separately. Strip it from the
+ * displayed narrative rather than leaking it verbatim.
  */
 export function extractRichResult(textValue: string): { narrative: string; result?: RichResult } {
   const candidates: RichResult[] = []
+  let narrative = textValue
   for (const match of textValue.matchAll(/```(?:[a-zA-Z0-9_-]+)?\s*([\s\S]*?)```/g)) {
+    let parsedJson: unknown
     try {
-      const parsed = validateRichResult(JSON.parse(match[1]))
-      if (parsed) candidates.push(parsed)
+      parsedJson = JSON.parse(match[1])
     } catch {
-      // Ordinary code/markdown fence; not a rich result.
+      continue // ordinary code/markdown fence; not JSON at all
     }
+    const looksLikeEnvelope =
+      !!parsedJson && typeof parsedJson === 'object' && !Array.isArray(parsedJson) &&
+      (parsedJson as { version?: unknown }).version === 1 && Array.isArray((parsedJson as { blocks?: unknown }).blocks)
+    if (!looksLikeEnvelope) continue // ordinary JSON-shaped fence; not a rich-result attempt
+
+    const parsed = validateRichResult(parsedJson)
+    if (parsed) candidates.push(parsed)
+    else narrative = narrative.replace(match[0], '').trim()
   }
   return candidates.length === 1
     ? { narrative: candidates[0].narrative, result: candidates[0] }
-    : { narrative: textValue }
+    : { narrative }
 }
