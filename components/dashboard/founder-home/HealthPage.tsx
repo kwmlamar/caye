@@ -3,8 +3,8 @@
 import { useState, useEffect, type ReactNode } from 'react'
 import { getSession } from '@/lib/supabase'
 import { CayeLoadingPulse } from '@/components/dashboard/founder-home/CayeLoadingPulse'
+import { quietPanel, TEXT_MUTED } from '@/components/dashboard/surface'
 
-const CARD_BG = '#1a1a1e'
 const LABEL_COLOR = '#71717a'
 const OK_COLOR = '#34d399'
 const BAD_COLOR = '#fb7185'
@@ -44,37 +44,62 @@ function fmtAgo(iso: string | null): string {
   return `${Math.floor(hours / 24)}d ago`
 }
 
-// Icon + label + dot + one-line status per "organ" — functional glance
+// Icon + label + dot + one-line status per subsystem — functional glance
 // over real data (cron/WhatsApp/migration/LLM signals that already exist
-// and already alert independently), not an illustrated brand piece. The
-// anatomical framing is cosmetic labeling on top of an ordinary status
-// card, kept restrained since the point is a faster check than asking
-// Caye in chat, not a character moment.
+// and already alert independently), not a character moment. Used to carry
+// an anatomical "Pulse/Lungs/Memory/Mind" framing; renamed to what each
+// row actually checks (2026-08-26) since the point is a faster, more
+// legible diagnostic than asking Caye in chat, and a metaphor a founder
+// has to decode under time pressure works against that.
+// One continuous, near-invisible panel for all four checks (2026-08-26)
+// rather than four separate flat-gray boxes with gaps between them —
+// hairline outline (quietPanel) instead of a filled card, closer to how
+// Claude/ChatGPT's own lists read: content grouped by whitespace and row
+// dividers, not a distinct surface floating on the page. Rows share
+// hairline dividers instead of each owning a background + border radius,
+// and get a hover tint so the whole row reads as clickable, not just the
+// chevron.
+function HealthSurface({ children }: { children: ReactNode }) {
+  return (
+    <div style={{ borderRadius: 14, overflow: 'hidden', ...quietPanel }}>
+      {children}
+    </div>
+  )
+}
+
 function OrganCard({
   icon, name, healthy, statusLine, children,
 }: { icon: ReactNode; name: string; healthy: boolean; statusLine: string; children?: ReactNode }) {
   const [expanded, setExpanded] = useState(false)
+  const [hover, setHover] = useState(false)
   const color = healthy ? OK_COLOR : BAD_COLOR
   return (
-    <div style={{ background: CARD_BG, borderRadius: 16, overflow: 'hidden' }}>
+    <div style={{ boxShadow: 'inset 0 -1px 0 rgba(255,255,255,0.05)' }}>
       <button
         onClick={() => setExpanded((v) => !v)}
+        onMouseEnter={() => setHover(true)}
+        onMouseLeave={() => setHover(false)}
         style={{
           width: '100%', display: 'flex', alignItems: 'center', gap: 12,
-          padding: '14px 16px', border: 'none', background: 'transparent', cursor: 'pointer', textAlign: 'left',
+          padding: '14px 16px', border: 'none', cursor: 'pointer', textAlign: 'left',
+          background: hover ? 'rgba(255,255,255,0.025)' : 'transparent',
+          transition: 'background 0.15s ease',
         }}
       >
-        <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, borderRadius: 10, background: `${color}17`, color, flexShrink: 0 }}>
+        <span style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, borderRadius: 10,
+          background: `${color}17`, color, flexShrink: 0,
+        }}>
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
             {icon}
           </svg>
         </span>
         <span style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: '#f4f4f5', display: 'flex', alignItems: 'center', gap: 7 }}>
-            <span aria-hidden style={{ width: 6, height: 6, borderRadius: '50%', background: color, flexShrink: 0 }} />
+            <span aria-hidden style={{ width: 6, height: 6, borderRadius: '50%', background: color, boxShadow: `0 0 6px ${color}99`, flexShrink: 0 }} />
             {name}
           </div>
-          <div style={{ fontSize: 11.5, color: LABEL_COLOR, marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          <div style={{ fontSize: 12, color: TEXT_MUTED, marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
             {statusLine}
           </div>
         </span>
@@ -84,7 +109,7 @@ function OrganCard({
         </svg>
       </button>
       {expanded && children && (
-        <div style={{ padding: '0 16px 14px', borderTop: '1px solid rgba(255,255,255,0.04)' }}>
+        <div style={{ padding: '0 16px 14px' }}>
           {children}
         </div>
       )}
@@ -95,7 +120,7 @@ function OrganCard({
 function DetailRow({ label, value, color }: { label: string; value: string; color?: string }) {
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, padding: '8px 0', fontSize: 12, boxShadow: 'inset 0 -1px 0 rgba(255,255,255,0.03)' }}>
-      <span style={{ color: LABEL_COLOR, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</span>
+      <span style={{ color: TEXT_MUTED, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</span>
       <span style={{ color: color ?? '#d4d4d8', fontVariantNumeric: 'tabular-nums', textAlign: 'right' }}>{value}</span>
     </div>
   )
@@ -135,10 +160,11 @@ export default function HealthPage() {
   const flaggedWhatsapp = data.whatsapp.items.filter((w) => w.unreachable || w.failure_streak > 0 || w.no_confirmed_deliveries)
 
   return (
-    <div style={{ flex: 1, overflowY: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 12, minHeight: 0 }}>
+    <div style={{ flex: 1, overflowY: 'auto', padding: 20, minHeight: 0, maxWidth: 640 }}>
+    <HealthSurface>
       <OrganCard
         icon={<path d="M3 12h4l2-8 4 16 3-11 2 3h5" />}
-        name="Pulse — scheduled jobs"
+        name="Scheduled jobs"
         healthy={data.crons.healthy}
         statusLine={data.crons.healthy ? `All ${data.crons.items.length} crons on schedule` : `${staleCrons.length} of ${data.crons.items.length} crons stale or failing`}
       >
@@ -153,8 +179,8 @@ export default function HealthPage() {
       </OrganCard>
 
       <OrganCard
-        icon={<path d="M12 3c0 5-4 4-4 9a4 4 0 0 0 8 0c0-5-4-4-4-9zM8 12H4a2 2 0 0 0-2 2v4a2 2 0 0 0 2 2h1M16 12h4a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-1" />}
-        name="Lungs — WhatsApp delivery"
+        icon={<><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 20l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" /></>}
+        name="Message delivery"
         healthy={data.whatsapp.healthy}
         statusLine={data.whatsapp.healthy ? `All ${data.whatsapp.items.length} workspaces confirming delivery` : `${flaggedWhatsapp.length} of ${data.whatsapp.items.length} workspaces flagged`}
       >
@@ -177,7 +203,7 @@ export default function HealthPage() {
 
       <OrganCard
         icon={<><rect x="4" y="4" width="16" height="16" rx="2" /><path d="M4 10h16M10 4v16" /></>}
-        name="Memory — database migrations"
+        name="Database"
         healthy={data.migrations.healthy}
         statusLine={
           data.migrations.error
@@ -197,14 +223,28 @@ export default function HealthPage() {
       </OrganCard>
 
       <OrganCard
-        icon={<><path d="M9 3a3 3 0 0 0-3 3v1a3 3 0 0 0-2 2.8v3.4A3 3 0 0 0 6 16v1a3 3 0 0 0 3 3M15 3a3 3 0 0 1 3 3v1a3 3 0 0 1 2 2.8v3.4a3 3 0 0 1-2 2.8v1a3 3 0 0 1-3 3" /><path d="M9 3v18M15 3v18" /></>}
-        name="Mind — LLM activity"
+        icon={<path d="M3 12h4l2-9 4 18 2-9h6" />}
+        name="Model activity"
         healthy={data.llm_activity.healthy}
         statusLine={data.llm_activity.last_call_at ? `Last call ${fmtAgo(data.llm_activity.last_call_at)}` : 'No LLM calls recorded'}
       />
-      <OrganCard icon={<path d="M5 12h14M12 5v14" />} name="Mind — model backends" healthy={data.model_backends.some((b) => b.state === 'available' || b.state === 'healthy')} statusLine={data.model_backends.map((b) => `${b.name}: ${b.state.replace('_', ' ')}`).join(' · ')}>
-        {data.model_backends.map((b) => <DetailRow key={b.name} label={b.name} value={b.detail ?? b.state.replace('_', ' ')} color={b.state === 'available' || b.state === 'healthy' ? OK_COLOR : BAD_COLOR} />)}
+
+      <OrganCard
+        icon={<path d="M5 12h14M12 5v14" />}
+        name="Model backends"
+        healthy={data.model_backends.some((b) => b.state === 'available' || b.state === 'healthy')}
+        statusLine={data.model_backends.map((b) => `${b.name}: ${b.state.replace('_', ' ')}`).join(' · ')}
+      >
+        {data.model_backends.map((b) => (
+          <DetailRow
+            key={b.name}
+            label={b.name}
+            value={b.detail ?? b.state.replace('_', ' ')}
+            color={b.state === 'available' || b.state === 'healthy' ? OK_COLOR : BAD_COLOR}
+          />
+        ))}
       </OrganCard>
+    </HealthSurface>
     </div>
   )
 }

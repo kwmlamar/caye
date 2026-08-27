@@ -3,9 +3,8 @@
 import { useState, useEffect, useMemo } from 'react'
 import { getSession } from '@/lib/supabase'
 import { CayeLoadingPulse } from '@/components/dashboard/founder-home/CayeLoadingPulse'
-import { Pill } from '@/components/dashboard/founder-home/console-ui'
+import { groupToolsByCategory } from '@/lib/tool-categories'
 
-const CARD_BG = '#1a1a1e'
 const LABEL_COLOR = '#71717a'
 
 type ToolRisk = 'read' | 'low' | 'high'
@@ -25,73 +24,51 @@ const RISK_COLOR: Record<ToolRisk, string> = {
 }
 const RISK_LABEL: Record<ToolRisk, string> = {
   read: 'Read',
-  low: 'Low-risk write',
-  high: 'High-risk write',
+  low: 'Low-risk',
+  high: 'Confirmation required',
 }
-// Read/low execute autonomously; high triggers a confirmation round-trip
-// (gateHighRisk / gateAdminHighRisk) — same tiers as registry.ts's own
-// grouping, kept in this fixed order regardless of what's present.
 const RISK_ORDER: ToolRisk[] = ['read', 'low', 'high']
 
-function ModeTag({ mode }: { mode: string }) {
+function RiskBadge({ risk }: { risk: ToolRisk }) {
   return (
     <span style={{
       fontSize: 9.5, fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.04em',
-      color: LABEL_COLOR, background: 'rgba(255,255,255,0.05)', borderRadius: 5, padding: '2px 6px',
+      color: RISK_COLOR[risk], flexShrink: 0, whiteSpace: 'nowrap',
     }}>
-      {mode}
+      {RISK_LABEL[risk]}
     </span>
   )
 }
 
 function ToolRow({ tool }: { tool: ToolInfo }) {
-  const color = RISK_COLOR[tool.risk]
   return (
-    <div style={{ padding: '10px 0', boxShadow: 'inset 0 -1px 0 rgba(255,255,255,0.04)' }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
-        <span aria-hidden style={{ width: 5, height: 5, borderRadius: '50%', background: color, flexShrink: 0 }} />
+    <div style={{ padding: '9px 0', boxShadow: 'inset 0 -1px 0 rgba(255,255,255,0.04)' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
         <span style={{ fontSize: 12.5, fontFamily: 'var(--font-mono)', color: '#f4f4f5', fontWeight: 600 }}>{tool.name}</span>
-        <span style={{ display: 'flex', gap: 4, marginLeft: 'auto' }}>
-          {tool.modes.map((m) => <ModeTag key={m} mode={m} />)}
-        </span>
+        <span style={{ marginLeft: 'auto' }}><RiskBadge risk={tool.risk} /></span>
       </div>
-      <p style={{ fontSize: 12, color: LABEL_COLOR, lineHeight: 1.5, margin: '4px 0 0 13px' }}>
+      <p style={{ fontSize: 12, color: LABEL_COLOR, lineHeight: 1.5, margin: '4px 0 0' }}>
         {tool.description}
       </p>
-      <div style={{ margin: '5px 0 0 13px', fontSize: 10.5, color: '#52525b', fontFamily: 'var(--font-mono)' }}>
-        {tool.roles.join(' · ')}
-      </div>
     </div>
   )
 }
 
-function RiskGroup({ risk, tools }: { risk: ToolRisk; tools: ToolInfo[] }) {
-  const [expanded, setExpanded] = useState(risk !== 'high')
-  const color = RISK_COLOR[risk]
+function CapabilityGroup({ label, tools }: { label: string; tools: ToolInfo[] }) {
+  const [expanded, setExpanded] = useState(false)
   return (
-    <div style={{ background: CARD_BG, borderRadius: 16, overflow: 'hidden' }}>
+    <div style={{ boxShadow: 'inset 0 -1px 0 rgba(255,255,255,0.04)' }}>
       <button
         onClick={() => setExpanded((v) => !v)}
         style={{
-          width: '100%', display: 'flex', alignItems: 'center', gap: 12,
-          padding: '14px 16px', border: 'none', background: 'transparent', cursor: 'pointer', textAlign: 'left',
+          width: '100%', display: 'flex', alignItems: 'center', gap: 10,
+          padding: '12px 2px', border: 'none', background: 'transparent', cursor: 'pointer', textAlign: 'left',
         }}
       >
-        <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, borderRadius: 10, background: `${color}17`, color, flexShrink: 0 }}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-            {risk === 'read' ? (
-              <><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" /><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" /></>
-            ) : risk === 'low' ? (
-              <><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" /></>
-            ) : (
-              <><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" /></>
-            )}
-          </svg>
-        </span>
         <span style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: '#f4f4f5' }}>{RISK_LABEL[risk]}</div>
+          <div style={{ fontSize: 13.5, fontWeight: 600, color: '#f4f4f5' }}>{label}</div>
           <div style={{ fontSize: 11.5, color: LABEL_COLOR, marginTop: 2 }}>
-            {tools.length} tool{tools.length === 1 ? '' : 's'}{risk === 'high' ? ' — confirmation required' : ' — autonomous'}
+            {tools.length} tool{tools.length === 1 ? '' : 's'}
           </div>
         </span>
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#52525b" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
@@ -100,7 +77,7 @@ function RiskGroup({ risk, tools }: { risk: ToolRisk; tools: ToolInfo[] }) {
         </svg>
       </button>
       {expanded && (
-        <div style={{ padding: '0 16px 6px', borderTop: '1px solid rgba(255,255,255,0.04)', maxHeight: 360, overflowY: 'auto' }}>
+        <div style={{ padding: '0 2px 10px' }}>
           {tools.map((t) => <ToolRow key={t.name} tool={t} />)}
         </div>
       )}
@@ -108,12 +85,88 @@ function RiskGroup({ risk, tools }: { risk: ToolRisk; tools: ToolInfo[] }) {
   )
 }
 
+function RiskTierGroup({ risk, tools }: { risk: ToolRisk; tools: ToolInfo[] }) {
+  const [expanded, setExpanded] = useState(risk === 'high')
+  return (
+    <div style={{ boxShadow: 'inset 0 -1px 0 rgba(255,255,255,0.04)' }}>
+      <button
+        onClick={() => setExpanded((v) => !v)}
+        style={{
+          width: '100%', display: 'flex', alignItems: 'center', gap: 10,
+          padding: '12px 2px', border: 'none', background: 'transparent', cursor: 'pointer', textAlign: 'left',
+        }}
+      >
+        <span style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13.5, fontWeight: 600, color: '#f4f4f5' }}>{RISK_LABEL[risk]}</div>
+          <div style={{ fontSize: 11.5, color: LABEL_COLOR, marginTop: 2 }}>
+            {tools.length} tool{tools.length === 1 ? '' : 's'}{risk === 'high' ? ' — confirmation required before executing' : ' — runs autonomously'}
+          </div>
+        </span>
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#52525b" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+          style={{ transform: expanded ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s ease', flexShrink: 0 }}>
+          <polyline points="9 18 15 12 9 6" />
+        </svg>
+      </button>
+      {expanded && (
+        <div style={{ padding: '0 2px 10px' }}>
+          {tools.map((t) => (
+            <div key={t.name} style={{ padding: '9px 0', boxShadow: 'inset 0 -1px 0 rgba(255,255,255,0.04)' }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 12.5, fontFamily: 'var(--font-mono)', color: '#f4f4f5', fontWeight: 600 }}>{t.name}</span>
+                <span style={{ display: 'flex', gap: 4, marginLeft: 'auto' }}>
+                  {t.modes.map((m) => (
+                    <span key={m} style={{
+                      fontSize: 9.5, fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.04em',
+                      color: LABEL_COLOR, background: 'rgba(255,255,255,0.05)', borderRadius: 5, padding: '2px 6px',
+                    }}>{m}</span>
+                  ))}
+                </span>
+              </div>
+              <p style={{ fontSize: 12, color: LABEL_COLOR, lineHeight: 1.5, margin: '4px 0 0' }}>{t.description}</p>
+              <div style={{ marginTop: 4, fontSize: 10.5, color: '#52525b', fontFamily: 'var(--font-mono)' }}>{t.roles.join(' · ')}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ViewToggle({ view, onChange }: { view: 'capabilities' | 'registry'; onChange: (v: 'capabilities' | 'registry') => void }) {
+  return (
+    <div style={{ display: 'inline-flex', gap: 2, padding: 2, borderRadius: 9, background: 'rgba(255,255,255,0.04)' }}>
+      {(['capabilities', 'registry'] as const).map((v) => (
+        <button
+          key={v}
+          onClick={() => onChange(v)}
+          style={{
+            border: 'none', cursor: 'pointer', borderRadius: 7, padding: '5px 10px',
+            fontSize: 11, fontWeight: 600, fontFamily: 'var(--font-mono)',
+            background: view === v ? 'rgba(78,190,206,0.14)' : 'transparent',
+            color: view === v ? '#7DD8E0' : LABEL_COLOR,
+          }}
+        >
+          {v === 'capabilities' ? 'What she can do' : 'Developer view'}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 // Snapshot-on-load, no polling — capability inventory changes when code
-// ships, not minute to minute. Grouped by risk tier (registry.ts's own
-// grouping) so the confirmation-gated tools are easy to find as a set.
+// ships, not minute to minute.
+//
+// Two views over the same /api/founder/tools data (2026-08-26 redesign):
+// "What she can do" groups by product capability (lib/tool-categories.ts)
+// with risk shown as a per-tool badge — this is the primary, founder-
+// legible view, replacing a raw registry dump as the default. "Developer
+// view" preserves the original risk-tier grouping (read/low-risk/
+// confirmation-required) for debugging which tools are gated — nothing
+// about the underlying data changes, only which grouping renders first.
 export default function ToolsPage() {
   const [tools, setTools] = useState<ToolInfo[] | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [view, setView] = useState<'capabilities' | 'registry'>('capabilities')
 
   useEffect(() => {
     let cancelled = false
@@ -132,7 +185,8 @@ export default function ToolsPage() {
     return () => { cancelled = true }
   }, [])
 
-  const grouped = useMemo(() => {
+  const capabilityGroups = useMemo(() => tools ? groupToolsByCategory(tools) : null, [tools])
+  const riskGroups = useMemo(() => {
     if (!tools) return null
     return RISK_ORDER.map((risk) => ({ risk, tools: tools.filter((t) => t.risk === risk) })).filter((g) => g.tools.length > 0)
   }, [tools])
@@ -140,17 +194,21 @@ export default function ToolsPage() {
   if (error) {
     return <div style={{ flex: 1, padding: 20, fontSize: 12.5, color: '#fb7185' }}>{error}</div>
   }
-  if (grouped === null) {
+  if (tools === null || capabilityGroups === null || riskGroups === null) {
     return <div style={{ flex: 1, padding: 20 }}><CayeLoadingPulse size={16} /></div>
   }
 
   return (
-    <div style={{ flex: 1, overflowY: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 12, minHeight: 0 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span style={{ fontSize: 12, color: LABEL_COLOR }}>{tools?.length ?? 0} tools in TOOL_REGISTRY</span>
-        <Pill color="#71717a" label="No usage metrics yet" dot={false} />
+    <div style={{ flex: 1, overflowY: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 14, minHeight: 0, maxWidth: 640 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+        <p style={{ fontSize: 12.5, color: LABEL_COLOR, margin: 0, lineHeight: 1.5 }}>
+          {tools.length} tools Caye can use — grouped by what they do, or by how she's allowed to use them.
+        </p>
+        <ViewToggle view={view} onChange={setView} />
       </div>
-      {grouped.map((g) => <RiskGroup key={g.risk} risk={g.risk} tools={g.tools} />)}
+      {view === 'capabilities'
+        ? capabilityGroups.map((g) => <CapabilityGroup key={g.category.id} label={g.category.label} tools={g.tools} />)
+        : riskGroups.map((g) => <RiskTierGroup key={g.risk} risk={g.risk} tools={g.tools} />)}
     </div>
   )
 }

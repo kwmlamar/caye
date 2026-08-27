@@ -4,9 +4,9 @@ import { useState, useEffect } from 'react'
 import { getSession } from '@/lib/supabase'
 import { CayeLoadingPulse } from '@/components/dashboard/founder-home/CayeLoadingPulse'
 import { Pill } from '@/components/dashboard/founder-home/console-ui'
+import { attentionSurface, GOLD, TEXT, TEXT_MUTED, quietPanel } from '../surface'
 import type { CustomerStatus } from '@/types/database'
 
-const CARD_BG = '#1a1a1e'
 const LABEL_COLOR = '#71717a'
 
 const STATUS_LABEL: Record<CustomerStatus, string> = {
@@ -165,6 +165,19 @@ function ConversionTrendChart({ daily }: { daily: DailyPoint[] }) {
 // actions here, act via Caye Direct / Command Conversations instead.
 // Clicking a row expands an inline 30-day daily trend in place, rather
 // than navigating away and losing the cross-workspace table.
+//
+// "Handled by Caye" (2026-08-26 redesign note): the product framing this
+// page should eventually lead with is an Autonomous Resolution Rate — "41
+// of 45 resolved without your help" — but that number isn't honestly
+// computable from what's persisted today. caye_escalations records when
+// Caye asked for help; nothing records a per-conversation "resolved
+// without asking" flag, and there's no "total situations" denominator
+// that isn't itself just raw conversation count (which conflates a
+// two-message chit-chat with a real booking situation). Computing this
+// correctly needs a schema decision (what counts as one "situation," and
+// a resolved/escalated flag on it), not a UI change — see the notice
+// below rather than a fabricated percentage. Everything else on this
+// page (conversion rate, call volume) is real and unchanged.
 export default function GlobalPerformance() {
   const [rows, setRows] = useState<WorkspaceRow[] | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -205,27 +218,45 @@ export default function GlobalPerformance() {
   const totalCalls = rows?.reduce((acc, r) => acc + r.call_count, 0) ?? 0
 
   return (
-    <div style={{ flex: 1, overflowY: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 16, minHeight: 0 }}>
-      <div style={{ flexShrink: 0, display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12 }}>
-        <div style={{ background: CARD_BG, borderRadius: 18, padding: '16px 18px' }}>
-          <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', textTransform: 'uppercase', color: LABEL_COLOR, marginBottom: 8 }}>
-            Workspaces
-          </div>
-          <div style={{ fontSize: 20, fontFamily: 'var(--font-display)', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
-            {rows?.length ?? '—'}
-          </div>
-        </div>
-        <div style={{ background: CARD_BG, borderRadius: 18, padding: '16px 18px' }}>
-          <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', textTransform: 'uppercase', color: LABEL_COLOR, marginBottom: 8 }}>
-            7-day calls (all workspaces)
-          </div>
-          <div style={{ fontSize: 20, fontFamily: 'var(--font-display)', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
-            {rows ? totalCalls.toLocaleString() : '—'}
-          </div>
-        </div>
+    <div style={{ flex: 1, overflowY: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 14, minHeight: 0 }}>
+      <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', textTransform: 'uppercase', color: LABEL_COLOR, flexShrink: 0 }}>
+        Operations / Performance
       </div>
 
-      <div style={{ flex: 1, minHeight: 0, background: CARD_BG, borderRadius: 16, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+      {/* Same warm-attention recipe as AttentionCard (dot + mono eyebrow,
+          then a real headline, then body) — reused rather than a one-off
+          gold box, so this reads as "the same kind of thing Caye already
+          flags," not a new visual language for a footnote. */}
+      <div style={{ ...attentionSurface, flexShrink: 0, borderRadius: 14, padding: '14px 16px', maxWidth: 620 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 8 }}>
+          <span aria-hidden style={{ width: 6, height: 6, borderRadius: '50%', background: GOLD, boxShadow: `0 0 6px ${GOLD}88`, flexShrink: 0 }} />
+          <span style={{ fontSize: 10.5, fontWeight: 700, fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', textTransform: 'uppercase', color: GOLD }}>
+            Not yet computable
+          </span>
+        </div>
+        <p style={{ fontSize: 13.5, fontWeight: 600, color: TEXT, margin: '0 0 6px', lineHeight: 1.4 }}>
+          &quot;Handled by Caye&quot; isn&apos;t computable yet
+        </p>
+        <p style={{ fontSize: 12.5, color: TEXT_MUTED, lineHeight: 1.65, margin: 0 }}>
+          The product number this page should lead with is an autonomous resolution rate — e.g. &quot;41 of 45 resolved without your help.&quot;
+          That needs a per-conversation resolved-without-escalation flag and a real &quot;situation&quot; denominator, neither of which is
+          persisted today (only escalations — when Caye asked for help — are tracked). Shown below instead: real conversion and
+          call-volume data, which don&apos;t require that schema change.
+        </p>
+      </div>
+
+      <div style={{ flexShrink: 0, display: 'flex', flexWrap: 'wrap', columnGap: 28, rowGap: 10, fontSize: 13 }}>
+        <span>
+          <strong style={{ fontVariantNumeric: 'tabular-nums' }}>{rows?.length ?? '—'}</strong>
+          <span style={{ color: LABEL_COLOR }}> workspaces</span>
+        </span>
+        <span>
+          <strong style={{ fontVariantNumeric: 'tabular-nums' }}>{rows ? totalCalls.toLocaleString() : '—'}</strong>
+          <span style={{ color: LABEL_COLOR }}> 7-day calls (internal diagnostic, all workspaces)</span>
+        </span>
+      </div>
+
+      <div style={{ flex: 1, minHeight: 0, borderRadius: 14, overflow: 'hidden', display: 'flex', flexDirection: 'column', ...quietPanel }}>
         <div style={{
           display: 'grid', gridTemplateColumns: '20px 1fr 110px 130px 110px',
           padding: '10px 16px', background: 'rgba(255,255,255,0.025)',

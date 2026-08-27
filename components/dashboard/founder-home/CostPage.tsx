@@ -4,9 +4,9 @@ import { useState, useEffect } from 'react'
 import { getSession } from '@/lib/supabase'
 import { CayeLoadingPulse } from '@/components/dashboard/founder-home/CayeLoadingPulse'
 import { Pill } from '@/components/dashboard/founder-home/console-ui'
+import { quietPanel } from '@/components/dashboard/surface'
 import type { CustomerStatus } from '@/types/database'
 
-const CARD_BG = '#1a1a1e'
 const LABEL_COLOR = '#71717a'
 
 const STATUS_LABEL: Record<CustomerStatus, string> = {
@@ -45,15 +45,19 @@ function fmtUsd(n: number): string {
 }
 
 // Cross-workspace "what does it cost to run Caye, and is that workspace
-// profitable" monitor. Split out of Global Performance (2026-07-28), which
-// used to render this same LLM-cost table before Cost became its own
-// page. Meta/WhatsApp conversation-based cost isn't tracked anywhere in
-// the codebase yet (no credentials, no sync job) — shown as an explicit
-// "not tracked yet" rather than a fabricated $0, so margin isn't
-// overstated. Monthly price is a live Stripe lookup for any workspace
-// mapped in lib/workspace-pricing.ts, falling back to a manually-typed
-// figure otherwise (or if the Stripe call fails) — the "Stripe"/"manual"
-// pill below each price says which. Read-only; no actions.
+// profitable" monitor — internal economics, deliberately presented denser
+// than an ordinary Settings page (2026-08-26: three large KPI cards
+// collapsed into one inline strip) since this is Operations, not
+// something a workspace owner would ever see. Split out of Global
+// Performance (2026-07-28), which used to render this same LLM-cost table
+// before Cost became its own page. Meta/WhatsApp conversation-based cost
+// isn't tracked anywhere in the codebase yet (no credentials, no sync
+// job) — shown as an explicit "not tracked yet" rather than a fabricated
+// $0, so margin isn't overstated. Monthly price is a live Stripe lookup
+// for any workspace mapped in lib/workspace-pricing.ts, falling back to a
+// manually-typed figure otherwise (or if the Stripe call fails) — the
+// "Stripe"/"manual" pill below each price says which. Read-only; no
+// actions.
 export default function CostPage() {
   const [rows, setRows] = useState<CostRow[] | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -80,39 +84,31 @@ export default function CostPage() {
   const totalMargin = rows?.reduce((acc, r) => acc + (r.margin_usd ?? 0), 0) ?? 0
 
   return (
-    <div style={{ flex: 1, overflowY: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 16, minHeight: 0 }}>
-      <div style={{ flexShrink: 0, display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
-        <div style={{ background: CARD_BG, borderRadius: 18, padding: '16px 18px' }}>
-          <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', textTransform: 'uppercase', color: LABEL_COLOR, marginBottom: 8 }}>
-            30-day LLM cost (all workspaces)
-          </div>
-          <div style={{ fontSize: 20, fontFamily: 'var(--font-display)', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
-            {rows ? fmtUsd(totalLlmCost30d) : '—'}
-          </div>
-        </div>
-        <div style={{ background: CARD_BG, borderRadius: 18, padding: '16px 18px' }}>
-          <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', textTransform: 'uppercase', color: LABEL_COLOR, marginBottom: 8 }}>
-            Monthly revenue (known)
-          </div>
-          <div style={{ fontSize: 20, fontFamily: 'var(--font-display)', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
-            {rows ? fmtUsd(totalRevenue) : '—'}
-          </div>
-        </div>
-        <div style={{ background: CARD_BG, borderRadius: 18, padding: '16px 18px' }}>
-          <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', textTransform: 'uppercase', color: LABEL_COLOR, marginBottom: 8 }}>
-            Margin (LLM-cost only)
-          </div>
-          <div style={{ fontSize: 20, fontFamily: 'var(--font-display)', fontWeight: 600, fontVariantNumeric: 'tabular-nums', color: totalMargin < 0 ? '#fb7185' : '#34d399' }}>
-            {rows ? fmtUsd(totalMargin) : '—'}
-          </div>
-        </div>
+    <div style={{ flex: 1, overflowY: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 14, minHeight: 0 }}>
+      <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', textTransform: 'uppercase', color: LABEL_COLOR, flexShrink: 0 }}>
+        Operations / Economics
+      </div>
+
+      <div style={{ flexShrink: 0, display: 'flex', flexWrap: 'wrap', columnGap: 28, rowGap: 10, fontSize: 13 }}>
+        <span>
+          <strong style={{ fontVariantNumeric: 'tabular-nums' }}>{rows ? fmtUsd(totalLlmCost30d) : '—'}</strong>
+          <span style={{ color: LABEL_COLOR }}> 30-day LLM cost</span>
+        </span>
+        <span>
+          <strong style={{ fontVariantNumeric: 'tabular-nums' }}>{rows ? fmtUsd(totalRevenue) : '—'}</strong>
+          <span style={{ color: LABEL_COLOR }}> monthly revenue (known)</span>
+        </span>
+        <span>
+          <strong style={{ fontVariantNumeric: 'tabular-nums', color: totalMargin < 0 ? '#fb7185' : '#34d399' }}>{rows ? fmtUsd(totalMargin) : '—'}</strong>
+          <span style={{ color: LABEL_COLOR }}> margin (LLM-cost only)</span>
+        </span>
       </div>
 
       <div style={{ fontSize: 11.5, color: '#52525b', lineHeight: 1.5, flexShrink: 0 }}>
         Meta/WhatsApp conversation-based cost isn&apos;t tracked yet — margin above reflects LLM cost only. Price/mo is a live Stripe lookup where a customer ID is on file (dot = ●), otherwise a manually-typed fallback (dot = ○) — see lib/workspace-pricing.ts.
       </div>
 
-      <div style={{ flex: 1, minHeight: 0, background: CARD_BG, borderRadius: 16, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ flex: 1, minHeight: 0, borderRadius: 14, overflow: 'hidden', display: 'flex', flexDirection: 'column', ...quietPanel }}>
         <div style={{
           display: 'grid', gridTemplateColumns: '1fr 100px 110px 110px 100px 100px 100px',
           padding: '10px 16px', background: 'rgba(255,255,255,0.025)',
