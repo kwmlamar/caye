@@ -217,10 +217,32 @@ export interface ToolContext {
     entityRef: string
     operation: 'customer_reply_draft'
   } | null
-  /** Set only by the founder Direct path after its inbound row is durable. */
+  /**
+   * Set only by the founder Direct path after its inbound row is durable —
+   * this is the general "this turn is a Caye Direct dashboard turn, not a
+   * WhatsApp operator turn" signal, not merely an engineering-artifact
+   * concern despite the name. create-parametric-part/revise-parametric-part
+   * use it to gate CAD artifact creation to Direct only; #87's multimodal
+   * follow-up (business_artifacts) reuses the exact same presence check in
+   * retrieve_artifact_for_operator to decide delivery transport
+   * deterministically (WhatsApp media send vs. inline Direct rendering)
+   * without the model ever choosing transport itself. Never renamed to
+   * something more generic because every existing caller/test already
+   * depends on this exact field name — see the doc comment on
+   * CayeAgentInput.engineeringOrigin.
+   */
   engineeringOrigin?: { threadId: string; messageId: string }
   /** Durable artifact ids created during this single turn, never client supplied. */
   engineeringArtifactIds?: string[]
+  /**
+   * Durable business_artifacts ids retrieve_artifact_for_operator resolved
+   * for INLINE Caye Direct delivery this turn (i.e. ctx.engineeringOrigin
+   * was set, so no WhatsApp send happened). Mirrors engineeringArtifactIds'
+   * shape/purpose exactly — see founder-thread-turn.ts, which turns this
+   * into a rich_result 'business_artifact' block after the turn completes.
+   * Undefined/unused on the WhatsApp path.
+   */
+  businessArtifactIds?: string[]
 }
 
 /**

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef, useCallback, type ReactNode } from 'react'
+import { useState, useEffect, useRef, useCallback, type ReactNode, type ClipboardEvent, type DragEvent } from 'react'
 import { getSession } from '@/lib/supabase'
 import { formatDistanceToNow } from '@/lib/utils'
 import { CayeMark } from '@/components/brand/CayeMark'
@@ -16,6 +16,19 @@ const NEAR_BOTTOM_PX = 96
 const TEXTAREA_MAX_H = 220
 const GLASS = { backdropFilter: 'blur(20px) saturate(140%)', WebkitBackdropFilter: 'blur(20px) saturate(140%)' } as const
 
+// Mirrors app/api/founder/caye-direct/attachments/route.ts's ACCEPTED_MIME_TYPES.
+const ACCEPTED_ATTACHMENT_MIME = 'image/jpeg,image/png,image/gif,image/webp,application/pdf'
+
+interface PendingAttachment {
+  clientId: string
+  file: File
+  /** Local object URL for instant preview — revoked on removal/unmount, never sent anywhere. */
+  previewUrl: string
+  status: 'uploading' | 'ready' | 'error'
+  artifactId?: string
+  errorMessage?: string
+}
+
 type DeliveryStatus = 'sent' | 'delivered' | 'read' | 'failed' | 'not_sent' | null
 
 interface OperatorMessage {
@@ -30,6 +43,8 @@ interface OperatorMessage {
   operator_name?: string | null
   operator_role?: string | null
   rich_result?: RichResult | null
+  /** Local-only preview URLs for an optimistic bubble, before the real persisted row (with its real rich_result) lands via refetch. Never sent to the server. */
+  localPreviews?: { url: string; kind: 'image' | 'file'; name: string }[]
 }
 
 // Only outbound messages carry these — inbound is what the operator sent
@@ -363,9 +378,81 @@ export default function CayeDirectThread(props: Props) {
   // why `model` is omitted whenever opts.endpoint is set.
   const [modelMode, setModelMode] = useState<'auto' | 'claude' | 'openai' | 'api'>('auto')
   const [lastBackend, setLastBackend] = useState<string | null>(null)
+  const [attachments, setAttachments] = useState<PendingAttachment[]>([])
+  const [dragActive, setDragActive] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const atBottomRef = useRef(true)
+
+  // Object URLs are local-only and must be released on unmount; a ref (not
+  // `attachments` itself) so the cleanup always sees the latest set rather
+  // than whatever was in scope on the render that registered the effect.
+  const attachmentsRef = useRef(attachments)
+  attachmentsRef.current = attachments
+  useEffect(() => () => { attachmentsRef.current.forEach((a) => URL.revokeObjectURL(a.previewUrl)) }, [])
+
+  async function uploadAttachment(file: File) {
+    const clientId = crypto.randomUUID()
+    const previewUrl = URL.createObjectURL(file)
+    setAttachments((prev) => [...prev, { clientId, file, previewUrl, status: 'uploading' }])
+
+    if (!ACCEPTED_ATTACHMENT_MIME.split(',').includes(file.type)) {
+      setAttachments((prev) => prev.map((a) => a.clientId === clientId ? { ...a, status: 'error', errorMessage: 'Unsupported file type — image or PDF only.' } : a))
+      return
+    }
+
+    try {
+      const { session } = await getSession()
+      if (!session) throw new Error('no session')
+      const form = new FormData()
+      form.set('workspaceId', workspaceId)
+      form.set('idempotencyKey', clientId)
+      form.set('file', file)
+      const res = await fetch('/api/founder/caye-direct/attachments', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${session.access_token}` },
+        body: form,
+      })
+      const json = await res.json().catch(() => null)
+      if (!res.ok || !json?.artifactId) {
+        setAttachments((prev) => prev.map((a) => a.clientId === clientId ? { ...a, status: 'error', errorMessage: json?.error ?? 'Upload failed' } : a))
+        return
+      }
+      setAttachments((prev) => prev.map((a) => a.clientId === clientId ? { ...a, status: 'ready', artifactId: json.artifactId } : a))
+    } catch {
+      setAttachments((prev) => prev.map((a) => a.clientId === clientId ? { ...a, status: 'error', errorMessage: 'Upload failed' } : a))
+    }
+  }
+
+  function addFiles(files: FileList | File[]) {
+    for (const file of Array.from(files)) uploadAttachment(file)
+  }
+
+  function removeAttachment(clientId: string) {
+    setAttachments((prev) => {
+      const target = prev.find((a) => a.clientId === clientId)
+      if (target) URL.revokeObjectURL(target.previewUrl)
+      return prev.filter((a) => a.clientId !== clientId)
+    })
+  }
+
+  function handlePaste(e: ClipboardEvent<HTMLTextAreaElement>) {
+    const files = Array.from(e.clipboardData?.items ?? [])
+      .filter((item) => item.kind === 'file')
+      .map((item) => item.getAsFile())
+      .filter((f): f is File => !!f)
+    if (files.length > 0) {
+      e.preventDefault()
+      addFiles(files)
+    }
+  }
+
+  function handleDrop(e: DragEvent<HTMLFormElement>) {
+    e.preventDefault()
+    setDragActive(false)
+    if (e.dataTransfer.files?.length) addFiles(e.dataTransfer.files)
+  }
 
   async function handleCopy(key: string, text: string) {
     try {
@@ -519,14 +606,26 @@ export default function CayeDirectThread(props: Props) {
   // ignore the return value.
   async function runTurn(
     text: string,
-    opts: { endpoint: string; sessionId?: string; isTyped: boolean }
+    opts: { endpoint: string; sessionId?: string; isTyped: boolean },
+    attachmentIds?: string[]
   ): Promise<string | null> {
     const trimmed = text.trim()
-    if (!trimmed || sending || readOnly || mode !== 'thread') return null
+    const hasAttachments = !!attachmentIds?.length
+    if ((!trimmed && !hasAttachments) || sending || readOnly || mode !== 'thread') return null
 
     setSending(true)
     if (opts.isTyped) setInput('')
     atBottomRef.current = true
+
+    // Local-only preview so the founder sees their own attachment
+    // immediately, not persisted state — the refetch after the turn
+    // settles replaces this whole optimistic row with the real one
+    // (real rich_result, real id), so nothing here needs to survive that.
+    const localPreviews = hasAttachments
+      ? attachments
+        .filter((a) => a.status === 'ready' && attachmentIds!.includes(a.artifactId!))
+        .map((a) => ({ url: a.previewUrl, kind: (a.file.type.startsWith('image/') ? 'image' : 'file') as 'image' | 'file', name: a.file.name }))
+      : undefined
 
     const optimistic: OperatorMessage = {
       id: `pending-${Date.now()}`,
@@ -535,8 +634,10 @@ export default function CayeDirectThread(props: Props) {
       created_at: new Date().toISOString(),
       origin: 'dashboard',
       operator_role: 'founder',
+      localPreviews,
     }
     setMessages((prev) => [...prev, optimistic])
+    if (hasAttachments) setAttachments([])
 
     // The whole round trip lives in a registered promise, not in this
     // component, so switching threads/workspaces mid-turn doesn't orphan
@@ -562,6 +663,7 @@ export default function CayeDirectThread(props: Props) {
             // Only the typed path sends a model choice — voice posts to
             // its own endpoint and always gets Auto server-side.
             ...(opts.isTyped ? { model: modelMode } : {}),
+            ...(hasAttachments ? { attachmentArtifactIds: attachmentIds } : {}),
           }),
         })
         const json = await res.json()
@@ -622,8 +724,12 @@ export default function CayeDirectThread(props: Props) {
 
   function send(text: string): Promise<string | null> {
     if (mode !== 'thread') return Promise.resolve(null)
-    return runTurn(text, { endpoint: `/api/founder/caye-direct/threads/${props.threadId}`, isTyped: true })
+    const readyIds = attachments.filter((a) => a.status === 'ready' && a.artifactId).map((a) => a.artifactId!)
+    return runTurn(text, { endpoint: `/api/founder/caye-direct/threads/${props.threadId}`, isTyped: true }, readyIds)
   }
+
+  const hasUploadingAttachment = attachments.some((a) => a.status === 'uploading')
+  const canSend = (input.trim().length > 0 || attachments.some((a) => a.status === 'ready')) && !hasUploadingAttachment
 
   // Fires the composer-supplied opener once history has settled — waiting
   // on `loading` rather than mount avoids racing the initial fetchMessages
@@ -672,6 +778,9 @@ export default function CayeDirectThread(props: Props) {
         @keyframes caye-skeleton-pulse {
           0%, 100% { opacity: 0.5; }
           50% { opacity: 1; }
+        }
+        @keyframes caye-attachment-spin {
+          to { transform: rotate(360deg); }
         }
         .caye-direct-scroll::-webkit-scrollbar { width: 6px; }
         .caye-direct-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 3px; }
@@ -818,11 +927,25 @@ export default function CayeDirectThread(props: Props) {
                           {m.rich_result && <RichResultRenderer result={m.rich_result} workspaceId={workspaceId} />}
                         </div>
                       ) : (
-                        <div style={{
-                          background: 'rgba(255,255,255,0.08)',
-                          borderRadius: bubbleRadius(isCaye, pos), padding: '9px 12px',
-                        }}>
-                          <p style={{ fontSize: 13.5, lineHeight: 1.55, whiteSpace: 'pre-wrap', color: '#f4f4f5' }}>{m.body}</p>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}>
+                          {m.body && m.body !== '[attachment]' && (
+                            <div style={{
+                              background: 'rgba(255,255,255,0.08)',
+                              borderRadius: bubbleRadius(isCaye, pos), padding: '9px 12px',
+                            }}>
+                              <p style={{ fontSize: 13.5, lineHeight: 1.55, whiteSpace: 'pre-wrap', color: '#f4f4f5' }}>{m.body}</p>
+                            </div>
+                          )}
+                          {m.localPreviews?.map((p, i) => (
+                            <div key={i}>
+                              {p.kind === 'image' ? (
+                                <img src={p.url} alt={p.name} style={{ maxWidth: 220, maxHeight: 220, borderRadius: 10, border: '1px solid rgba(255,255,255,0.08)', display: 'block' }} />
+                              ) : (
+                                <div style={{ padding: '8px 10px', borderRadius: 10, background: 'rgba(255,255,255,0.08)', fontSize: 11.5, color: '#d4d4d8' }}>{p.name}</div>
+                              )}
+                            </div>
+                          ))}
+                          {m.rich_result && <RichResultRenderer result={m.rich_result} workspaceId={workspaceId} />}
                         </div>
                       )}
                       {showMeta && (
@@ -914,21 +1037,84 @@ export default function CayeDirectThread(props: Props) {
               )}
             </div>
           )}
-          <form className="caye-direct-composer-shell" onSubmit={(e) => { e.preventDefault(); send(input) }}>
+          <form
+            className="caye-direct-composer-shell"
+            onSubmit={(e) => { e.preventDefault(); send(input) }}
+            onDragOver={(e) => { e.preventDefault(); setDragActive(true) }}
+            onDragLeave={() => setDragActive(false)}
+            onDrop={handleDrop}
+          >
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept={ACCEPTED_ATTACHMENT_MIME}
+              multiple
+              onChange={(e) => { if (e.target.files?.length) addFiles(e.target.files); e.target.value = '' }}
+              style={{ display: 'none' }}
+            />
+            {attachments.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+                {attachments.map((a) => (
+                  <div key={a.clientId} style={{
+                    position: 'relative', width: 56, height: 56, borderRadius: 10, overflow: 'hidden',
+                    border: `1px solid ${a.status === 'error' ? 'rgba(239,68,68,0.5)' : 'rgba(255,255,255,0.12)'}`,
+                    background: 'rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }} title={a.status === 'error' ? a.errorMessage : a.file.name}>
+                    {a.file.type.startsWith('image/') ? (
+                      <img src={a.previewUrl} alt={a.file.name} style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: a.status === 'error' ? 0.4 : 1 }} />
+                    ) : (
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#72cfd9" strokeWidth="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /></svg>
+                    )}
+                    {a.status === 'uploading' && (
+                      <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <div style={{ width: 14, height: 14, border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#4EBECE', borderRadius: '50%', animation: 'caye-attachment-spin 0.7s linear infinite' }} />
+                      </div>
+                    )}
+                    {a.status === 'error' && (
+                      <div style={{ position: 'absolute', inset: 0, background: 'rgba(239,68,68,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fca5a5', fontSize: 9, textAlign: 'center', padding: 2 }}>
+                        Failed
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => removeAttachment(a.clientId)}
+                      aria-label={`Remove ${a.file.name}`}
+                      style={{
+                        position: 'absolute', top: 2, right: 2, width: 16, height: 16, borderRadius: '50%',
+                        background: 'rgba(0,0,0,0.65)', border: 'none', color: '#fff', cursor: 'pointer',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, lineHeight: 1, fontSize: 11,
+                      }}
+                    >×</button>
+                  </div>
+                ))}
+              </div>
+            )}
             <CayeComposerSurface
-              active={composerFocused}
+              active={composerFocused || dragActive}
               maxWidth="100%"
               style={{
                 alignItems: 'flex-end',
                 borderRadius: 20,
-                background: composerFocused ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.035)',
-                border: `1px solid ${composerFocused ? 'rgba(78,190,206,0.28)' : 'rgba(255,255,255,0.07)'}`,
+                background: dragActive ? 'rgba(78,190,206,0.08)' : composerFocused ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.035)',
+                border: `1px solid ${composerFocused || dragActive ? 'rgba(78,190,206,0.28)' : 'rgba(255,255,255,0.07)'}`,
                 boxShadow: composerFocused
                   ? '0 1px 0 rgba(255,255,255,0.04) inset, 0 0 14px -4px rgba(78,190,206,0.18), 0 10px 24px -12px rgba(0,0,0,0.5)'
                   : '0 1px 0 rgba(255,255,255,0.03) inset, 0 8px 18px -10px rgba(0,0,0,0.45)',
                 transition: 'background 0.18s ease, border-color 0.2s ease, box-shadow 0.22s ease',
               }}
             >
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={sending}
+                title="Attach an image or PDF"
+                aria-label="Attach a file"
+                className="caye-direct-send"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(244,244,245,0.6)" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21.44 11.05l-9.19 9.19a5 5 0 0 1-7.07-7.07l9.19-9.19a3.5 3.5 0 0 1 4.95 4.95l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+                </svg>
+              </button>
               <textarea
                 ref={textareaRef}
                 value={input}
@@ -936,6 +1122,7 @@ export default function CayeDirectThread(props: Props) {
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(input) }
                 }}
+                onPaste={handlePaste}
                 placeholder="Ask Caye anything…"
                 disabled={sending}
                 onFocus={() => setComposerFocused(true)}
@@ -964,13 +1151,13 @@ export default function CayeDirectThread(props: Props) {
               </button>
               <button
                 type="submit"
-                disabled={sending || !input.trim()}
+                disabled={sending || !canSend}
                 title="Send"
                 aria-label="Send message"
-                className={`caye-direct-send${input.trim() && !sending ? ' is-ready' : ''}`}
+                className={`caye-direct-send${canSend && !sending ? ' is-ready' : ''}`}
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
-                  stroke={input.trim() && !sending ? '#4EBECE' : 'rgba(244,244,245,0.45)'}
+                  stroke={canSend && !sending ? '#4EBECE' : 'rgba(244,244,245,0.45)'}
                   strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
                   <line x1="12" y1="19" x2="12" y2="5" /><polyline points="5 12 12 5 19 12" />
                 </svg>
