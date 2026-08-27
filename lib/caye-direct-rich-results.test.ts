@@ -25,4 +25,23 @@ describe('Caye Direct rich results', () => {
     expect(validateRichResult({ version: 1, narrative: 'x', blocks: [{ type: 'component', name: 'DangerousWidget' }] })).toBeNull()
     expect(validateRichResult({ version: 1, narrative: 'x', blocks: [{ type: 'artifact_reference', id: 'x', name: 'x', url: 'https://example.com' }] })).toBeNull()
   })
+
+  it('strips a rejected rich-result attempt instead of leaking it as raw JSON (engineering generation secondary bug)', () => {
+    const reply = [
+      'Revision 2 is ready — 4 mm thick, everything else unchanged.',
+      '```json',
+      JSON.stringify({ version: 1, narrative: 'Revision 2 ready.', blocks: [{ type: 'engineering_artifact', artifactId: 'artifact-2' }] }),
+      '```',
+    ].join('\n')
+    const extracted = extractRichResult(reply)
+    expect(extracted.result).toBeUndefined()
+    expect(extracted.narrative).not.toContain('```')
+    expect(extracted.narrative).not.toContain('engineering_artifact')
+    expect(extracted.narrative).toBe('Revision 2 is ready — 4 mm thick, everything else unchanged.')
+  })
+
+  it('leaves ordinary non-envelope JSON fences untouched', () => {
+    const reply = ['Config:', '```json', JSON.stringify({ foo: 'bar' }), '```'].join('\n')
+    expect(extractRichResult(reply)).toEqual({ narrative: reply })
+  })
 })
