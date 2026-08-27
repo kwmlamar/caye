@@ -26,9 +26,16 @@ vi.mock('server-only', () => ({}))
  *   1. An artifact ingested over WhatsApp is findable by a Direct-channel
  *      free-text query with no WhatsApp-specific context required — cross-
  *      channel durable memory (item D).
- *   2. Retrieving it on the Direct channel (ctx.engineeringOrigin set)
+ *   2. Retrieving it on the Direct channel (ctx.channel === 'dashboard')
  *      never sends WhatsApp media and never claims "Sent" — it resolves to
  *      an inline business_artifact reference instead (the actual fix).
+ *
+ * This is the FAST, tool-level layer — searchArtifacts/retrieve_artifact_
+ * for_operator called directly, no model/tool-loop involved. For the same
+ * scenario proven through the REAL runFounderThreadTurn -> cayeAgent ->
+ * runToolLoop chain, with real persistence and a real reload through the
+ * actual GET thread/business-artifacts routes, see
+ * lib/caye-agent/caye-direct-multimodal-integration.test.ts.
  */
 
 const MAX_ARTIFACT_ID = 'artifact-max-photo'
@@ -145,13 +152,13 @@ describe('regression: the Max photo — cross-channel durable memory + inline Di
     expect(items[0].confirmedRelations[0]?.label).toBe(MAX_RELATION_LABEL)
   })
 
-  it('retrieving it on Caye Direct (ctx.engineeringOrigin set) renders it inline — never sends WhatsApp media, never claims "Sent"', async () => {
+  it('retrieving it on Caye Direct (ctx.channel === \'dashboard\') renders it inline — never sends WhatsApp media, never claims "Sent"', async () => {
     const ctx: ToolContext = {
       workspaceId: 'ws-bimini',
       callerRole: 'founder',
       operatorId: 7,
       requestId: 'req-direct-1',
-      engineeringOrigin: { threadId: 'thread-new-direct-convo', messageId: 'msg-1' },
+      channel: 'dashboard',
     }
     const result = await retrieveArtifactForOperator.execute({ artifact_id: MAX_ARTIFACT_ID }, ctx)
 

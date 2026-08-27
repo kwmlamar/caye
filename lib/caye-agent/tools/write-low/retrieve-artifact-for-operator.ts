@@ -28,14 +28,17 @@ const SENDABLE_MODALITY: Record<string, WhatsAppMediaType | undefined> = {
  *
  * CHANNEL-AWARE DELIVERY (multimodal Caye Direct follow-up). The model
  * calls this ONE tool regardless of channel — it never decides transport.
- * ctx.engineeringOrigin's presence is the deterministic signal for "this
- * turn is a founder Caye Direct dashboard turn" (see its doc comment in
- * ../types.ts): when set, this pushes the artifact id onto
- * ctx.businessArtifactIds for inline in-conversation rendering instead of
- * sending WhatsApp media — no operator phone/WhatsApp-window lookup even
- * happens on that path, since nothing is actually sent anywhere. When
- * unset (every WhatsApp operator turn, unchanged), behavior is exactly
- * what it always was.
+ * ctx.channel === 'dashboard' is the deterministic signal for "this turn
+ * is a founder Caye Direct dashboard turn" (see its doc comment in
+ * ../types.ts — a dedicated field, not engineeringOrigin, after an
+ * adversarial review flagged reusing that CAD-specific field as an
+ * overloaded, easily-misread channel check): when set, this pushes the
+ * artifact id onto ctx.businessArtifactIds for inline in-conversation
+ * rendering instead of sending WhatsApp media — no operator phone/
+ * WhatsApp-window lookup even happens on that path, since nothing is
+ * actually sent anywhere. When unset (every WhatsApp operator turn,
+ * driver turn, admin-shell turn, cron/scan invocation), behavior is
+ * exactly what it always was.
  */
 export const retrieveArtifactForOperator: Tool<RetrieveArtifactForOperatorInput> = {
   name: 'retrieve_artifact_for_operator',
@@ -67,7 +70,7 @@ export const retrieveArtifactForOperator: Tool<RetrieveArtifactForOperatorInput>
       return { ok: false, error: `That artifact is ${detail.artifact.retention_status} and no longer retrievable.` }
     }
 
-    if (ctx.engineeringOrigin) {
+    if (ctx.channel === 'dashboard') {
       // Direct channel: no WhatsApp send, no phone/window lookup — the
       // artifact is already durably stored (getArtifactDetail refuses any
       // row whose storage_state isn't 'stored'), which is the only thing

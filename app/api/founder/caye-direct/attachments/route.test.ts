@@ -26,7 +26,12 @@ function reqWithForm(fields: Record<string, string | Blob>): NextRequest {
   })
 }
 
-const PNG_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47])
+// A real, sufficiently-long PNG magic-byte signature (detectMimeType's PNG
+// check requires length > 8) plus a few trailing bytes — a too-short fake
+// used to fail detectMimeType's own magic-byte check before this route
+// sniffed bytes at all, which the earlier (pre-review) version of this
+// route never noticed since it trusted Content-Type alone.
+const PNG_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0])
 
 describe('POST /api/founder/caye-direct/attachments — enters the SAME business_artifacts pipeline as WhatsApp', () => {
   beforeEach(() => {
@@ -53,6 +58,36 @@ describe('POST /api/founder/caye-direct/attachments — enters the SAME business
     requireFounderMock.mockResolvedValue({ id: 'founder-1' })
     const res = await POST(reqWithForm({ workspaceId: 'ws-1', idempotencyKey: 'key-1', file: new File(['x'], 'a.exe', { type: 'application/x-msdownload' }) }))
     expect(res.status).toBe(400)
+    expect(ingestArtifactMock).not.toHaveBeenCalled()
+  })
+
+  it('rejects a file whose ACTUAL bytes are not an accepted type, even when the client spoofs Content-Type as image/png (MIME sniffing, adversarial review)', async () => {
+    requireFounderMock.mockResolvedValue({ id: 'founder-1' })
+    // Real PNG magic bytes are 89 50 4E 47 0D 0A 1A 0A — this is plain
+    // text pretending, via Content-Type, to be an image.
+    const spoofed = new File(['#!/bin/sh\necho pwned\n'], 'totally-a-photo.png', { type: 'image/png' })
+    const res = await POST(reqWithForm({ workspaceId: 'ws-1', idempotencyKey: 'key-1', file: spoofed }))
+    expect(res.status).toBe(400)
+    expect(ingestArtifactMock).not.toHaveBeenCalled()
+  })
+
+  it('accepts real PNG bytes even when Content-Type is missing/generic — sniffed from bytes, not trusted from the header', async () => {
+    requireFounderMock.mockResolvedValue({ id: 'founder-1' })
+    ingestArtifactMock.mockResolvedValue({ ok: true, deduped: false, artifact: { id: 'artifact-1', filename: 'a.png', modality: 'image', detected_mime_type: 'image/png' } })
+    const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0])
+    const res = await POST(reqWithForm({ workspaceId: 'ws-1', idempotencyKey: 'key-1', file: new File([pngBytes], 'a.png', { type: 'application/octet-stream' }) }))
+    expect(res.status).toBe(200)
+    expect(ingestArtifactMock).toHaveBeenCalled()
+  })
+
+  it('rejects a file over the coarse upload ceiling before ever buffering it into ingestArtifact', async () => {
+    requireFounderMock.mockResolvedValue({ id: 'founder-1' })
+    // A genuinely oversized buffer (not a spoofed .size getter, which
+    // File's real accessor doesn't let a test override) — this is what
+    // the route's own file.size check actually reads.
+    const huge = new File([new Uint8Array(101 * 1024 * 1024)], 'big.png', { type: 'image/png' })
+    const res = await POST(reqWithForm({ workspaceId: 'ws-1', idempotencyKey: 'key-1', file: huge }))
+    expect(res.status).toBe(413)
     expect(ingestArtifactMock).not.toHaveBeenCalled()
   })
 

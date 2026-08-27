@@ -89,6 +89,7 @@ const buildAttachmentContentBlocksMock = vi.fn()
 vi.mock('@/lib/artifacts/attachments', () => ({
   resolveWorkspaceAttachments: (...args: unknown[]) => resolveWorkspaceAttachmentsMock(...args),
   buildAttachmentContentBlocks: (...args: unknown[]) => buildAttachmentContentBlocksMock(...args),
+  MAX_ATTACHMENTS_PER_TURN: 6,
 }))
 
 // './investigation' is NOT mocked: runInvestigation lives there and calls
@@ -488,10 +489,59 @@ describe('runFounderThreadTurn — attachments (multimodal Caye Direct follow-up
     expect(cayeAgentMock).toHaveBeenCalled()
   })
 
+  // ATTACHMENT-ROUTING INVARIANT (adversarial review). "attachment present"
+  // must never reach a path that can't see it, for ANY requestedMode value —
+  // not just the one case above. Exhaustive over every value the composer's
+  // model selector can actually send, plus the omitted-options shape voice
+  // uses, so a future mode added to RequestedMode can't slip through
+  // untested.
+  it.each(['auto', 'claude', 'openai', 'api'] as const)(
+    'attachment-routing invariant: requestedMode=%s + attachment always uses the real multimodal path, never the router',
+    async (requestedMode) => {
+      resolveWorkspaceAttachmentsMock.mockResolvedValue({ resolved: [imageArtifact], invalidIds: [] })
+      buildAttachmentContentBlocksMock.mockResolvedValue({ blocks: [imageBlock], unreadableNote: null })
+      await runFounderThreadTurn('ws-1', 'thread-1', 'this is Max', { requestedMode, founderUserId: 'f-1' }, ['artifact-1'])
+      expect(runCayeDirectRouterTurnMock).not.toHaveBeenCalled()
+      expect(cayeAgentMock).toHaveBeenCalledTimes(1)
+      // Not merely "cayeAgent was called" — it must have actually RECEIVED
+      // the real bytes, not just the text.
+      const firstCallArgs = cayeAgentMock.mock.calls[0][0] as { userMessage: unknown }
+      expect(firstCallArgs.userMessage).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'image' })]))
+    }
+  )
+
+  it('attachment-routing invariant: an attachment with NO options object at all (voice-shaped call) still reaches the real multimodal path', async () => {
+    resolveWorkspaceAttachmentsMock.mockResolvedValue({ resolved: [imageArtifact], invalidIds: [] })
+    buildAttachmentContentBlocksMock.mockResolvedValue({ blocks: [imageBlock], unreadableNote: null })
+    await runFounderThreadTurn('ws-1', 'thread-1', 'this is Max', undefined, ['artifact-1'])
+    expect(runCayeDirectRouterTurnMock).not.toHaveBeenCalled()
+    const firstCallArgs = cayeAgentMock.mock.calls[0][0] as { userMessage: unknown }
+    expect(firstCallArgs.userMessage).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'image' })]))
+  })
+
   it('takes the router path as usual when no attachments are present, unchanged', async () => {
     await runFounderThreadTurn('ws-1', 'thread-1', 'hello', { requestedMode: 'claude', founderUserId: 'f-1' })
     expect(runCayeDirectRouterTurnMock).toHaveBeenCalled()
     expect(cayeAgentMock).not.toHaveBeenCalled()
+  })
+
+  it('rejects more than MAX_ATTACHMENTS_PER_TURN attachments outright — never silently truncates the list', async () => {
+    const tooMany = Array.from({ length: 7 }, (_, i) => `artifact-${i}`)
+    await expect(
+      runFounderThreadTurn('ws-1', 'thread-1', 'here are some files', undefined, tooMany)
+    ).rejects.toThrow('Too many attachments')
+    expect(resolveWorkspaceAttachmentsMock).not.toHaveBeenCalled()
+    expect(cayeAgentMock).not.toHaveBeenCalled()
+  })
+
+  it('attachment-routing invariant: fails the turn explicitly rather than answering silently when every attachment is unreadable (storage outage) — never a false "I don\'t see anything"', async () => {
+    resolveWorkspaceAttachmentsMock.mockResolvedValue({ resolved: [imageArtifact], invalidIds: [] })
+    buildAttachmentContentBlocksMock.mockResolvedValue({ blocks: [], unreadableNote: 'Saved but could not be read live this turn: max.png.' })
+    await expect(
+      runFounderThreadTurn('ws-1', 'thread-1', 'this is Max', undefined, ['artifact-1'])
+    ).rejects.toThrow('Attachment unreadable')
+    expect(cayeAgentMock).not.toHaveBeenCalled()
+    expect(persistAgentTurnsMock).not.toHaveBeenCalled()
   })
 
   it('merges a business_artifact result from retrieve_artifact_for_operator into the persisted rich_result', async () => {

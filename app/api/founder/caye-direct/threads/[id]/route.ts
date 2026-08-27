@@ -110,6 +110,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const msg = err instanceof Error ? err.message : 'Agent failed'
     if (msg === 'Thread not found') return NextResponse.json({ error: msg }, { status: 404 })
     if (msg === 'Invalid attachment') return NextResponse.json({ error: msg }, { status: 400 })
+    if (msg === 'Too many attachments') return NextResponse.json({ error: `Send at most a few files at once.` }, { status: 400 })
+    // Not a client input problem (the id was valid and workspace-scoped) —
+    // bytes just couldn't be read back from storage this attempt. Never
+    // silently answer without them (see runFounderThreadTurn's hard
+    // invariant) — surface it as a real, retryable failure instead.
+    if (msg === 'Attachment unreadable') return NextResponse.json({ error: "Couldn't read that attachment right now — try again in a moment." }, { status: 502 })
     return NextResponse.json({ error: msg }, { status: 500 })
   }
 }

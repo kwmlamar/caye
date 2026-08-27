@@ -77,6 +77,48 @@ describe('GET /api/founder/business-artifacts/[id] — trusted id resolution (mu
     expect(signArtifactUrlMock).toHaveBeenCalledWith('ws-1/artifact-1/original.png')
   })
 
+  it('a malformed/path-traversal-shaped id resolves to nothing — it is passed straight to the workspace-scoped lookup, never interpreted as a path', async () => {
+    requireFounderMock.mockResolvedValue({ id: 'founder-1' })
+    getArtifactDetailMock.mockResolvedValue(null)
+    const params2 = Promise.resolve({ id: '../../../etc/passwd' })
+    const res = await GET(req('ws-1'), { params: params2 })
+    expect(getArtifactDetailMock).toHaveBeenCalledWith('ws-1', '../../../etc/passwd')
+    expect(res.status).toBe(404)
+    expect(signArtifactUrlMock).not.toHaveBeenCalled()
+  })
+
+  it('ignores any client-supplied storage-path-shaped query param — the route accepts no such field at all', async () => {
+    requireFounderMock.mockResolvedValue({ id: 'founder-1' })
+    getArtifactDetailMock.mockResolvedValue({
+      artifact: { id: 'artifact-1', filename: 'max.png', modality: 'image', storage_path: 'ws-1/artifact-1/original.png' },
+      observations: [], relations: [],
+    })
+    signArtifactUrlMock.mockResolvedValue('https://signed.example/artifact-1?token=abc')
+    const reqWithForgedPath = new NextRequest(
+      'http://localhost/api/founder/business-artifacts/artifact-1?workspaceId=ws-1&storage_path=ws-attacker/other-artifact/original.png&path=ws-attacker/other-artifact/original.png',
+      { headers: { Authorization: 'Bearer test-token' } }
+    )
+    await GET(reqWithForgedPath, { params })
+    // The ONLY path ever handed to signArtifactUrl is the one from the
+    // authorized artifact row itself — never anything read off the request.
+    expect(signArtifactUrlMock).toHaveBeenCalledWith('ws-1/artifact-1/original.png')
+    expect(signArtifactUrlMock).not.toHaveBeenCalledWith('ws-attacker/other-artifact/original.png')
+  })
+
+  it('an artifact whose storage_state is not \'stored\' never reaches this route as resolvable — getArtifactDetail already refuses it, so no signed URL is minted', async () => {
+    requireFounderMock.mockResolvedValue({ id: 'founder-1' })
+    // Mirrors query.ts's own contract: getArtifactDetail returns null for
+    // any storage_state other than 'stored' (see lib/artifacts/query.test.ts
+    // for that guarantee at the source). This route has no independent
+    // storage_state check of its own — it relies entirely on that contract,
+    // which is exactly why getArtifactDetailMock returning null here is the
+    // correct simulation of "pending/failed upload," not a gap in this test.
+    getArtifactDetailMock.mockResolvedValue(null)
+    const res = await GET(req('ws-1'), { params })
+    expect(res.status).toBe(404)
+    expect(signArtifactUrlMock).not.toHaveBeenCalled()
+  })
+
   it('never claims success when the signed URL could not be minted (render-failure honesty)', async () => {
     requireFounderMock.mockResolvedValue({ id: 'founder-1' })
     getArtifactDetailMock.mockResolvedValue({

@@ -16,6 +16,18 @@ import type { BusinessArtifactRow } from './types'
  * refuses any row whose storage_state isn't 'stored' — see query.ts).
  */
 
+/**
+ * Per-turn attachment cap (adversarial review, multi-attachment safety).
+ * The composer's file picker/drop zone allows selecting several files at
+ * once with no client-side limit — this is the single authoritative,
+ * server-side enforcement point every caller (the typed text route and the
+ * voice route both funnel through runFounderThreadTurn) goes through, so a
+ * scripted/forged request can't bypass a client-only check and attach an
+ * unbounded number of files — each inlined as real base64 bytes — to one
+ * model turn.
+ */
+export const MAX_ATTACHMENTS_PER_TURN = 6
+
 export type ResolvedAttachment = { artifact: BusinessArtifactRow }
 
 export interface ResolveAttachmentsResult {

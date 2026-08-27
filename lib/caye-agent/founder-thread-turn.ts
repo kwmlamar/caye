@@ -16,7 +16,7 @@ import { runCayeDirectRouterTurn } from '@/lib/model-router/caye-direct-bridge'
 import type { BackendId, RequestedMode } from '@/lib/model-router/types'
 import type { RichResult } from '@/lib/caye-direct-rich-results'
 import { engineeringRichResult } from '@/lib/engineering/rich-result'
-import { resolveWorkspaceAttachments, buildAttachmentContentBlocks } from '@/lib/artifacts/attachments'
+import { resolveWorkspaceAttachments, buildAttachmentContentBlocks, MAX_ATTACHMENTS_PER_TURN } from '@/lib/artifacts/attachments'
 import { businessArtifactRichResult, mergeRichResults } from '@/lib/artifacts/rich-result'
 
 export interface FounderThreadTurnResult {
@@ -100,6 +100,7 @@ export async function runFounderThreadTurn(
   let attachmentRichResult: RichResult | undefined
   let userMessageOverride: Anthropic.MessageParam['content'] | undefined
   if (hasAttachments) {
+    if (attachmentArtifactIds!.length > MAX_ATTACHMENTS_PER_TURN) throw new Error('Too many attachments')
     const { resolved, invalidIds } = await resolveWorkspaceAttachments(workspaceId, attachmentArtifactIds!)
     // A forged id, a foreign-workspace id, or one that never finished
     // storing is refused outright rather than silently dropped — see
@@ -108,6 +109,18 @@ export async function runFounderThreadTurn(
 
     attachmentRichResult = businessArtifactRichResult(resolved.map((r) => r.artifact.id))
     const { blocks, unreadableNote } = await buildAttachmentContentBlocks(resolved)
+    // HARD INVARIANT (attachment-routing safety): an attachment must never
+    // be silently answered without the model actually seeing it. This is
+    // NOT the routine "this modality has no inline-read path yet" case
+    // (buildAttachmentContentBlocks handles that gracefully via
+    // unreadableNote while still forwarding any OTHER attachment's real
+    // bytes) — today's composer only accepts image/PDF, both inline-
+    // readable, so `blocks` is empty here only when byte download itself
+    // failed for every attachment (e.g. a storage outage). Fail the turn
+    // explicitly rather than let the model respond as if nothing was ever
+    // attached — no message is persisted, mirroring the invalid-id case
+    // above exactly.
+    if (blocks.length === 0) throw new Error('Attachment unreadable')
     const trailingText = [message.trim(), unreadableNote].filter(Boolean).join('\n\n')
     userMessageOverride = [...blocks, ...(trailingText ? [{ type: 'text' as const, text: trailingText }] : [])]
   }
@@ -164,6 +177,19 @@ export async function runFounderThreadTurn(
   // than extended.
   const usingRouter = !!(options?.requestedMode && options.founderUserId) && !hasAttachments
 
+  // HARD INVARIANT (attachment-routing safety), not just correct-by-
+  // construction boolean logic above: the model-router bridge
+  // (runCayeDirectRouterTurn) has no wiring at all to receive
+  // userMessageOverride's real content blocks — it only ever sees
+  // `message` (plain text). An attachment reaching that path would be
+  // silently invisible to whichever backend served the turn. This can
+  // never actually trip given the `&& !hasAttachments` clause above, but
+  // it exists so a future refactor of that boolean can fail loudly here
+  // instead of silently dropping an attachment.
+  if (hasAttachments && usingRouter) {
+    throw new Error('Attachment routing invariant violated: attachments must never reach the model-router path')
+  }
+
   if (usingRouter) {
     // Router path is unchanged: single call, single persist, exactly as
     // before this feature existed. ranOutOfIterations/continuation is a
@@ -179,8 +205,12 @@ export async function runFounderThreadTurn(
       message,
       requestedMode: options!.requestedMode!,
       engineeringOrigin: { threadId, messageId: inboundRow.id },
+      channel: 'dashboard',
     })
-    const richResult = mergeRichResults(engineeringRichResult(routerResult.engineeringArtifactIds ?? []), routerResult.richResult)
+    const richResult = mergeRichResults(
+      mergeRichResults(engineeringRichResult(routerResult.engineeringArtifactIds ?? []), businessArtifactRichResult(routerResult.businessArtifactIds ?? [])),
+      routerResult.richResult
+    )
     const inserted = await persistAgentTurns(supabase, workspaceId, routerResult.newTurns, operator, undefined, undefined, 'dashboard', 'visible', richResult)
     const insertedIds = inserted.map((r) => r.id)
     await Promise.all([...insertedIds.map((id) => linkMessageToThread(supabase, threadId, id, 'founder')), linkInsertedMessagesToThreads(supabase, insertedIds, routerResult.linkedThreadIds)])
@@ -202,6 +232,7 @@ export async function runFounderThreadTurn(
       callerName,
       operatorId: operator?.id ?? null,
       engineeringOrigin: { threadId, messageId: inboundRow.id },
+      channel: 'dashboard',
       userMessageOverride,
     },
     persistPassTurns

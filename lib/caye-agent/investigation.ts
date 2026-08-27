@@ -279,6 +279,8 @@ export interface RunInvestigationInput {
   callerName: string
   operatorId: number | null
   engineeringOrigin?: { threadId: string; messageId: string }
+  /** Which Caye surface originated this turn — see ToolContext.channel's doc comment. Passed through to every pass (first and continuations), unlike engineeringOrigin, which only ever mattered for the first. */
+  channel?: 'dashboard'
   /**
    * When set, overrides what the FIRST cayeAgent() pass actually sees as
    * `userMessage` — e.g. inline image/document content blocks alongside
@@ -330,6 +332,7 @@ export async function runInvestigation(
     threadId: input.threadId,
     investigation: { id: investigationId, isContinuation: false, objective: input.message },
     engineeringOrigin: input.engineeringOrigin,
+    channel: input.channel,
   })
   await persistPassTurns(agentResult.newTurns, agentResult.linkedThreadIds, agentResult.engineeringArtifactIds, agentResult.businessArtifactIds)
 
@@ -350,8 +353,9 @@ export async function runInvestigation(
       operatorId: input.operatorId,
       threadId: input.threadId,
       investigation: { id: investigationId, isContinuation: true, objective: input.message },
+      channel: input.channel,
     })
-    await persistPassTurns(agentResult.newTurns, agentResult.linkedThreadIds, agentResult.engineeringArtifactIds)
+    await persistPassTurns(agentResult.newTurns, agentResult.linkedThreadIds, agentResult.engineeringArtifactIds, agentResult.businessArtifactIds)
   }
 
   if (agentResult.ranOutOfIterations) {

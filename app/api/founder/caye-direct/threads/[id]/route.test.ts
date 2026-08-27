@@ -70,6 +70,20 @@ describe('POST /api/founder/caye-direct/threads/[id] — attachments (multimodal
     expect(json.error).toBe('Invalid attachment')
   })
 
+  it('maps "Too many attachments" to 400', async () => {
+    runFounderThreadTurnMock.mockRejectedValue(new Error('Too many attachments'))
+    const res = await POST(req({ workspaceId: 'ws-1', attachmentArtifactIds: ['a', 'b', 'c', 'd', 'e', 'f', 'g'] }), { params })
+    expect(res.status).toBe(400)
+  })
+
+  it('maps "Attachment unreadable" to 502 with a retry-friendly message, distinct from a client-input 400', async () => {
+    runFounderThreadTurnMock.mockRejectedValue(new Error('Attachment unreadable'))
+    const res = await POST(req({ workspaceId: 'ws-1', attachmentArtifactIds: ['artifact-1'] }), { params })
+    expect(res.status).toBe(502)
+    const json = await res.json()
+    expect(json.error).toMatch(/try again/i)
+  })
+
   it('still maps "Thread not found" to 404 alongside the new attachment handling', async () => {
     runFounderThreadTurnMock.mockRejectedValue(new Error('Thread not found'))
     const res = await POST(req({ workspaceId: 'ws-1', message: 'hi' }), { params })

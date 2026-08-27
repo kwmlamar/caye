@@ -147,7 +147,7 @@ describe('retrieve_artifact_for_operator — failure honesty (#87 review pass 2,
 })
 
 describe('retrieve_artifact_for_operator — channel-aware delivery (multimodal Caye Direct follow-up)', () => {
-  it('a WhatsApp turn (no ctx.engineeringOrigin) sends real WhatsApp media, unchanged', async () => {
+  it('a WhatsApp turn (ctx.channel unset) sends real WhatsApp media, unchanged', async () => {
     const ctx = baseCtx()
     const result = await retrieveArtifactForOperator.execute({ artifact_id: 'artifact-1' }, ctx)
     expect(sendMediaWhatsApp).toHaveBeenCalledTimes(1)
@@ -156,8 +156,8 @@ describe('retrieve_artifact_for_operator — channel-aware delivery (multimodal 
     expect(ctx.businessArtifactIds).toBeUndefined()
   })
 
-  it('a Caye Direct turn (ctx.engineeringOrigin set) never sends WhatsApp media or looks up a phone/window', async () => {
-    const ctx = baseCtx({ engineeringOrigin: { threadId: 'thread-1', messageId: 'msg-1' } })
+  it('a Caye Direct turn (ctx.channel === \'dashboard\') never sends WhatsApp media or looks up a phone/window', async () => {
+    const ctx = baseCtx({ channel: 'dashboard' })
     const result = await retrieveArtifactForOperator.execute({ artifact_id: 'artifact-1' }, ctx)
 
     expect(sendMediaWhatsApp).not.toHaveBeenCalled()
@@ -168,22 +168,29 @@ describe('retrieve_artifact_for_operator — channel-aware delivery (multimodal 
   })
 
   it('pushes the artifact id onto ctx.businessArtifactIds for inline delivery — the accumulator founder-thread-turn.ts reads back', async () => {
-    const ctx = baseCtx({ engineeringOrigin: { threadId: 'thread-1', messageId: 'msg-1' } })
+    const ctx = baseCtx({ channel: 'dashboard' })
     await retrieveArtifactForOperator.execute({ artifact_id: 'artifact-1' }, ctx)
     expect(ctx.businessArtifactIds).toEqual(['artifact-1'])
   })
 
   it('a repeated call within the same turn does not send WhatsApp media a second time when inline', async () => {
-    const ctx = baseCtx({ engineeringOrigin: { threadId: 'thread-1', messageId: 'msg-1' }, businessArtifactIds: [] })
+    const ctx = baseCtx({ channel: 'dashboard', businessArtifactIds: [] })
     await retrieveArtifactForOperator.execute({ artifact_id: 'artifact-1' }, ctx)
     await retrieveArtifactForOperator.execute({ artifact_id: 'artifact-1' }, ctx)
     expect(ctx.businessArtifactIds).toEqual(['artifact-1', 'artifact-1']) // dedup happens one layer up (cayeAgent's Set) — see index.ts
     expect(sendMediaWhatsApp).not.toHaveBeenCalled()
   })
 
+  it('ctx.engineeringOrigin ALONE (without channel) does NOT trigger inline delivery — the two fields are decoupled after the adversarial review fix', async () => {
+    const ctx = baseCtx({ engineeringOrigin: { threadId: 'thread-1', messageId: 'msg-1' } })
+    const result = await retrieveArtifactForOperator.execute({ artifact_id: 'artifact-1' }, ctx)
+    expect(sendMediaWhatsApp).toHaveBeenCalledTimes(1)
+    expect((result.data as { delivery?: string }).delivery).toBe('whatsapp')
+  })
+
   it('still refuses a tombstoned artifact on the Direct path — the retention check runs before the channel branch', async () => {
     getArtifactDetail.mockResolvedValueOnce({ ...STORED_IMAGE_DETAIL, artifact: { ...STORED_IMAGE_DETAIL.artifact, retention_status: 'tombstoned' } })
-    const ctx = baseCtx({ engineeringOrigin: { threadId: 'thread-1', messageId: 'msg-1' } })
+    const ctx = baseCtx({ channel: 'dashboard' })
     const result = await retrieveArtifactForOperator.execute({ artifact_id: 'artifact-1' }, ctx)
     expect(result.ok).toBe(false)
     expect(ctx.businessArtifactIds).toBeUndefined()

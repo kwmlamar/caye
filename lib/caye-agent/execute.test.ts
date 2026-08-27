@@ -770,6 +770,49 @@ describe('runToolLoop action-grounding on back-office (2026-08-16 Mrs. Max incid
     )
     expect(result.replyText).toBe('Sent — she should have it now.')
   })
+
+  // Multimodal Caye Direct follow-up (#87). retrieve_artifact_for_operator's
+  // `delivery` field (channel-decided, never model-decided — see that
+  // tool's doc comment) must be what actually grounds a "sent" claim, not
+  // just the tool having run successfully.
+  const artifactTool = (execute: () => Promise<{ ok: boolean; data?: unknown; error?: string }>): Tool<never> =>
+    ({
+      name: 'retrieve_artifact_for_operator',
+      description: 'test',
+      risk: 'low',
+      roles: ['owner', 'founder'],
+      modes: ['back-office'],
+      inputSchema: { type: 'object', properties: {} },
+      execute,
+    }) as unknown as Tool<never>
+
+  it('lets a "sent" claim through when retrieve_artifact_for_operator actually delivered over WhatsApp', async () => {
+    const result = await runBackOfficeTurns(
+      [
+        toolUseTurn('retrieve_artifact_for_operator', { artifact_id: 'artifact-1' }),
+        textTurn("I've sent that pickup map over."),
+      ],
+      [artifactTool(async () => ({ ok: true, data: { artifact_id: 'artifact-1', delivery: 'whatsapp', sent: true } }))]
+    )
+    expect(result.replyText).toBe("I've sent that pickup map over.")
+  })
+
+  it('strips a "sent" claim when retrieve_artifact_for_operator only rendered inline on Caye Direct — no WhatsApp send happened', async () => {
+    const result = await runBackOfficeTurns(
+      [
+        toolUseTurn('retrieve_artifact_for_operator', { artifact_id: 'artifact-1' }),
+        textTurn('I sent you the photo of Max.'),
+      ],
+      [artifactTool(async () => ({ ok: true, data: { artifact_id: 'artifact-1', delivery: 'inline' } }))]
+    )
+    expect(result.replyText).not.toContain('I sent you the photo of Max')
+    expect(result.replyText).toContain('I have not actually sent anything')
+    // The persisted turn (what Caye Direct actually renders on reload)
+    // carries the same correction, not the raw false claim.
+    const lastAssistantTurn = result.newTurns[result.newTurns.length - 1]
+    const textBlock = (lastAssistantTurn.content as Array<{ type: string; text?: string }>).find((b) => b.type === 'text')
+    expect(textBlock?.text).not.toContain('I sent you the photo of Max')
+  })
 })
 
 describe('runToolLoop — internal tool names never reach the operator (2026-08-17 Pam Ott incident)', () => {

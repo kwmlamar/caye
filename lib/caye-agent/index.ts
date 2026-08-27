@@ -57,6 +57,8 @@ export interface CayeAgentInput {
     objective: string
   }
   engineeringOrigin?: { threadId: string; messageId: string }
+  /** Which Caye surface originated this turn — see ToolContext.channel's doc comment. Set only by founder-thread-turn.ts. */
+  channel?: 'dashboard'
 }
 
 export interface CayeAgentResult {
@@ -285,6 +287,7 @@ export async function cayeAgent(input: CayeAgentInput): Promise<CayeAgentResult>
       workspaceTimezone,
       activeWork,
       engineeringOrigin: input.engineeringOrigin,
+      channel: input.channel,
       engineeringArtifactIds,
       businessArtifactIds,
     },

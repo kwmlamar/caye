@@ -112,14 +112,23 @@ export function extractExecutedToolsFromGroup(group: readonly StoredTurnRow[]): 
       if (match) {
         ok = match.is_error !== true
         const raw = typeof match.content === 'string' ? match.content : null
+        let delivery: string | undefined
         if (raw) {
           try {
-            const parsed = JSON.parse(raw) as { ok?: boolean; data?: { executed?: boolean } }
+            const parsed = JSON.parse(raw) as { ok?: boolean; data?: { executed?: boolean; delivery?: string } }
             if (typeof parsed.ok === 'boolean') ok = parsed.ok
             if (parsed.data?.executed === false) pendingOnly = true
+            delivery = parsed.data?.delivery
           } catch {
             // Non-JSON tool_result content — fall back to is_error alone.
           }
+        }
+        // Mirrors execute.ts's live special case exactly: a stored
+        // retrieve_artifact_for_operator success only grounds a "sent"
+        // claim when it was a real external send, never an inline Caye
+        // Direct rendering — see that file's comment.
+        if (toolUse.name === 'retrieve_artifact_for_operator' && ok && delivery === 'whatsapp') {
+          executed.push({ name: 'retrieve_artifact_for_operator:whatsapp', ok: true, pendingOnly: false })
         }
       }
       executed.push({ name: toolUse.name, ok, pendingOnly })

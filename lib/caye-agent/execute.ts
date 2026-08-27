@@ -397,6 +397,18 @@ export async function runToolLoop(args: ToolLoopArgs): Promise<ToolLoopResult> {
       if (typeof confirmedToolName === 'string') {
         executedTools.push({ name: confirmedToolName, ok: result.ok, pendingOnly: false })
       }
+      // retrieve_artifact_for_operator's transport is channel-decided, not
+      // model-decided (see that tool's own doc comment): `delivery` is
+      // 'whatsapp' for a real external send, 'inline' when the artifact
+      // just rendered in Caye Direct and nothing was sent anywhere. A
+      // "sent"/"messaged" claim must only be grounded by the former — see
+      // the distinct groundedBy entry in action-claim-guard.ts. Recorded
+      // under a delivery-qualified name (never the bare tool name) so an
+      // inline-only turn can never accidentally ground a send claim just
+      // because the tool ran successfully.
+      if (block.name === 'retrieve_artifact_for_operator' && result.ok && resultData?.delivery === 'whatsapp') {
+        executedTools.push({ name: 'retrieve_artifact_for_operator:whatsapp', ok: true, pendingOnly: false })
+      }
       if (tool.terminatesTurn && result.ok && terminalReplyText === null) {
         const data = result.data as { delivered_text?: unknown } | undefined
         terminalReplyText = typeof data?.delivered_text === 'string' ? data.delivered_text : ''

@@ -18,6 +18,8 @@ const GLASS = { backdropFilter: 'blur(20px) saturate(140%)', WebkitBackdropFilte
 
 // Mirrors app/api/founder/caye-direct/attachments/route.ts's ACCEPTED_MIME_TYPES.
 const ACCEPTED_ATTACHMENT_MIME = 'image/jpeg,image/png,image/gif,image/webp,application/pdf'
+// Mirrors lib/artifacts/attachments.ts's MAX_ATTACHMENTS_PER_TURN (the real, server-side enforcement).
+const MAX_ATTACHMENTS_PER_TURN = 6
 
 interface PendingAttachment {
   clientId: string
@@ -426,7 +428,11 @@ export default function CayeDirectThread(props: Props) {
   }
 
   function addFiles(files: FileList | File[]) {
-    for (const file of Array.from(files)) uploadAttachment(file)
+    // Mirrors lib/artifacts/attachments.ts's MAX_ATTACHMENTS_PER_TURN —
+    // that server-side check is the real enforcement; this just keeps the
+    // composer from letting someone select more than it can ever send.
+    const room = MAX_ATTACHMENTS_PER_TURN - attachments.length
+    for (const file of Array.from(files).slice(0, Math.max(0, room))) uploadAttachment(file)
   }
 
   function removeAttachment(clientId: string) {
@@ -682,10 +688,17 @@ export default function CayeDirectThread(props: Props) {
         if (opts.isTyped) {
           setLastBackend(res.ok && typeof json.backend === 'string' ? json.backend : null)
           if (!res.ok) {
+            // Attachment-specific failures (invalid/forged id, storage
+            // unreadable, too many files) are deliberately clean, safe-to-
+            // show messages (400/413/502) — surface them so the founder
+            // knows whether to just retry or re-attach. A bare 500 is the
+            // route's catch-all for an unexpected exception, which can
+            // carry a raw internal error string — never show that verbatim.
+            const specific = res.status !== 500 && typeof json.error === 'string' ? json.error : null
             setMessages((prev) => [...prev, {
               id: `error-${Date.now()}`,
               direction: 'outbound',
-              body: "Couldn't get a reply just now — try again in a moment.",
+              body: specific ?? "Couldn't get a reply just now — try again in a moment.",
               created_at: new Date().toISOString(),
             }])
           }
