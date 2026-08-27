@@ -26,7 +26,6 @@ describe('classifyToolResponse — intent tagging', () => {
 
   it('tags NEEDS_HUMAN as blocked', () => {
     expect(classifyToolResponse('NEEDS_HUMAN', false)?.intent).toBe('blocked')
-    expect(classifyToolResponse('NEEDS_HUMAN', false, 'draft_in_inbox')?.intent).toBe('blocked')
   })
 })
 
@@ -44,15 +43,16 @@ describe('classifyToolResponse — failure instruction discipline (CAY-140)', ()
     expect(instruction).toMatch(/do not guess or invent a reason/i)
   })
 
-  it('forbids claiming a platform escalation that never happened', () => {
+  it('forbids inventing a platform-side escalation while not banning real operator messaging', () => {
     const { instruction } = classifyToolResponse('FAILED_PERMANENT', false)!
-    expect(instruction).toMatch(/tropitech, engineering, or any other team/i)
+    expect(instruction).toMatch(/tropitech, engineering, developers, or support/i)
+    expect(instruction).not.toMatch(/any other team/i)
   })
 
-  it('gives the draft_in_inbox failure the exact preserved-draft shape the fixture expects', () => {
-    const { instruction } = classifyToolResponse('FAILED_PERMANENT', false, 'draft_in_inbox')!
-    expect(instruction).toMatch(/couldn't save it to the inbox/i)
-    expect(instruction).toMatch(/kept the draft here/i)
-    expect(instruction).toMatch(/do not offer to send it instead/i)
+  it('does not own draft_in_inbox evidence semantics after #142', () => {
+    const generic = classifyToolResponse('FAILED_PERMANENT', false, 'draft_in_inbox')!
+    expect(generic.intent).toBe('failed')
+    expect(generic.instruction).not.toMatch(/kept the draft here/i)
+    expect(generic.instruction).not.toMatch(/blocked or uncertain/i)
   })
 })
