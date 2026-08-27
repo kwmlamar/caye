@@ -83,6 +83,8 @@ import { findBookingsTool } from './read/front-desk/find-bookings'
 import { sendCustomerReply } from './write-high/send-customer-reply'
 import { createParametricPart } from './write-low/create-parametric-part'
 import { reviseParametricPart } from './write-low/revise-parametric-part'
+import { runStaticStructuralAnalysis } from './write-low/run-static-structural-analysis'
+import { rerunStaticStructuralAnalysis } from './write-low/rerun-static-structural-analysis'
 
 /**
  * All tools available to the back-office agent.
@@ -258,6 +260,11 @@ export const TOOL_REGISTRY: AnyTool[] = [
   // CAD template; it is not a generic code execution surface.
   createParametricPart as AnyTool,
   reviseParametricPart as AnyTool,
+  // FEA V1: constrained to catalog materials + known geometry regions +
+  // a fixed Gmsh/CalculiX driver — never raw geometry, solver commands,
+  // or code. See lib/engineering/fea/spec.ts.
+  runStaticStructuralAnalysis as AnyTool,
+  rerunStaticStructuralAnalysis as AnyTool,
   // High-risk write — confirmation flow enforced in code (gateHighRisk,
   // #64), not just the prompt. See lib/caye-agent/tools/high-risk-gate.ts.
   // The ungated list lives in high-risk-registry.ts because

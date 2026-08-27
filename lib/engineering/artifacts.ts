@@ -1,8 +1,9 @@
 import 'server-only'
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { createServiceClient } from '@/lib/supabase-server'
 import type { EngineeringSpec } from './spec'
 import { generateCadInSandbox } from './runtime'
+import { checksum, cleanupStagedEngineeringFiles } from './storage'
 
 const BUCKET = 'engineering-artifacts'
 const MAX_ARTIFACT_BYTES = 25 * 1024 * 1024
@@ -13,18 +14,13 @@ type ArtifactRow = { id: string; lineage_id: string; revision: number; name: str
 type StagedFile = { kind: FileKind; storage_path: string; media_type: string; byte_size: number; checksum: string }
 type FinalizedArtifact = { artifactId: string; revision: number; name: string }
 
-function checksum(content: Buffer | string) { return createHash('sha256').update(content).digest('hex') }
 function pathFor(workspaceId: string, lineageId: string, artifactId: string, filename: string) { return `${workspaceId}/${lineageId}/${artifactId}/${filename}` }
 function boundedFailureReason(cause: unknown): string {
   const raw = cause instanceof Error ? cause.message : String(cause)
   return raw.replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').slice(0, MAX_FAILURE_REASON_CHARS) || 'Generation failed'
 }
 
-export async function cleanupStagedEngineeringFiles(storage: { remove(paths: string[]): PromiseLike<{ error: { message: string } | null }> }, paths: readonly string[]): Promise<void> {
-  if (!paths.length) return
-  const { error } = await storage.remove([...new Set(paths)])
-  if (error && !/not found|does not exist/i.test(error.message)) throw new Error(`Could not clean staged engineering files: ${error.message}`)
-}
+export { cleanupStagedEngineeringFiles }
 
 async function markJobFailed(supabase: ReturnType<typeof createServiceClient>, jobId: string, cause: unknown): Promise<void> {
   const { data, error } = await supabase.from('engineering_jobs').update({ status: 'failed', failed_at: new Date().toISOString(), failure_reason: boundedFailureReason(cause) }).eq('id', jobId).eq('status', 'running').select('id').maybeSingle()

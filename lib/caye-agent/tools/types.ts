@@ -230,6 +230,8 @@ export interface ToolContext {
   engineeringOrigin?: { threadId: string; messageId: string }
   /** Durable artifact ids created during this single turn, never client supplied. */
   engineeringArtifactIds?: string[]
+  /** Durable FEA analysis ids created during this single turn, never client supplied. Mirrors engineeringArtifactIds' shape/purpose exactly. */
+  engineeringAnalysisIds?: string[]
   /**
    * Which Caye surface originated this turn, distinct from `mode` (which
    * back-office tools are visible at all) — set ONLY by the founder Direct

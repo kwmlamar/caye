@@ -68,6 +68,8 @@ export interface CayeAgentResult {
   /** See ToolLoopResult.ranOutOfIterations. Undefined/false on every ordinary turn. */
   ranOutOfIterations?: boolean
   engineeringArtifactIds?: string[]
+  /** Mirrors engineeringArtifactIds' shape/purpose exactly — see ToolContext.engineeringAnalysisIds. */
+  engineeringAnalysisIds?: string[]
   /** business_artifacts ids retrieve_artifact_for_operator resolved for inline Direct delivery this turn — see ToolContext.businessArtifactIds. */
   businessArtifactIds?: string[]
 }
@@ -269,6 +271,7 @@ export async function cayeAgent(input: CayeAgentInput): Promise<CayeAgentResult>
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
   const directThreadLinks: string[] = []
   const engineeringArtifactIds: string[] = []
+  const engineeringAnalysisIds: string[] = []
   const businessArtifactIds: string[] = []
   const { replyText, newTurns, ranOutOfIterations } = await runToolLoop({
     client,
@@ -289,6 +292,7 @@ export async function cayeAgent(input: CayeAgentInput): Promise<CayeAgentResult>
       engineeringOrigin: input.engineeringOrigin,
       channel: input.channel,
       engineeringArtifactIds,
+      engineeringAnalysisIds,
       businessArtifactIds,
     },
     mode: 'back-office',
@@ -304,6 +308,7 @@ export async function cayeAgent(input: CayeAgentInput): Promise<CayeAgentResult>
     linkedThreadIds: [...new Set(directThreadLinks)],
     ranOutOfIterations,
     engineeringArtifactIds: [...new Set(engineeringArtifactIds)],
+    engineeringAnalysisIds: [...new Set(engineeringAnalysisIds)],
     businessArtifactIds: [...new Set(businessArtifactIds)],
   }
 }

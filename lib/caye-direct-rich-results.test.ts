@@ -40,6 +40,19 @@ describe('Caye Direct rich results', () => {
     expect(extracted.narrative).toBe('Revision 2 is ready — 4 mm thick, everything else unchanged.')
   })
 
+  it('strips a model-authored engineering_analysis block too — only server orchestration may introduce it', () => {
+    const reply = [
+      'Max stress is about 42 MPa on that load case.',
+      '```json',
+      JSON.stringify({ version: 1, narrative: 'Analysis ready.', blocks: [{ type: 'engineering_analysis', analysisId: 'analysis-1' }] }),
+      '```',
+    ].join('\n')
+    const extracted = extractRichResult(reply)
+    expect(extracted.result).toBeUndefined()
+    expect(extracted.narrative).not.toContain('engineering_analysis')
+    expect(extracted.narrative).toBe('Max stress is about 42 MPa on that load case.')
+  })
+
   it('leaves ordinary non-envelope JSON fences untouched', () => {
     const reply = ['Config:', '```json', JSON.stringify({ foo: 'bar' }), '```'].join('\n')
     expect(extractRichResult(reply)).toEqual({ narrative: reply })

@@ -69,6 +69,8 @@ export interface CayeDirectRouterTurnResult {
   model?: string
   richResult?: RichResult
   engineeringArtifactIds?: string[]
+  /** Mirrors engineeringArtifactIds' shape/purpose exactly — see ToolContext.engineeringAnalysisIds. */
+  engineeringAnalysisIds?: string[]
   /** business_artifacts ids retrieve_artifact_for_operator resolved for inline Direct delivery this turn — see ToolContext.businessArtifactIds. */
   businessArtifactIds?: string[]
 }
@@ -100,6 +102,7 @@ export async function runCayeDirectRouterTurn(args: CayeDirectRouterTurnArgs): P
 
   const directThreadLinks: string[] = []
   const engineeringArtifactIds: string[] = []
+  const engineeringAnalysisIds: string[] = []
   const businessArtifactIds: string[] = []
   const toolCtx: ToolContext = {
     workspaceId: args.workspaceId,
@@ -110,6 +113,7 @@ export async function runCayeDirectRouterTurn(args: CayeDirectRouterTurnArgs): P
     engineeringOrigin: args.engineeringOrigin,
     channel: args.channel,
     engineeringArtifactIds,
+    engineeringAnalysisIds,
     businessArtifactIds,
   }
 
@@ -160,6 +164,7 @@ export async function runCayeDirectRouterTurn(args: CayeDirectRouterTurnArgs): P
       linkedThreadIds: result.linkedThreadIds,
       backend: decision.selected,
       ...([...new Set(engineeringArtifactIds)].length ? { engineeringArtifactIds: [...new Set(engineeringArtifactIds)] } : {}),
+      ...([...new Set(engineeringAnalysisIds)].length ? { engineeringAnalysisIds: [...new Set(engineeringAnalysisIds)] } : {}),
       ...([...new Set(businessArtifactIds)].length ? { businessArtifactIds: [...new Set(businessArtifactIds)] } : {}),
       richResult: result.richResult ? { ...result.richResult, provenance: { requestedMode: args.requestedMode, selectedBackend: decision.selected, provider: decision.selected?.includes('anthropic') || decision.selected === 'claude_subscription' ? 'anthropic' : decision.selected === 'openrouter' ? 'openrouter' : 'openai', model: result.model, fallbackSequence: decision.fallbacksTried, latencyMs: result.latencyMs ?? Date.now() - start, usage: result.usage } } : undefined,
     }
