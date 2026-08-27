@@ -10,6 +10,7 @@ export type RichResultBlock =
   | { type: 'work_reference'; id: string; resolved?: Record<string, string> }
   | { type: 'artifact_reference'; id: string; name: string; mimeType?: string }
   | { type: 'engineering_artifact'; artifactId: string }
+  | { type: 'engineering_analysis'; analysisId: string }
   | { type: 'business_artifact'; artifactId: string }
 
 export interface ArtifactReference { id: string; name: string; mimeType?: string }
@@ -99,7 +100,7 @@ export function validateRichResult(value: unknown): RichResult | null {
     }
     // Only server orchestration can introduce these trusted semantic blocks
     // — never accepted from model-authored fenced JSON (extractRichResult).
-    if (b.type === 'engineering_artifact' || b.type === 'business_artifact') return null
+    if (b.type === 'engineering_artifact' || b.type === 'engineering_analysis' || b.type === 'business_artifact') return null
 
     return null
   }

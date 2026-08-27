@@ -52,6 +52,11 @@ const ALLOWED = new Map<string, string>([
   // MODEL as a tool_result so it can correct its own malformed tool call —
   // same category as orchestrator.ts's stableStringify entry above.
   ['lib/model-router/tool-bridge/schema-validate.ts', 'validation error path returned to the model, not a human'],
+  // Array-index path segment in the FEA analysis-spec validation error
+  // (constraints[i]/loads[i]), fed back to the MODEL as a tool_result so it
+  // can correct its own malformed tool call — same category as
+  // schema-validate.ts's entry above.
+  ['lib/engineering/fea/spec.ts', 'validation error path returned to the model, not a human'],
 ])
 
 function sourceFiles(dir: string, out: string[] = []): string[] {

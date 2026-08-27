@@ -16,6 +16,7 @@ import { runCayeDirectRouterTurn } from '@/lib/model-router/caye-direct-bridge'
 import type { BackendId, RequestedMode } from '@/lib/model-router/types'
 import type { RichResult } from '@/lib/caye-direct-rich-results'
 import { engineeringRichResult } from '@/lib/engineering/rich-result'
+import { engineeringAnalysisRichResult } from '@/lib/engineering/fea/rich-result'
 import { resolveWorkspaceAttachments, buildAttachmentContentBlocks, MAX_ATTACHMENTS_PER_TURN } from '@/lib/artifacts/attachments'
 import { businessArtifactRichResult, mergeRichResults } from '@/lib/artifacts/rich-result'
 
@@ -160,10 +161,11 @@ export async function runFounderThreadTurn(
     turns: Anthropic.MessageParam[],
     linkedThreadIds: string[],
     engineeringArtifactIds: string[] = [],
-    businessArtifactIds: string[] = []
+    businessArtifactIds: string[] = [],
+    engineeringAnalysisIds: string[] = []
   ): Promise<void> {
     if (turns.length === 0) return
-    const richResult = mergeRichResults(engineeringRichResult(engineeringArtifactIds), businessArtifactRichResult(businessArtifactIds))
+    const richResult = mergeRichResults(mergeRichResults(engineeringRichResult(engineeringArtifactIds), businessArtifactRichResult(businessArtifactIds)), engineeringAnalysisRichResult(engineeringAnalysisIds))
     const inserted = await persistAgentTurns(supabase, workspaceId, turns, operator, undefined, undefined, 'dashboard', 'visible', richResult)
     const insertedIds = inserted.map((r) => r.id)
     await Promise.all([
@@ -208,7 +210,10 @@ export async function runFounderThreadTurn(
       channel: 'dashboard',
     })
     const richResult = mergeRichResults(
-      mergeRichResults(engineeringRichResult(routerResult.engineeringArtifactIds ?? []), businessArtifactRichResult(routerResult.businessArtifactIds ?? [])),
+      mergeRichResults(
+        mergeRichResults(engineeringRichResult(routerResult.engineeringArtifactIds ?? []), businessArtifactRichResult(routerResult.businessArtifactIds ?? [])),
+        engineeringAnalysisRichResult(routerResult.engineeringAnalysisIds ?? [])
+      ),
       routerResult.richResult
     )
     const inserted = await persistAgentTurns(supabase, workspaceId, routerResult.newTurns, operator, undefined, undefined, 'dashboard', 'visible', richResult)
@@ -245,6 +250,9 @@ export async function runFounderThreadTurn(
   return {
     replyText: agentResult.replyText,
     threadId,
-    richResult: mergeRichResults(engineeringRichResult(agentResult.engineeringArtifactIds ?? []), businessArtifactRichResult(agentResult.businessArtifactIds ?? [])),
+    richResult: mergeRichResults(
+      mergeRichResults(engineeringRichResult(agentResult.engineeringArtifactIds ?? []), businessArtifactRichResult(agentResult.businessArtifactIds ?? [])),
+      engineeringAnalysisRichResult(agentResult.engineeringAnalysisIds ?? [])
+    ),
   }
 }
