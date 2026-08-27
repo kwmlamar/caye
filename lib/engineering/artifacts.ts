@@ -10,6 +10,7 @@ const REQUIRED_KINDS = ['source', 'preview_geometry', 'export_geometry', 'metada
 type FileKind = typeof REQUIRED_KINDS[number]
 type ArtifactRow = { id: string; lineage_id: string; revision: number; name: string; parameters: EngineeringSpec['parameters']; assumptions: string[] }
 type StagedFile = { kind: FileKind; storage_path: string; media_type: string; byte_size: number; checksum: string }
+type FinalizedArtifact = { artifactId: string; revision: number; name: string }
 
 function checksum(content: Buffer | string) { return createHash('sha256').update(content).digest('hex') }
 function pathFor(workspaceId: string, lineageId: string, artifactId: string, filename: string) { return `${workspaceId}/${lineageId}/${artifactId}/${filename}` }
@@ -23,6 +24,32 @@ export async function cleanupStagedEngineeringFiles(storage: { remove(paths: str
 async function markJobFailed(supabase: ReturnType<typeof createServiceClient>, jobId: string): Promise<void> {
   const { data, error } = await supabase.from('engineering_jobs').update({ status: 'failed', failed_at: new Date().toISOString(), failure_reason: 'Generation failed' }).eq('id', jobId).eq('status', 'running').select('id').maybeSingle()
   if (error || !data) throw new Error(`Could not mark engineering job failed: ${error?.message ?? 'job was not running'}`)
+}
+
+async function reconcileFinalization(
+  supabase: ReturnType<typeof createServiceClient>,
+  args: { jobId: string; workspaceId: string; artifactId: string; name: string },
+): Promise<{ state: 'committed'; artifact: FinalizedArtifact } | { state: 'uncommitted' } | { state: 'indeterminate'; reason: string }> {
+  const [{ data: job, error: jobError }, { data: artifact, error: artifactError }] = await Promise.all([
+    supabase.from('engineering_jobs').select('id, status').eq('id', args.jobId).eq('workspace_id', args.workspaceId).maybeSingle(),
+    supabase.from('engineering_artifacts').select('id, job_id, revision, name, engineering_artifact_files(kind)').eq('id', args.artifactId).eq('workspace_id', args.workspaceId).maybeSingle(),
+  ])
+  if (jobError || artifactError) {
+    return { state: 'indeterminate', reason: `authoritative reconciliation query failed: ${jobError?.message ?? artifactError?.message ?? 'unknown error'}` }
+  }
+
+  if (job?.status === 'completed' && artifact?.id === args.artifactId && artifact.job_id === args.jobId) {
+    const files = (artifact.engineering_artifact_files ?? []) as Array<{ kind: FileKind }>
+    const complete = files.length === REQUIRED_KINDS.length && REQUIRED_KINDS.every((kind) => files.some((file) => file.kind === kind))
+    if (complete && Number.isInteger(artifact.revision)) {
+      return { state: 'committed', artifact: { artifactId: artifact.id, revision: artifact.revision, name: artifact.name ?? args.name } }
+    }
+    return { state: 'indeterminate', reason: 'job is completed but the artifact metadata is incomplete' }
+  }
+
+  if (job?.status === 'running' && !artifact) return { state: 'uncommitted' }
+
+  return { state: 'indeterminate', reason: `unexpected authoritative state (job=${job?.status ?? 'missing'}, artifact=${artifact ? 'present' : 'missing'})` }
 }
 
 /** Files stage under an unreferenced UUID; the final RPC makes all metadata discoverable atomically. */
@@ -60,16 +87,32 @@ export async function createEngineeringArtifact(args: { workspaceId: string; thr
       uploadedPaths.push(storagePath)
       files.push({ kind, storage_path: storagePath, media_type: mediaType, byte_size: bytes.byteLength, checksum: checksum(bytes) })
     }
-    const { data: finalized, error: finalizeError } = await supabase.rpc('caye_finalize_engineering_artifact', {
+
+    const finalizeArgs = {
       p_job_id: job.id, p_workspace_id: args.workspaceId, p_artifact_id: artifactId, p_lineage_id: lineageId, p_parent_artifact_id: parent?.id ?? null,
       p_name: args.spec.name, p_parameters: args.spec.parameters, p_assumptions: args.spec.assumptions, p_dimensions: generated.metadata.bounds_mm,
       p_calculation_metadata: { volume_mm3: generated.metadata.volume_mm3, disclaimer: 'Geometry-derived properties only. This is not structural verification or a safe-load claim.' },
       p_provenance: { engine: 'cadquery', generated_at: new Date().toISOString() }, p_files: files,
-    })
+    }
+    const { data: finalized, error: finalizeError } = await supabase.rpc('caye_finalize_engineering_artifact', finalizeArgs)
     const result = finalized?.[0] as { artifact_id?: string; revision?: number } | undefined
-    if (finalizeError || !result?.artifact_id || !Number.isInteger(result.revision)) throw new Error(`Could not finalize engineering artifact: ${finalizeError?.message ?? 'incomplete finalization result'}`)
-    return { artifactId: result.artifact_id, revision: result.revision, name: args.spec.name }
+    if (!finalizeError && result?.artifact_id && Number.isInteger(result.revision)) {
+      return { artifactId: result.artifact_id, revision: result.revision, name: args.spec.name }
+    }
+
+    // An RPC transport error is not proof that the transaction failed. Reconcile
+    // against durable state before performing destructive compensation.
+    const reconciliation = await reconcileFinalization(supabase, { jobId: job.id, workspaceId: args.workspaceId, artifactId, name: args.spec.name })
+    if (reconciliation.state === 'committed') return reconciliation.artifact
+    if (reconciliation.state === 'indeterminate') {
+      throw new EngineeringFinalizationIndeterminateError(`Engineering finalization is indeterminate: ${reconciliation.reason}`, { cause: finalizeError ?? new Error('incomplete finalization result') })
+    }
+    throw new EngineeringKnownUncommittedError(`Could not finalize engineering artifact: ${finalizeError?.message ?? 'incomplete finalization result'}`)
   } catch (cause) {
+    // Never delete staged objects if a commit may have happened. That could turn a
+    // valid completed artifact into a database record pointing at missing files.
+    if (cause instanceof EngineeringFinalizationIndeterminateError) throw cause
+
     let cleanupError: unknown
     try { await cleanupStagedEngineeringFiles(storage, uploadedPaths) } catch (error) { cleanupError = error }
     try { await markJobFailed(supabase, job.id) } catch (transitionError) { throw new Error(`Engineering generation failed and failure state was not recorded: ${transitionError instanceof Error ? transitionError.message : String(transitionError)}`, { cause }) }
@@ -77,6 +120,9 @@ export async function createEngineeringArtifact(args: { workspaceId: string; thr
     throw cause
   }
 }
+
+class EngineeringKnownUncommittedError extends Error {}
+class EngineeringFinalizationIndeterminateError extends Error {}
 
 export async function getTrustedArtifact(workspaceId: string, artifactId: string) {
   const supabase = createServiceClient()
