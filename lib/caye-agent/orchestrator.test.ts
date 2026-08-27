@@ -251,3 +251,74 @@ describe('guidanceFor', () => {
     expect(guidanceFor('CONFLICT', false)).toMatch(/already exists/i)
   })
 })
+
+describe('guidanceFor — draft_in_inbox error_code-specific guidance (CAY-139, 2026-08-26 Bimini incident)', () => {
+  // Before this, every draft_in_inbox failure got one generic "blocked or
+  // uncertain" sentence, and the model filled the gap itself — live on
+  // Bimini it invented "the staging system is down" / "backend issue" /
+  // implied TropiTech should be notified, none of which any tool result
+  // ever said. Every branch below must both give the true reason AND
+  // explicitly INSTRUCT the model not to reach for that language (the
+  // instruction necessarily names the banned phrases in order to forbid
+  // them — these assertions check the prohibition is present, not that the
+  // words are absent from the guidance text).
+  const forbidsOutageLanguage = /never describe this as a system outage/i
+  const forbidsFakeEscalation = /never say anyone was notified or flagged.*unless a tool result actually says so/i
+
+  it('rate-limited: says nothing was created and a retry is safe, and forbids outage/escalation language', () => {
+    const g = guidanceFor('FAILED_RETRYABLE', false, 'draft_in_inbox', 'ZOHO_DRAFT_RATE_LIMITED')!
+    expect(g).toMatch(/nothing was created/i)
+    expect(g).toMatch(/rate limited/i)
+    expect(g).toMatch(forbidsOutageLanguage)
+    expect(g).toMatch(forbidsFakeEscalation)
+  })
+
+  it('auth required: says the connection needs reconnecting, forbids outage/escalation language', () => {
+    const g = guidanceFor('NEEDS_HUMAN', false, 'draft_in_inbox', 'ZOHO_DRAFT_AUTH_REQUIRED')!
+    expect(g).toMatch(/reconnect/i)
+    expect(g).toMatch(forbidsOutageLanguage)
+    expect(g).toMatch(forbidsFakeEscalation)
+  })
+
+  it('verification-mode-not-live: says the workspace needs one-time verification, forbids outage language', () => {
+    const g = guidanceFor('FAILED_PERMANENT', false, 'draft_in_inbox', 'ZOHO_DRAFT_MODE_NOT_VERIFIED')!
+    expect(g).toMatch(/verif/i)
+    expect(g).toMatch(forbidsOutageLanguage)
+  })
+
+  it('deterministic rejection: says nothing was created, no ambiguity language, forbids outage language', () => {
+    const g = guidanceFor('FAILED_PERMANENT', false, 'draft_in_inbox', 'ZOHO_DRAFT_REJECTED')!
+    expect(g).not.toMatch(/not sure whether/i)
+    expect(g).toMatch(forbidsOutageLanguage)
+  })
+
+  it('creation uncertain: says the outcome is unknown and forbids claiming it failed or offering to send instead', () => {
+    const g = guidanceFor('NEEDS_HUMAN', false, 'draft_in_inbox', 'ZOHO_DRAFT_CREATION_UNCERTAIN')!
+    expect(g).toMatch(/not sure whether/i)
+    expect(g).toMatch(/deliberately did not retry/i)
+    expect(g).toMatch(/do NOT say it failed/i)
+    expect(g).toMatch(/do NOT offer to send/i)
+    expect(g).toMatch(forbidsOutageLanguage)
+  })
+
+  it('an unrecognised error_code on draft_in_inbox falls back to the original generic guidance (backward compatible)', () => {
+    const g = guidanceFor('NEEDS_HUMAN', false, 'draft_in_inbox')!
+    expect(g).toMatch(/do NOT offer to send/i)
+    expect(g).toMatch(/do not retry blindly/i)
+  })
+
+  it('every draft_in_inbox failure branch explicitly forbids claiming an outage or an unsent escalation', () => {
+    const codes = [
+      ['FAILED_RETRYABLE', 'ZOHO_DRAFT_RATE_LIMITED'],
+      ['NEEDS_HUMAN', 'ZOHO_DRAFT_AUTH_REQUIRED'],
+      ['FAILED_PERMANENT', 'ZOHO_DRAFT_MODE_NOT_VERIFIED'],
+      ['FAILED_PERMANENT', 'ZOHO_DRAFT_REJECTED'],
+      ['NEEDS_HUMAN', 'ZOHO_DRAFT_CREATION_UNCERTAIN'],
+    ] as const
+    for (const [status, code] of codes) {
+      const g = guidanceFor(status, false, 'draft_in_inbox', code)!
+      expect(g).toMatch(forbidsOutageLanguage)
+      expect(g).toMatch(forbidsFakeEscalation)
+    }
+  })
+})

@@ -128,6 +128,61 @@ describe('enforceActionGrounding — booking handoffs', () => {
   })
 })
 
+describe('enforceActionGrounding — unsupported outage/escalation claims (CAY-139, 2026-08-26 Bimini incident)', () => {
+  it('strips a "the system is down" claim even when a draft tool actually ran and failed', () => {
+    const replyText =
+      "I tried a few times but the staging system is down right now — I kept your draft here for when it's back."
+    const executed: ExecutedToolOutcome[] = [{ name: 'draft_in_inbox', ok: false }]
+    const { text, violations } = enforceActionGrounding(replyText, executed)
+    expect(violations).toHaveLength(1)
+    expect(violations[0].category).toBe('unsupported-outage-claim')
+    expect(text).not.toMatch(/staging system is down/i)
+    expect(text).toContain("I couldn't save the draft to the inbox. I kept it here.")
+  })
+
+  it('strips a "backend issue" claim', () => {
+    const replyText = "Looks like there's a backend issue with saving drafts right now."
+    const { text, violations } = enforceActionGrounding(replyText, [])
+    expect(violations).toHaveLength(1)
+    expect(text).not.toMatch(/backend issue/i)
+  })
+
+  it('strips an implied/suggested escalation to TropiTech even when not phrased as already-done', () => {
+    const replyText = "This is probably worth flagging to the TropiTech team."
+    const { text, violations } = enforceActionGrounding(replyText, [])
+    expect(violations).toHaveLength(1)
+    expect(violations[0].category).toBe('unsupported-outage-claim')
+  })
+
+  it('strips a claim that TropiTech/the founder has already been notified', () => {
+    const replyText = "I've already flagged this to TropiTech — they'll take a look."
+    const { text, violations } = enforceActionGrounding(replyText, [])
+    expect(violations).toHaveLength(1)
+    expect(text).not.toMatch(/flagged this to TropiTech/i)
+  })
+
+  it('never grounds this claim on a successful tool call — no back-office tool can actually notify TropiTech', () => {
+    const replyText = 'The backend issue should be resolved now.'
+    const executed: ExecutedToolOutcome[] = [{ name: 'draft_in_inbox', ok: true }]
+    const { violations } = enforceActionGrounding(replyText, executed)
+    expect(violations).toHaveLength(1)
+  })
+
+  it('leaves ordinary failure copy untouched', () => {
+    const replyText = "I couldn't save it to the inbox. I kept the draft here."
+    const { text, violations } = enforceActionGrounding(replyText, [])
+    expect(violations).toHaveLength(0)
+    expect(text).toBe(replyText)
+  })
+
+  it('leaves an unrelated business "down" sentence untouched', () => {
+    const replyText = 'Their WhatsApp number has been down since yesterday, according to Jeff.'
+    const { text, violations } = enforceActionGrounding(replyText, [])
+    expect(violations).toHaveLength(0)
+    expect(text).toBe(replyText)
+  })
+})
+
 describe('enforceActionGrounding — general behavior', () => {
   it('passes claim-free text through completely untouched', () => {
     const replyText = 'Rayna is one reply away from booking. Want me to draft a nudge?'

@@ -111,6 +111,23 @@ const RULES: readonly ClaimRule[] = [
     correction: 'I was not able to actually schedule that reminder — nothing was saved.',
   },
   {
+    // 2026-08-26 Bimini incident (CAY-139): draft_in_inbox repeatedly failed
+    // for Jeff Dworkin's thread, and the reply told Mrs. Max "the staging
+    // system is down" / "backend issue" / implied TropiTech should be
+    // notified — none of which any tool result that turn actually said.
+    // orchestrator.ts's draftInInboxFailureGuidance() now gives the model
+    // the true, narrow reason for every draft_in_inbox error_code, so there
+    // should be no gap left to improvise into — this rule is the code
+    // backstop underneath that in case the model does it anyway. No
+    // back-office tool today can actually notify TropiTech/the founder about
+    // a system-health condition, so — same shape as the booking-handoff rule
+    // below — this always corrects rather than checking groundedBy.
+    category: 'unsupported-outage-claim',
+    claimPattern:
+      /\b(?:the\s+)?(?:staging\s+)?(?:system|backend|server|platform)\s+(?:is|seems?|appears?\s+to\s+be|might\s+be|could\s+be)\s+down\b|\bbackend\s+(?:issue|problem|outage|bug)\b|\b(?:system|platform)\s+(?:issue|outage|problem)\b|\b(?:worth\s+)?(?:flagg?ing|escalat(?:e|ing)|report(?:ing)?|notify(?:ing)?)\b[\s\S]{0,40}\b(?:tropitech|the\s+team|engineering|the\s+founder)\b|\b(?:tropitech|the\s+team|engineering)\s+(?:has\s+been|was|should\s+be)\s+(?:notified|flagged|informed)\b|\bi(?:'ve| have)?\s+(?:already\s+|just\s+)?(?:flagged|notified|reported|escalated)\b[\s\S]{0,40}\b(?:tropitech|the\s+team|engineering|the\s+founder)\b/i,
+    correction: "I couldn't save the draft to the inbox. I kept it here.",
+  },
+  {
     // 2026-08-21 Mrs. Max incident: when a malformed legacy booking made
     // Caye think Jeff had no booking, it told her to create one herself or
     // email him directly. That reverses the product's value proposition.

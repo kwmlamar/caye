@@ -176,9 +176,30 @@ export function classifyError(err: unknown, fallbackCode: string): ToolResult {
   return failedRetryable(fallbackCode, message)
 }
 
-/** Pull a 3-digit HTTP status out of the messages the Zoho helpers throw. */
-function httpStatusFrom(message: string): number | null {
-  const m = /\((\d{3})\)/.exec(message) ?? /\bstatus[ :=]+(\d{3})\b/i.exec(message)
+/**
+ * Pull a 3-digit HTTP status out of the messages the Zoho/Gmail helpers
+ * throw (`... (HTTP 429, code ...)` / `... status: 401 ...`).
+ *
+ * Exported so draft-in-inbox.ts can reuse the exact same status-detection
+ * this module already uses to classify PG/HTTP errors, instead of a second,
+ * possibly-drifting regex — a null return there means "no explicit status
+ * found," which is the signal that separates a deterministic provider
+ * rejection from a genuinely ambiguous network/timeout failure.
+ */
+export function httpStatusFrom(message: string): number | null {
+  // Three shapes seen in this codebase's thrown provider errors:
+  //   zoho-calendar.ts:  "Zoho Calendar create failed (503): upstream"
+  //   generic:           "... status: 401 ..."
+  //   email-ai.ts:       "Zoho Mail API draft error (HTTP 400, code 400): ..."
+  // (CAY-139, 2026-08-26) The third shape was previously unrecognised here —
+  // draft-in-inbox.ts's deterministic-vs-ambiguous classification depends on
+  // this function telling the two apart, so a real Zoho Mail 4xx/5xx was
+  // silently falling into "no status found" (the ambiguous bucket) even
+  // though Zoho had answered synchronously and definitely rejected it.
+  const m =
+    /\((\d{3})\)/.exec(message) ??
+    /\bstatus[ :=]+(\d{3})\b/i.exec(message) ??
+    /\bHTTP[ :]?(\d{3})\b/i.exec(message)
   if (!m) return null
   const n = Number(m[1])
   return n >= 100 && n <= 599 ? n : null

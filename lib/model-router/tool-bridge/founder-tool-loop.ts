@@ -425,7 +425,7 @@ export async function runFounderToolLoop(args: FounderToolLoopArgs): Promise<Fou
       const { result: toolResult } = await runToolWithRecovery(tool, block.input, args.toolCtx, { mode: 'back-office' })
       anyRealToolExecutedThisTurn = true
       const payload = stripForModel(toolResult)
-      const guidance = guidanceFor(toolResult.status, toolResult.deferred === true)
+      const guidance = guidanceFor(toolResult.status, toolResult.deferred === true, block.name, toolResult.error_code)
       if (guidance) payload.how_to_report_this = guidance
       toolResults.push({
         type: 'tool_result',
