@@ -9,6 +9,8 @@ import { Pill } from '@/components/dashboard/founder-home/console-ui'
 import { CayeComposerSurface } from '@/components/dashboard/founder-home/AskCayeComposer'
 import { emitStale, ALL_TOPICS } from '@/lib/founder-freshness'
 import CayeVoiceSession from './voice/CayeVoiceSession'
+import { RichResultRenderer } from './RichResultRenderer'
+import type { RichResult } from '@/lib/caye-direct-rich-results'
 
 const NEAR_BOTTOM_PX = 96
 const TEXTAREA_MAX_H = 220
@@ -27,6 +29,7 @@ interface OperatorMessage {
   origin?: 'whatsapp' | 'dashboard' | 'demo'
   operator_name?: string | null
   operator_role?: string | null
+  rich_result?: RichResult | null
 }
 
 // Only outbound messages carry these — inbound is what the operator sent
@@ -154,6 +157,7 @@ function backendLabel(backend: string): string {
     case 'openai_codex_subscription': return 'Codex (subscription)'
     case 'anthropic_api': return 'Claude (API)'
     case 'openai_api': return 'OpenAI (API)'
+    case 'openrouter': return 'OpenRouter'
     default: return backend
   }
 }
@@ -811,6 +815,7 @@ export default function CayeDirectThread(props: Props) {
                         // voices still read as visually distinct.
                         <div style={{ padding: '1px 0' }}>
                           <FormattedReplyText text={m.body} style={{ fontSize: 14, lineHeight: 1.6, color: '#f4f4f5' }} />
+                          {m.rich_result && <RichResultRenderer result={m.rich_result} />}
                         </div>
                       ) : (
                         <div style={{

@@ -14,6 +14,7 @@ import { runToolTurnWithFallback } from './tool-turn-router'
 import { validateAgainstSchema } from './schema-validate'
 import { detectProtocolArtifacts } from './protocol-artifact-guard'
 import { requiresBusinessGrounding } from './business-grounding-classifier'
+import { extractRichResult, type RichResult } from '@/lib/caye-direct-rich-results'
 
 /**
  * Option B from the multi-model router brief: a NEW founder-only
@@ -76,6 +77,8 @@ const PROTOCOL_CORRECTION_MESSAGE =
   'Respond now with EXACTLY ONE of: (1) a single fenced ```json``` block containing {"tool_calls":[...]} and nothing else, to request one real tool call, or (2) plain natural-language final text with no simulated tool calls, tool results, or protocol syntax of any kind, based only on information you have actually been given. ' +
   'Never write your own tool result. Never predict what a tool will return. If you still need information, request exactly one real tool now — you will receive its real result in a later turn.'
 
+const RICH_RESULT_INSTRUCTIONS = '\n\nWhen a compact semantic display helps, you may put ONE fenced JSON object after your answer with exactly {"version":1,"narrative":"...","blocks":[...]}. Valid block types are metric, table, code, code_diff, goal_reference, work_reference, and artifact_reference. Never emit HTML, React, component names, scripts, embeds, or executable content. References use only an id; Caye resolves labels and status. Plain text is always valid.'
+
 /**
  * Fed back (invariant #2) when the model answered in plain text before any
  * real tool executed this turn, for a request classified as requiring
@@ -134,9 +137,13 @@ export interface FounderToolLoopArgs {
 
 export interface FounderToolLoopResult {
   replyText: string
+  richResult?: RichResult
   newTurns: Anthropic.MessageParam[]
   linkedThreadIds: string[]
   decision: RouterDecision
+  model?: string
+  usage?: { inputTokens?: number; outputTokens?: number }
+  latencyMs?: number
 }
 
 function isToolUseBlock(b: Anthropic.ContentBlock): b is Anthropic.ToolUseBlock {
@@ -275,6 +282,9 @@ export async function runFounderToolLoop(args: FounderToolLoopArgs): Promise<Fou
   // failure rather than silently trying a different provider mid-turn.
   let pinnedChain: BackendId[] | undefined
   let lastDecision: RouterDecision | undefined
+  let lastModel: string | undefined
+  let lastUsage: { inputTokens?: number; outputTokens?: number } | undefined
+  let lastLatencyMs: number | undefined
 
   const applyActionGrounding = (text: string): string => {
     const { text: grounded, violations } = enforceActionGrounding(text, executedTools)
@@ -302,12 +312,15 @@ export async function runFounderToolLoop(args: FounderToolLoopArgs): Promise<Fou
     const { result, decision } = await runToolTurnWithFallback(
       args.backends,
       args.requestedMode,
-      { ctx: args.ctx, system: args.system, messages, tools, maxOutputTokens, hints: args.hints },
+      { ctx: args.ctx, system: args.system + RICH_RESULT_INSTRUCTIONS, messages, tools, maxOutputTokens, hints: args.hints },
       args.signal,
       policy,
       pinnedChain
     )
     lastDecision = decision
+    lastModel = result.model
+    lastUsage = result.usage
+    lastLatencyMs = result.latencyMs
 
     // Provenance boundary #1: model text is never evidence a tool ran.
     // This is the only place raw backend output is trusted enough to
@@ -316,7 +329,7 @@ export async function runFounderToolLoop(args: FounderToolLoopArgs): Promise<Fou
       result,
       backend: args.backends.find((b) => b.id === decision.selected),
       baseMessages: messages,
-      system: args.system,
+      system: args.system + RICH_RESULT_INSTRUCTIONS,
       tools,
       maxOutputTokens,
       ctx: args.ctx,
@@ -350,14 +363,15 @@ export async function runFounderToolLoop(args: FounderToolLoopArgs): Promise<Fou
       newTurns.push(assistantTurn)
 
       const rawReplyText = joinTextBlocks(content)
-      const replyText = applyToolNameLeakGuard(applyActionGrounding(rawReplyText))
+      const extracted = extractRichResult(rawReplyText)
+      const replyText = applyToolNameLeakGuard(applyActionGrounding(extracted.narrative))
       if (replyText !== rawReplyText) {
         const lastTurn = newTurns[newTurns.length - 1]
         if (lastTurn?.role === 'assistant') {
           lastTurn.content = [{ type: 'text', text: replyText }]
         }
       }
-      return { replyText, newTurns, linkedThreadIds: dedupeThreadLinks(args.toolCtx), decision }
+      return { replyText, ...(extracted.result ? { richResult: extracted.result } : {}), newTurns, linkedThreadIds: dedupeThreadLinks(args.toolCtx), decision, model: lastModel, usage: lastUsage, latencyMs: lastLatencyMs }
     }
 
     const assistantTurn: Anthropic.MessageParam = { role: 'assistant', content }

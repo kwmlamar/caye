@@ -7,9 +7,11 @@ import { runFounderToolLoop } from './tool-bridge/founder-tool-loop'
 import { ClaudeSubscriptionBackend } from './backends/claude-subscription'
 import { OpenAICodexSubscriptionBackend } from './backends/openai-codex-subscription'
 import { AnthropicApiBackend } from './backends/anthropic-api'
+import { OpenAIApiBackend, OpenRouterBackend } from './backends/openai-compatible'
 import type { ToolCapableBackend } from './tool-bridge/types'
 import type { BackendId, FounderRouterContext, RequestedMode, RouterDecision } from './types'
 import { buildInvocationLog } from './observability'
+import type { RichResult } from '@/lib/caye-direct-rich-results'
 
 /**
  * The ONE call site where a real Caye Direct thread turn can be answered by
@@ -53,6 +55,7 @@ export interface CayeDirectRouterTurnResult {
   linkedThreadIds: string[]
   backend?: BackendId
   model?: string
+  richResult?: RichResult
 }
 
 function backendsFor(): ToolCapableBackend[] {
@@ -60,7 +63,7 @@ function backendsFor(): ToolCapableBackend[] {
   // capabilities.ts/types.ts's doc comments), so 'openai_api' in a planned
   // chain is silently skipped by runChainWithFallback's byId lookup rather
   // than invented here.
-  return [new ClaudeSubscriptionBackend(), new OpenAICodexSubscriptionBackend(), new AnthropicApiBackend()]
+  return [new ClaudeSubscriptionBackend(), new OpenAICodexSubscriptionBackend(), new AnthropicApiBackend(), new OpenAIApiBackend(), new OpenRouterBackend()]
 }
 
 export async function runCayeDirectRouterTurn(args: CayeDirectRouterTurnArgs): Promise<CayeDirectRouterTurnResult> {
@@ -135,6 +138,7 @@ export async function runCayeDirectRouterTurn(args: CayeDirectRouterTurnArgs): P
       newTurns: result.newTurns,
       linkedThreadIds: result.linkedThreadIds,
       backend: decision.selected,
+      richResult: result.richResult ? { ...result.richResult, provenance: { requestedMode: args.requestedMode, selectedBackend: decision.selected, provider: decision.selected?.includes('anthropic') || decision.selected === 'claude_subscription' ? 'anthropic' : decision.selected === 'openrouter' ? 'openrouter' : 'openai', model: result.model, fallbackSequence: decision.fallbacksTried, latencyMs: result.latencyMs ?? Date.now() - start, usage: result.usage } } : undefined,
     }
   } catch (err) {
     const failureSummary = err instanceof Error ? err.message : String(err)

@@ -14,12 +14,14 @@ import {
 import { maybeGenerateThreadTitle, maybeRefreshThreadSummary } from '@/lib/caye-direct-threads-summarize'
 import { runCayeDirectRouterTurn } from '@/lib/model-router/caye-direct-bridge'
 import type { BackendId, RequestedMode } from '@/lib/model-router/types'
+import type { RichResult } from '@/lib/caye-direct-rich-results'
 
 export interface FounderThreadTurnResult {
   replyText: string
   threadId: string
   /** Which backend actually served this turn — only set on the model-router path (options.requestedMode present). */
   backend?: BackendId
+  richResult?: RichResult
 }
 
 /**
@@ -128,11 +130,13 @@ export async function runFounderThreadTurn(
       message,
       requestedMode: options!.requestedMode!,
     })
-    await persistPassTurns(routerResult.newTurns, routerResult.linkedThreadIds)
+    const inserted = await persistAgentTurns(supabase, workspaceId, routerResult.newTurns, operator, undefined, undefined, 'dashboard', 'visible', routerResult.richResult)
+    const insertedIds = inserted.map((r) => r.id)
+    await Promise.all([...insertedIds.map((id) => linkMessageToThread(supabase, threadId, id, 'founder')), linkInsertedMessagesToThreads(supabase, insertedIds, routerResult.linkedThreadIds)])
     await touchThread(supabase, threadId)
     await maybeGenerateThreadTitle(workspaceId, threadId)
     void maybeRefreshThreadSummary(workspaceId, threadId).catch(() => {})
-    return { replyText: routerResult.replyText, threadId, backend: routerResult.backend }
+    return { replyText: routerResult.replyText, threadId, backend: routerResult.backend, richResult: routerResult.richResult }
   }
 
   // Bounded automatic continuation (2026-08-17 Bimini revenue-audit fix) —
