@@ -220,10 +220,26 @@ describe('Jeff Dworkin — the actual incident sentence can no longer reach the 
       "I tried a few more times but it looks like the staging system is down right now, or there might be a " +
       "backend issue on our end — I've kept your draft here. This is probably worth flagging to the TropiTech team."
     const { text, violations } = enforceActionGrounding(incidentText, [{ name: 'draft_in_inbox', ok: false }])
-    expect(violations.map((v) => v.category)).toContain('unsupported-outage-claim')
+    // Both the invented root-cause claim AND the invented escalation claim
+    // are caught, by their own separate rules (CAY-140 review split).
+    expect(violations.map((v) => v.category)).toContain('unsupported-infrastructure-claim')
+    expect(violations.map((v) => v.category)).toContain('unsupported-platform-escalation-claim')
     expect(text).not.toMatch(/staging system is down/i)
     expect(text).not.toMatch(/backend issue/i)
     expect(text).not.toMatch(/flagging to the TropiTech team/i)
-    expect(text).toContain("I couldn't save the draft to the inbox. I kept it here.")
+  })
+
+  it('a TRUE "I notified the team" claim from the same incident thread, backed by a real send_operator_message call, survives untouched (CAY-140 regression)', () => {
+    // Guards against re-introducing the CAY-140 regression in this exact
+    // Jeff Dworkin context: a legitimate operator-notification claim must
+    // never be swept up by the draft-failure-adjacent guards above.
+    const replyText = "I couldn't save the draft to the inbox, so I let the team know to check on it."
+    const executed = [
+      { name: 'draft_in_inbox', ok: false },
+      { name: 'send_operator_message', ok: true },
+    ]
+    const { text, violations } = enforceActionGrounding(replyText, executed)
+    expect(violations).toHaveLength(0)
+    expect(text).toBe(replyText)
   })
 })

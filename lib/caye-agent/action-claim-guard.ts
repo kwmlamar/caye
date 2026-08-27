@@ -45,6 +45,18 @@
  * claims. See that file for why replaying raw stored prose into a new
  * turn's context (without this) let a model treat its own past hallucination
  * as an accomplished fact.
+ *
+ * 2026-08-26 (CAY-139/CAY-140): two more rules — 'unsupported-infrastructure-
+ * claim' and 'unsupported-platform-escalation-claim' — catch a DIFFERENT
+ * failure shape than the ones above: not a claim that an action completed,
+ * but an invented CAUSE ("the system is down") or an invented escalation to
+ * TropiTech's own platform/support side (as opposed to a real business
+ * operator, which the 'send' rule already grounds). These are deliberately
+ * kept separate rules with narrow destination lists and empty (not
+ * draft-specific) corrections — see each rule's own comment for why, and
+ * for the review finding (a prior single combined rule wrongly matched
+ * legitimate "I've notified the team/founder" claims that a real
+ * send_operator_message call actually grounded).
  */
 
 export interface ExecutedToolOutcome {
@@ -113,19 +125,56 @@ const RULES: readonly ClaimRule[] = [
   {
     // 2026-08-26 Bimini incident (CAY-139): draft_in_inbox repeatedly failed
     // for Jeff Dworkin's thread, and the reply told Mrs. Max "the staging
-    // system is down" / "backend issue" / implied TropiTech should be
-    // notified — none of which any tool result that turn actually said.
-    // orchestrator.ts's draftInInboxFailureGuidance() now gives the model
-    // the true, narrow reason for every draft_in_inbox error_code, so there
-    // should be no gap left to improvise into — this rule is the code
-    // backstop underneath that in case the model does it anyway. No
-    // back-office tool today can actually notify TropiTech/the founder about
-    // a system-health condition, so — same shape as the booking-handoff rule
-    // below — this always corrects rather than checking groundedBy.
-    category: 'unsupported-outage-claim',
+    // system is down" / "backend issue" — a specific infra/root-cause claim
+    // no tool result that turn actually made. orchestrator.ts's
+    // draftInInboxFailureGuidance() now gives the model the true, narrow
+    // reason for every draft_in_inbox error_code, so there should be no gap
+    // left to improvise into — this rule is the code backstop underneath
+    // that in case the model does it anyway. Deliberately narrow: this is
+    // ONLY about claiming infrastructure is broken, never about whether a
+    // person got messaged (that's the separate 'unsupported-platform-
+    // escalation-claim' rule below, and legitimate operator/owner/founder
+    // notification claims are the pre-existing 'send' rule's job — this
+    // rule must never overlap either). Correction is intentionally EMPTY,
+    // not draft-specific prose: enforceActionGrounding is a general-purpose
+    // pass with no knowledge of what turn it's running against (a booking
+    // turn, a pricing turn, anything), so injecting "I couldn't save the
+    // draft..." here would itself be an unsupported claim on any turn that
+    // isn't actually a draft-save failure (CAY-140 review finding). The
+    // real, turn-accurate failure copy is guidanceFor's job, not this
+    // backstop's — this only ever needs to remove the false clause, never
+    // manufacture a replacement one.
+    category: 'unsupported-infrastructure-claim',
     claimPattern:
-      /\b(?:the\s+)?(?:staging\s+)?(?:system|backend|server|platform)\s+(?:is|seems?|appears?\s+to\s+be|might\s+be|could\s+be)\s+down\b|\bbackend\s+(?:issue|problem|outage|bug)\b|\b(?:system|platform)\s+(?:issue|outage|problem)\b|\b(?:worth\s+)?(?:flagg?ing|escalat(?:e|ing)|report(?:ing)?|notify(?:ing)?)\b[\s\S]{0,40}\b(?:tropitech|the\s+team|engineering|the\s+founder)\b|\b(?:tropitech|the\s+team|engineering)\s+(?:has\s+been|was|should\s+be)\s+(?:notified|flagged|informed)\b|\bi(?:'ve| have)?\s+(?:already\s+|just\s+)?(?:flagged|notified|reported|escalated)\b[\s\S]{0,40}\b(?:tropitech|the\s+team|engineering|the\s+founder)\b/i,
-    correction: "I couldn't save the draft to the inbox. I kept it here.",
+      /\b(?:the\s+)?(?:staging\s+)?(?:system|backend|server|platform)\s+(?:is|seems?(?:\s+to\s+be)?|appears?\s+to\s+be|might\s+be|could\s+be)\s+down\b|\bbackend\s+(?:issue|problem|outage|bug)\b|\b(?:system|platform)\s+(?:issue|outage|problem)\b/i,
+    correction: '',
+  },
+  {
+    // 2026-08-26 Bimini incident (CAY-139), CAY-140 review correction. The
+    // original single rule here also matched generic "notified the team" /
+    // "notified the founder" phrasing with no groundedBy exception, which
+    // meant a TRUE completed operator notification — send_operator_message
+    // actually ran, and the model correctly reported "I've notified the
+    // team" — got silently rewritten into a false draft-failure sentence.
+    // "The team", "the founder", "the owner", "Mrs. Max", or any named
+    // person are all REACHABLE destinations via send_operator_message /
+    // escalate_to_owner / notify_driver (see the 'send' rule above, and
+    // lib/caye-agent/tools/write-low/send-operator-message.ts's own
+    // description: "the owner or founder"). This rule must never touch
+    // those claims — grounding for them is the 'send' rule's job.
+    //
+    // What this rule blocks is narrower and different in kind: an invented
+    // claim of escalating to TropiTech / engineering / support / developers
+    // — TropiTech's own platform/support side, not a business operator.
+    // Audited the full tool registry (lib/caye-agent/tools/registry.ts) for
+    // this PR: no tool of any kind can reach that destination today, so
+    // unlike 'send' this has no groundedBy — any match is always corrected.
+    // If such a tool is ever added, add it to a groundedBy list here rather
+    // than widening this destination set.
+    category: 'unsupported-platform-escalation-claim',
+    claimPattern:
+      /\b(?:worth\s+)?(?:flagg?ing|escalat(?:e|ing)|report(?:ing)?|notify(?:ing)?)\b[\s\S]{0,40}\b(?:tropitech|engineering|support|developers?)\b|\b(?:tropitech|engineering|support|developers?)\s+(?:has\s+been|have\s+been|was|were|should\s+be)\s+(?:notified|flagged|informed)\b|\bi(?:'ve| have)?\s+(?:\w+\s+){0,2}(?:flagged|notified|reported|escalated)\b[\s\S]{0,40}\b(?:tropitech|engineering|support|developers?)\b/i,
+    correction: '',
   },
   {
     // 2026-08-21 Mrs. Max incident: when a malformed legacy booking made
