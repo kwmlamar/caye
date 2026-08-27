@@ -162,6 +162,11 @@ export function sanitizeRawTrace(raw: RawTraceInput, opts: SanitizeOptions): Rep
       last_notified_summary: item.last_notified_summary ? redactPII(item.last_notified_summary, knownNames) : item.last_notified_summary,
       operator_aware_summary: item.operator_aware_summary ? redactPII(item.operator_aware_summary, knownNames) : item.operator_aware_summary,
     })),
+    // No PII risk here (operation names + a closed outcome enum) — copied
+    // through verbatim, but still explicit rather than a `...raw.seed`
+    // spread so every ReplaySeed field is deliberately handled once, not
+    // silently passed through.
+    forcedProviderOutcomes: raw.seed?.forcedProviderOutcomes,
   }
 
   const historicalEffects = raw.historicalEffects.map((eff) => sanitizeEffect(eff, knownNames, workspaceId))

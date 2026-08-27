@@ -224,22 +224,28 @@ export class BenchReplayAdapter implements BenchAdapter {
         continue
       }
       if (call.risk === 'read') continue
-      if (call.executed) {
-        effects.push({
-          id: nextEffectId('write'),
-          workspaceId: this.state.workspaceId,
-          at: context.now,
-          kind: call.toolName === 'retrieve_artifact_for_operator' ? 'artifact_return' : 'state_write',
-          risk: riskToBenchRisk(call.risk),
-          consequential: true,
-          authorized: true,
-          idempotencyKey: idempotencyKeyFor(call),
-          outcome: call.ok ? 'success' : call.status === 'NEEDS_HUMAN' ? 'uncertain' : 'failed',
-          uncertainty: !call.ok && call.status === 'NEEDS_HUMAN' ? 'ambiguous' : 'none',
-          evidence: toolEvidence(call),
-          metadata: { tool: call.toolName, eventId: event.id },
-        })
-      }
+      // Every consequential attempt gets an effect, success or not — a
+      // FAILED or AMBIGUOUS outcome is exactly the information the
+      // hard-invariant gate and the historical comparison need to see,
+      // not something to silently drop. `call.executed` (true only when
+      // `result.ok`) previously gated this block, which meant a failed
+      // tool call produced NO effect at all — invisible to
+      // false_success_after_ambiguous_failure and to the
+      // failedConsequentialActions/ungroundedClaims quality metrics.
+      effects.push({
+        id: nextEffectId('write'),
+        workspaceId: this.state.workspaceId,
+        at: context.now,
+        kind: call.toolName === 'retrieve_artifact_for_operator' ? 'artifact_return' : 'state_write',
+        risk: riskToBenchRisk(call.risk),
+        consequential: true,
+        authorized: true,
+        idempotencyKey: idempotencyKeyFor(call),
+        outcome: call.ok ? 'success' : call.status === 'NEEDS_HUMAN' ? 'uncertain' : 'failed',
+        uncertainty: !call.ok && call.status === 'NEEDS_HUMAN' ? 'ambiguous' : 'none',
+        evidence: toolEvidence(call),
+        metadata: { tool: call.toolName, eventId: event.id },
+      })
     }
 
     if (replyText.trim().length > 0) {
