@@ -340,6 +340,16 @@ describe('back-office prompt — CAY-140 operator-communication policy', () => {
     expect(p).toMatch(/there is no such queue on the other end of that sentence/)
   })
 
+  it('distinguishes a real operator/teammate notification from the banned platform-escalation claim (#141 review)', () => {
+    // The prompt originally banned saying you notified "the team" at all —
+    // but send_operator_message genuinely can reach another operator on the
+    // workspace, so that ban was itself false. It must be scoped to the
+    // TropiTech/engineering/support side only.
+    const p = prompt()
+    expect(p).toMatch(/send_operator_message genuinely can reach a teammate/)
+    expect(p).toMatch(/only about the platform\/vendor side/)
+  })
+
   it('gives the exact preserved-draft-failure shape from the regression fixture', () => {
     const p = prompt()
     expect(p).toMatch(/"I couldn't save it to the inbox\. I kept the draft here\." is the complete answer/)

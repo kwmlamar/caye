@@ -124,12 +124,35 @@ const RULES: readonly ClaimRule[] = [
       'I’ll reconcile or create the booking here first, then I’ll report back. I’ll ask only if a required booking detail is genuinely missing.',
   },
   {
-    // CAY-140: no tool in this registry lets Caye notify TropiTech,
-    // engineering, support, or "the developers" about anything — there is no
-    // such escalation path. No `groundedBy` is possible, so any sentence in
-    // this shape is always corrected, mirroring the booking-handoff rule
-    // above. Deliberately matches both a completed-action claim ("I flagged
-    // this to TropiTech") and a bare recommendation ("worth flagging to the
+    // CAY-140 (revised after #141 review — see below). No tool in this
+    // registry lets Caye notify TropiTech-the-company, engineering,
+    // developers, or "support" about anything — there is no such escalation
+    // path. That is NOT the same claim as notifying a real operator/owner on
+    // this workspace: send_operator_message and escalate_to_owner are both
+    // real, grounded tools for exactly that (see the 'send' rule above,
+    // which already lists them). This rule must therefore require an
+    // explicit platform/vendor-shaped noun — tropitech, engineering,
+    // developers, support — and must NEVER match a bare "the team", since
+    // "the team" is exactly the phrase a genuine, tool-backed
+    // send_operator_message claim ("I've notified the team") would use.
+    //
+    // FIRST VERSION OF THIS RULE HAD THAT BUG: its third alternative included
+    // a bare `the\s+team` branch, so `enforceActionGrounding` would rewrite a
+    // TRUE "I've notified the team" (backed by a real send_operator_message
+    // call this turn) into a false denial, because no groundedBy is possible
+    // for THIS category (there genuinely is no TropiTech-notification tool)
+    // — a claim naming a workspace operator was being judged by a rule meant
+    // only for claims naming TropiTech/engineering/support. Fixed by
+    // requiring the platform noun in every branch; a claim about a named
+    // operator or "the team" alone never matches this rule at all, and so is
+    // never touched by it (it either matches nothing, or matches the 'send'
+    // rule above if it uses that rule's own verbs).
+    //
+    // No `groundedBy` is possible here — there is genuinely no tool that
+    // reaches TropiTech/engineering/support — so any sentence that matches
+    // is always corrected, mirroring the booking-handoff rule above.
+    // Deliberately matches both a completed-action claim ("I flagged this to
+    // TropiTech") and a bare recommendation ("worth flagging to the
     // TropiTech team") — the recommendation is just as misleading, since it
     // implies a support channel the operator can expect to hear back from
     // that does not exist. Live Bimini transcript: a draft-save failure
@@ -138,8 +161,8 @@ const RULES: readonly ClaimRule[] = [
     // that one sentence.
     category: 'platform-escalation',
     claimPattern:
-      /\b(?:worth\s+)?flagg?(?:ed|ing)?\b[\s\S]{0,30}\bto\s+(?:the\s+)?tropitech\b|\bi(?:'ve| have)?\s+(?:already\s+|just\s+)?(?:flagged|notified|escalated|reported)\b[\s\S]{0,30}\b(?:the\s+)?(?:tropitech|engineering|developers?|the\s+team)\b|\btropitech\s+(?:team|engineering|developers?|support)\b[\s\S]{0,30}\b(?:should|will|has been|is aware|knows|is looking)\b/i,
-    correction: "I don't have a way to notify anyone else about this — here's what I know:",
+      /\b(?:worth\s+)?flagg?(?:ed|ing)?\b[\s\S]{0,30}\bto\s+(?:the\s+)?(?:tropitech|engineering|support)\b|\bi(?:'ve| have)?\s+(?:already\s+|just\s+)?(?:flagged|notified|escalated|reported|informed|told|contacted)\b[\s\S]{0,30}\b(?:the\s+)?(?:tropitech|engineering|developers?|support)\b|\b(?:tropitech|engineering|support)\b[\s\S]{0,20}\b(?:has been|have been|was|is)\s+(?:notified|flagged|escalated|informed|told|contacted|made aware|aware)\b|\b(?:tropitech|engineering|support)\s+team\s+(?:should|will|has been|is aware|knows|is looking)\b/i,
+    correction: "I haven't notified TropiTech or support about this.",
   },
   {
     // CAY-140: nothing in this codebase gives Caye a health check on

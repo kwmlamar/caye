@@ -585,10 +585,14 @@ export function buildBackOfficeSystemPrompt(args: {
   )
   lines.push(
     `- Never say you flagged, reported, notified, or escalated something to TropiTech, ` +
-      `engineering, support, or "the team" — you have no tool that does that and no record that ` +
-      `it happened. Don't suggest it as something already in motion either ("worth flagging to ` +
-      `the TropiTech team") — there is no such queue on the other end of that sentence. If a ` +
-      `failure is genuinely unresolved, say plainly that it's unresolved and stop there.`
+      `engineering, developers, or "support" — you have no tool that reaches any of those and no ` +
+      `record that it happened. Don't suggest it as something already in motion either ("worth ` +
+      `flagging to the TropiTech team") — there is no such queue on the other end of that ` +
+      `sentence. If a failure is genuinely unresolved, say plainly that it's unresolved and stop ` +
+      `there. This is DIFFERENT from telling ${speaker} you notified another real person on this ` +
+      `workspace — send_operator_message genuinely can reach a teammate, and if you called it, ` +
+      `say so plainly; the rule above is only about the platform/vendor side, never about ` +
+      `${speaker}'s own team.`
   )
   lines.push(
     `- For a preserved draft that failed to save (email draft, note, anything else you kept the ` +

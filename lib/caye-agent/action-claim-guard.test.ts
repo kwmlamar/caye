@@ -160,6 +160,77 @@ describe('enforceActionGrounding — platform-escalation claims (CAY-140)', () =
   })
 })
 
+describe('enforceActionGrounding — platform-escalation must not corrupt real operator sends (#141 review)', () => {
+  // The first version of this rule matched a bare "the team", so a TRUE
+  // send_operator_message claim ("I've notified the team") was rewritten
+  // into a false denial — there is no groundedBy for this category (there
+  // really is no TropiTech-notification tool), so anything the pattern
+  // matched was unconditionally corrected. The fix requires an explicit
+  // platform noun (tropitech/engineering/support); a claim naming a real
+  // operator, or "the team" alone, never matches this rule at all.
+
+  it('A — a real send_operator_message claim about "the team" passes through untouched', () => {
+    const replyText = "I've notified the team."
+    const { text, violations } = enforceActionGrounding(replyText, [
+      { name: 'send_operator_message', ok: true },
+    ])
+    expect(violations).toHaveLength(0)
+    expect(text).toBe(replyText)
+  })
+
+  it('B — a real escalate_to_owner claim about the owner passes through untouched', () => {
+    const replyText = "I've escalated this to the owner."
+    const { text, violations } = enforceActionGrounding(replyText, [
+      { name: 'escalate_to_owner', ok: true },
+    ])
+    expect(violations).toHaveLength(0)
+    expect(text).toBe(replyText)
+  })
+
+  it('C — an engineering claim with no relevant tool is still stripped', () => {
+    const { text, violations } = enforceActionGrounding("I've notified engineering.", [])
+    expect(violations).toHaveLength(1)
+    expect(violations[0].category).toBe('platform-escalation')
+    expect(text).not.toMatch(/notified engineering/i)
+  })
+
+  it('D — a TropiTech claim with no relevant tool is still stripped', () => {
+    const { text, violations } = enforceActionGrounding(
+      'I flagged this to the TropiTech team.',
+      []
+    )
+    expect(violations).toHaveLength(1)
+    expect(violations[0].category).toBe('platform-escalation')
+    expect(text).not.toMatch(/flagged this to the tropitech team/i)
+  })
+
+  it('E — an unrelated successful send_reply does not excuse a platform-escalation claim', () => {
+    const { violations } = enforceActionGrounding('Engineering has been notified.', [
+      { name: 'send_reply', ok: true },
+    ])
+    expect(violations).toHaveLength(1)
+    expect(violations[0].category).toBe('platform-escalation')
+  })
+
+  it('F — a future-tense offer about a real operator is never rewritten as a false completion claim', () => {
+    const replyText = 'I can notify Mrs. Max if you want.'
+    const { text, violations } = enforceActionGrounding(replyText, [])
+    expect(violations).toHaveLength(0)
+    expect(text).toBe(replyText)
+  })
+
+  it('G — existing send-claim behavior is unaffected', () => {
+    // Same fixture as the send-claims describe block above — pinned again
+    // here so a future edit to this rule can't silently break the
+    // pre-existing 'send' category.
+    const replyText = "Here's what I sent her on WhatsApp just now: Hi Mrs. Max."
+    const { violations } = enforceActionGrounding(replyText, [
+      { name: 'get_customer', ok: true },
+    ])
+    expect(violations.some((v) => v.category === 'send')).toBe(true)
+  })
+})
+
 describe('enforceActionGrounding — invented infrastructure causes (CAY-140)', () => {
   it('strips an invented root cause for a generic tool failure', () => {
     const replyText = "Still not going through — the staging system is still down."
