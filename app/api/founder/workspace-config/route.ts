@@ -25,7 +25,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient, createServerClient } from '@/lib/supabase-server'
 import { isFounderUserId } from '@/lib/founder'
 import type { VoiceProfile } from '@/lib/voice-profile'
-import { pauseOutreachForOwner, resumeOwnerPausedOutreach } from '@/lib/outreach-pause-control'
+import { pauseOutreachForOwner, resumeOwnerPausedOutreach, founderOverrideResolvedBounceSafetyPause } from '@/lib/outreach-pause-control'
 
 interface WorkspaceConfigPatch {
   system_prompt?: string | null
@@ -33,6 +33,10 @@ interface WorkspaceConfigPatch {
   autosend_enabled?: boolean
   ai_voice_profile?: VoiceProfile | null
   outreach_autosend_paused?: boolean
+  // Only consulted when outreach_autosend_paused=false and the ordinary
+  // resume path proves this is a resolved bounce_safety stop. Omitting it
+  // preserves the original behavior exactly.
+  outreach_override_justification?: string
 }
 
 async function requireFounder(req: NextRequest) {
@@ -156,9 +160,19 @@ export async function PATCH(req: NextRequest) {
   }
   if (body.outreach_autosend_paused === false) {
     try {
-      const result = await resumeOwnerPausedOutreach(workspaceId, 'founder')
+      let result = await resumeOwnerPausedOutreach(workspaceId, 'founder')
+      // Defense in depth: only an already-classified resolved bounce_safety
+      // stop can reach the special founder override. Unknown/provider/
+      // compliance states stay blocked at the route boundary too.
+      if (
+        result.disposition === 'safety_recovery_not_supported' &&
+        result.source === 'bounce_safety' &&
+        body.outreach_override_justification
+      ) {
+        result = await founderOverrideResolvedBounceSafetyPause(workspaceId, body.outreach_override_justification)
+      }
       if (result.disposition !== 'running') {
-        return NextResponse.json({ error: 'Outreach remains paused because its safety provenance cannot be overridden here.' }, { status: 409 })
+        return NextResponse.json({ error: 'Outreach remains paused because its safety provenance cannot be overridden here.', pause: result }, { status: 409 })
       }
     } catch (err) {
       return NextResponse.json({ error: err instanceof Error ? err.message : 'Could not resume outreach' }, { status: 500 })

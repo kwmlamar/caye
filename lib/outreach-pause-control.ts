@@ -184,3 +184,44 @@ export async function reconcileLegacyOutreachPause(workspaceId: string): Promise
   await recordPauseEvent({ workspaceId, action: 'paused', source: 'bounce_safety', reason, actorRole: 'system' })
   return { workspaceId, reconciled: true, state: classifyOutreachPause({ paused: true, source: 'bounce_safety', reason, pausedAt }) }
 }
+
+/**
+ * Founder-only escape hatch for a resolved bounce-safety stop. This remains
+ * unreachable from Caye/the agent layer, only applies to an established
+ * `bounce_safety` provenance, rechecks the live trailing-window threshold,
+ * requires a written justification, and audits the successful override.
+ */
+export async function founderOverrideResolvedBounceSafetyPause(workspaceId: string, justification: string): Promise<OutreachPauseState> {
+  if (!justification?.trim()) throw new Error('A written justification is required to override a bounce-safety stop.')
+  const db = createServiceClient()
+  const { data: config, error } = await db.from('workspace_ai_config')
+    .select('outreach_autosend_paused,outreach_pause_source,outreach_pause_reason,outreach_paused_at,outreach_bounce_threshold,outreach_bounce_window_hours')
+    .eq('workspace_id', workspaceId).maybeSingle()
+  if (error) throw new Error(error.message)
+  const current = classifyOutreachPause({ paused: config?.outreach_autosend_paused ?? false, source: config?.outreach_pause_source, reason: config?.outreach_pause_reason, pausedAt: config?.outreach_paused_at })
+  if (!current.paused || current.source !== 'bounce_safety') return current
+
+  const threshold = config?.outreach_bounce_threshold ?? 5
+  const windowHours = config?.outreach_bounce_window_hours ?? 24
+  const cutoff = new Date(Date.now() - windowHours * 60 * 60 * 1000).toISOString()
+  const { count, error: bounceError } = await db.from('caye_outreach_bounces')
+    .select('id', { count: 'exact', head: true }).eq('workspace_id', workspaceId).gte('created_at', cutoff)
+  if (bounceError) throw new Error(bounceError.message)
+  if ((count ?? 0) >= threshold) return { ...current, activeSafetyCondition: 'bounce_threshold', disposition: 'safety_active' }
+
+  const reason = `Founder override of a resolved bounce-safety stop: ${justification.trim()}`
+  const { data: updated, error: updateError } = await db.from('workspace_ai_config')
+    .update({ outreach_autosend_paused: false, outreach_pause_source: null, outreach_pause_reason: null, outreach_paused_at: null })
+    .eq('workspace_id', workspaceId).eq('outreach_autosend_paused', true).eq('outreach_pause_source', 'bounce_safety')
+    .select('workspace_id')
+  if (updateError) throw new Error(updateError.message)
+  if (!updated?.length) {
+    const { data: latest, error: latestError } = await db.from('workspace_ai_config')
+      .select('outreach_autosend_paused,outreach_pause_source,outreach_pause_reason,outreach_paused_at')
+      .eq('workspace_id', workspaceId).maybeSingle()
+    if (latestError) throw new Error(latestError.message)
+    return classifyOutreachPause({ paused: latest?.outreach_autosend_paused ?? true, source: latest?.outreach_pause_source, reason: latest?.outreach_pause_reason, pausedAt: latest?.outreach_paused_at })
+  }
+  await recordPauseEvent({ workspaceId, action: 'resumed', source: 'bounce_safety', reason, actorRole: 'founder' })
+  return { paused: false, source: 'bounce_safety', reason: null, pausedAt: null, activeSafetyCondition: null, disposition: 'running' }
+}
