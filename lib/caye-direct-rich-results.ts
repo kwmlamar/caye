@@ -101,17 +101,22 @@ export function validateRichResult(value: unknown): RichResult | null {
 }
 
 /**
- * Rich UI uses a dedicated fence so ordinary markdown/code fences can never be
- * mistaken for Caye presentation data. Plain text remains fully compatible.
+ * Models may place the rich envelope in a fenced block after normal prose.
+ * We inspect all fences and accept exactly one block that validates as a
+ * RichResult. Ordinary markdown/code fences are ignored rather than being
+ * mistaken for UI data. Plain text remains fully compatible.
  */
 export function extractRichResult(textValue: string): { narrative: string; result?: RichResult } {
-  const matches = [...textValue.matchAll(/```caye-rich-result\s*([\s\S]*?)```/gi)]
-  if (matches.length !== 1) return { narrative: textValue }
-
-  try {
-    const result = validateRichResult(JSON.parse(matches[0][1]))
-    return result ? { narrative: result.narrative, result } : { narrative: textValue }
-  } catch {
-    return { narrative: textValue }
+  const candidates: RichResult[] = []
+  for (const match of textValue.matchAll(/```(?:[a-zA-Z0-9_-]+)?\s*([\s\S]*?)```/g)) {
+    try {
+      const parsed = validateRichResult(JSON.parse(match[1]))
+      if (parsed) candidates.push(parsed)
+    } catch {
+      // Ordinary code/markdown fence; not a rich result.
+    }
   }
+  return candidates.length === 1
+    ? { narrative: candidates[0].narrative, result: candidates[0] }
+    : { narrative: textValue }
 }
