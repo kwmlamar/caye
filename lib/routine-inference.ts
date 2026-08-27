@@ -43,6 +43,8 @@ export interface RunInferenceOptions<T> {
   tier?: InferenceTier
   /** The existing authoritative inference path. It is never replaced by this module. */
   frontier: () => Promise<T>
+  /** Model used by the frontier callback, when known, for safe routing telemetry. */
+  frontierModel?: string
   /** Required only when the caller explicitly opts into routine inference. */
   routine?: {
     system?: string
@@ -123,11 +125,21 @@ export async function runInference<T>(options: RunInferenceOptions<T>): Promise<
     requestedTier,
     actualTier: 'frontier',
     provider: 'frontier',
+    model: options.frontierModel,
     fallbackOccurred: Boolean(fallbackReason),
     fallbackReason,
     latencyMs: Date.now() - startedAt,
   })
   return result
+}
+
+/**
+ * Small structured server-log sink for a reviewed routine workload. This is
+ * intentionally metadata-only: prompts, completions, response bodies, and
+ * credentials never reach it.
+ */
+export function createRoutineInferenceLogger(workload: string): (metadata: RoutineInferenceMetadata) => void {
+  return (metadata) => console.info('[routine-inference]', { workload, ...metadata })
 }
 
 export class RoutineInferenceUnavailableError extends Error {

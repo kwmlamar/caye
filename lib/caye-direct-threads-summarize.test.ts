@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { afterEach, describe, it, expect, vi, beforeEach } from 'vitest'
 
 vi.mock('server-only', () => ({}))
 
@@ -37,7 +37,7 @@ vi.mock('@/lib/caye-direct-threads', () => ({
   getThreadMessages: vi.fn(),
 }))
 
-import { maybeGenerateThreadTitle, maybeRefreshThreadSummary } from './caye-direct-threads-summarize'
+import { maybeGenerateThreadTitle, maybeRefreshThreadSummary, parseRoutineThreadTitle } from './caye-direct-threads-summarize'
 import { getThreadMessages } from './caye-direct-threads'
 
 function textResponse(text: string) {
@@ -65,6 +65,12 @@ beforeEach(() => {
   vi.mocked(getThreadMessages).mockReset()
 })
 
+afterEach(() => {
+  vi.unstubAllEnvs()
+  vi.unstubAllGlobals()
+  vi.restoreAllMocks()
+})
+
 describe('maybeGenerateThreadTitle', () => {
   it('titles a fresh thread from its first exchange, once', async () => {
     threadsDb.set('t1', { id: 't1', title: null, summary: null, summary_updated_at: null })
@@ -87,6 +93,107 @@ describe('maybeGenerateThreadTitle', () => {
 
     expect(loggedMessagesCreate).not.toHaveBeenCalled()
     expect(updates).toHaveLength(0)
+  })
+
+  it('uses the validated routine title without calling the frontier model', async () => {
+    threadsDb.set('t1', { id: 't1', title: null, summary: null, summary_updated_at: null })
+    vi.mocked(getThreadMessages).mockResolvedValue([messageRow(0, 'Emily wants a 3-person golf cart tour.')] as any)
+    vi.stubEnv('CAYE_ROUTINE_MODEL_ENABLED', 'true')
+    vi.stubEnv('CAYE_ROUTINE_MODEL_BASE_URL', 'https://routine.example/v1')
+    vi.stubEnv('CAYE_ROUTINE_MODEL_API_KEY', 'routine-test-secret')
+    vi.stubEnv('CAYE_ROUTINE_MODEL', 'small-model')
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content: '{"kind":"title","title":"Emily golf cart tour"}' } }] }), { status: 200 })))
+
+    await maybeGenerateThreadTitle('ws-1', 't1')
+
+    expect(loggedMessagesCreate).not.toHaveBeenCalled()
+    expect(updates[0].patch.title).toBe('Emily golf cart tour')
+  })
+
+  it('preserves the existing frontier title call when routine routing is disabled', async () => {
+    threadsDb.set('t1', { id: 't1', title: null, summary: null, summary_updated_at: null })
+    vi.mocked(getThreadMessages).mockResolvedValue([messageRow(0, 'Emily wants a tour.')] as any)
+    loggedMessagesCreate.mockResolvedValue(textResponse('Emily tour request'))
+    vi.stubEnv('CAYE_ROUTINE_MODEL_ENABLED', 'false')
+    const fetch = vi.fn()
+    vi.stubGlobal('fetch', fetch)
+
+    await maybeGenerateThreadTitle('ws-1', 't1')
+
+    expect(fetch).not.toHaveBeenCalled()
+    expect(loggedMessagesCreate).toHaveBeenCalledOnce()
+    expect(updates[0].patch.title).toBe('Emily tour request')
+  })
+
+  it.each([
+    ['invalid routine structure', '{"kind":"title","title":"One"}'],
+    ['explicit routine escalation', '{"kind":"escalate"}'],
+  ])('falls back to the existing frontier title call for %s', async (_name, content) => {
+    threadsDb.set('t1', { id: 't1', title: null, summary: null, summary_updated_at: null })
+    vi.mocked(getThreadMessages).mockResolvedValue([messageRow(0, 'Emily wants a tour.')] as any)
+    loggedMessagesCreate.mockResolvedValue(textResponse('Emily tour request'))
+    vi.stubEnv('CAYE_ROUTINE_MODEL_ENABLED', 'true')
+    vi.stubEnv('CAYE_ROUTINE_MODEL_BASE_URL', 'https://routine.example/v1')
+    vi.stubEnv('CAYE_ROUTINE_MODEL_API_KEY', 'routine-test-secret')
+    vi.stubEnv('CAYE_ROUTINE_MODEL', 'small-model')
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content } }] }), { status: 200 })))
+
+    await maybeGenerateThreadTitle('ws-1', 't1')
+
+    expect(loggedMessagesCreate).toHaveBeenCalledOnce()
+    expect(updates[0].patch.title).toBe('Emily tour request')
+  })
+
+  it('falls back to frontier when routine inference fails and logs only safe metadata', async () => {
+    threadsDb.set('t1', { id: 't1', title: null, summary: null, summary_updated_at: null })
+    vi.mocked(getThreadMessages).mockResolvedValue([messageRow(0, 'Emily wants a tour.')] as any)
+    loggedMessagesCreate.mockResolvedValue(textResponse('Emily tour request'))
+    vi.stubEnv('CAYE_ROUTINE_MODEL_ENABLED', 'true')
+    vi.stubEnv('CAYE_ROUTINE_MODEL_BASE_URL', 'https://routine.example/v1')
+    vi.stubEnv('CAYE_ROUTINE_MODEL_API_KEY', 'routine-test-secret')
+    vi.stubEnv('CAYE_ROUTINE_MODEL', 'small-model')
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('unavailable', { status: 503 })))
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+
+    await maybeGenerateThreadTitle('ws-1', 't1')
+
+    expect(loggedMessagesCreate).toHaveBeenCalledOnce()
+    expect(info).toHaveBeenCalledWith('[routine-inference]', expect.objectContaining({ workload: 'caye_direct_thread_title', actualTier: 'frontier', fallbackReason: 'routine_provider_error' }))
+    expect(JSON.stringify(info.mock.calls)).not.toContain('routine-test-secret')
+    expect(JSON.stringify(info.mock.calls)).not.toContain('Emily wants a tour')
+  })
+
+  it('falls back to frontier when the routine title request times out', async () => {
+    threadsDb.set('t1', { id: 't1', title: null, summary: null, summary_updated_at: null })
+    vi.mocked(getThreadMessages).mockResolvedValue([messageRow(0, 'Emily wants a tour.')] as any)
+    loggedMessagesCreate.mockResolvedValue(textResponse('Emily tour request'))
+    vi.stubEnv('CAYE_ROUTINE_MODEL_ENABLED', 'true')
+    vi.stubEnv('CAYE_ROUTINE_MODEL_BASE_URL', 'https://routine.example/v1')
+    vi.stubEnv('CAYE_ROUTINE_MODEL_API_KEY', 'routine-test-secret')
+    vi.stubEnv('CAYE_ROUTINE_MODEL', 'small-model')
+    vi.stubEnv('CAYE_ROUTINE_MODEL_TIMEOUT_MS', '5')
+    vi.stubGlobal('fetch', vi.fn((_url, init: RequestInit) => new Promise((_resolve, reject) => init.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError'))))))
+
+    await maybeGenerateThreadTitle('ws-1', 't1')
+
+    expect(loggedMessagesCreate).toHaveBeenCalledOnce()
+    expect(updates[0].patch.title).toBe('Emily tour request')
+  })
+})
+
+describe('parseRoutineThreadTitle', () => {
+  it.each([
+    '{"kind":"unknown","title":"Emily tour request"}',
+    '{"kind":"title","title":"Emily tour request","extra":true}',
+    '{"kind":"title","title":"Emily tour request."}',
+    '{"kind":"title","title":"One"}',
+  ])('rejects invalid or unknown routine title shapes', (content) => {
+    expect(() => parseRoutineThreadTitle(content)).toThrow()
+  })
+
+  it('accepts only the explicit structural escalation shape', () => {
+    expect(parseRoutineThreadTitle('{"kind":"escalate"}')).toEqual({ kind: 'escalate' })
+    expect(() => parseRoutineThreadTitle('{"kind":"escalate","title":"ignored"}')).toThrow()
   })
 })
 

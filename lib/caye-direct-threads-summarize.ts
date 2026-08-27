@@ -2,6 +2,7 @@ import 'server-only'
 import Anthropic from '@anthropic-ai/sdk'
 import { createServiceClient } from '@/lib/supabase-server'
 import { loggedMessagesCreate } from '@/lib/llm-telemetry'
+import { createRoutineInferenceLogger, runInference, type RoutineParseResult } from '@/lib/routine-inference'
 import { getThread, getThreadMessages } from '@/lib/caye-direct-threads'
 import { isInternalTurnBody, visibleBody } from '@/lib/caye-operator-messages'
 
@@ -15,6 +16,13 @@ const CHEAP_MODEL = 'claude-haiku-4-5-20251001'
 // saves. Matches the "lazy, not per-message" principle: most threads
 // never cross this and never get a summary at all.
 const SUMMARY_TRIGGER_MESSAGE_COUNT = 20
+const TITLE_WORKLOAD = 'caye_direct_thread_title'
+
+const FRONTIER_TITLE_SYSTEM =
+  'You title a short conversation snippet in 2-6 words. Describe the SUBJECT, not the fact that it\'s a conversation. No punctuation at the end, no quotes, no "Conversation about". Examples: "Emily pricing exception", "August bookings", "Deposit policy". Reply with the title only.'
+
+const ROUTINE_TITLE_SYSTEM =
+  'Classify a founder-only conversation snippet into a sidebar title. Return ONLY JSON matching exactly {"kind":"title","title":"2-6 word subject"} or {"kind":"escalate"}. Use escalate when the subject is ambiguous. A title must be 2-6 plain words, at most 80 characters, without quotes or ending punctuation. It is display-only and must describe the subject, not that this is a conversation.'
 
 /**
  * One-shot title generation for a founder-created Direct thread, fired
@@ -36,20 +44,19 @@ export async function maybeGenerateThreadTitle(workspaceId: string, threadId: st
   if (visible.length === 0) return
 
   try {
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
-    const response = await loggedMessagesCreate(
-      client,
-      {
-        model: CHEAP_MODEL,
-        max_tokens: 20,
-        system:
-          'You title a short conversation snippet in 2-6 words. Describe the SUBJECT, not the fact that it\'s a conversation. No punctuation at the end, no quotes, no "Conversation about". Examples: "Emily pricing exception", "August bookings", "Deposit policy". Reply with the title only.',
-        messages: [{ role: 'user', content: visible.join('\n\n').slice(0, 2000) }],
+    const transcript = visible.join('\n\n').slice(0, 2000)
+    const title = await runInference({
+      tier: 'routine',
+      frontierModel: CHEAP_MODEL,
+      frontier: () => generateThreadTitleWithFrontier(transcript, workspaceId),
+      routine: {
+        system: ROUTINE_TITLE_SYSTEM,
+        messages: [{ role: 'user', content: transcript }],
+        maxOutputTokens: 60,
+        parse: parseRoutineThreadTitle,
       },
-      { source: 'lib/caye-direct-threads-summarize.ts:maybeGenerateThreadTitle', workspaceId }
-    )
-    const text = response.content.find((b): b is Anthropic.TextBlock => b.type === 'text')?.text?.trim()
-    const title = text?.replace(/^["']|["']$/g, '').slice(0, 80)
+      onMetadata: createRoutineInferenceLogger(TITLE_WORKLOAD),
+    })
     if (title) {
       await supabase
         .from('caye_direct_threads')
@@ -60,6 +67,47 @@ export async function maybeGenerateThreadTitle(workspaceId: string, threadId: st
   } catch (err) {
     console.warn('[caye-direct-threads-summarize] title generation failed:', err)
   }
+}
+
+/** The original title generation path, retained verbatim as routine fallback. */
+async function generateThreadTitleWithFrontier(transcript: string, workspaceId: string): Promise<string | null> {
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+  const response = await loggedMessagesCreate(
+    client,
+    {
+      model: CHEAP_MODEL,
+      max_tokens: 20,
+      system: FRONTIER_TITLE_SYSTEM,
+      messages: [{ role: 'user', content: transcript }],
+    },
+    { source: 'lib/caye-direct-threads-summarize.ts:maybeGenerateThreadTitle', workspaceId }
+  )
+  const text = response.content.find((b): b is Anthropic.TextBlock => b.type === 'text')?.text?.trim()
+  return text?.replace(/^["']|["']$/g, '').slice(0, 80) ?? null
+}
+
+/** Strictly accepts the bounded routine schema; all uncertainty escalates. */
+export function parseRoutineThreadTitle(content: string): RoutineParseResult<string | null> {
+  let value: unknown
+  try {
+    value = JSON.parse(content)
+  } catch {
+    throw new Error('routine thread title was not JSON')
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('routine thread title was not an object')
+  const record = value as Record<string, unknown>
+  if (record.kind === 'escalate' && Object.keys(record).length === 1) return { kind: 'escalate' }
+  if (record.kind !== 'title' || Object.keys(record).length !== 2 || typeof record.title !== 'string') {
+    throw new Error('routine thread title had an unknown shape')
+  }
+  const title = record.title.trim()
+  if (!isValidRoutineTitle(title)) throw new Error('routine thread title failed validation')
+  return { kind: 'output', value: title }
+}
+
+function isValidRoutineTitle(title: string): boolean {
+  const words = title.split(/\s+/).filter(Boolean)
+  return words.length >= 2 && words.length <= 6 && title.length <= 80 && !/["']/.test(title) && !/[.!?;:,]$/.test(title)
 }
 
 /**
