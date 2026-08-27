@@ -8,5 +8,20 @@ export const metadata: Metadata = {
 }
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
-  return children
+  return (
+    <>
+      <style>{`
+        /* Caye Direct already labels assistant turns in text. Repeating the
+           brand mark beside every reply (and again while thinking) adds noise
+           without carrying information, so keep the transcript typographic. */
+        .caye-direct-thread img[src="/caye-logo-icon.png"] {
+          display: none !important;
+        }
+        .caye-direct-thread .caye-working-mark {
+          display: none !important;
+        }
+      `}</style>
+      {children}
+    </>
+  )
 }
