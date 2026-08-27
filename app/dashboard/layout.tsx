@@ -11,13 +11,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   return (
     <>
       <style>{`
-        /* Caye Direct already labels assistant turns in text. Repeating the
-           brand mark beside every reply (and again while thinking) adds noise
-           without carrying information, so keep the transcript typographic. */
+        /* Caye Direct is already visually directional: founder turns are
+           right-aligned bubbles and Caye turns are open left-aligned text.
+           Repeating names/marks on every turn adds noise without information. */
         .caye-direct-thread img[src="/caye-logo-icon.png"] {
           display: none !important;
         }
-        .caye-direct-thread .caye-working-mark {
+        .caye-direct-thread .caye-working-mark,
+        .caye-direct-thread .caye-direct-sender {
           display: none !important;
         }
       `}</style>
