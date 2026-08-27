@@ -26,6 +26,13 @@ export interface OutreachPauseState {
   disposition: OutreachPauseDisposition
 }
 
+/**
+ * Provenance answers why the switch was set. `activeSafetyCondition` answers
+ * whether a deterministic stop exists now. They intentionally are separate:
+ * a past bounce stop whose threshold later falls below the limit is not proof
+ * that sending is safe again, so it remains held until a future policy adds a
+ * real recovery proof.
+ */
 export function classifyOutreachPause(input: { paused: boolean; source?: string | null; reason?: string | null; pausedAt?: string | null; activeSafetyCondition?: OutreachSafetyCondition }): OutreachPauseState {
   const source: OutreachPauseSource = ['owner_manual', 'bounce_safety', 'provider_safety', 'compliance', 'system_recoverable'].includes(String(input.source))
     ? input.source as Exclude<OutreachPauseSource, 'unknown'>
@@ -54,11 +61,16 @@ export async function pauseOutreachForOwner(workspaceId: string, reason = 'Pause
     .eq('workspace_id', workspaceId).maybeSingle()
   if (readError) throw new Error(readError.message)
   const current = classifyOutreachPause({ paused: existing?.outreach_autosend_paused ?? false, source: existing?.outreach_pause_source, reason: existing?.outreach_pause_reason, pausedAt: existing?.outreach_paused_at })
+  // A second "pause" command must never relabel a safety/legacy stop as an
+  // owner pause, which would accidentally make it resumable later.
   if (current.paused) return
   const { data: updated, error } = await db.from('workspace_ai_config').update({
     outreach_autosend_paused: true, outreach_pause_source: 'owner_manual', outreach_pause_reason: reason, outreach_paused_at: new Date().toISOString(),
   }).eq('workspace_id', workspaceId).eq('outreach_autosend_paused', false).select('workspace_id')
   if (error) throw new Error(error.message)
+  // Existing outreach workspaces always have config. More importantly, a
+  // zero-row conditional update means a concurrent safety pause won; never
+  // overwrite it with a lower-priority manual provenance label.
   if (!updated?.length) return
   await recordPauseEvent({ workspaceId, action: 'paused', source: 'owner_manual', reason, actorRole })
 }
@@ -94,6 +106,14 @@ export async function recordBounceKillSwitchPause(workspaceId: string, reason: s
   await recordPauseEvent({ workspaceId, action: 'paused', source: 'bounce_safety', reason, actorRole: 'system' })
 }
 
+/**
+ * The same trailing-window rule lib/outreach-kill-switch.ts's
+ * shouldTripKillSwitch applies live, replayed after the fact against a
+ * sorted bounce timestamp list. Returns the earliest timestamp at which the
+ * running trailing-`windowHours` count first reached `threshold`, or null if
+ * it never did. O(n^2) on the input length, which is fine — a workspace's
+ * bounce log is a few dozen rows, not a stream.
+ */
 export function findTrailingWindowCrossing(isoTimestamps: string[], threshold: number, windowHours: number): string | null {
   const times = isoTimestamps.map((t) => Date.parse(t)).filter((t) => !Number.isNaN(t)).sort((a, b) => a - b)
   const windowMs = windowHours * 60 * 60 * 1000
@@ -112,6 +132,21 @@ export interface OutreachPauseReconciliation {
   state: OutreachPauseState
 }
 
+/**
+ * One-time deterministic backfill for a pause whose provenance was never
+ * recorded because it predates 20260824_outreach_pause_provenance.sql. Does
+ * NOT clear the pause or make it owner-resumable — it only establishes
+ * whether the workspace's own bounce log shows a real threshold crossing
+ * that would have tripped lib/outreach-kill-switch.ts, using the exact same
+ * rule that code applies going forward. A crossing found this way is
+ * retroactive evidence, not a guess: it reconciles the row to
+ * `bounce_safety`, which classifyOutreachPause still routes to
+ * `safety_recovery_not_supported` — fully blocked from ordinary resume, same
+ * as a live bounce trip. No crossing found -> the row is left untouched;
+ * provenance genuinely cannot be established and it must keep failing closed
+ * as `unknown_blocked`. Safe to call repeatedly (idempotent): once a row has
+ * a non-null source, later calls are a no-op.
+ */
 export async function reconcileLegacyOutreachPause(workspaceId: string): Promise<OutreachPauseReconciliation> {
   const db = createServiceClient()
   const { data: config, error } = await db.from('workspace_ai_config')
@@ -131,6 +166,9 @@ export async function reconcileLegacyOutreachPause(workspaceId: string): Promise
 
   const reason = `Reconciled from a legacy pause with no recorded provenance: bounce count crossed the safety threshold of ${threshold} within a trailing ${windowHours}h window around ${crossing}. Backfilled retroactively — the original trip predates provenance tracking (20260824_outreach_pause_provenance.sql).`
   const pausedAt = config?.outreach_paused_at ?? crossing
+  // Conditional on source still being null: a concurrent reconciliation run
+  // or a fresh manual/system pause must win over this backfill, never be
+  // overwritten by it.
   const { data: updated, error: updateError } = await db.from('workspace_ai_config')
     .update({ outreach_pause_source: 'bounce_safety', outreach_pause_reason: reason, outreach_paused_at: pausedAt })
     .eq('workspace_id', workspaceId).eq('outreach_autosend_paused', true).is('outreach_pause_source', null)
@@ -148,10 +186,10 @@ export async function reconcileLegacyOutreachPause(workspaceId: string): Promise
 }
 
 /**
- * Founder-only escape hatch for a resolved bounce-safety stop. This never
- * handles unknown/provider/compliance pauses and it rechecks the live bounce
- * window before clearing anything. It is intentionally not exposed to Caye
- * or an agent tool.
+ * Founder-only escape hatch for a resolved bounce-safety stop. This remains
+ * unreachable from Caye/the agent layer, only applies to an established
+ * `bounce_safety` provenance, rechecks the live trailing-window threshold,
+ * requires a written justification, and audits the successful override.
  */
 export async function founderOverrideResolvedBounceSafetyPause(workspaceId: string, justification: string): Promise<OutreachPauseState> {
   if (!justification?.trim()) throw new Error('A written justification is required to override a bounce-safety stop.')
