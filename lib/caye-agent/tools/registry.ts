@@ -1,4 +1,5 @@
 import type { Tool } from './types'
+import { createServiceClient } from '@/lib/supabase-server'
 import { gateHighRisk } from './high-risk-gate'
 import { HIGH_RISK_TOOLS } from './high-risk-registry'
 import {
@@ -6,6 +7,7 @@ import {
   EXTERNAL_DRAFT_INTENT_REQUIRED,
   verifyExternalDraftIntent,
 } from './external-draft-intent'
+import { updateActiveWork } from '@/lib/whatsapp/active-work'
 import { confirmPendingAction } from './write-high/confirm-pending-action'
 import { getCalendar } from './read/get-calendar'
 import { getZohoCalendar } from './read/get-zoho-calendar'
@@ -22,11 +24,14 @@ import { getPendingQuotes } from './read/get-pending-quotes'
 import { searchThreads } from './read/search-threads'
 import { queryBusinessKnowledge } from './read/query-business-knowledge'
 import { listStandingRules } from './read/list-standing-rules'
+import { listActiveGoals } from './read/list-active-goals'
 import { getServices } from './read/get-services'
 import { getTeamMembers } from './read/get-team-members'
 import { getChannelStatus } from './read/get-channel-status'
 import { getOutreachStatus } from './read/get-outreach-operational-status'
 import { getOutreachTargeting } from './read/get-outreach-targeting'
+import { getArtifact } from './read/get-artifact'
+import { searchArtifacts } from './read/search-artifacts'
 import { getConnectLink } from './write-low/get-connect-link'
 import { recordChannelIntake } from './write-low/record-channel-intake'
 import { markHandled } from './write-low/mark-handled'
@@ -62,6 +67,8 @@ import { addInternalNote } from './write-low/add-internal-note'
 import { sendPaymentConfirmation } from './write-low/send-payment-confirmation'
 import { notifyDriver } from './write-low/notify-driver'
 import { relateToDirectThread } from './write-low/relate-to-direct-thread'
+import { annotateArtifactTool } from './write-low/annotate-artifact'
+import { retrieveArtifactForOperator } from './write-low/retrieve-artifact-for-operator'
 import { getMyAssignments } from './read/get-my-assignments'
 import { getLogisticsFacts } from './read/get-logistics-facts'
 import { escalateDriverQuestion } from './write-low/escalate-driver-question'
@@ -74,6 +81,8 @@ import { checkAvailabilityTool } from './read/front-desk/check-availability'
 import { lookupPriceTool } from './read/front-desk/lookup-price'
 import { findBookingsTool } from './read/front-desk/find-bookings'
 import { sendCustomerReply } from './write-high/send-customer-reply'
+import { createParametricPart } from './write-low/create-parametric-part'
+import { reviseParametricPart } from './write-low/revise-parametric-part'
 
 /**
  * All tools available to the back-office agent.
@@ -163,7 +172,17 @@ function registeredHighRiskTool(tool: AnyTool): AnyTool {
         if (typeof conversationId === 'string') {
           await cancelPendingExternalDraftsForConversation({ ctx, conversationId })
         }
-        return gated.execute(args, ctx)
+        const result = await gated.execute(args, ctx)
+        const body = (args as { body?: unknown }).body
+        if (typeof body === 'string' && body.trim()) {
+          const data = result.data as { executed?: unknown } | undefined
+          await updateActiveWork({
+            supabase: createServiceClient(), workspaceId: ctx.workspaceId, operatorId: ctx.operatorId,
+            work: ctx.activeWork, artifact: body.trim(),
+            status: result.ok && data?.executed !== true ? 'ready' : result.ok ? 'completed' : 'failed',
+          })
+        }
+        return result
       },
     }
   }
@@ -188,11 +207,15 @@ export const TOOL_REGISTRY: AnyTool[] = [
   searchThreads as AnyTool,
   queryBusinessKnowledge as AnyTool,
   listStandingRules as AnyTool,
+  listActiveGoals as AnyTool,
   getServices as AnyTool,
   getTeamMembers as AnyTool,
   getChannelStatus as AnyTool,
   getOutreachStatus as AnyTool,
   getOutreachTargeting as AnyTool,
+  // Multimodal Business Memory (#87)
+  getArtifact as AnyTool,
+  searchArtifacts as AnyTool,
   // Low-risk write
   getConnectLink as AnyTool,
   recordChannelIntake as AnyTool,
@@ -229,6 +252,12 @@ export const TOOL_REGISTRY: AnyTool[] = [
   runOutreach as AnyTool,
   recoverOutreachOperations as AnyTool,
   relateToDirectThread as AnyTool,
+  annotateArtifactTool as AnyTool,
+  retrieveArtifactForOperator as AnyTool,
+  // Engineering V1 is intentionally founder-only and constrained to a fixed
+  // CAD template; it is not a generic code execution surface.
+  createParametricPart as AnyTool,
+  reviseParametricPart as AnyTool,
   // High-risk write — confirmation flow enforced in code (gateHighRisk,
   // #64), not just the prompt. See lib/caye-agent/tools/high-risk-gate.ts.
   // The ungated list lives in high-risk-registry.ts because

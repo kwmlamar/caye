@@ -42,6 +42,7 @@ import { resolveAcknowledgedAttentionItems, acknowledgeAttentionItems } from '@/
 import { dispatchOperatorIntent } from '@/lib/whatsapp/actions'
 import { sendFreeFormWhatsApp, deliveryFieldsFromResult, type SendResult } from '@/lib/whatsapp/outbound'
 import { downloadWhatsAppMedia, isSupportedImageMimeType } from '@/lib/whatsapp/media'
+import { ingestArtifact } from '@/lib/artifacts/ingest'
 import { decideImageBurst } from '@/lib/whatsapp/image-burst'
 import { generateCayeAutoReply } from '@/lib/caye-reply'
 import { alertFounderOfDeliveryFailure } from '@/lib/whatsapp/founder-alert'
@@ -63,6 +64,7 @@ import { FIRST_DISCOVERY_QUESTION } from '@/lib/onboarding'
 import { mediaPlaceholder } from '@/lib/operator-text-guard'
 import { fetchBusinessFacts, formatBusinessFactsBlock } from '@/lib/business-facts'
 import { routeOperatorLearningCorrection } from '@/lib/operator-learning-router'
+import { applyActiveWorkPrecedence, intentWithActiveWork, isActiveWorkCorrection, loadActiveWork, seedActiveWork } from '@/lib/whatsapp/active-work'
 import {
   getActiveDemoSession,
   startDemoSession,
@@ -163,6 +165,8 @@ interface WaInboundMessage {
   button?: { text?: string; payload?: string }
   /** Present when type === 'image' — a photo/screenshot sent to Caye Direct. */
   image?: { id: string; mime_type: string; sha256?: string; caption?: string }
+  /** Present when type === 'document' — a PDF/file sent to Caye Direct (#87). */
+  document?: { id: string; mime_type: string; sha256?: string; filename?: string; caption?: string }
   context?: { id: string; from?: string }
 }
 
@@ -847,6 +851,21 @@ async function handleOneInbound(
     return
   }
 
+  // ── Document messages (PDFs, 2026-08-26, #87) ──────────────────────────
+  if (message.type === 'document' && message.document) {
+    await handleDocumentInbound(supabase, {
+      message,
+      workspaceId,
+      operator,
+      operatorId,
+      callerRole,
+      callerName,
+      replyTo,
+      whatsappOutboundEnabled: cfg.whatsapp_outbound_enabled,
+    })
+    return
+  }
+
   if (message.type !== 'text' || !message.text?.body) {
     // Non-text, non-image — just log and bail. We don't classify other media in v1.
     await supabase.from('caye_operator_messages').insert({
@@ -900,11 +919,13 @@ async function handleOneInbound(
     .maybeSingle()
   const lastOutboundBody: string | null = lastRow?.body ?? null
 
+  const activeWork = await loadActiveWork({ supabase, workspaceId, operatorId })
   const rawIntent = await classifyOperatorIntent({
     operatorText: body,
     pending,
     lastCayeOutboundBody: lastOutboundBody,
     quotedMessage: null,
+    activeWork,
   })
 
   // Strip an item_ref the operator never gave. The classifier answered a bare
@@ -922,12 +943,14 @@ async function handleOneInbound(
     if (reason) console.warn(`[whatsapp-operator] ${workspaceId}: ${reason} — dropped`)
     return { ...one, item_ref: itemRef }
   }
-  const intent: OperatorIntent =
+  const unprecedencedIntent: OperatorIntent =
     rawIntent.kind === 'multi'
       ? { ...rawIntent, actions: rawIntent.actions.map(guardRef) }
       : rawIntent.kind === 'unclear'
         ? rawIntent // carries no item_ref
         : guardRef(rawIntent)
+  const intent = applyActiveWorkPrecedence(unprecedencedIntent, body, activeWork)
+  const seededWork = seedActiveWork(body, intent)
 
   // Persist inbound + classified intent + claude_format for the user turn.
   // claude_format is what the back-office agent's sliding-window loader
@@ -940,7 +963,7 @@ async function handleOneInbound(
       direction: 'inbound',
       wa_message_id: message.id,
       body,
-      intent,
+      intent: intentWithActiveWork(intent, seededWork),
       claude_format: { role: 'user', content: body },
       operator_allowlist_id: operator.id,
       operator_name: operator.name,
@@ -1069,7 +1092,7 @@ async function handleOneInbound(
     )
   }
 
-  if (LEGACY_DISPATCH_KINDS.has(intent.kind) && ownership.owner === 'legacy' && !legacyTargetMissing) {
+  if (LEGACY_DISPATCH_KINDS.has(intent.kind) && ownership.owner === 'legacy' && !legacyTargetMissing && !isActiveWorkCorrection(body, activeWork)) {
     const result = await dispatchOperatorIntent({ workspaceId }, intent, pending)
     if (result.ackBody && result.ackBody.trim()) {
       // Send ack synchronously instead of via the outbound queue. The
@@ -1353,6 +1376,26 @@ async function handleImageInbound(
       { type: 'image', source: { type: 'base64', media_type: mimeType, data: base64 } },
       ...(caption ? [{ type: 'text' as const, text: caption }] : []),
     ]
+
+    // Durable Business Memory (#87): persist the artifact so it survives past
+    // this turn — the vision call above only ever sees these bytes once.
+    // Best-effort: a storage/ingestion failure must never block the existing
+    // reply flow, which is unchanged either way.
+    try {
+      await ingestArtifact({
+        workspaceId,
+        sourceChannel: 'whatsapp_operator',
+        bytes: Buffer.from(base64, 'base64'),
+        declaredMimeType: mimeType,
+        filename: null,
+        providerAttachmentId: image.id,
+        operatorMessageId: null,
+        senderOperatorAllowlistId: operator.id,
+        senderLabel: operator.name,
+      })
+    } catch (ingestErr) {
+      console.error(`[whatsapp-operator] artifact ingestion failed for ${workspaceId}:`, ingestErr)
+    }
   } catch (err) {
     console.error(`[whatsapp-operator] image download failed for ${workspaceId}:`, err)
     await sendFreeFormWhatsApp(
@@ -1397,6 +1440,130 @@ async function handleImageInbound(
       `back-office-image-error-${message.id}`
     ).catch((sendErr) =>
       console.error(`[whatsapp-operator] image error-fallback send failed for ${workspaceId}:`, sendErr)
+    )
+  }
+}
+
+// ─── Document inbound (2026-08-26, #87) ──────────────────────────────────
+//
+// PDFs sent to Caye Direct. Same shape as handleImageInbound: download,
+// persist as a durable business_artifacts row (async understanding via the
+// caye_pending_operations queue — a PDF extraction call is slower than an
+// image description and must not block this reply), then let the
+// back-office agent read the PDF live for THIS turn via an Anthropic
+// document content block, same as the image path does with a vision block.
+// Non-PDF documents (docx/xlsx/etc.) are still ingested — original bytes
+// preserved — but are not read inline; understanding for those modalities
+// is schema-ready, not implemented (processArtifact marks them unsupported).
+
+async function handleDocumentInbound(
+  supabase: ReturnType<typeof createServiceClient>,
+  params: ImageInboundParams
+): Promise<void> {
+  const { message, workspaceId, operator, operatorId, callerRole, callerName, replyTo, whatsappOutboundEnabled } =
+    params
+  const document = message.document!
+  const caption = document.caption?.trim() || null
+  const filename = document.filename ?? null
+  const placeholderBody = filename ? `[document: ${filename}]` : '[document]'
+
+  await supabase.from('caye_operator_messages').insert({
+    workspace_id: workspaceId,
+    direction: 'inbound',
+    wa_message_id: message.id,
+    body: placeholderBody,
+    intent: null,
+    claude_format: { role: 'user', content: placeholderBody },
+    operator_allowlist_id: operator.id,
+    operator_name: operator.name,
+    operator_role: operator.role,
+  })
+
+  if (!whatsappOutboundEnabled) {
+    console.log(`[whatsapp-operator] flag off for ${workspaceId} — skipping document action`)
+    return
+  }
+
+  let base64: string
+  let mimeType: string
+  try {
+    const downloaded = await downloadWhatsAppMedia(document.id)
+    base64 = downloaded.base64
+    mimeType = downloaded.mimeType
+  } catch (err) {
+    console.error(`[whatsapp-operator] document download failed for ${workspaceId}:`, err)
+    await sendFreeFormWhatsApp(
+      replyTo,
+      "Couldn't pull that document down — try sending it again?",
+      `document-download-error-${message.id}`
+    )
+    return
+  }
+
+  try {
+    await ingestArtifact({
+      workspaceId,
+      sourceChannel: 'whatsapp_operator',
+      bytes: Buffer.from(base64, 'base64'),
+      declaredMimeType: mimeType,
+      filename,
+      providerAttachmentId: document.id,
+      operatorMessageId: null,
+      senderOperatorAllowlistId: operator.id,
+      senderLabel: operator.name,
+    })
+  } catch (ingestErr) {
+    console.error(`[whatsapp-operator] artifact ingestion failed for ${workspaceId}:`, ingestErr)
+  }
+
+  if (mimeType !== 'application/pdf') {
+    await sendFreeFormWhatsApp(
+      replyTo,
+      `Got the file${filename ? ` (${filename})` : ''} — I've saved it, but I can only read PDF content directly right now.`,
+      `document-unsupported-${message.id}`
+    )
+    return
+  }
+
+  const content: Anthropic.MessageParam['content'] = [
+    { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } },
+    ...(caption ? [{ type: 'text' as const, text: caption }] : []),
+  ]
+
+  try {
+    const agentResult = await cayeAgent({
+      mode: 'back-office',
+      workspaceId,
+      userMessage: content,
+      callerRole,
+      callerName,
+      operatorId,
+    })
+
+    if (!agentResult.replyText) {
+      console.warn(`[whatsapp-operator] empty reply from back-office agent (document) for ${workspaceId}`)
+      return
+    }
+
+    const sendResult = await sendFreeFormWhatsApp(
+      replyTo,
+      agentResult.replyText,
+      `back-office-document-${message.id}`
+    )
+    if (sendResult.status === 'failed') {
+      console.error(`[whatsapp-operator] Meta send failed (document) for ${workspaceId}:`, sendResult.error)
+    }
+
+    const insertedDocument = await persistAgentTurns(supabase, workspaceId, agentResult.newTurns, operator, sendResult)
+    await linkInsertedMessagesToThreads(supabase, insertedDocument.map((r) => r.id), agentResult.linkedThreadIds)
+  } catch (err) {
+    console.error(`[whatsapp-operator] back-office agent failed (document) for ${workspaceId}:`, err)
+    await sendFreeFormWhatsApp(
+      replyTo,
+      "Sorry, I hit a snag reading that document — give me a minute and try again.",
+      `back-office-document-error-${message.id}`
+    ).catch((sendErr) =>
+      console.error(`[whatsapp-operator] document error-fallback send failed for ${workspaceId}:`, sendErr)
     )
   }
 }

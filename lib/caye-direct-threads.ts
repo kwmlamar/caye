@@ -1,6 +1,7 @@
 import 'server-only'
 import type { createServiceClient } from '@/lib/supabase-server'
 import { resolveFounderOperator } from '@/lib/operator-identity'
+import type { RichResult } from './caye-direct-rich-results'
 
 /**
  * Founder-facing topic threads over Caye Direct (2026-08-13).
@@ -279,6 +280,7 @@ export interface ThreadMessageRow {
   operator_role: string | null
   wa_delivery_status: string | null
   wa_delivery_error: string | null
+  rich_result?: RichResult | null
 }
 
 /**
@@ -419,7 +421,7 @@ export async function getThreadMessages(
 
   const { data, error } = await supabase
     .from('caye_operator_messages')
-    .select('id, direction, body, created_at, origin, operator_name, operator_role, wa_delivery_status, wa_delivery_error')
+    .select('id, direction, body, created_at, origin, operator_name, operator_role, wa_delivery_status, wa_delivery_error, rich_result')
     .in('id', messageIds)
     .order('created_at', { ascending: true })
     .limit(limit)

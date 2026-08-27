@@ -46,7 +46,7 @@ export function planChain(
   hints: RouterTaskHints | undefined,
   policy: RouterPolicy = DEFAULT_ROUTER_POLICY
 ): BackendId[] {
-  const apiTail: BackendId[] = policy.allowApiFallback ? ['anthropic_api', 'openai_api'] : []
+  const apiTail: BackendId[] = policy.allowApiFallback ? ['anthropic_api', 'openai_api', 'openrouter'] : []
 
   if (requestedMode === 'claude') {
     return dedupe(['claude_subscription', ...apiTail.filter((b) => b === 'anthropic_api'), ...apiTail])
@@ -55,12 +55,12 @@ export function planChain(
     return dedupe(['openai_codex_subscription', ...apiTail.filter((b) => b === 'openai_api'), ...apiTail])
   }
   if (requestedMode === 'api') {
-    return policy.allowApiFallback ? ['anthropic_api', 'openai_api'] : []
+    return policy.allowApiFallback ? ['anthropic_api', 'openai_api', 'openrouter'] : []
   }
 
   // auto
   if (!policy.preferSubscriptionOverApi) {
-    return dedupe(['anthropic_api', 'openai_api', 'claude_subscription', 'openai_codex_subscription'])
+    return dedupe(['anthropic_api', 'openai_api', 'openrouter', 'claude_subscription', 'openai_codex_subscription'])
   }
   const codingLed = hints?.isCodingOrRepoTask
   const subscriptionOrder: BackendId[] = codingLed

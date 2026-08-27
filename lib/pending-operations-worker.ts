@@ -11,6 +11,7 @@ import { classifyError } from './caye-agent/tools/result'
 import { alertFounderOfDeliveryFailure } from './whatsapp/founder-alert'
 import { runOutreachSourcingJob } from './outreach-sourcing-job'
 import { recordCronRun } from './cron-run-log'
+import { processArtifact } from './artifacts/process'
 
 /**
  * Drains caye_pending_operations — the durable outbox for external effects
@@ -73,6 +74,17 @@ async function processOperation(row: PendingOperationRow): Promise<Outcome> {
         await markSynced(row)
         return 'synced'
       }
+      case 'artifact_process': {
+        const artifactId = typeof row.payload.artifact_id === 'string' ? row.payload.artifact_id : null
+        if (!artifactId) return await fail(row, 'operation payload has no artifact_id', false)
+        const result = await processArtifact(artifactId)
+        if (result.ok) {
+          await markSynced(row)
+          return 'synced'
+        }
+        return await fail(row, result.error, true)
+      }
+
       case 'zoho_calendar_upsert':
       case 'zoho_calendar_delete': {
         const bookingId = typeof row.payload.booking_id === 'string' ? row.payload.booking_id : null

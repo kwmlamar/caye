@@ -372,7 +372,7 @@ export async function runToolLoop(args: ToolLoopArgs): Promise<ToolLoopResult> {
       // raw error string it has to interpret for itself.
       const { result } = await runToolWithRecovery(tool, block.input, args.ctx, { mode, toolUseId: block.id })
       const payload = stripForModel(result)
-      const guidance = guidanceFor(result.status, result.deferred === true)
+      const guidance = guidanceFor(result.status, result.deferred === true, block.name, result.error_code)
       if (guidance) payload.how_to_report_this = guidance
       toolResults.push({
         type: 'tool_result',

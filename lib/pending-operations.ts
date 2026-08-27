@@ -16,7 +16,14 @@ import { createServiceClient } from './supabase-server'
  * counts (for calendar sync it does — the booking is already committed).
  */
 
-export type OperationKind = 'zoho_calendar_upsert' | 'zoho_calendar_delete' | 'outreach_sourcing'
+export type OperationKind =
+  | 'zoho_calendar_upsert'
+  | 'zoho_calendar_delete'
+  | 'outreach_sourcing'
+  // Multimodal Business Memory (#87): derive understanding for a
+  // business_artifacts row. Payload: { artifact_id, processing_version }.
+  // Idempotency key: `artifact_process:${artifact_id}:v${processing_version}`.
+  | 'artifact_process'
 
 export interface EnqueueArgs {
   workspaceId: string

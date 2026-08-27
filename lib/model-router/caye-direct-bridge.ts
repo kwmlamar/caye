@@ -7,9 +7,20 @@ import { runFounderToolLoop } from './tool-bridge/founder-tool-loop'
 import { ClaudeSubscriptionBackend } from './backends/claude-subscription'
 import { OpenAICodexSubscriptionBackend } from './backends/openai-codex-subscription'
 import { AnthropicApiBackend } from './backends/anthropic-api'
+import { OpenAIApiBackend, OpenRouterBackend } from './backends/openai-compatible'
 import type { ToolCapableBackend } from './tool-bridge/types'
 import type { BackendId, FounderRouterContext, RequestedMode, RouterDecision } from './types'
 import { buildInvocationLog } from './observability'
+import type { RichResult } from '@/lib/caye-direct-rich-results'
+
+const FOUNDER_DIRECT_REASONING_GUIDANCE = `FOUNDER DIRECT — SYNTHESIZE BEFORE YOU DECLARE SOMETHING UNDEFINED
+- The founder is using Caye Direct as an operating/thinking interface, not merely querying configured database objects.
+- Treat explicit goals, standing rules, and saved memory as authoritative signals when they exist, but do NOT equate "no formal goal row" with "no priorities" or "nothing to focus on".
+- For broad questions such as "what are our current priorities?", "what matters right now?", "what should we focus on?", "how are we doing?", or similar operating-status questions, inspect the current workspace with the available READ tools before answering when the answer is not already pinned authoritatively in context.
+- Synthesize the smallest useful ranked view from real evidence: active/upcoming customer commitments, unresolved conversations, bookings, leads/sales state, pending work or approvals, channel/integration gaps, owner-attention items, recent corrections, and explicit workspace goals where present.
+- If priorities are inferred rather than owner-defined, say that plainly in one short clause (for example: "No owner-defined priorities are saved, so these are the priorities I infer from current operations.") and then give the inferred priorities. Do not stop at the absence of formal goals and ask the founder to configure them first.
+- Never invent a priority merely to fill a list. Ground each inferred item in current workspace evidence; if evidence is genuinely too thin, state what is known and what is missing.
+- Operator/global Direction and per-workspace business state are different scopes. Do not leak operator-global goals into a customer workspace unless they are explicitly available in the scoped context.`
 
 /**
  * The ONE call site where a real Caye Direct thread turn can be answered by
@@ -45,6 +56,7 @@ export interface CayeDirectRouterTurnArgs {
    * tools to a live subscription model.
    */
   restrictToToolNames?: readonly string[]
+  engineeringOrigin?: { threadId: string; messageId: string }
 }
 
 export interface CayeDirectRouterTurnResult {
@@ -53,6 +65,8 @@ export interface CayeDirectRouterTurnResult {
   linkedThreadIds: string[]
   backend?: BackendId
   model?: string
+  richResult?: RichResult
+  engineeringArtifactIds?: string[]
 }
 
 function backendsFor(): ToolCapableBackend[] {
@@ -60,7 +74,7 @@ function backendsFor(): ToolCapableBackend[] {
   // capabilities.ts/types.ts's doc comments), so 'openai_api' in a planned
   // chain is silently skipped by runChainWithFallback's byId lookup rather
   // than invented here.
-  return [new ClaudeSubscriptionBackend(), new OpenAICodexSubscriptionBackend(), new AnthropicApiBackend()]
+  return [new ClaudeSubscriptionBackend(), new OpenAICodexSubscriptionBackend(), new AnthropicApiBackend(), new OpenAIApiBackend(), new OpenRouterBackend()]
 }
 
 export async function runCayeDirectRouterTurn(args: CayeDirectRouterTurnArgs): Promise<CayeDirectRouterTurnResult> {
@@ -81,12 +95,15 @@ export async function runCayeDirectRouterTurn(args: CayeDirectRouterTurnArgs): P
   }
 
   const directThreadLinks: string[] = []
+  const engineeringArtifactIds: string[] = []
   const toolCtx: ToolContext = {
     workspaceId: args.workspaceId,
     callerRole: 'founder',
     operatorId: args.operatorId,
     requestId: randomUUID(),
     directThreadLinks,
+    engineeringOrigin: args.engineeringOrigin,
+    engineeringArtifactIds,
   }
 
   // Deliberately no `hints` — see capabilities.ts: setting needsToolUse
@@ -104,7 +121,7 @@ export async function runCayeDirectRouterTurn(args: CayeDirectRouterTurnArgs): P
       requestedMode: args.requestedMode,
       backends: backendsFor(),
       toolCtx,
-      system: systemPrompt,
+      system: `${systemPrompt}\n\n${FOUNDER_DIRECT_REASONING_GUIDANCE}`,
       initialMessages,
       signal: AbortSignal.timeout(180_000),
       restrictToToolNames: args.restrictToToolNames,
@@ -135,6 +152,8 @@ export async function runCayeDirectRouterTurn(args: CayeDirectRouterTurnArgs): P
       newTurns: result.newTurns,
       linkedThreadIds: result.linkedThreadIds,
       backend: decision.selected,
+      ...([...new Set(engineeringArtifactIds)].length ? { engineeringArtifactIds: [...new Set(engineeringArtifactIds)] } : {}),
+      richResult: result.richResult ? { ...result.richResult, provenance: { requestedMode: args.requestedMode, selectedBackend: decision.selected, provider: decision.selected?.includes('anthropic') || decision.selected === 'claude_subscription' ? 'anthropic' : decision.selected === 'openrouter' ? 'openrouter' : 'openai', model: result.model, fallbackSequence: decision.fallbacksTried, latencyMs: result.latencyMs ?? Date.now() - start, usage: result.usage } } : undefined,
     }
   } catch (err) {
     const failureSummary = err instanceof Error ? err.message : String(err)

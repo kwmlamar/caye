@@ -211,6 +211,16 @@ export interface ToolContext {
    * caye-reply.ts already uses) rather than silently reasoning in UTC.
    */
   workspaceTimezone?: string | null
+  /** Immutable identity snapshot for the active operator task in this turn. */
+  activeWork?: {
+    sourceMessageId: string
+    entityRef: string
+    operation: 'customer_reply_draft'
+  } | null
+  /** Set only by the founder Direct path after its inbound row is durable. */
+  engineeringOrigin?: { threadId: string; messageId: string }
+  /** Durable artifact ids created during this single turn, never client supplied. */
+  engineeringArtifactIds?: string[]
 }
 
 /**
