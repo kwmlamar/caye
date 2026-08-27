@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('server-only', () => ({}))
 
-const insert = vi.fn(async () => ({ error: null }))
+const { insert } = vi.hoisted(() => ({ insert: vi.fn(async () => ({ error: null })) }))
 vi.mock('./supabase-server', () => ({
   createServiceClient: () => ({ from: () => ({ insert }) }),
 }))
