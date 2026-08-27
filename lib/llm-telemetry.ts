@@ -19,6 +19,14 @@ export interface LoggedCallContext {
   workspaceId?: string | null
 }
 
+export interface GenericLlmUsage {
+  model: string
+  inputTokens?: number
+  outputTokens?: number
+  cacheReadTokens?: number
+  cacheCreationTokens?: number
+}
+
 export async function loggedMessagesCreate(
   client: Anthropic,
   params: Anthropic.MessageCreateParamsNonStreaming,
@@ -32,19 +40,33 @@ export async function loggedMessagesCreate(
   return response
 }
 
+/** Shared telemetry sink for non-Anthropic backends so cloud spend stays visible. */
+export async function logGenericLlmUsage(usage: GenericLlmUsage, ctx: LoggedCallContext): Promise<void> {
+  const supabase = createServiceClient()
+  await supabase.from('llm_call_log').insert({
+    source: ctx.source,
+    model: usage.model,
+    input_tokens: usage.inputTokens ?? 0,
+    output_tokens: usage.outputTokens ?? 0,
+    cache_read_tokens: usage.cacheReadTokens ?? 0,
+    cache_creation_tokens: usage.cacheCreationTokens ?? 0,
+    workspace_id: ctx.workspaceId ?? null,
+  })
+}
+
 async function logCallUsage(
   response: Anthropic.Message,
   ctx: LoggedCallContext
 ): Promise<void> {
-  const supabase = createServiceClient()
   const usage = response.usage
-  await supabase.from('llm_call_log').insert({
-    source: ctx.source,
-    model: response.model,
-    input_tokens: usage.input_tokens ?? 0,
-    output_tokens: usage.output_tokens ?? 0,
-    cache_read_tokens: usage.cache_read_input_tokens ?? 0,
-    cache_creation_tokens: usage.cache_creation_input_tokens ?? 0,
-    workspace_id: ctx.workspaceId ?? null,
-  })
+  await logGenericLlmUsage(
+    {
+      model: response.model,
+      inputTokens: usage.input_tokens,
+      outputTokens: usage.output_tokens,
+      cacheReadTokens: usage.cache_read_input_tokens,
+      cacheCreationTokens: usage.cache_creation_input_tokens,
+    },
+    ctx
+  )
 }
