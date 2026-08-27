@@ -65,6 +65,7 @@ const WORKSPACE_A_ARTIFACT: FakeArtifact = {
   id: 'artifact-a',
   workspace_id: 'ws-a',
   retention_status: 'active',
+  storage_state: 'stored',
   received_at: '2026-08-26T10:00:00Z',
   filename: 'pickup.jpg',
   modality: 'image',
@@ -73,6 +74,7 @@ const WORKSPACE_B_ARTIFACT: FakeArtifact = {
   id: 'artifact-b',
   workspace_id: 'ws-b',
   retention_status: 'active',
+  storage_state: 'stored',
   received_at: '2026-08-26T10:00:00Z',
   filename: 'other-workspace-secret.jpg',
   modality: 'image',
@@ -105,6 +107,66 @@ describe('workspace isolation (#87 mandatory test — search/get/recent must nev
 
     const result = await getMostRecentArtifactForOperator({ workspaceId: 'ws-a', operatorAllowlistId: 7 })
 
+    expect(result).toBeNull()
+  })
+})
+
+describe('storage durability guard (#87 test I — retrieval refuses an artifact whose blob is not confirmed durable)', () => {
+  it('getArtifactDetail refuses a row whose storage_state is not "stored"', async () => {
+    const notYetStored: FakeArtifact = { ...WORKSPACE_A_ARTIFACT, id: 'artifact-pending', storage_state: 'pending' }
+    const fake = fakeSupabase([notYetStored])
+    currentClient = fake.client
+
+    const detail = await getArtifactDetail('ws-a', 'artifact-pending')
+    expect(detail).toBeNull()
+  })
+
+  it('getArtifactDetail refuses a row whose upload failed', async () => {
+    const failedUpload: FakeArtifact = { ...WORKSPACE_A_ARTIFACT, id: 'artifact-failed', storage_state: 'failed' }
+    const fake = fakeSupabase([failedUpload])
+    currentClient = fake.client
+
+    const detail = await getArtifactDetail('ws-a', 'artifact-failed')
+    expect(detail).toBeNull()
+  })
+
+  it('searchArtifacts never surfaces a row whose bytes are not confirmed durable', async () => {
+    const notYetStored: FakeArtifact = { ...WORKSPACE_A_ARTIFACT, id: 'artifact-pending', storage_state: 'pending' }
+    const fake = fakeSupabase([notYetStored, WORKSPACE_A_ARTIFACT])
+    currentClient = fake.client
+
+    const results = await searchArtifacts({ workspaceId: 'ws-a' })
+    expect(results.map((r) => r.artifact.id)).toEqual(['artifact-a'])
+  })
+
+  it('N: still returns the durable original when UNDERSTANDING failed — storage durability and processing success are independent', async () => {
+    const storedButUnderstandingFailed: FakeArtifact = {
+      ...WORKSPACE_A_ARTIFACT,
+      id: 'artifact-storage-ok-processing-failed',
+      storage_state: 'stored',
+      processing_status: 'failed',
+      processing_error: 'model call timed out',
+    }
+    const fake = fakeSupabase([storedButUnderstandingFailed])
+    currentClient = fake.client
+
+    const detail = await getArtifactDetail('ws-a', 'artifact-storage-ok-processing-failed')
+    expect(detail).not.toBeNull()
+    expect(detail?.artifact.processing_status).toBe('failed')
+    expect(detail?.artifact.storage_state).toBe('stored')
+  })
+
+  it('getMostRecentArtifactForOperator never resolves to a not-yet-stored row', async () => {
+    const notYetStored: FakeArtifact = {
+      ...WORKSPACE_A_ARTIFACT,
+      id: 'artifact-pending',
+      storage_state: 'pending',
+      sender_operator_allowlist_id: 7,
+    }
+    const fake = fakeSupabase([notYetStored])
+    currentClient = fake.client
+
+    const result = await getMostRecentArtifactForOperator({ workspaceId: 'ws-a', operatorAllowlistId: 7 })
     expect(result).toBeNull()
   })
 })

@@ -71,6 +71,10 @@ export async function searchArtifacts(filters: ArtifactSearchFilters): Promise<A
     .select('*')
     .eq('workspace_id', filters.workspaceId)
     .neq('retention_status', 'deleted')
+    // A row can exist with no confirmed durable bytes behind it (upload
+    // failed, or ingestion crashed mid-flight) — never surface that as a
+    // retrievable result. See ingest.ts's storage_state model.
+    .eq('storage_state', 'stored')
 
   if (filters.modality) q = q.eq('modality', filters.modality)
   if (filters.conversationId) q = q.eq('conversation_id', filters.conversationId)
@@ -156,6 +160,9 @@ export async function getArtifactDetail(
     .eq('id', artifactId)
     .maybeSingle()
   if (!artifact) return null
+  // A row can exist with no confirmed durable bytes behind it — refuse to
+  // hand it back as retrievable evidence. See ingest.ts's storage_state model.
+  if ((artifact as BusinessArtifactRow).storage_state !== 'stored') return null
 
   const [{ data: observations }, { data: relations }] = await Promise.all([
     supabase
@@ -198,6 +205,7 @@ export async function getMostRecentArtifactForOperator(params: {
     .eq('workspace_id', params.workspaceId)
     .eq('sender_operator_allowlist_id', params.operatorAllowlistId)
     .neq('retention_status', 'deleted')
+    .eq('storage_state', 'stored')
 
   if (params.modality) q = q.eq('modality', params.modality)
   if (params.withinMs) {

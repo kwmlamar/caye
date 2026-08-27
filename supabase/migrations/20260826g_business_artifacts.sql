@@ -94,6 +94,13 @@ create table if not exists business_artifacts (
   -- {workspace_id}/{artifact_id}/original.<ext> — never derived from the
   -- provider filename, so a hostile/weird filename can't become a path.
   storage_path text not null,
+  -- Durability of the BYTES — independent of processing_status, which is
+  -- about understanding. A row existing does not mean bytes exist: the
+  -- upload can fail, or the process can crash between insert and upload.
+  -- 'stored' is the only state that means the blob is confirmed durable and
+  -- safe to process or return to an operator. See ingest.ts's header comment.
+  storage_state text not null default 'pending'
+    check (storage_state in ('pending', 'stored', 'failed')),
 
   received_at timestamptz not null default now(),
 
@@ -105,6 +112,13 @@ create table if not exists business_artifacts (
   processing_version int not null default 1,
   processing_error text,
   processing_completed_at timestamptz,
+  -- Compare-and-set lease for processArtifact (mirrors caye_pending_operations'
+  -- claim_token/claimed_at exactly). Only the holder of the current token may
+  -- transition processing_status out of 'processing'; a lease older than the
+  -- in-process reap window is treated as an abandoned/crashed worker and
+  -- reset to 'failed' so the row becomes claimable again.
+  processing_claim_token uuid,
+  processing_claimed_at timestamptz,
 
   -- Explicit retention/deletion state (issue #9). 'active' = normal.
   -- 'tombstoned' = hidden from ordinary retrieval but bytes + rows retained
@@ -129,6 +143,10 @@ comment on column business_artifacts.detected_mime_type is
   'Sniffed from actual bytes, not the extension or provider-declared mime type. The issue is explicit: never trust a filename extension.';
 comment on column business_artifacts.retention_status is
   'active = normal. tombstoned = hidden from retrieval, bytes retained. deleted = bytes actually removed from storage; row/observations/relations remain as history.';
+comment on column business_artifacts.storage_state is
+  'pending = row exists, bytes not yet confirmed durable (fresh insert, or a prior attempt that failed/crashed before confirming). stored = blob confirmed durable — the ONLY state safe to process or return to an operator. failed = upload attempted and failed; the SAME row is reused and retried on the next ingest call for this provider attachment, never duplicated.';
+comment on column business_artifacts.processing_claim_token is
+  'Compare-and-set worker lease for processArtifact, same shape as caye_pending_operations.claim_token. NULL except while processing_status=processing.';
 
 -- Idempotent retry key: the same provider attachment delivered twice (webhook
 -- retry, duplicate message ingestion, reconnect replay) resolves to one row.
@@ -155,6 +173,12 @@ create index if not exists business_artifacts_sender_operator_idx
 
 create index if not exists business_artifacts_processing_pending_idx
   on business_artifacts (processing_status) where processing_status = 'pending';
+
+-- Stale-claim reap: a 'processing' row whose lease is older than the reap
+-- window means the worker holding it crashed. Mirrors
+-- caye_pending_operations_stale_claim_idx exactly.
+create index if not exists business_artifacts_stale_claim_idx
+  on business_artifacts (processing_claimed_at) where processing_status = 'processing';
 
 alter table business_artifacts enable row level security;
 

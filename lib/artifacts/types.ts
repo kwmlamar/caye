@@ -20,6 +20,16 @@ export type ArtifactModality = 'image' | 'document' | 'audio' | 'video' | 'sprea
 
 export type ArtifactProcessingStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'unsupported'
 
+/**
+ * Durability of the original bytes — INDEPENDENT of processing_status.
+ * A row can exist ('pending' — just inserted, or a prior attempt never
+ * confirmed) without its bytes ever having been stored ('failed' — the
+ * upload itself failed, or the process crashed before it ran). Only
+ * 'stored' means the blob is confirmed durable and safe to process/return.
+ * See lib/artifacts/ingest.ts's header comment for the full state model.
+ */
+export type ArtifactStorageState = 'pending' | 'stored' | 'failed'
+
 export type ArtifactRetentionStatus = 'active' | 'tombstoned' | 'deleted'
 
 export type ObservationType =
@@ -69,11 +79,14 @@ export interface BusinessArtifactRow {
   modality: ArtifactModality
   storage_bucket: string
   storage_path: string
+  storage_state: ArtifactStorageState
   received_at: string
   processing_status: ArtifactProcessingStatus
   processing_version: number
   processing_error: string | null
   processing_completed_at: string | null
+  processing_claim_token: string | null
+  processing_claimed_at: string | null
   retention_status: ArtifactRetentionStatus
   tombstoned_at: string | null
   tombstoned_reason: string | null

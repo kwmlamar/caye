@@ -15,14 +15,32 @@ import { CHANNEL_SIZE_LIMITS_BYTES, modalityFromMimeType, type BusinessArtifactR
  * Called synchronously from a channel's inbound handler (e.g. the WhatsApp
  * operator webhook's image/document branch) BEFORE the model ever sees the
  * bytes. Idempotent: the same provider attachment delivered twice (webhook
- * retry, duplicate message ingestion, reconnect replay) returns the SAME
+ * retry, duplicate message ingestion, reconnect replay) resolves to the SAME
  * artifact row rather than creating a second one.
  *
- * Always enqueues an `artifact_process` job. Callers that also want an
- * immediate inline understanding pass (for conversational responsiveness)
- * call `processArtifact` themselves right after — it is idempotent per
- * processing_version, so the queue draining it later (retry path, or the
- * primary path for channels with no inline pass) never double-processes.
+ * CANONICAL DB IDENTITY IS NOT THE SAME THING AS DURABLE BYTES. A row can
+ * exist with no confirmed blob behind it (upload failed, or the process
+ * crashed between the insert and the upload) — `storage_state` says which
+ * is true, independently of `processing_status` (which is about
+ * UNDERSTANDING, and never starts before storage_state='stored'):
+ *
+ *   storage_state:    'pending' → 'stored' | 'failed'
+ *   processing_status: 'pending' → 'processing' → 'completed'/'unsupported'/'failed'
+ *
+ * A dedup hit is only ever reported as a genuine no-op when storage_state is
+ * already 'stored'. Otherwise the SAME row is reused and the upload is
+ * retried against these (possibly freshly re-delivered) bytes — a webhook
+ * retry, or a retry after a mid-ingestion crash, self-heals through this
+ * exact path. A second artifact row is never created for one provider
+ * attachment id, whether the previous attempt failed, crashed, or is racing
+ * concurrently with this one (the unique index makes a racing insert a
+ * refetch-and-reuse, not a duplicate).
+ *
+ * Understanding is only ever enqueued once storage_state has just become
+ * 'stored' in THIS call — never before, and the enqueue is itself idempotent
+ * (stable idempotency key per artifact+processing_version), so a retry that
+ * re-confirms already-stored bytes safely re-enqueues without duplicating
+ * the queue entry.
  */
 
 export interface IngestArtifactInput {
@@ -46,23 +64,24 @@ export type IngestArtifactResult =
   | { ok: true; artifact: BusinessArtifactRow; deduped: boolean }
   | { ok: false; error: string; errorCode: 'TOO_LARGE' | 'UPLOAD_FAILED' | 'DB_FAILED' }
 
+async function findExistingRow(
+  supabase: ReturnType<typeof createServiceClient>,
+  workspaceId: string,
+  sourceChannel: string,
+  providerAttachmentId: string
+): Promise<BusinessArtifactRow | null> {
+  const { data } = await supabase
+    .from('business_artifacts')
+    .select('*')
+    .eq('workspace_id', workspaceId)
+    .eq('source_channel', sourceChannel)
+    .eq('provider_attachment_id', providerAttachmentId)
+    .maybeSingle()
+  return (data as BusinessArtifactRow | null) ?? null
+}
+
 export async function ingestArtifact(input: IngestArtifactInput): Promise<IngestArtifactResult> {
   const supabase = createServiceClient()
-
-  // Idempotent retry key: the same provider attachment already ingested for
-  // this workspace/channel is the same promise, not a new artifact.
-  if (input.providerAttachmentId) {
-    const { data: existing } = await supabase
-      .from('business_artifacts')
-      .select('*')
-      .eq('workspace_id', input.workspaceId)
-      .eq('source_channel', input.sourceChannel)
-      .eq('provider_attachment_id', input.providerAttachmentId)
-      .maybeSingle()
-    if (existing) {
-      return { ok: true, artifact: existing as BusinessArtifactRow, deduped: true }
-    }
-  }
 
   const detectedMimeType = detectMimeType(input.bytes, input.declaredMimeType)
   const modality = modalityFromMimeType(detectedMimeType)
@@ -77,74 +96,119 @@ export async function ingestArtifact(input: IngestArtifactInput): Promise<Ingest
 
   const contentSha256 = sha256Hex(input.bytes)
 
-  // Insert first (artifact id is the storage path's directory), then upload.
-  // A row with no bytes yet (processing_status stays 'pending' either way)
-  // is recoverable; bytes with no row is an orphan with nothing pointing at
-  // it. Ingestion always enqueues processing regardless, so a failed upload
-  // surfaces as a failed processing attempt rather than a silent gap.
-  const { data: inserted, error: insertError } = await supabase
-    .from('business_artifacts')
-    .insert({
-      workspace_id: input.workspaceId,
-      origin: input.origin ?? 'external',
-      source_channel: input.sourceChannel,
-      conversation_id: input.conversationId ?? null,
-      unified_message_id: input.unifiedMessageId ?? null,
-      operator_message_id: input.operatorMessageId ?? null,
-      sender_contact_id: input.senderContactId ?? null,
-      sender_operator_allowlist_id: input.senderOperatorAllowlistId ?? null,
-      sender_label: input.senderLabel ?? null,
-      provider_attachment_id: input.providerAttachmentId,
-      filename: input.filename,
-      declared_mime_type: input.declaredMimeType,
-      detected_mime_type: detectedMimeType,
-      byte_size: input.bytes.byteLength,
-      content_sha256: contentSha256,
-      modality,
-      storage_path: 'pending', // placeholder, patched below once we have the real id
-      received_at: (input.receivedAt ?? new Date()).toISOString(),
-    })
-    .select('*')
-    .single()
+  // Resolve the canonical row: reuse an existing one for this provider
+  // attachment id (whatever state it's in), or create a fresh one.
+  let artifact: BusinessArtifactRow | null = null
+  let reused = false
 
-  if (insertError || !inserted) {
-    // A concurrent retry racing this same insert hits the unique
-    // (workspace_id, source_channel, provider_attachment_id) index — refetch
-    // and treat it as the dedup path rather than a failure.
-    if (insertError?.code === '23505' && input.providerAttachmentId) {
-      const { data: raced } = await supabase
-        .from('business_artifacts')
-        .select('*')
-        .eq('workspace_id', input.workspaceId)
-        .eq('source_channel', input.sourceChannel)
-        .eq('provider_attachment_id', input.providerAttachmentId)
-        .maybeSingle()
-      if (raced) return { ok: true, artifact: raced as BusinessArtifactRow, deduped: true }
-    }
-    return { ok: false, error: insertError?.message ?? 'insert failed', errorCode: 'DB_FAILED' }
+  if (input.providerAttachmentId) {
+    artifact = await findExistingRow(supabase, input.workspaceId, input.sourceChannel, input.providerAttachmentId)
+    if (artifact) reused = true
   }
 
-  const artifact = inserted as BusinessArtifactRow
-  const storagePath = buildStoragePath(input.workspaceId, artifact.id, detectedMimeType)
+  if (!artifact) {
+    const { data: inserted, error: insertError } = await supabase
+      .from('business_artifacts')
+      .insert({
+        workspace_id: input.workspaceId,
+        origin: input.origin ?? 'external',
+        source_channel: input.sourceChannel,
+        conversation_id: input.conversationId ?? null,
+        unified_message_id: input.unifiedMessageId ?? null,
+        operator_message_id: input.operatorMessageId ?? null,
+        sender_contact_id: input.senderContactId ?? null,
+        sender_operator_allowlist_id: input.senderOperatorAllowlistId ?? null,
+        sender_label: input.senderLabel ?? null,
+        provider_attachment_id: input.providerAttachmentId,
+        filename: input.filename,
+        declared_mime_type: input.declaredMimeType,
+        detected_mime_type: detectedMimeType,
+        byte_size: input.bytes.byteLength,
+        content_sha256: contentSha256,
+        modality,
+        storage_path: 'pending', // placeholder — patched once storage_state becomes 'stored'
+        received_at: (input.receivedAt ?? new Date()).toISOString(),
+      })
+      .select('*')
+      .single()
 
+    if (insertError || !inserted) {
+      // A concurrent retry racing this same insert hits the unique
+      // (workspace_id, source_channel, provider_attachment_id) index —
+      // refetch and reuse it, same as the dedup lookup above would have.
+      if (insertError?.code === '23505' && input.providerAttachmentId) {
+        const raced = await findExistingRow(supabase, input.workspaceId, input.sourceChannel, input.providerAttachmentId)
+        if (raced) {
+          artifact = raced
+          reused = true
+        }
+      }
+      if (!artifact) {
+        return { ok: false, error: insertError?.message ?? 'insert failed', errorCode: 'DB_FAILED' }
+      }
+    } else {
+      artifact = inserted as BusinessArtifactRow
+    }
+  }
+
+  // Bytes already durably confirmed for this row — a genuine no-op replay
+  // (webhook retry, duplicate message ingestion, reconnect replay).
+  if (artifact.storage_state === 'stored') {
+    return { ok: true, artifact, deduped: true }
+  }
+
+  // storage_state is 'pending' or 'failed': either this is a brand-new row,
+  // or a PRIOR attempt for this same provider attachment never confirmed its
+  // bytes (upload failed, or the process crashed between insert and
+  // upload). Either way, (re)attempt storing THESE bytes against the SAME
+  // canonical row — never a second one.
+  const storagePath = buildStoragePath(input.workspaceId, artifact.id, detectedMimeType)
   const uploadResult = await uploadArtifactBytes({ path: storagePath, bytes: input.bytes, mimeType: detectedMimeType })
+
   if (!uploadResult.ok) {
     await supabase
       .from('business_artifacts')
-      .update({ processing_status: 'failed', processing_error: `upload failed: ${uploadResult.error}` })
+      .update({
+        storage_state: 'failed',
+        processing_error: `upload failed: ${uploadResult.error}`,
+        updated_at: new Date().toISOString(),
+      })
       .eq('id', artifact.id)
     return { ok: false, error: uploadResult.error, errorCode: 'UPLOAD_FAILED' }
   }
 
-  await supabase.from('business_artifacts').update({ storage_path: storagePath }).eq('id', artifact.id)
-  artifact.storage_path = storagePath
+  // The blob is now durably in object storage — but the row does not agree
+  // until THIS update actually lands. Never assume it landed: if it fails,
+  // storage_state stays whatever it was (never falsely 'stored'), so a
+  // later retry re-attempts the whole flow. Re-uploading the same bytes is
+  // a safe no-op (uploadArtifactBytes treats "already exists" as success),
+  // and this time the DB patch gets another chance to actually succeed —
+  // this is the self-heal for "upload succeeds, DB state update fails."
+  const { data: updated, error: patchError } = await supabase
+    .from('business_artifacts')
+    .update({
+      storage_state: 'stored',
+      storage_path: storagePath,
+      processing_error: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', artifact.id)
+    .select('*')
+    .single()
 
+  if (patchError || !updated) {
+    return { ok: false, error: patchError?.message ?? 'failed to record storage state', errorCode: 'DB_FAILED' }
+  }
+  const stored = updated as BusinessArtifactRow
+
+  // Idempotent: a retry that re-confirms already-attempted bytes re-enqueues
+  // safely — the unique idempotency key makes the second enqueue a no-op.
   await enqueueOperation({
     workspaceId: input.workspaceId,
     operation: 'artifact_process',
-    payload: { artifact_id: artifact.id, processing_version: artifact.processing_version },
-    idempotencyKey: `artifact_process:${artifact.id}:v${artifact.processing_version}`,
+    payload: { artifact_id: stored.id, processing_version: stored.processing_version },
+    idempotencyKey: `artifact_process:${stored.id}:v${stored.processing_version}`,
   })
 
-  return { ok: true, artifact, deduped: false }
+  return { ok: true, artifact: stored, deduped: reused }
 }
