@@ -105,3 +105,82 @@ export async function recordBounceKillSwitchPause(workspaceId: string, reason: s
   if (error) throw new Error(error.message)
   await recordPauseEvent({ workspaceId, action: 'paused', source: 'bounce_safety', reason, actorRole: 'system' })
 }
+
+/**
+ * The same trailing-window rule lib/outreach-kill-switch.ts's
+ * shouldTripKillSwitch applies live, replayed after the fact against a
+ * sorted bounce timestamp list. Returns the earliest timestamp at which the
+ * running trailing-`windowHours` count first reached `threshold`, or null if
+ * it never did. O(n^2) on the input length, which is fine — a workspace's
+ * bounce log is a few dozen rows, not a stream.
+ */
+export function findTrailingWindowCrossing(isoTimestamps: string[], threshold: number, windowHours: number): string | null {
+  const times = isoTimestamps.map((t) => Date.parse(t)).filter((t) => !Number.isNaN(t)).sort((a, b) => a - b)
+  const windowMs = windowHours * 60 * 60 * 1000
+  for (let i = 0; i < times.length; i++) {
+    const windowStart = times[i] - windowMs
+    let count = 0
+    for (let j = i; j >= 0 && times[j] > windowStart; j--) count++
+    if (count >= threshold) return new Date(times[i]).toISOString()
+  }
+  return null
+}
+
+export interface OutreachPauseReconciliation {
+  workspaceId: string
+  reconciled: boolean
+  state: OutreachPauseState
+}
+
+/**
+ * One-time deterministic backfill for a pause whose provenance was never
+ * recorded because it predates 20260824_outreach_pause_provenance.sql. Does
+ * NOT clear the pause or make it owner-resumable — it only establishes
+ * whether the workspace's own bounce log shows a real threshold crossing
+ * that would have tripped lib/outreach-kill-switch.ts, using the exact same
+ * rule that code applies going forward. A crossing found this way is
+ * retroactive evidence, not a guess: it reconciles the row to
+ * `bounce_safety`, which classifyOutreachPause still routes to
+ * `safety_recovery_not_supported` — fully blocked from ordinary resume, same
+ * as a live bounce trip. No crossing found -> the row is left untouched;
+ * provenance genuinely cannot be established and it must keep failing closed
+ * as `unknown_blocked`. Safe to call repeatedly (idempotent): once a row has
+ * a non-null source, later calls are a no-op.
+ */
+export async function reconcileLegacyOutreachPause(workspaceId: string): Promise<OutreachPauseReconciliation> {
+  const db = createServiceClient()
+  const { data: config, error } = await db.from('workspace_ai_config')
+    .select('outreach_autosend_paused,outreach_pause_source,outreach_pause_reason,outreach_paused_at,outreach_bounce_threshold,outreach_bounce_window_hours')
+    .eq('workspace_id', workspaceId).maybeSingle()
+  if (error) throw new Error(error.message)
+  const current = classifyOutreachPause({ paused: config?.outreach_autosend_paused ?? false, source: config?.outreach_pause_source, reason: config?.outreach_pause_reason, pausedAt: config?.outreach_paused_at })
+  if (!current.paused || current.source !== 'unknown') return { workspaceId, reconciled: false, state: current }
+
+  const threshold = config?.outreach_bounce_threshold ?? 5
+  const windowHours = config?.outreach_bounce_window_hours ?? 24
+  const { data: bounces, error: bounceError } = await db.from('caye_outreach_bounces')
+    .select('created_at').eq('workspace_id', workspaceId)
+  if (bounceError) throw new Error(bounceError.message)
+  const crossing = findTrailingWindowCrossing((bounces ?? []).map((b) => b.created_at as string), threshold, windowHours)
+  if (!crossing) return { workspaceId, reconciled: false, state: current }
+
+  const reason = `Reconciled from a legacy pause with no recorded provenance: bounce count crossed the safety threshold of ${threshold} within a trailing ${windowHours}h window around ${crossing}. Backfilled retroactively — the original trip predates provenance tracking (20260824_outreach_pause_provenance.sql).`
+  const pausedAt = config?.outreach_paused_at ?? crossing
+  // Conditional on source still being null: a concurrent reconciliation run
+  // or a fresh manual/system pause must win over this backfill, never be
+  // overwritten by it.
+  const { data: updated, error: updateError } = await db.from('workspace_ai_config')
+    .update({ outreach_pause_source: 'bounce_safety', outreach_pause_reason: reason, outreach_paused_at: pausedAt })
+    .eq('workspace_id', workspaceId).eq('outreach_autosend_paused', true).is('outreach_pause_source', null)
+    .select('workspace_id')
+  if (updateError) throw new Error(updateError.message)
+  if (!updated?.length) {
+    const { data: latest, error: latestError } = await db.from('workspace_ai_config')
+      .select('outreach_autosend_paused,outreach_pause_source,outreach_pause_reason,outreach_paused_at')
+      .eq('workspace_id', workspaceId).maybeSingle()
+    if (latestError) throw new Error(latestError.message)
+    return { workspaceId, reconciled: false, state: classifyOutreachPause({ paused: latest?.outreach_autosend_paused ?? true, source: latest?.outreach_pause_source, reason: latest?.outreach_pause_reason, pausedAt: latest?.outreach_paused_at }) }
+  }
+  await recordPauseEvent({ workspaceId, action: 'paused', source: 'bounce_safety', reason, actorRole: 'system' })
+  return { workspaceId, reconciled: true, state: classifyOutreachPause({ paused: true, source: 'bounce_safety', reason, pausedAt }) }
+}
