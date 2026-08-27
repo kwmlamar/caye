@@ -4,6 +4,7 @@ import { Toaster } from 'sonner'
 import GoogleAnalyticsGate from '@/components/analytics/GoogleAnalyticsGate'
 import './globals.css'
 import './dashboard-ui.css'
+import './caye-direct-composer.css'
 
 const geist = Geist({
   variable: '--font-sans',
