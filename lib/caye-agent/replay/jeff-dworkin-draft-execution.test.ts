@@ -212,6 +212,35 @@ describe('Jeff Dworkin — every failure class produces evidence-backed guidance
   }
 })
 
+describe('Jeff Dworkin — deterministic provider rejection end-to-end (follow-up: ZOHO_DRAFT_REJECTED must read as a definite, known failure)', () => {
+  it('a real 400 rejection from Zoho produces guidance that is definite, not an "uncertain" hedge, and is not the generic fallback', async () => {
+    nextOutcome = new Error('Zoho Mail API draft error (HTTP 422, code 422): unprocessable entity')
+    const result = await draftInInbox.execute({ conversation_id: 'conv_jeff', body: REVISED_BODY }, ctx)
+
+    expect(result.status).toBe('FAILED_PERMANENT')
+    expect(result.error_code).toBe('ZOHO_DRAFT_REJECTED')
+
+    const guidance = guidanceFor(result.status, false, 'draft_in_inbox', result.error_code)!
+    // Definite, known-failure semantics.
+    expect(guidance).toMatch(/rejected/i)
+    expect(guidance).toMatch(/nothing was created/i)
+    expect(guidance).toMatch(/preserve the completed draft text/i)
+    expect(guidance).toMatch(/do NOT retry blindly/i)
+    expect(guidance).toMatch(/do NOT offer to send it instead/i)
+    // Must never borrow the ambiguous-outcome case's vocabulary.
+    expect(guidance).not.toMatch(/uncertain/i)
+    expect(guidance).not.toMatch(/not sure whether/i)
+    // Must not be the generic default/fallback text (proves the case is
+    // actually wired up and not silently falling through).
+    const fallback = guidanceFor('FAILED_PERMANENT', false, 'draft_in_inbox', 'SOME_UNRECOGNISED_CODE')!
+    expect(guidance).not.toBe(fallback)
+    expect(guidance).not.toMatch(/blocked or uncertain/i)
+    // Must read distinctly from the genuinely ambiguous case for the same tool.
+    const ambiguousGuidance = guidanceFor('NEEDS_HUMAN', false, 'draft_in_inbox', 'ZOHO_DRAFT_CREATION_UNCERTAIN')!
+    expect(guidance).not.toBe(ambiguousGuidance)
+  })
+})
+
 describe('Jeff Dworkin — the actual incident sentence can no longer reach the operator (CAY-139 test 9, literal reconstruction)', () => {
   it('strips the exact reported phrasing even when a real draft_in_inbox call failed this turn', () => {
     // Reconstructed from the issue's own description of the incident, not a

@@ -286,10 +286,48 @@ describe('guidanceFor — draft_in_inbox error_code-specific guidance (CAY-139, 
     expect(g).toMatch(forbidsOutageLanguage)
   })
 
-  it('deterministic rejection: says nothing was created, no ambiguity language, forbids outage language', () => {
+  describe('deterministic rejection (ZOHO_DRAFT_REJECTED, class D) — a definite known failure, never a hedge', () => {
     const g = guidanceFor('FAILED_PERMANENT', false, 'draft_in_inbox', 'ZOHO_DRAFT_REJECTED')!
-    expect(g).not.toMatch(/not sure whether/i)
-    expect(g).toMatch(forbidsOutageLanguage)
+
+    it('states a definite, known failure — the provider rejected it and nothing was created', () => {
+      expect(g).toMatch(/rejected/i)
+      expect(g).toMatch(/nothing was created/i)
+      expect(g).toMatch(/definite, known failure/i)
+    })
+
+    it('instructs preserving the draft text, no blind retry, no offer to send instead', () => {
+      expect(g).toMatch(/preserve the completed draft text/i)
+      expect(g).toMatch(/do NOT retry blindly/i)
+      expect(g).toMatch(/do NOT offer to send it instead/i)
+    })
+
+    it('never uses "uncertain" wording — that word describes the genuinely different ambiguous-outcome case', () => {
+      expect(g).not.toMatch(/uncertain/i)
+    })
+
+    it('never uses "not sure whether" wording — this is not a might-have-worked hedge', () => {
+      expect(g).not.toMatch(/not sure whether/i)
+    })
+
+    it('forbids outage/backend/escalation language, same as every other draft_in_inbox failure branch', () => {
+      expect(g).toMatch(forbidsOutageLanguage)
+      expect(g).toMatch(forbidsFakeEscalation)
+    })
+
+    it('does NOT fall through to the generic default branch — proves the ZOHO_DRAFT_REJECTED case is actually wired up', () => {
+      // The default/fallback branch (an unrecognised error_code) literally
+      // says "blocked or uncertain" — if someone deleted the ZOHO_DRAFT_REJECTED
+      // case above, this exact guidance would start matching that phrase and
+      // this assertion would fail, catching the regression.
+      const fallback = guidanceFor('FAILED_PERMANENT', false, 'draft_in_inbox', 'SOME_UNRECOGNISED_CODE')!
+      expect(g).not.toBe(fallback)
+      expect(g).not.toMatch(/blocked or uncertain/i)
+    })
+
+    it('reads as distinctly more definite than the generic non-draft FAILED_PERMANENT guidance', () => {
+      const generic = guidanceFor('FAILED_PERMANENT', false)!
+      expect(g).not.toBe(generic)
+    })
   })
 
   it('creation uncertain: says the outcome is unknown and forbids claiming it failed or offering to send instead', () => {

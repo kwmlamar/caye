@@ -309,6 +309,21 @@ function draftInInboxFailureGuidance(errorCode?: string): string {
         'Preserve the completed draft text and say plainly this cannot be saved to the inbox yet; only the founder ' +
         `running the one-time verification unblocks it. ${commonBan}`
       )
+    case 'ZOHO_DRAFT_REJECTED':
+      // Class D (deterministic rejection) — the follow-up review that added
+      // this case explicitly required wording that reads as a DEFINITE,
+      // KNOWN failure, never a hedge: the provider answered synchronously
+      // and said no, so there is nothing ambiguous left to resolve. This
+      // must never share language with the ZOHO_DRAFT_CREATION_UNCERTAIN /
+      // ZOHO_DRAFT_ID_MISSING case below — no "uncertain," no "not sure
+      // whether," no "may or may not exist." Those words describe a
+      // genuinely different outcome (network/timeout/5xx/no-id) where the
+      // provider's actual state is unknown; here it is known.
+      return (
+        'The email provider rejected this draft save outright — a definite, known failure, not a maybe. Nothing ' +
+        'was created on the provider side. Preserve the completed draft text and say plainly that the draft was ' +
+        `rejected and nothing was saved. Do NOT retry blindly, and do NOT offer to send it instead. ${commonBan}`
+      )
     case 'ZOHO_DRAFT_CREATION_UNCERTAIN':
     case 'ZOHO_DRAFT_ID_MISSING':
       return (
