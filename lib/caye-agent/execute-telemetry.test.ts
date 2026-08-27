@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('server-only', () => ({}))
 
-const loggedMessagesCreate = vi.fn()
+const { loggedMessagesCreate } = vi.hoisted(() => ({ loggedMessagesCreate: vi.fn() }))
 vi.mock('@/lib/llm-telemetry', () => ({ loggedMessagesCreate }))
 
 vi.mock('./tools/registry', () => ({ TOOL_REGISTRY: [] }))
