@@ -38,6 +38,9 @@ function statusDot(status: string) {
 
 function PropertyModel({ snapshot, expanded, onExpand }: { snapshot: Snapshot; expanded?: boolean; onExpand?: () => void }) {
   const observations = expanded ? snapshot.current_observations : snapshot.current_observations.slice(0, 12)
+  const primaryText = expanded ? '#f4f4f5' : undefined
+  const secondaryText = expanded ? '#b8bac2' : '#8e8e96'
+  const tertiaryText = expanded ? '#9a9ca5' : '#71717a'
   return (
     <div style={{
       border: '1px solid rgba(255,255,255,.10)',
@@ -47,15 +50,16 @@ function PropertyModel({ snapshot, expanded, onExpand }: { snapshot: Snapshot; e
       display: 'grid',
       gap: expanded ? 18 : 12,
       minHeight: expanded ? '100%' : undefined,
+      color: primaryText,
     }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start' }}>
         <div>
-          <div style={{ color: '#8e8e96', fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase' }}>Property model</div>
-          <div style={{ fontSize: expanded ? 24 : 17, fontWeight: 650 }}>{snapshot.property.name}</div>
-          <div style={{ color: '#a1a1aa', fontSize: expanded ? 12 : 11 }}>{snapshot.property.location_label || snapshot.property.property_type}</div>
+          <div style={{ color: secondaryText, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase' }}>Property model</div>
+          <div style={{ fontSize: expanded ? 24 : 17, fontWeight: 650, color: primaryText }}>{snapshot.property.name}</div>
+          <div style={{ color: expanded ? '#c5c6cc' : '#a1a1aa', fontSize: expanded ? 12 : 11 }}>{snapshot.property.location_label || snapshot.property.property_type}</div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div style={{ fontSize: 10, color: '#8e8e96' }}>{snapshot.structures.length} structures · {snapshot.systems.length} systems · {snapshot.assets.length} assets</div>
+          <div style={{ fontSize: 10, color: secondaryText }}>{snapshot.structures.length} structures · {snapshot.systems.length} systems · {snapshot.assets.length} assets</div>
           {!expanded && onExpand ? <ExpandResultButton onClick={onExpand} label={`Open ${snapshot.property.name} full screen`} /> : null}
         </div>
       </div>
@@ -67,12 +71,12 @@ function PropertyModel({ snapshot, expanded, onExpand }: { snapshot: Snapshot; e
             return (
               <div key={system.id} style={{ border: '1px solid rgba(255,255,255,.07)', borderRadius: 10, padding: expanded ? 14 : 10, minHeight: expanded ? 110 : 80 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                  <div style={{ fontSize: expanded ? 14 : 12, fontWeight: 600 }}>{system.name}</div>
-                  <div title={system.status} style={{ fontSize: 10, color: '#8e8e96' }}>{statusDot(system.status)}</div>
+                  <div style={{ fontSize: expanded ? 14 : 12, fontWeight: 600, color: primaryText }}>{system.name}</div>
+                  <div title={system.status} style={{ fontSize: 10, color: secondaryText }}>{statusDot(system.status)}</div>
                 </div>
-                <div style={{ color: '#8e8e96', fontSize: 10, marginBottom: 7 }}>{system.system_type}</div>
-                {assets.length === 0 ? <div style={{ color: '#71717a', fontSize: 10 }}>No assets recorded</div> : assets.map((asset) => (
-                  <div key={asset.id} style={{ fontSize: expanded ? 12 : 10, color: '#c4c4cc', padding: '3px 0' }}>{statusDot(asset.status)} {asset.name} <span style={{ color: '#71717a' }}>· {asset.asset_type}</span></div>
+                <div style={{ color: secondaryText, fontSize: 10, marginBottom: 7 }}>{system.system_type}</div>
+                {assets.length === 0 ? <div style={{ color: tertiaryText, fontSize: 10 }}>No assets recorded</div> : assets.map((asset) => (
+                  <div key={asset.id} style={{ fontSize: expanded ? 12 : 10, color: expanded ? '#d7d7dc' : '#c4c4cc', padding: '3px 0' }}>{statusDot(asset.status)} {asset.name} <span style={{ color: tertiaryText }}>· {asset.asset_type}</span></div>
                 ))}
               </div>
             )
@@ -82,12 +86,12 @@ function PropertyModel({ snapshot, expanded, onExpand }: { snapshot: Snapshot; e
 
       {observations.length > 0 && (
         <div>
-          <div style={{ color: '#8e8e96', fontSize: 10, letterSpacing: '.06em', textTransform: 'uppercase', marginBottom: 7 }}>Current known state</div>
+          <div style={{ color: secondaryText, fontSize: 10, letterSpacing: '.06em', textTransform: 'uppercase', marginBottom: 7 }}>Current known state</div>
           <div style={{ display: 'grid', gridTemplateColumns: expanded ? 'repeat(auto-fit,minmax(220px,1fr))' : 'repeat(auto-fit,minmax(175px,1fr))', gap: expanded ? 8 : 5 }}>
             {observations.map((observation) => (
-              <div key={observation.id} style={{ padding: expanded ? '10px 11px' : '7px 8px', background: 'rgba(255,255,255,.035)', borderRadius: 7 }}>
-                <div style={{ color: '#8e8e96', fontSize: expanded ? 10 : 9 }}>{observation.observation_key} · {observation.provenance_status}</div>
-                <div style={{ fontSize: expanded ? 14 : 12, marginTop: expanded ? 3 : 0 }}>{valueFor(observation)}</div>
+              <div key={observation.id} style={{ padding: expanded ? '10px 11px' : '7px 8px', background: expanded ? 'rgba(255,255,255,.055)' : 'rgba(255,255,255,.035)', borderRadius: 7 }}>
+                <div style={{ color: secondaryText, fontSize: expanded ? 10 : 9 }}>{observation.observation_key} · {observation.provenance_status}</div>
+                <div style={{ fontSize: expanded ? 14 : 12, marginTop: expanded ? 3 : 0, color: primaryText, lineHeight: expanded ? 1.45 : undefined }}>{valueFor(observation)}</div>
               </div>
             ))}
           </div>
