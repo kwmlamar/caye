@@ -41,3 +41,17 @@
 .caye-direct-composer-shell button[aria-label="Send message"].caye-direct-send.is-ready svg {
   stroke: #071012 !important;
 }
+
+/*
+ * Team/operator transcripts reserve an 18px avatar column plus an 8px gap.
+ * CayeDirectThread also had a second 26px inline left margin on those rows,
+ * effectively double-indenting Caye's text. Remove only that duplicate
+ * offset while preserving the avatar column/grouping.
+ *
+ * This structural selector is intentionally limited to the Caye transcript
+ * row shape (650px row containing the Caye avatar) so ordinary Direct chat,
+ * inbox content, and unrelated avatars are untouched.
+ */
+div[style*="max-width: 650px"]:has(> div > img[alt="Caye"])[style*="margin-left: 26px"] {
+  margin-left: 0 !important;
+}
