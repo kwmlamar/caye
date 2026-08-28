@@ -26,7 +26,7 @@ describe('engineering project intelligence migration (PGlite)', () => {
     const migrationsDir = join(__dirname, '..', '..', 'supabase', 'migrations')
     await db.exec(readFileSync(join(migrationsDir, '20260828_property_intelligence_v1.sql'), 'utf8'))
     await db.exec(readFileSync(join(migrationsDir, '20260828_property_intelligence_v1_provenance_scope.sql'), 'utf8'))
-    await db.exec(readFileSync(join(migrationsDir, '20260828203000_engineering_project_intelligence_v1.sql'), 'utf8'))
+    await db.exec(readFileSync(join(migrationsDir, '20260829_engineering_project_intelligence_v1.sql'), 'utf8'))
   })
 
   afterAll(async () => { await db.close() })
