@@ -40,12 +40,13 @@ describe('Caye MCP protocol adapter', () => {
       'caye_attention_list',
       'caye_engineering_artifacts_list',
     ])
+    expect(CAYE_MCP_TOOLS.every((tool) => tool.annotations.readOnlyHint === true)).toBe(true)
+    expect(CAYE_MCP_TOOLS.every((tool) => tool.annotations.destructiveHint === false)).toBe(true)
     expect(mcpToolsListResult().tools).toEqual(CAYE_MCP_TOOLS)
   })
 
   it('maps MCP workspace scope into trusted gateway scope, not capability args', async () => {
     const result = await callCayeMcpTool('founder-user', 'caye_attention_list', { workspaceId: 'workspace-a' })
-
     expect(mocks.invokeFounderReadCapability).toHaveBeenCalledWith('founder-user', {
       capability: 'attention.list',
       version: 1,
@@ -61,7 +62,6 @@ describe('Caye MCP protocol adapter', () => {
       workspaceId: 'workspace-a',
       actor: { userId: 'spoofed' },
     })
-
     expect(result?.isError).toBe(true)
     expect(mocks.invokeFounderReadCapability).not.toHaveBeenCalled()
     expect(JSON.stringify(result?.structuredContent)).toContain('invalid_args')
@@ -83,9 +83,7 @@ describe('Caye MCP protocol adapter', () => {
       failure: { code: 'unavailable' as const, message: 'State unavailable', retryable: true },
     }
     mocks.invokeFounderReadCapability.mockResolvedValue(failed)
-
     const result = await callCayeMcpTool('founder-user', 'caye_goals_list', {})
-
     expect(result?.isError).toBe(true)
     expect(result?.structuredContent).toEqual({ result: failed })
   })
