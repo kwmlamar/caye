@@ -27,14 +27,46 @@ export type IngestRunStats = {
   reviewLowPriority: number
   rejected: number
   errors: string[]
+  /** True when this call was a no-op because a 'source' run was already in flight — see job_search_runs_one_running_per_type_idx. */
+  skippedAlreadyRunning?: boolean
 }
 
-function parseYearsRequired(requirements: string | null): number | null {
-  if (!requirements) return null
+/** Postgres unique_violation. See job_search_runs_one_running_per_type_idx in the migration. */
+const POSTGRES_UNIQUE_VIOLATION = '23505'
+
+type YearsRequirement = { years: number | null; isHardRequirement: boolean }
+
+// Bounded lookahead window after a years-of-experience match — long enough
+// to catch "5 years experience preferred" / "5+ years is a plus" style
+// phrasing immediately following the number, short enough that an
+// unrelated "preferred" elsewhere in a long posting can't soften a
+// mention it has nothing to do with.
+const SOFT_QUALIFIER_WINDOW_CHARS = 40
+const SOFT_QUALIFIER_PATTERN = /\b(?:preferred|nice to have|a plus|ideally?|bonus|desired|not required)\b/i
+
+/**
+ * Extracts the years-of-experience figure from a posting's requirements
+ * text, and whether that figure reads as a strict minimum ("5 years
+ * required") vs a soft preference ("5 years preferred", "5+ years is a
+ * plus"). Audited 2026-08-28 (PR #196): the original version always
+ * treated any years mention as a hard minimum, which meant an "8+ years
+ * preferred" posting — soft language that doesn't actually rule out an
+ * early-career candidate — got hard-blocked by the >5-year junior-target
+ * threshold exactly the same as an actual "8+ years required" posting.
+ */
+function parseYearsRequired(requirements: string | null): YearsRequirement {
+  if (!requirements) return { years: null, isHardRequirement: true }
   const match = requirements.match(/(\d{1,2})\+?\s*(?:years?|yrs?)\b/i)
-  if (!match) return null
+  if (!match || match.index === undefined) return { years: null, isHardRequirement: true }
   const years = Number.parseInt(match[1], 10)
-  return Number.isNaN(years) ? null : years
+  if (Number.isNaN(years)) return { years: null, isHardRequirement: true }
+
+  const after = requirements.slice(
+    match.index + match[0].length,
+    match.index + match[0].length + SOFT_QUALIFIER_WINDOW_CHARS,
+  )
+  const isHardRequirement = !SOFT_QUALIFIER_PATTERN.test(after)
+  return { years, isHardRequirement }
 }
 
 function guessDegreeRequirement(requirements: string | null): 'none' | 'preferred' | 'required' {
@@ -65,10 +97,21 @@ export async function runIngestPipeline(): Promise<IngestRunStats> {
 
   const { data: runRow, error: runError } = await supabase
     .from('job_search_runs')
-    .insert({ run_type: 'source', status: 'running', triggered_by: 'cron' })
+    .insert({ run_type: 'source', status: 'running', run_trigger_source: 'cron' })
     .select('id')
     .single()
-  if (runError || !runRow) throw new Error(`Could not start job-search run: ${runError?.message}`)
+  if (runError || !runRow) {
+    // job_search_runs_one_running_per_type_idx (partial unique index on
+    // run_type where status = 'running') rejects this insert when a
+    // sourcing run is already in flight — treat that as an expected,
+    // graceful no-op (overlapping cron trigger / manual re-trigger) rather
+    // than an error, so it doesn't fire redundant external API calls
+    // against Greenhouse/Lever or spam job_search_events with a failure.
+    if (runError?.code === POSTGRES_UNIQUE_VIOLATION) {
+      return { ...stats, skippedAlreadyRunning: true }
+    }
+    throw new Error(`Could not start job-search run: ${runError?.message}`)
+  }
   const runId = runRow.id as string
 
   try {
@@ -89,8 +132,14 @@ export async function runIngestPipeline(): Promise<IngestRunStats> {
       const adapter = getSourceAdapter(source.source_key)
       if (!adapter) continue
       try {
-        const postings = await adapter.fetchCandidates((source.config as Record<string, unknown>) ?? {})
+        const { postings, errors } = await adapter.fetchCandidates((source.config as Record<string, unknown>) ?? {})
         allPostings.push(...postings)
+        // Per-board/site failures inside a source (e.g. one bad Greenhouse
+        // board token among several configured) previously vanished
+        // silently — Promise.allSettled inside the adapter absorbed them
+        // so this outer try/catch never saw them. Surface them here so a
+        // dead/misconfigured source doesn't fail 100% silently forever.
+        stats.errors.push(...errors)
       } catch (err) {
         stats.errors.push(`${source.source_key}: ${err instanceof Error ? err.message : String(err)}`)
       }
@@ -114,7 +163,7 @@ export async function runIngestPipeline(): Promise<IngestRunStats> {
       const requirements = posting.requirements ?? null
       const fullText = `${posting.description ?? ''}\n${requirements ?? ''}`
       const signals = detectWorkAuthSignals(fullText)
-      const minYears = parseYearsRequired(requirements)
+      const { years: minYears, isHardRequirement: yearsIsHardRequirement } = parseYearsRequired(requirements)
       const degreeReq = guessDegreeRequirement(requirements)
       const candidateSkills = extractSkillTokens(requirements)
 
@@ -126,6 +175,7 @@ export async function runIngestPipeline(): Promise<IngestRunStats> {
         requiresDegree: degreeReq,
         founderHasDegree,
         minYearsExperienceRequired: minYears,
+        experienceRequirementIsHard: yearsIsHardRequirement,
         founderYearsExperience,
         location: posting.location ?? null,
         remoteType: posting.remoteType ?? 'unknown',

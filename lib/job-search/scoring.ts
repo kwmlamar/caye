@@ -32,7 +32,7 @@ export type ScoringInput = {
   discoveredAt: string
   /** Rough proxy for "application complexity" — count of custom/free-text screener questions beyond the standard set, when known. */
   extraScreenerQuestionCount: number
-} & Pick<PolicyGateInput, 'founderYearsExperience' | 'verifiedSponsorshipOverride'> & {
+} & Pick<PolicyGateInput, 'founderYearsExperience' | 'verifiedSponsorshipOverride' | 'experienceRequirementIsHard'> & {
     signals: PolicyGateInput['signals']
   }
 
@@ -101,6 +101,7 @@ export function scoreCandidate(input: ScoringInput): ScoringResult {
     minYearsExperienceRequired: input.minYearsExperienceRequired,
     founderYearsExperience: input.founderYearsExperience,
     verifiedSponsorshipOverride: input.verifiedSponsorshipOverride,
+    experienceRequirementIsHard: input.experienceRequirementIsHard,
   })
 
   const breakdown: ScoreBreakdown = {

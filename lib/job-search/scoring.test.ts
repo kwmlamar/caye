@@ -5,7 +5,7 @@ const baseSignals = {
   optExcluded: false,
   citizenshipRequired: false,
   clearanceRequired: false,
-  ambiguousSponsorshipLanguage: false,
+  ambiguousEligibilityLanguage: false,
   evidence: [] as string[],
 }
 
@@ -72,7 +72,7 @@ describe('scoreCandidate — hard blockers override score (#192)', () => {
   it('ambiguous sponsorship language routes to review, never auto-queue, even with a high raw score', () => {
     const result = scoreCandidate({
       ...strongFitBase,
-      signals: { ...baseSignals, ambiguousSponsorshipLanguage: true, evidence: ['sponsorship'] },
+      signals: { ...baseSignals, ambiguousEligibilityLanguage: true, evidence: ['sponsorship'] },
     })
     expect(result.bucket).toBe('review_low_priority')
   })
