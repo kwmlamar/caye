@@ -101,7 +101,15 @@ begin
     if new.source_artifact_id is not null and not exists (select 1 from public.business_artifacts a where a.id = new.source_artifact_id and a.workspace_id = new.workspace_id) then raise exception 'execution artifact is not in this workspace'; end if;
     if new.installed_asset_id is not null and not exists (select 1 from public.property_assets a where a.id = new.installed_asset_id and a.workspace_id = new.workspace_id and a.property_id = project_property_id) then raise exception 'installed asset is not part of this project property'; end if;
   end if;
-  if tg_table_name = 'engineering_project_outcomes' and not exists (select 1 from public.property_observations o where o.id = new.property_observation_id and o.workspace_id = new.workspace_id and o.property_id = project_property_id) then raise exception 'outcome observation is not part of this project property'; end if;
+  -- This function is shared by several project tables with different row shapes.
+  -- Convert NEW to jsonb before reading the outcome-only field so PostgreSQL does
+  -- not try to resolve property_observation_id on decision/execution row types.
+  if tg_table_name = 'engineering_project_outcomes' and not exists (
+    select 1 from public.property_observations o
+    where o.id = ((to_jsonb(new)->>'property_observation_id')::uuid)
+      and o.workspace_id = new.workspace_id
+      and o.property_id = project_property_id
+  ) then raise exception 'outcome observation is not part of this project property'; end if;
   if tg_table_name = 'engineering_project_verdicts' and not exists (select 1 from public.caye_operator_messages m where m.id = new.source_message_id and m.workspace_id = new.workspace_id and m.direction = 'inbound' and m.origin = 'dashboard') then raise exception 'verdict source must be an inbound founder dashboard message in this workspace'; end if;
   return new;
 end $$;
