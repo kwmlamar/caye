@@ -12,6 +12,27 @@ type Input = {
 
 const SAFETY_NOTE = 'Simulation result based on modeled geometry, material properties, loads, constraints, mesh, and solver assumptions. Not structural certification.'
 
+function safeAnalysisFailureReason(error: unknown): string {
+  if (!(error instanceof Error)) return 'Structural analysis failed. No verified results were produced.'
+  const message = error.message.replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ')
+  if (message.includes('ENGINEERING_FEA_SANDBOX_IMAGE is required')) {
+    return 'Structural analysis could not start because the FEA runtime is not configured. No verified results were produced.'
+  }
+  if (message.includes('there should not be more than 16 entries in a line')) {
+    return 'CalculiX rejected the generated solver input because a node or element set line exceeded its 16-entry limit. No verified results were produced.'
+  }
+  if (message.includes('matched zero mesh nodes')) {
+    return 'Structural analysis could not resolve one of the requested load or constraint regions on the generated mesh. No verified results were produced.'
+  }
+  if (message.includes('produced no usable stress/displacement rows')) {
+    return 'The solver completed without producing usable stress and displacement rows. No verified results were produced.'
+  }
+  if (message.includes('ccx exited')) {
+    return 'CalculiX failed while solving the generated analysis input. No verified results were produced.'
+  }
+  return 'Structural analysis failed. No verified results were produced.'
+}
+
 export const runStaticStructuralAnalysis: Tool<Input> = {
   name: 'run_static_structural_analysis',
   description: 'Run a linear static structural finite-element analysis (Gmsh mesh + CalculiX solve) against an existing engineering artifact. Returns deterministic solver-derived max stress, max displacement, and factor of safety (when yield strength is known). Constraints/loads must reference known geometry regions and a catalog material — this does not accept raw geometry, solver commands, or code. This is engineering analysis under modeled assumptions, not structural certification.',
@@ -68,7 +89,7 @@ export const runStaticStructuralAnalysis: Tool<Input> = {
         },
       }
     } catch (error) {
-      return { ok: false, error: error instanceof EngineeringAnalysisSpecError ? error.message : 'Structural analysis failed. No verified results were produced.' }
+      return { ok: false, error: error instanceof EngineeringAnalysisSpecError ? error.message : safeAnalysisFailureReason(error) }
     }
   },
 }

@@ -67,11 +67,6 @@ export function feaDriverSource(input: DriverInput): string {
     .map((l, i) => `    {'index': ${i}, 'region': ${JSON.stringify(l.region)}, 'magnitude_n': ${pyFloat(l.magnitude_n)}, 'direction': (${l.direction.map(pyFloat).join(', ')})},`)
     .join('\n')
 
-  // String.raw: this template embeds Python f-string \n and regex \s/\d
-  // escapes that must reach the generated .py file as literal two-character
-  // sequences, not be pre-processed into real control characters by JS's
-  // own template-literal escaping (which would corrupt every regex and
-  // silently split f-strings across physical lines into a syntax error).
   return String.raw`import gmsh
 import json
 import re
@@ -100,6 +95,11 @@ def in_bounds(pt, bounds, tol):
     x, y, z = pt
     (x0, x1), (y0, y1), (z0, z1) = bounds
     return (x0 - tol) <= x <= (x1 + tol) and (y0 - tol) <= y <= (y1 + tol) and (z0 - tol) <= z <= (z1 + tol)
+
+def append_id_set(deck, keyword, ids):
+    deck.append(keyword + '\n')
+    for start in range(0, len(ids), 16):
+        deck.append(','.join(str(i) for i in ids[start:start + 16]) + '\n')
 
 gmsh.initialize()
 gmsh.option.setNumber('General.Terminal', 0)
@@ -143,13 +143,10 @@ with open('mesh.inp') as f:
     mesh_text = f.read()
 
 deck = [mesh_text]
-deck.append(f"*ELSET, ELSET=EALL\n")
-deck.append(','.join(str(i) for i in all_element_ids) + '\n')
+append_id_set(deck, '*ELSET, ELSET=EALL', all_element_ids)
 for name, ids in node_sets.items():
-    deck.append(f"*NSET, NSET={name.upper()}\n")
-    deck.append(','.join(str(i) for i in ids) + '\n')
-deck.append(f"*NSET, NSET=NALL\n")
-deck.append(','.join(str(i) for i in node_tags) + '\n')
+    append_id_set(deck, f'*NSET, NSET={name.upper()}', ids)
+append_id_set(deck, '*NSET, NSET=NALL', node_tags)
 
 deck.append("*MATERIAL, NAME=MAT1\n*ELASTIC\n")
 deck.append(f"{E_MPA}, {NU}\n*DENSITY\n{RHO_TONNE_MM3}\n")
@@ -190,9 +187,6 @@ try:
 except FileNotFoundError:
     fail('solve', 'ccx produced no .dat output')
 
-# *EL PRINT, S rows: "element  integ.pt.  S11  S22  S33  S12  S13  S23" —
-# CalculiX does not emit a von Mises scalar itself; every post-processor
-# derives it from the raw tensor the same way this does.
 max_mises = 0.0
 mises_row = re.compile(r'^\s*\d+\s+\d+((?:\s+-?\d+\.?\d*(?:[eE][+-]?\d+)?){6})\s*$')
 for line in dat_text.splitlines():
@@ -204,7 +198,6 @@ for line in dat_text.splitlines():
     if vm > max_mises:
         max_mises = vm
 
-# *NODE PRINT, U rows: "node  U1  U2  U3"
 max_disp = 0.0
 disp_row = re.compile(r'^\s*\d+((?:\s+-?\d+\.?\d*(?:[eE][+-]?\d+)?){3})\s*$')
 for line in dat_text.splitlines():
