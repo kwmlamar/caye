@@ -237,6 +237,63 @@ export default function FounderHome() {
     })
   }
 
+  // The sidebar's "more" menu acts on a thread without it being open (the
+  // one place besides CayeDirectThread's own header Archive button that
+  // needs to hit the PATCH endpoint directly) — archiveThread above stays
+  // the local-state-only sync CayeDirectThread's onArchive callback uses
+  // after ITS OWN PATCH already succeeded.
+  async function archiveThreadById(id: string) {
+    const { session } = await getSession()
+    if (session) {
+      await fetch(`/api/founder/caye-direct/threads/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ workspaceId, status: 'archived' }),
+      })
+    }
+    archiveThread(id)
+  }
+
+  async function renameThreadTitle(id: string, title: string) {
+    updateThreadMeta(id, { title })
+    const { session } = await getSession()
+    if (!session) return
+    await fetch(`/api/founder/caye-direct/threads/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+      body: JSON.stringify({ workspaceId, title }),
+    })
+  }
+
+  async function togglePinThread(id: string, pinned: boolean) {
+    setThreads((current) => (current ?? []).map((thread) =>
+      thread.id === id ? { ...thread, pinned_at: pinned ? new Date().toISOString() : null } : thread
+    ))
+    const { session } = await getSession()
+    if (!session) return
+    await fetch(`/api/founder/caye-direct/threads/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+      body: JSON.stringify({ workspaceId, pinned }),
+    })
+  }
+
+  async function deleteThreadPermanently(id: string) {
+    setThreads((current) => {
+      const remaining = (current ?? []).filter((thread) => thread.id !== id)
+      setActiveViewState((view) => (view.type === 'thread' && view.id === id)
+        ? (remaining[0] ? { type: 'thread', id: remaining[0].id } : { type: 'thread', id: '' })
+        : view)
+      return remaining
+    })
+    const { session } = await getSession()
+    if (!session) return
+    await fetch(`/api/founder/caye-direct/threads/${id}?workspaceId=${workspaceId}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${session.access_token}` },
+    })
+  }
+
   const selectedThread = activeView.type === 'thread' ? threads?.find((t) => t.id === activeView.id) ?? null : null
   const selectedOperator = activeView.type === 'operator' ? operators?.find((o) => o.id === activeView.id) ?? null : null
   const operatorLabels = liveOperatorDisplayNames(operators ?? [])
@@ -265,6 +322,10 @@ export default function FounderHome() {
         onSelectThread={selectThread}
         onNewThread={createThread}
         creatingThread={creating}
+        onRenameThread={renameThreadTitle}
+        onTogglePinThread={togglePinThread}
+        onArchiveThread={archiveThreadById}
+        onDeleteThread={deleteThreadPermanently}
         operators={operators}
         onSelectOperator={selectOperator}
         query={query}

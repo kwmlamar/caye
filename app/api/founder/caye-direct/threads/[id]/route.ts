@@ -1,7 +1,8 @@
 /**
- * GET   /api/founder/caye-direct/threads/:id?workspaceId=<uuid>
- * POST  /api/founder/caye-direct/threads/:id   { workspaceId, message }
- * PATCH /api/founder/caye-direct/threads/:id   { workspaceId, title?, status? }
+ * GET    /api/founder/caye-direct/threads/:id?workspaceId=<uuid>
+ * POST   /api/founder/caye-direct/threads/:id   { workspaceId, message }
+ * PATCH  /api/founder/caye-direct/threads/:id   { workspaceId, title?, status?, pinned? }
+ * DELETE /api/founder/caye-direct/threads/:id?workspaceId=<uuid>
  *
  * A single Caye Direct thread. GET returns metadata + resolved linked
  * entities + visible messages (same visibility rules as the operator
@@ -10,7 +11,9 @@
  * same agent, same caye_operator_messages table as every other Caye
  * Direct/WhatsApp turn, but context loading is thread-scoped
  * (loadDirectThreadContext) instead of the operator's global sliding
- * window. PATCH renames or archives.
+ * window. PATCH renames, archives, or pins/unpins. DELETE hard-removes the
+ * thread (the organization layer only — see deleteThread's doc comment),
+ * distinct from archiving.
  *
  * POST always sends as the founder, exactly like the legacy operator-
  * scoped route — there is still no way to send as another operator from
@@ -30,6 +33,8 @@ import {
   describeEntity,
   renameThread,
   setThreadStatus,
+  setThreadPinned,
+  deleteThread,
 } from '@/lib/caye-direct-threads'
 import { runFounderThreadTurn } from '@/lib/caye-agent/founder-thread-turn'
 import type { RequestedMode } from '@/lib/model-router/types'
@@ -122,10 +127,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const body = await req.json().catch(() => null)
-  const { workspaceId, title, status } = (body ?? {}) as {
+  const { workspaceId, title, status, pinned } = (body ?? {}) as {
     workspaceId?: string
     title?: string
     status?: 'active' | 'archived'
+    pinned?: boolean
   }
   if (!workspaceId) return NextResponse.json({ error: 'workspaceId is required' }, { status: 400 })
 
@@ -138,7 +144,23 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   let ok = true
   if (title?.trim()) ok = (await renameThread(supabase, workspaceId, threadId, title)) && ok
   if (status) ok = (await setThreadStatus(supabase, workspaceId, threadId, status)) && ok
+  if (typeof pinned === 'boolean') ok = (await setThreadPinned(supabase, workspaceId, threadId, pinned)) && ok
 
+  if (!ok) return NextResponse.json({ error: 'Thread not found' }, { status: 404 })
+  return NextResponse.json({ ok: true })
+}
+
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const workspaceId = req.nextUrl.searchParams.get('workspaceId')
+  if (!workspaceId) return NextResponse.json({ error: 'workspaceId is required' }, { status: 400 })
+
+  const user = await requireFounder(req)
+  if (!user) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+
+  const { id: threadId } = await params
+  const supabase = createServiceClient()
+
+  const ok = await deleteThread(supabase, workspaceId, threadId)
   if (!ok) return NextResponse.json({ error: 'Thread not found' }, { status: 404 })
   return NextResponse.json({ ok: true })
 }

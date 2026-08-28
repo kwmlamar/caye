@@ -35,6 +35,7 @@ export interface DirectThread {
   last_activity_at: string
   created_at: string
   updated_at: string
+  pinned_at: string | null
 }
 
 export interface ThreadEntity {
@@ -185,9 +186,10 @@ export interface ThreadListItem {
   status: 'active' | 'archived'
   last_activity_at: string
   created_by: 'founder' | 'caye'
+  pinned_at: string | null
 }
 
-/** Sidebar list — client buckets these into Today/Yesterday/Previous 7 days/Older. */
+/** Sidebar list — client buckets these into Pinned/Today/Yesterday/Previous 7 days/Older. */
 export async function listThreads(
   supabase: SupabaseClient,
   workspaceId: string,
@@ -195,7 +197,7 @@ export async function listThreads(
 ): Promise<ThreadListItem[]> {
   let query = supabase
     .from('caye_direct_threads')
-    .select('id, title, status, last_activity_at, created_by')
+    .select('id, title, status, last_activity_at, created_by, pinned_at')
     .eq('workspace_id', workspaceId)
     .eq('status', opts.status ?? 'active')
 
@@ -267,6 +269,45 @@ export async function setThreadStatus(
     .select('id')
     .maybeSingle()
   if (error) throw new Error(`[caye-direct-threads] setThreadStatus failed: ${error.message}`)
+  return !!data
+}
+
+/** pinned_at doubles as the boolean flag and the Pinned-section sort key
+ *  (most-recently-pinned first) — see the 20260828 migration's comment. */
+export async function setThreadPinned(
+  supabase: SupabaseClient,
+  workspaceId: string,
+  threadId: string,
+  pinned: boolean
+): Promise<boolean> {
+  const { data, error } = await supabase
+    .from('caye_direct_threads')
+    .update({ pinned_at: pinned ? new Date().toISOString() : null, updated_at: new Date().toISOString() })
+    .eq('id', threadId)
+    .eq('workspace_id', workspaceId)
+    .select('id')
+    .maybeSingle()
+  if (error) throw new Error(`[caye-direct-threads] setThreadPinned failed: ${error.message}`)
+  return !!data
+}
+
+/** Hard delete — the sidebar's "Delete" menu item, distinct from Archive.
+ *  Only removes this organization layer (the thread row and its join rows,
+ *  via FK cascade); caye_operator_messages stays the untouched raw-event
+ *  log exactly as the 20260813 migration's comment describes. */
+export async function deleteThread(
+  supabase: SupabaseClient,
+  workspaceId: string,
+  threadId: string
+): Promise<boolean> {
+  const { data, error } = await supabase
+    .from('caye_direct_threads')
+    .delete()
+    .eq('id', threadId)
+    .eq('workspace_id', workspaceId)
+    .select('id')
+    .maybeSingle()
+  if (error) throw new Error(`[caye-direct-threads] deleteThread failed: ${error.message}`)
   return !!data
 }
 

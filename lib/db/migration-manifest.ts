@@ -133,4 +133,8 @@ export const REPO_MIGRATIONS: readonly string[] = [
   '20260826i_caye_direct_rich_results',
   '20260826j_business_artifacts',
   '20260827_engineering_runtime_v1',
+  '20260827_llm_request_telemetry',
+  '20260827b_fix_engineering_finalize_ambiguous_revision',
+  '20260827c_engineering_analysis_v1',
+  '20260828_caye_direct_threads_pin',
 ]
