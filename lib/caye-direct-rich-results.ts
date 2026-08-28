@@ -12,6 +12,7 @@ export type RichResultBlock =
   | { type: 'engineering_artifact'; artifactId: string }
   | { type: 'engineering_analysis'; analysisId: string }
   | { type: 'business_artifact'; artifactId: string }
+  | { type: 'property_snapshot'; propertyId: string }
 
 export interface ArtifactReference { id: string; name: string; mimeType?: string }
 export interface RichResultProvenance {
@@ -98,9 +99,11 @@ export function validateRichResult(value: unknown): RichResult | null {
       blocks.push({ type: 'artifact_reference', id: b.id as string, name, ...(mimeType ? { mimeType } : {}) })
       continue
     }
-    // Only server orchestration can introduce these trusted semantic blocks
-    // — never accepted from model-authored fenced JSON (extractRichResult).
-    if (b.type === 'engineering_artifact' || b.type === 'engineering_analysis' || b.type === 'business_artifact') return null
+
+    // These blocks point at server-authoritative resources and are only
+    // introduced by trusted orchestration after a real tool/runtime event.
+    // Model-authored fenced JSON never gets to manufacture one.
+    if (b.type === 'engineering_artifact' || b.type === 'engineering_analysis' || b.type === 'business_artifact' || b.type === 'property_snapshot') return null
 
     return null
   }
@@ -123,11 +126,8 @@ export function validateRichResult(value: unknown): RichResult | null {
  *
  * A fence that parses as JSON and carries the envelope shape
  * ({version:1, blocks:[...]}) but fails validateRichResult — e.g. a model
- * trying to author an engineering_artifact block, which is server-only by
- * design (see validateRichResult's comment) — is a protocol artifact, not
- * reader content. Left in place, it renders as a raw JSON dump alongside
- * the trusted block the server attaches separately. Strip it from the
- * displayed narrative rather than leaking it verbatim.
+ * trying to author a server-only engineering/property block — is a protocol
+ * artifact, not reader content. Strip it instead of leaking raw JSON.
  */
 export function extractRichResult(textValue: string): { narrative: string; result?: RichResult } {
   const candidates: RichResult[] = []
