@@ -12,7 +12,7 @@ export type FounderCapabilityInvocationInput = {
 }
 
 export type FounderContextSnapshot = {
-  actor: { kind: 'founder'; userId: string }
+  actor: { kind: 'founder' }
   scope: { workspaceId: string | null }
   capabilities: ReturnType<typeof capabilityManifest>
   observations: {
@@ -112,7 +112,7 @@ export async function buildFounderContextSnapshot(
     : [null, null]
 
   return {
-    actor: { kind: 'founder', userId: authenticatedFounderUserId },
+    actor: { kind: 'founder' },
     scope: { workspaceId },
     capabilities: founderCapabilityManifest(),
     observations: { goals, attention, engineeringArtifacts },
