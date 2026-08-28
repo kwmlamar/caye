@@ -100,19 +100,10 @@ export function validateRichResult(value: unknown): RichResult | null {
       continue
     }
 
-    // A property snapshot is only a semantic pointer. Rendering re-fetches
-    // the property through a founder-authenticated, workspace-scoped server
-    // route, so a fabricated/foreign id cannot expose data. The model should
-    // use ids returned by list_properties/get_property_snapshot; a bad id
-    // simply renders as unavailable rather than becoming trusted content.
-    if (b.type === 'property_snapshot' && idOk(b.propertyId)) {
-      blocks.push({ type: 'property_snapshot', propertyId: b.propertyId as string })
-      continue
-    }
-
-    // These blocks carry server-created artifact semantics and therefore
-    // remain orchestration-only, never accepted from model-authored JSON.
-    if (b.type === 'engineering_artifact' || b.type === 'engineering_analysis' || b.type === 'business_artifact') return null
+    // These blocks point at server-authoritative resources and are only
+    // introduced by trusted orchestration after a real tool/runtime event.
+    // Model-authored fenced JSON never gets to manufacture one.
+    if (b.type === 'engineering_artifact' || b.type === 'engineering_analysis' || b.type === 'business_artifact' || b.type === 'property_snapshot') return null
 
     return null
   }
@@ -135,7 +126,7 @@ export function validateRichResult(value: unknown): RichResult | null {
  *
  * A fence that parses as JSON and carries the envelope shape
  * ({version:1, blocks:[...]}) but fails validateRichResult — e.g. a model
- * trying to author a server-only engineering_artifact block — is a protocol
+ * trying to author a server-only engineering/property block — is a protocol
  * artifact, not reader content. Strip it instead of leaking raw JSON.
  */
 export function extractRichResult(textValue: string): { narrative: string; result?: RichResult } {
