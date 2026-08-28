@@ -85,6 +85,11 @@ import { getWorkspaceAutonomy } from './admin/read/get-workspace-autonomy'
 import { triggerCron } from './admin/write-high/trigger-cron'
 import { setWorkspaceAutonomy } from './admin/write-high/set-workspace-autonomy'
 import { gateAdminHighRisk } from './admin/admin-high-risk-gate'
+import { getJobSearchSummary } from './admin/read/get-job-search-summary'
+import { listJobSearchQueue } from './admin/read/list-job-search-queue'
+import { explainJobSearchRejection } from './admin/read/explain-job-search-rejection'
+import { pauseJobSearch } from './admin/write-low/pause-job-search'
+import { resumeJobSearch } from './admin/write-low/resume-job-search'
 import { checkAvailabilityTool } from './read/front-desk/check-availability'
 import { lookupPriceTool } from './read/front-desk/lookup-price'
 import { findBookingsTool } from './read/front-desk/find-bookings'
@@ -330,6 +335,17 @@ export const TOOL_REGISTRY: AnyTool[] = [
   // enabling a scan points unprompted, recurring WhatsApp traffic at a paying
   // customer's owner — see the tool's own doc comment.
   gateAdminHighRisk(setWorkspaceAutonomy) as AnyTool,
+  // CAY-192 — founder-only job-search operator (Phase 7 founder UX).
+  // pause/resume are 'low' risk, not gateAdminHighRisk-wrapped: pausing
+  // is safety-positive/immediate, and resuming only re-enables
+  // application PREPARATION, which always lands at NEEDS_HUMAN in this
+  // build (no automated submission exists yet — see
+  // lib/job-search/application-executor.ts's doc comment).
+  getJobSearchSummary as AnyTool,
+  listJobSearchQueue as AnyTool,
+  explainJobSearchRejection as AnyTool,
+  pauseJobSearch as AnyTool,
+  resumeJobSearch as AnyTool,
 ]
 
 export function findTool(name: string): AnyTool | undefined {

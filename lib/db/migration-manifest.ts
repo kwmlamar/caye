@@ -137,4 +137,9 @@ export const REPO_MIGRATIONS: readonly string[] = [
   '20260827b_fix_engineering_finalize_ambiguous_revision',
   '20260827c_engineering_analysis_v1',
   '20260828_caye_direct_threads_pin',
+  '20260828_founder_global_direct',
+  '20260828_property_intelligence_v1',
+  '20260828_property_intelligence_v1_current_state',
+  '20260828_property_intelligence_v1_provenance_scope',
+  '20260828z_job_search_operator_v1',
 ]

@@ -21,6 +21,12 @@ export type CapabilityNamespace =
   | 'artifacts'
   | 'engineering'
   | 'property'
+  // Founder-only job-search operator (CAY-192). Never workspace-scoped —
+  // capabilities in this namespace must not accept or branch on
+  // context.scope.workspaceId, since job_search_* tables have no
+  // workspace_id column at all (see supabase/migrations/
+  // 20260828z_job_search_operator_v1.sql).
+  | 'job_search'
 
 export type CapabilityName = `${CapabilityNamespace}.${string}`
 

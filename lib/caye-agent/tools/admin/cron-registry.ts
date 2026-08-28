@@ -9,6 +9,7 @@ import { runActivationScan } from '@/app/api/caye/activation-scan/cron/route'
 import { runOperationWorker } from '@/app/api/caye/operation-worker/route'
 import { runOutreachAutosendScan } from '@/app/api/caye/outreach-autosend-scan/route'
 import { runOutreachSourcingScan } from '@/app/api/caye/outreach-sourcing-scan/route'
+import { runJobSearchSourcing } from '@/app/api/caye/job-search-sourcing/route'
 
 /**
  * Fixed, hardcoded map of the crons Admin Shell can report on / manually
@@ -48,4 +49,9 @@ export const CRON_JOBS: Record<
   'operation-worker': { label: 'External-effects outbox (deferred calendar syncs)', run: runOperationWorker },
   'outreach-autosend-scan': { label: 'Outreach send scan', run: runOutreachAutosendScan },
   'outreach-sourcing-scan': { label: 'Outreach sourcing scan', run: runOutreachSourcingScan },
+  // CAY-192 — founder-only job-search operator. Source/normalize/dedupe/
+  // score only; does not prepare applications (see the route's doc
+  // comment). Not yet registered with an external scheduler — manual
+  // trigger only until that follow-up step is done (see PR description).
+  'job-search-sourcing': { label: 'Job-search sourcing/scoring (founder-only)', run: runJobSearchSourcing },
 }
