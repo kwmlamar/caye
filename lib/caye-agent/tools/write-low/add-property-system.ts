@@ -13,10 +13,11 @@ type Input = {
 
 export const addPropertySystemTool: Tool<Input> = {
   name: 'add_property_system',
-  description: 'Add a persistent physical system to a known property, such as water, HVAC, energy, network, or security. Optionally attach it to a structure in that same property. Records what exists; does not authorize changes.',
+  description: 'Add a persistent physical system to a known property from founder Caye Direct, such as water, HVAC, energy, network, or security. Optionally attach it to a structure in that same property. Records what exists; does not authorize changes.',
   risk: 'low', roles: ['founder'], modes: ['back-office'],
   inputSchema: { type: 'object', properties: { property_id: { type: 'string' }, structure_id: { type: 'string' }, name: { type: 'string' }, system_type: { type: 'string', enum: ['water','thermal','hvac','energy','electrical','network','security','wastewater','structural','other'] }, status: { type: 'string', enum: ['active','inactive','unknown','needs_attention'] }, notes: { type: 'string' } }, required: ['property_id','name','system_type'], additionalProperties: false },
   async execute(args, ctx) {
+    if (ctx.channel !== 'dashboard') return { ok: false, error: 'Property records can only be changed from founder Caye Direct.' }
     try {
       const system = await addPropertySystem({ workspaceId: ctx.workspaceId, propertyId: args.property_id, structureId: args.structure_id ?? null, name: args.name, systemType: args.system_type, status: args.status, metadata: args.notes ? { notes: args.notes } : {} })
       return { ok: true, data: { system } }
