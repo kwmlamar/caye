@@ -3,6 +3,46 @@ import { createServiceClient } from '@/lib/supabase-server'
 
 export type PropertyObservationProvenance = 'measured' | 'observed' | 'operator_confirmed' | 'inferred' | 'estimated'
 
+type SnapshotObservation = {
+  id: string
+  structure_id: string | null
+  system_id: string | null
+  asset_id: string | null
+  observation_key: string
+  numeric_value: number | null
+  text_value: string | null
+  unit: string | null
+  provenance_status: PropertyObservationProvenance
+  confidence: number | null
+  observed_at: string
+  created_at: string
+  notes: string | null
+}
+
+function observationStateKey(observation: SnapshotObservation): string {
+  const subject = observation.asset_id
+    ? `asset:${observation.asset_id}`
+    : observation.system_id
+      ? `system:${observation.system_id}`
+      : observation.structure_id
+        ? `structure:${observation.structure_id}`
+        : 'property'
+  return `${subject}:${observation.observation_key}`
+}
+
+/** Input is newest-first; first value for each (subject,key) is current state. */
+export function currentPropertyObservations(observations: readonly SnapshotObservation[]): SnapshotObservation[] {
+  const seen = new Set<string>()
+  const current: SnapshotObservation[] = []
+  for (const observation of observations) {
+    const key = observationStateKey(observation)
+    if (seen.has(key)) continue
+    seen.add(key)
+    current.push(observation)
+  }
+  return current
+}
+
 export async function createProperty(input: { workspaceId: string; name: string; propertyType?: string; locationLabel?: string | null; metadata?: Record<string, unknown> }) {
   const supabase = createServiceClient()
   const { data, error } = await supabase.from('physical_properties').insert({ workspace_id: input.workspaceId, name: input.name.trim(), property_type: input.propertyType ?? 'residential', location_label: input.locationLabel ?? null, metadata: input.metadata ?? {} }).select('id,name,property_type,location_label,status').single()
@@ -86,19 +126,21 @@ export async function getPropertySnapshot(workspaceId: string, propertyId: strin
     supabase.from('property_structures').select('id,name,structure_type,metadata').eq('workspace_id', workspaceId).eq('property_id', propertyId).order('created_at'),
     supabase.from('property_systems').select('id,structure_id,name,system_type,status,metadata').eq('workspace_id', workspaceId).eq('property_id', propertyId).order('created_at'),
     supabase.from('property_assets').select('id,structure_id,system_id,name,asset_type,manufacturer,model,status,specifications,metadata').eq('workspace_id', workspaceId).eq('property_id', propertyId).order('created_at'),
-    supabase.from('property_observations').select('id,structure_id,system_id,asset_id,observation_key,numeric_value,text_value,unit,provenance_status,confidence,observed_at,notes').eq('workspace_id', workspaceId).eq('property_id', propertyId).order('observed_at', { ascending: false }).limit(100),
+    supabase.from('property_observations').select('id,structure_id,system_id,asset_id,observation_key,numeric_value,text_value,unit,provenance_status,confidence,observed_at,created_at,notes').eq('workspace_id', workspaceId).eq('property_id', propertyId).order('observed_at', { ascending: false }).order('created_at', { ascending: false }).limit(100),
   ])
 
   if (structuresResult.error || systemsResult.error || assetsResult.error || observationsResult.error) {
     throw new Error('Property snapshot is incomplete; one or more system reads failed')
   }
 
+  const observations = (observationsResult.data ?? []) as SnapshotObservation[]
   return {
     property,
     structures: structuresResult.data ?? [],
     systems: systemsResult.data ?? [],
     assets: assetsResult.data ?? [],
-    observations: observationsResult.data ?? [],
+    current_observations: currentPropertyObservations(observations),
+    observations,
   }
 }
 
