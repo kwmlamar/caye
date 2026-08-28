@@ -6,8 +6,35 @@ import { cadQuerySource } from './cadquery-source'
 const TIMEOUT_MS = 90_000
 const MAX_OUTPUT_BYTES = 25 * 1024 * 1024
 const MAX_DIAGNOSTIC_CHARS = 2_000
+const DEFAULT_CAD_SANDBOX_IMAGE = 'caye-engineering:cadquery-v2'
 
 export type GeneratedCadFiles = { source: string; stl: Buffer; step: Buffer; metadata: { bounds_mm: Record<string, number>; volume_mm3: number } }
+
+type CadImageEnv = {
+  ENGINEERING_CAD_SANDBOX_IMAGE?: string
+  ENGINEERING_SANDBOX_IMAGE?: string
+}
+
+/**
+ * CAD and FEA intentionally have separate runtime images. During the FEA rollout,
+ * the legacy ENGINEERING_SANDBOX_IMAGE value was overwritten with caye-fea:latest,
+ * which made CAD revisions execute inside the solver image and fail before geometry
+ * was produced. Prefer the explicit CAD variable, accept the legacy variable only
+ * when it is clearly not the FEA image, and otherwise fall back to the known-good
+ * CadQuery image that Engineering V1 was built and validated against.
+ */
+export function resolveCadSandboxImage(env: CadImageEnv = process.env): string {
+  const explicitCadImage = env.ENGINEERING_CAD_SANDBOX_IMAGE?.trim()
+  if (explicitCadImage) return explicitCadImage
+
+  const legacyImage = env.ENGINEERING_SANDBOX_IMAGE?.trim()
+  if (legacyImage && !/^caye-fea(?::|$)/i.test(legacyImage)) return legacyImage
+
+  if (legacyImage) {
+    console.warn(`[engineering/runtime] refusing FEA image for CAD generation image=${legacyImage}; using ${DEFAULT_CAD_SANDBOX_IMAGE}`)
+  }
+  return DEFAULT_CAD_SANDBOX_IMAGE
+}
 
 function safeDiagnostic(value: unknown): string {
   const raw = value instanceof Error ? `${value.name}: ${value.message}` : String(value)
@@ -31,8 +58,7 @@ function validateMetadata(input: unknown): GeneratedCadFiles['metadata'] {
 
 /** Runs only a fixed CadQuery template in a short-lived, secret-free image. */
 export async function generateCadInSandbox(spec: EngineeringSpec): Promise<GeneratedCadFiles> {
-  const image = process.env.ENGINEERING_SANDBOX_IMAGE
-  if (!image) throw new Error('Engineering runtime is not configured (ENGINEERING_SANDBOX_IMAGE is required)')
+  const image = resolveCadSandboxImage()
 
   let stage = 'sandbox_create'
   let sandbox: Awaited<ReturnType<typeof Sandbox.create>> | null = null
