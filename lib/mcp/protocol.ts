@@ -16,7 +16,20 @@ type McpTool = {
   description: string
   inputSchema: Record<string, unknown>
   outputSchema?: Record<string, unknown>
+  annotations?: {
+    readOnlyHint?: boolean
+    destructiveHint?: boolean
+    idempotentHint?: boolean
+    openWorldHint?: boolean
+  }
 }
+
+const READ_ONLY_ANNOTATIONS = {
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: false,
+} as const
 
 const WORKSPACE_PROPERTY = {
   type: ['string', 'null'],
@@ -41,64 +54,30 @@ export const CAYE_MCP_TOOLS = [
   {
     name: 'caye_context_snapshot',
     description: 'Read Caye founder context for operator scope or one explicit workspace.',
-    inputSchema: {
-      type: 'object',
-      additionalProperties: false,
-      properties: { workspaceId: WORKSPACE_PROPERTY },
-    },
-    outputSchema: {
-      type: 'object',
-      additionalProperties: false,
-      required: ['snapshot'],
-      properties: { snapshot: { type: 'object' } },
-    },
+    annotations: READ_ONLY_ANNOTATIONS,
+    inputSchema: { type: 'object', additionalProperties: false, properties: { workspaceId: WORKSPACE_PROPERTY } },
+    outputSchema: { type: 'object', additionalProperties: false, required: ['snapshot'], properties: { snapshot: { type: 'object' } } },
   },
   {
     name: 'caye_goals_list',
     description: 'List Caye durable goals for operator scope or exactly one workspace.',
-    inputSchema: {
-      type: 'object',
-      additionalProperties: false,
-      properties: { workspaceId: WORKSPACE_PROPERTY },
-    },
-    outputSchema: {
-      type: 'object',
-      additionalProperties: false,
-      required: ['result'],
-      properties: { result: CAPABILITY_RESULT_SCHEMA },
-    },
+    annotations: READ_ONLY_ANNOTATIONS,
+    inputSchema: { type: 'object', additionalProperties: false, properties: { workspaceId: WORKSPACE_PROPERTY } },
+    outputSchema: { type: 'object', additionalProperties: false, required: ['result'], properties: { result: CAPABILITY_RESULT_SCHEMA } },
   },
   {
     name: 'caye_attention_list',
     description: 'List unresolved founder attention for exactly one Caye workspace.',
-    inputSchema: {
-      type: 'object',
-      additionalProperties: false,
-      required: ['workspaceId'],
-      properties: { workspaceId: { type: 'string', minLength: 1 } },
-    },
-    outputSchema: {
-      type: 'object',
-      additionalProperties: false,
-      required: ['result'],
-      properties: { result: CAPABILITY_RESULT_SCHEMA },
-    },
+    annotations: READ_ONLY_ANNOTATIONS,
+    inputSchema: { type: 'object', additionalProperties: false, required: ['workspaceId'], properties: { workspaceId: { type: 'string', minLength: 1 } } },
+    outputSchema: { type: 'object', additionalProperties: false, required: ['result'], properties: { result: CAPABILITY_RESULT_SCHEMA } },
   },
   {
     name: 'caye_engineering_artifacts_list',
     description: 'List trusted engineering artifact metadata for exactly one Caye workspace.',
-    inputSchema: {
-      type: 'object',
-      additionalProperties: false,
-      required: ['workspaceId'],
-      properties: { workspaceId: { type: 'string', minLength: 1 } },
-    },
-    outputSchema: {
-      type: 'object',
-      additionalProperties: false,
-      required: ['result'],
-      properties: { result: CAPABILITY_RESULT_SCHEMA },
-    },
+    annotations: READ_ONLY_ANNOTATIONS,
+    inputSchema: { type: 'object', additionalProperties: false, required: ['workspaceId'], properties: { workspaceId: { type: 'string', minLength: 1 } } },
+    outputSchema: { type: 'object', additionalProperties: false, required: ['result'], properties: { result: CAPABILITY_RESULT_SCHEMA } },
   },
 ] as const satisfies readonly McpTool[]
 
@@ -132,39 +111,18 @@ function invalidToolInput(message: string): ToolCallResult {
   return toolResult({ error: { code: 'invalid_args', message } }, true)
 }
 
-function workspaceFromArguments(
-  args: unknown,
-  required: boolean,
-): { ok: true; workspaceId: string | null } | { ok: false; result: ToolCallResult } {
-  if (args === undefined || args === null) {
-    return required
-      ? { ok: false, result: invalidToolInput('workspaceId is required.') }
-      : { ok: true, workspaceId: null }
-  }
-  if (typeof args !== 'object' || Array.isArray(args)) {
-    return { ok: false, result: invalidToolInput('Tool arguments must be an object.') }
-  }
+function workspaceFromArguments(args: unknown, required: boolean): { ok: true; workspaceId: string | null } | { ok: false; result: ToolCallResult } {
+  if (args === undefined || args === null) return required ? { ok: false, result: invalidToolInput('workspaceId is required.') } : { ok: true, workspaceId: null }
+  if (typeof args !== 'object' || Array.isArray(args)) return { ok: false, result: invalidToolInput('Tool arguments must be an object.') }
   const record = args as Record<string, unknown>
-  if (Object.keys(record).some((key) => key !== 'workspaceId')) {
-    return { ok: false, result: invalidToolInput('Only workspaceId is accepted by this tool version.') }
-  }
+  if (Object.keys(record).some((key) => key !== 'workspaceId')) return { ok: false, result: invalidToolInput('Only workspaceId is accepted by this tool version.') }
   const workspaceId = record.workspaceId
-  if (workspaceId === undefined || workspaceId === null) {
-    return required
-      ? { ok: false, result: invalidToolInput('workspaceId is required.') }
-      : { ok: true, workspaceId: null }
-  }
-  if (typeof workspaceId !== 'string' || workspaceId.trim().length === 0) {
-    return { ok: false, result: invalidToolInput('workspaceId must be a non-empty string.') }
-  }
+  if (workspaceId === undefined || workspaceId === null) return required ? { ok: false, result: invalidToolInput('workspaceId is required.') } : { ok: true, workspaceId: null }
+  if (typeof workspaceId !== 'string' || workspaceId.trim().length === 0) return { ok: false, result: invalidToolInput('workspaceId must be a non-empty string.') }
   return { ok: true, workspaceId: workspaceId.trim() }
 }
 
-export async function callCayeMcpTool(
-  founderUserId: string,
-  name: string,
-  args: unknown,
-): Promise<ToolCallResult | null> {
+export async function callCayeMcpTool(founderUserId: string, name: string, args: unknown): Promise<ToolCallResult | null> {
   if (!CAYE_MCP_TOOLS.some((tool) => tool.name === name)) return null
 
   if (name === 'caye_context_snapshot') {
