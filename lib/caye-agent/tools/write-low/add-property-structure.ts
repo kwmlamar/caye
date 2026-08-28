@@ -11,7 +11,7 @@ type Input = {
 
 export const addPropertyStructureTool: Tool<Input> = {
   name: 'add_property_structure',
-  description: 'Add a persistent structure/building within a known physical property. Records what exists; does not authorize construction or physical changes.',
+  description: 'Add a persistent structure/building within a known physical property from founder Caye Direct. Records what exists; does not authorize construction or physical changes.',
   risk: 'low',
   roles: ['founder'],
   modes: ['back-office'],
@@ -27,6 +27,7 @@ export const addPropertyStructureTool: Tool<Input> = {
     additionalProperties: false,
   },
   async execute(args, ctx) {
+    if (ctx.channel !== 'dashboard') return { ok: false, error: 'Property records can only be changed from founder Caye Direct.' }
     try {
       const structure = await addPropertyStructure({
         workspaceId: ctx.workspaceId,
