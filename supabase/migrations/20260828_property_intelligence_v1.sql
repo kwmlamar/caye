@@ -13,44 +13,50 @@ create table if not exists public.physical_properties (
   metadata jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  unique (workspace_id, name)
+  unique (workspace_id, name),
+  unique (workspace_id, id)
 );
 create index if not exists physical_properties_workspace_idx on public.physical_properties(workspace_id, status, created_at desc);
 
 create table if not exists public.property_structures (
   id uuid primary key default gen_random_uuid(),
   workspace_id uuid not null references public.customers(id) on delete cascade,
-  property_id uuid not null references public.physical_properties(id) on delete cascade,
+  property_id uuid not null,
   name text not null check (char_length(name) between 1 and 160),
   structure_type text not null default 'building' check (structure_type in ('building','shed','tank_pad','utility','other')),
   metadata jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  unique (property_id, name)
+  unique (property_id, name),
+  unique (workspace_id, property_id, id),
+  foreign key (workspace_id, property_id) references public.physical_properties(workspace_id, id) on delete cascade
 );
 create index if not exists property_structures_property_idx on public.property_structures(workspace_id, property_id);
 
 create table if not exists public.property_systems (
   id uuid primary key default gen_random_uuid(),
   workspace_id uuid not null references public.customers(id) on delete cascade,
-  property_id uuid not null references public.physical_properties(id) on delete cascade,
-  structure_id uuid references public.property_structures(id) on delete set null,
+  property_id uuid not null,
+  structure_id uuid,
   name text not null check (char_length(name) between 1 and 160),
   system_type text not null check (system_type in ('water','thermal','hvac','energy','electrical','network','security','wastewater','structural','other')),
   status text not null default 'active' check (status in ('active','inactive','unknown','needs_attention')),
   metadata jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  unique (property_id, name)
+  unique (property_id, name),
+  unique (workspace_id, property_id, id),
+  foreign key (workspace_id, property_id) references public.physical_properties(workspace_id, id) on delete cascade,
+  foreign key (workspace_id, property_id, structure_id) references public.property_structures(workspace_id, property_id, id) on delete set null (structure_id)
 );
 create index if not exists property_systems_property_idx on public.property_systems(workspace_id, property_id, system_type);
 
 create table if not exists public.property_assets (
   id uuid primary key default gen_random_uuid(),
   workspace_id uuid not null references public.customers(id) on delete cascade,
-  property_id uuid not null references public.physical_properties(id) on delete cascade,
-  structure_id uuid references public.property_structures(id) on delete set null,
-  system_id uuid references public.property_systems(id) on delete set null,
+  property_id uuid not null,
+  structure_id uuid,
+  system_id uuid,
   name text not null check (char_length(name) between 1 and 160),
   asset_type text not null check (char_length(asset_type) between 1 and 80),
   manufacturer text,
@@ -60,17 +66,21 @@ create table if not exists public.property_assets (
   metadata jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  unique (property_id, name)
+  unique (property_id, name),
+  unique (workspace_id, property_id, id),
+  foreign key (workspace_id, property_id) references public.physical_properties(workspace_id, id) on delete cascade,
+  foreign key (workspace_id, property_id, structure_id) references public.property_structures(workspace_id, property_id, id) on delete set null (structure_id),
+  foreign key (workspace_id, property_id, system_id) references public.property_systems(workspace_id, property_id, id) on delete set null (system_id)
 );
 create index if not exists property_assets_property_idx on public.property_assets(workspace_id, property_id, system_id, asset_type);
 
 create table if not exists public.property_observations (
   id uuid primary key default gen_random_uuid(),
   workspace_id uuid not null references public.customers(id) on delete cascade,
-  property_id uuid not null references public.physical_properties(id) on delete cascade,
-  structure_id uuid references public.property_structures(id) on delete set null,
-  system_id uuid references public.property_systems(id) on delete set null,
-  asset_id uuid references public.property_assets(id) on delete set null,
+  property_id uuid not null,
+  structure_id uuid,
+  system_id uuid,
+  asset_id uuid,
   observation_key text not null check (char_length(observation_key) between 1 and 120),
   numeric_value double precision,
   text_value text,
@@ -82,6 +92,10 @@ create table if not exists public.property_observations (
   notes text,
   observed_at timestamptz not null default now(),
   created_at timestamptz not null default now(),
+  foreign key (workspace_id, property_id) references public.physical_properties(workspace_id, id) on delete cascade,
+  foreign key (workspace_id, property_id, structure_id) references public.property_structures(workspace_id, property_id, id) on delete set null (structure_id),
+  foreign key (workspace_id, property_id, system_id) references public.property_systems(workspace_id, property_id, id) on delete set null (system_id),
+  foreign key (workspace_id, property_id, asset_id) references public.property_assets(workspace_id, property_id, id) on delete set null (asset_id),
   check ((numeric_value is not null)::integer + (text_value is not null)::integer = 1),
   check (numeric_value is null or (unit is not null and char_length(unit) between 1 and 40))
 );
@@ -93,14 +107,18 @@ create index if not exists property_observations_asset_idx on public.property_ob
 create table if not exists public.property_artifact_links (
   id uuid primary key default gen_random_uuid(),
   workspace_id uuid not null references public.customers(id) on delete cascade,
-  property_id uuid not null references public.physical_properties(id) on delete cascade,
-  structure_id uuid references public.property_structures(id) on delete set null,
-  system_id uuid references public.property_systems(id) on delete set null,
-  asset_id uuid references public.property_assets(id) on delete set null,
+  property_id uuid not null,
+  structure_id uuid,
+  system_id uuid,
+  asset_id uuid,
   artifact_id uuid not null references public.business_artifacts(id) on delete cascade,
   relation_type text not null default 'evidence' check (relation_type in ('evidence','photo_of','drawing_of','manual_for','measurement_source','other')),
   created_at timestamptz not null default now(),
-  unique (property_id, artifact_id, relation_type)
+  unique (property_id, artifact_id, relation_type),
+  foreign key (workspace_id, property_id) references public.physical_properties(workspace_id, id) on delete cascade,
+  foreign key (workspace_id, property_id, structure_id) references public.property_structures(workspace_id, property_id, id) on delete set null (structure_id),
+  foreign key (workspace_id, property_id, system_id) references public.property_systems(workspace_id, property_id, id) on delete set null (system_id),
+  foreign key (workspace_id, property_id, asset_id) references public.property_assets(workspace_id, property_id, id) on delete set null (asset_id)
 );
 
 alter table public.physical_properties enable row level security;
