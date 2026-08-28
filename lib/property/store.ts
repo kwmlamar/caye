@@ -12,13 +12,15 @@ export async function createProperty(input: { workspaceId: string; name: string;
 
 async function requireProperty(workspaceId: string, propertyId: string) {
   const supabase = createServiceClient()
-  const { data } = await supabase.from('physical_properties').select('id').eq('workspace_id', workspaceId).eq('id', propertyId).maybeSingle()
+  const { data, error } = await supabase.from('physical_properties').select('id').eq('workspace_id', workspaceId).eq('id', propertyId).maybeSingle()
+  if (error) throw new Error('Could not verify property scope')
   if (!data) throw new Error('Property not found in this workspace')
 }
 
 async function requireScopedEntity(table: 'property_structures' | 'property_systems' | 'property_assets', workspaceId: string, propertyId: string, id: string, label: string) {
   const supabase = createServiceClient()
-  const { data } = await supabase.from(table).select('id').eq('workspace_id', workspaceId).eq('property_id', propertyId).eq('id', id).maybeSingle()
+  const { data, error } = await supabase.from(table).select('id').eq('workspace_id', workspaceId).eq('property_id', propertyId).eq('id', id).maybeSingle()
+  if (error) throw new Error(`Could not verify ${label.toLowerCase()} scope`)
   if (!data) throw new Error(`${label} is not part of this property`)
 }
 
@@ -60,11 +62,13 @@ export async function recordPropertyObservation(input: { workspaceId: string; pr
   if (numeric && !input.unit) throw new Error('Numeric observations require an explicit unit')
   const supabase = createServiceClient()
   if (input.sourceArtifactId) {
-    const { data: artifact } = await supabase.from('business_artifacts').select('id').eq('workspace_id', input.workspaceId).eq('id', input.sourceArtifactId).maybeSingle()
+    const { data: artifact, error } = await supabase.from('business_artifacts').select('id').eq('workspace_id', input.workspaceId).eq('id', input.sourceArtifactId).maybeSingle()
+    if (error) throw new Error('Could not verify source artifact scope')
     if (!artifact) throw new Error('Source artifact is not in this workspace')
   }
   if (input.sourceMessageId) {
-    const { data: message } = await supabase.from('caye_operator_messages').select('id').eq('workspace_id', input.workspaceId).eq('id', input.sourceMessageId).maybeSingle()
+    const { data: message, error } = await supabase.from('caye_operator_messages').select('id').eq('workspace_id', input.workspaceId).eq('id', input.sourceMessageId).maybeSingle()
+    if (error) throw new Error('Could not verify source message scope')
     if (!message) throw new Error('Source message is not in this workspace')
   }
   const { data, error } = await supabase.from('property_observations').insert({ workspace_id: input.workspaceId, property_id: input.propertyId, structure_id: input.structureId ?? null, system_id: input.systemId ?? null, asset_id: input.assetId ?? null, observation_key: input.key.trim(), numeric_value: numeric ? input.numericValue : null, text_value: textual ? input.textValue!.trim() : null, unit: numeric ? input.unit : null, provenance_status: input.provenanceStatus, confidence: input.confidence ?? null, source_artifact_id: input.sourceArtifactId ?? null, source_message_id: input.sourceMessageId ?? null, notes: input.notes ?? null, observed_at: input.observedAt ?? new Date().toISOString() }).select('id,observation_key,numeric_value,text_value,unit,provenance_status,confidence,observed_at').single()
@@ -74,15 +78,28 @@ export async function recordPropertyObservation(input: { workspaceId: string; pr
 
 export async function getPropertySnapshot(workspaceId: string, propertyId: string) {
   const supabase = createServiceClient()
-  const { data: property } = await supabase.from('physical_properties').select('id,name,property_type,location_label,status,metadata,created_at,updated_at').eq('workspace_id', workspaceId).eq('id', propertyId).maybeSingle()
+  const { data: property, error: propertyError } = await supabase.from('physical_properties').select('id,name,property_type,location_label,status,metadata,created_at,updated_at').eq('workspace_id', workspaceId).eq('id', propertyId).maybeSingle()
+  if (propertyError) throw new Error('Could not load property')
   if (!property) return null
-  const [{ data: structures }, { data: systems }, { data: assets }, { data: observations }] = await Promise.all([
+
+  const [structuresResult, systemsResult, assetsResult, observationsResult] = await Promise.all([
     supabase.from('property_structures').select('id,name,structure_type,metadata').eq('workspace_id', workspaceId).eq('property_id', propertyId).order('created_at'),
     supabase.from('property_systems').select('id,structure_id,name,system_type,status,metadata').eq('workspace_id', workspaceId).eq('property_id', propertyId).order('created_at'),
     supabase.from('property_assets').select('id,structure_id,system_id,name,asset_type,manufacturer,model,status,specifications,metadata').eq('workspace_id', workspaceId).eq('property_id', propertyId).order('created_at'),
     supabase.from('property_observations').select('id,structure_id,system_id,asset_id,observation_key,numeric_value,text_value,unit,provenance_status,confidence,observed_at,notes').eq('workspace_id', workspaceId).eq('property_id', propertyId).order('observed_at', { ascending: false }).limit(100),
   ])
-  return { property, structures: structures ?? [], systems: systems ?? [], assets: assets ?? [], observations: observations ?? [] }
+
+  if (structuresResult.error || systemsResult.error || assetsResult.error || observationsResult.error) {
+    throw new Error('Property snapshot is incomplete; one or more system reads failed')
+  }
+
+  return {
+    property,
+    structures: structuresResult.data ?? [],
+    systems: systemsResult.data ?? [],
+    assets: assetsResult.data ?? [],
+    observations: observationsResult.data ?? [],
+  }
 }
 
 export async function listProperties(workspaceId: string) {
