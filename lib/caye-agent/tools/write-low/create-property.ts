@@ -14,7 +14,6 @@ export const createPropertyTool: Tool<Input> = {
   async execute(args, ctx) {
     try {
       const property = await createProperty({ workspaceId: ctx.workspaceId, name: args.name, propertyType: args.property_type, locationLabel: args.location_label ?? null, metadata: args.notes ? { notes: args.notes } : {} })
-      ctx.propertySnapshotIds?.push(property.id)
       return { ok: true, data: { property, note: 'Property record created. No physical action was performed.' } }
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : 'Could not create property.' }
