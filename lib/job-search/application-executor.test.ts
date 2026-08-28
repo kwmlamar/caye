@@ -65,7 +65,7 @@ vi.mock('./settings', () => ({
 
 const profileMock = {
   id: 'profile-1',
-  status: 'verified' as const,
+  status: 'verified' as 'needs_verification' | 'verified',
   skills: ['TypeScript', 'React'],
   summary: 'Recent CS graduate.',
   fullName: 'Test Founder',
@@ -79,14 +79,22 @@ const profileMock = {
 }
 
 const factsMock = vi.fn()
+const profileFn = vi.fn(() => profileMock)
 vi.mock('./profile', () => ({
-  getActiveProfile: async () => profileMock,
+  getActiveProfile: async () => profileFn(),
   getActiveFacts: async () => factsMock(),
 }))
 
 const { prepareApplication, evaluateExecutionSignal } = await import('./application-executor')
 
-const resumeVariant = { id: 'variant-1', variantKey: 'full_stack' as const, title: 'Software Engineer / Full Stack', summary: 'Recent CS graduate.', sections: {} }
+const resumeVariant = {
+  id: 'variant-1',
+  variantKey: 'full_stack' as const,
+  title: 'Software Engineer / Full Stack',
+  summary: 'Recent CS graduate.',
+  sections: {},
+  status: 'verified' as const,
+}
 
 function candidate(overrides: Partial<Parameters<typeof prepareApplication>[0]> = {}) {
   return {
@@ -105,6 +113,8 @@ beforeEach(() => {
   settingsMock.mockReset()
   factsMock.mockReset()
   factsMock.mockResolvedValue([])
+  profileFn.mockReset()
+  profileFn.mockReturnValue(profileMock)
 })
 
 describe('evaluateExecutionSignal — never bypasses (#192)', () => {
@@ -175,5 +185,70 @@ describe('prepareApplication — safety boundaries (#192)', () => {
     const applications = fake.tables['job_search_applications'] ?? []
     const forThisCandidate = applications.filter((row) => row.candidate_id === 'stable-candidate-id')
     expect(forThisCandidate).toHaveLength(1)
+  })
+
+  it('is idempotent under real concurrency: two simultaneous prepare calls for the same candidate never create two application rows', async () => {
+    settingsMock.mockResolvedValue({ paused: false })
+    const oneCandidate = candidate({ id: 'concurrent-candidate-id' })
+
+    // Genuinely concurrent, not sequential-awaited: both calls start before
+    // either resolves, racing through the upsert. The migration's
+    // unique(candidate_id) constraint is the real backstop in production;
+    // this test proves the upsert-based code path in application-executor.ts
+    // itself doesn't independently race past that into two inserts against
+    // the fake store, which — unlike Postgres — has no unique constraint to
+    // catch a bug here on its own.
+    const [resultA, resultB] = await Promise.all([
+      prepareApplication(oneCandidate, resumeVariant),
+      prepareApplication(oneCandidate, resumeVariant),
+    ])
+
+    expect(resultA.outcome).toBe('needs_human')
+    expect(resultB.outcome).toBe('needs_human')
+
+    const applications = fake.tables['job_search_applications'] ?? []
+    const forThisCandidate = applications.filter((row) => row.candidate_id === 'concurrent-candidate-id')
+    expect(forThisCandidate).toHaveLength(1)
+
+    // Both calls must have resolved to the SAME application row, not two
+    // different ids that happen to coexist.
+    if (resultA.outcome === 'needs_human' && resultB.outcome === 'needs_human') {
+      expect(resultA.applicationId).toBe(resultB.applicationId)
+    }
+  })
+})
+
+describe('prepareApplication — refuses unverified source material (#196 audit)', () => {
+  it('never generates artifacts from an unverified founder profile', async () => {
+    settingsMock.mockResolvedValue({ paused: false })
+    profileFn.mockReturnValue({ ...profileMock, status: 'needs_verification' as const })
+
+    const result = await prepareApplication(candidate(), resumeVariant)
+
+    expect(result.outcome).toBe('skipped_unverified_source')
+    const artifacts = fake.tables['job_search_generated_artifacts'] ?? []
+    expect(artifacts).toHaveLength(0)
+  })
+
+  it('never generates artifacts from an unverified resume variant', async () => {
+    settingsMock.mockResolvedValue({ paused: false })
+    const unverifiedVariant = { ...resumeVariant, status: 'needs_verification' as const }
+
+    const result = await prepareApplication(candidate(), unverifiedVariant)
+
+    expect(result.outcome).toBe('skipped_unverified_source')
+    const artifacts = fake.tables['job_search_generated_artifacts'] ?? []
+    expect(artifacts).toHaveLength(0)
+  })
+
+  it('proceeds normally once both profile and resume variant are verified', async () => {
+    settingsMock.mockResolvedValue({ paused: false })
+    profileFn.mockReturnValue({ ...profileMock, status: 'verified' as const })
+
+    const result = await prepareApplication(candidate(), resumeVariant)
+
+    expect(result.outcome).not.toBe('skipped_unverified_source')
+    const artifacts = fake.tables['job_search_generated_artifacts'] ?? []
+    expect(artifacts.length).toBeGreaterThan(0)
   })
 })

@@ -54,6 +54,7 @@ export type CandidateForApplication = {
 
 export type ApplicationPrepareResult =
   | { outcome: 'skipped_paused' }
+  | { outcome: 'skipped_unverified_source'; applicationId: string; reason: string }
   | { outcome: 'prohibited_platform'; applicationId: string }
   | { outcome: 'needs_human'; applicationId: string; reason: string }
 
@@ -119,6 +120,26 @@ export async function prepareApplication(
   if (isProhibitedApplyDestination(candidate.applyUrl)) {
     await markNeedsHuman(applicationId, 'Apply destination is a prohibited automation target (LinkedIn/Indeed). Founder must apply manually if desired.')
     return { outcome: 'prohibited_platform', applicationId }
+  }
+
+  // Refuse to generate any application artifact from unverified source
+  // material. The seed migration ships job_search_profiles/resume_variants
+  // with status='needs_verification' and literal "NEEDS_VERIFICATION —
+  // replace with real, truthful ..." placeholder text — without this
+  // check, an unpaused pipeline running before the founder populates real
+  // facts would happily tailor a resume/cover note out of that placeholder
+  // text and persist it as a generated_artifacts row.
+  if (profile.status !== 'verified' || resumeVariant.status !== 'verified') {
+    const reason =
+      profile.status !== 'verified'
+        ? 'Founder profile is not yet verified (job_search_profiles.status = needs_verification) — refusing to generate application content from unverified source material.'
+        : `Resume variant "${resumeVariant.variantKey}" is not yet verified (status = needs_verification) — refusing to generate application content from unverified source material.`
+    await supabase
+      .from('job_search_applications')
+      .update({ status: 'NEEDS_HUMAN', needs_human_reason: reason, updated_at: new Date().toISOString() })
+      .eq('id', applicationId)
+    await logJobSearchEvent({ eventType: 'application_needs_human', entityType: 'application', entityId: applicationId, payload: { reason } })
+    return { outcome: 'skipped_unverified_source', applicationId, reason }
   }
 
   const tailored = tailorResume(resumeVariant, profile, candidate.skills)

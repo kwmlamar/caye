@@ -18,6 +18,14 @@ export type ResumeVariantSource = {
   title: string
   summary: string | null
   sections: Record<string, unknown>
+  /**
+   * Mirrors job_search_resume_variants.status. Callers (application-executor.ts)
+   * must refuse to generate application artifacts from a variant that is
+   * still 'needs_verification' — its summary/sections may contain seed
+   * placeholder text ("NEEDS_VERIFICATION — replace with real, truthful
+   * resume content.") rather than the founder's real, truthful content.
+   */
+  status: 'needs_verification' | 'verified'
 }
 
 export type TailoredResume = {

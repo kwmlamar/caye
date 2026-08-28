@@ -28,7 +28,13 @@ describe('emphasizeSkills — truthful tailoring (#192)', () => {
 })
 
 describe('tailorResume — no unsupported claims', () => {
-  const variant = { variantKey: 'full_stack' as const, title: 'Software Engineer / Full Stack', summary: 'Recent CS graduate with hands-on project experience.', sections: {} }
+  const variant = {
+    variantKey: 'full_stack' as const,
+    title: 'Software Engineer / Full Stack',
+    summary: 'Recent CS graduate with hands-on project experience.',
+    sections: {},
+    status: 'verified' as const,
+  }
   const profile = { skills: ['TypeScript', 'React', 'Node.js'], summary: 'Recent CS graduate.' }
 
   it('every emphasized skill traces back to the verified profile skill pool', () => {
