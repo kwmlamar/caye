@@ -13,16 +13,20 @@ describe('property water analysis', () => {
       dailyDemandGallons: 450,
     })
     expect(result.capturedGallons).toBeCloseTo(747.6, 6)
+    expect(result.retainedRainGallons).toBeCloseTo(747.6, 6)
     expect(result.endingStorageGallons).toBeCloseTo(747.6, 6)
     expect(result.storageRunwayDays).toBeCloseTo(1.6613333333, 6)
+    expect(result.demandCoveredDaysByRainfall).toBeCloseTo(1.6613333333, 6)
     expect(result.overflowGallons).toBe(0)
   })
 
-  it('shows overflow rather than inventing storage', () => {
+  it('credits demand coverage only for rainwater the tanks actually retain', () => {
     const result = analyzeWaterScenario({ label: 'storm', catchmentAreaSqFt: 1500, rainfallInches: 3, collectionEfficiency: 0.9, storageCapacityGallons: 2000, startingStorageGallons: 500, dailyDemandGallons: 400 })
     expect(result.capturedGallons).toBeCloseTo(2523.15, 6)
+    expect(result.retainedRainGallons).toBe(1500)
     expect(result.endingStorageGallons).toBe(2000)
     expect(result.overflowGallons).toBeCloseTo(1023.15, 6)
+    expect(result.demandCoveredDaysByRainfall).toBeCloseTo(3.75, 6)
   })
 
   it('compares current and proposed catchment without changing shared assumptions', () => {
@@ -32,6 +36,7 @@ describe('property water analysis', () => {
       { label: 'full catchment', catchmentAreaSqFt: 1500, ...shared },
     )
     expect(result.delta.capturedGallons).toBeCloseTo(398.72, 6)
+    expect(result.delta.retainedRainGallons).toBeCloseTo(398.72, 6)
     expect(result.delta.storageRunwayDays).toBeGreaterThan(0)
   })
 
