@@ -9,6 +9,7 @@ import {
   linkEngineeringOutcome,
   listEngineeringProjects,
   recordEngineeringExecutionEvidence,
+  recordEngineeringVerdict,
   selectEngineeringAlternative,
 } from './store'
 
@@ -23,7 +24,7 @@ export const listEngineeringProjectsTool: Tool<{ property_id?: string }> = {
 }
 
 export const getEngineeringProjectTool: Tool<{ project_id: string }> = {
-  name: 'get_engineering_project', description: 'Load one persistent engineering project with baseline, alternatives, predictions, selection, execution evidence, outcomes, and deterministic comparison. Use this before continuing a known physical project in a fresh Direct conversation.', risk: 'read', roles: ['founder'], modes: ['back-office'],
+  name: 'get_engineering_project', description: 'Load one persistent engineering project with baseline, alternatives, predictions, selection, execution evidence, outcomes, verdicts, and deterministic comparison. Use this before continuing a known physical project in a fresh Direct conversation.', risk: 'read', roles: ['founder'], modes: ['back-office'],
   inputSchema: { type: 'object', properties: { project_id: { type: 'string' } }, required: ['project_id'], additionalProperties: false },
   async execute(args, ctx) { const blocked = directOnly(ctx); if (blocked) return blocked; try { return { ok: true, data: await getEngineeringProjectSnapshot(ctx.workspaceId, args.project_id) } } catch (e) { return { ok: false, error: e instanceof Error ? e.message : 'Could not load project.' } } },
 }
@@ -68,4 +69,10 @@ export const compareEngineeringProjectOutcomesTool: Tool<{ project_id: string }>
   name: 'compare_engineering_project_outcomes', description: 'Deterministically compare the selected intervention predictions with linked numeric property observations. Refuses incompatible units rather than asking the model to improvise conversions.', risk: 'read', roles: ['founder'], modes: ['back-office'],
   inputSchema: { type: 'object', properties: { project_id: { type: 'string' } }, required: ['project_id'], additionalProperties: false },
   async execute(args, ctx) { const blocked = directOnly(ctx); if (blocked) return blocked; try { return { ok: true, data: await compareEngineeringProjectOutcomes(ctx.workspaceId, args.project_id) } } catch (e) { return { ok: false, error: e instanceof Error ? e.message : 'Could not compare outcomes.' } } },
+}
+
+export const recordEngineeringVerdictTool: Tool<{ project_id: string; verdict: 'succeeded'|'partially_succeeded'|'failed'|'inconclusive'; reason_codes?: string[]; summary: string }> = {
+  name: 'record_engineering_verdict', description: 'Record a founder-grounded project verdict. Succeeded/partial/failed require linked outcome evidence; with insufficient outcome evidence use inconclusive. A verdict records learning and never rewrites the underlying measured/observed property history.', risk: 'low', roles: ['founder'], modes: ['back-office'],
+  inputSchema: { type: 'object', properties: { project_id: { type: 'string' }, verdict: { type: 'string', enum: ['succeeded','partially_succeeded','failed','inconclusive'] }, reason_codes: { type: 'array', items: { type: 'string' } }, summary: { type: 'string' } }, required: ['project_id','verdict','summary'], additionalProperties: false },
+  async execute(args, ctx) { const blocked = directOnly(ctx); if (blocked) return blocked; if (!ctx.engineeringOrigin?.messageId) return { ok: false, error: 'Project verdict requires the current founder Direct source message.' }; try { return { ok: true, data: await recordEngineeringVerdict({ workspaceId: ctx.workspaceId, projectId: args.project_id, verdict: args.verdict, reasonCodes: args.reason_codes, summary: args.summary, sourceMessageId: ctx.engineeringOrigin.messageId }) } } catch (e) { return { ok: false, error: e instanceof Error ? e.message : 'Could not record verdict.' } } },
 }
