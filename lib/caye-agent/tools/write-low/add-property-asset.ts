@@ -12,7 +12,6 @@ export const addPropertyAssetTool: Tool<Input> = {
   async execute(args, ctx) {
     try {
       const asset = await addPropertyAsset({ workspaceId: ctx.workspaceId, propertyId: args.property_id, systemId: args.system_id ?? null, name: args.name, assetType: args.asset_type, manufacturer: args.manufacturer ?? null, model: args.model ?? null, status: args.status, specifications: args.specifications ?? {}, metadata: args.notes ? { notes: args.notes } : {} })
-      ctx.propertySnapshotIds?.push(args.property_id)
       return { ok: true, data: { asset } }
     } catch (error) { return { ok: false, error: error instanceof Error ? error.message : 'Could not add property asset.' } }
   },
