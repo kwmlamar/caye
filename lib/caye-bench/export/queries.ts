@@ -1,5 +1,6 @@
 import 'server-only'
 import { createServiceClient } from '@/lib/supabase-server'
+import { hashArgsKeyString } from './args-key'
 import type { EpisodeSelector, RawExportBundle } from './types'
 
 /**
@@ -132,22 +133,46 @@ async function fetchPendingActionsForToolCalls(client: ServiceClient, workspaceI
   const windowStart = timestamps.length > 0 ? new Date(Math.min(...timestamps) - 60 * 60 * 1000).toISOString() : undefined
   const windowEnd = timestamps.length > 0 ? new Date(Math.max(...timestamps) + 60 * 60 * 1000).toISOString() : undefined
 
-  // No `args` in this select, deliberately — resolveHighRiskAuthorization
-  // (build-raw-trace.ts) only ever needs tool_name/created_in_request_id/
-  // executed_at/id to correlate a caye_tool_calls row, never the pending
-  // action's own args (which could carry a message body or other
-  // customer-identifying content). Same "nothing fetched just in case"
-  // discipline as every other query in this file.
+  // `args_key` IS selected here — it's the load-bearing field
+  // resolveHighRiskAuthorization (build-raw-trace.ts) needs to tell apart
+  // two different customers' concurrent calls to the same high-risk tool
+  // (bare tool_name matching cannot — that was the exact conflation bug
+  // this query used to leave open). It never leaves this function raw,
+  // though: hashed immediately below (args-key.ts) so nothing downstream
+  // ever holds or compares the actual args content of a pending action
+  // that may belong to an entirely different, unrelated customer than
+  // this episode's own subject.
   let query = client
     .from('caye_pending_actions')
-    .select('id, workspace_id, tool_name, created_in_request_id, created_at, executed_at, cancelled_at')
+    .select('id, workspace_id, tool_name, args_key, operator_id, created_in_request_id, created_at, executed_at, cancelled_at')
     .eq('workspace_id', workspaceId)
     .in('tool_name', [...highRiskToolNames, 'confirm_pending_action'])
   if (windowStart) query = query.gte('created_at', windowStart)
   if (windowEnd) query = query.lte('created_at', windowEnd)
   const { data, error } = await query.order('created_at', { ascending: true }).limit(TIME_WINDOW_HARD_MAX_ROWS)
   if (error) throw new Error(`export/queries: caye_pending_actions fetch failed: ${error.message}`)
-  return (data ?? []) as RawExportBundle['pendingActions']
+  const rows = (data ?? []) as Array<{
+    id: string
+    workspace_id: string
+    tool_name: string
+    args_key: string | null
+    operator_id: number | null
+    created_in_request_id: string | null
+    created_at: string | null
+    executed_at: string | null
+    cancelled_at: string | null
+  }>
+  return rows.map((r) => ({
+    id: r.id,
+    workspace_id: r.workspace_id,
+    tool_name: r.tool_name,
+    argsKeyHash: r.args_key != null ? hashArgsKeyString(r.args_key) : null,
+    operatorId: r.operator_id,
+    created_in_request_id: r.created_in_request_id,
+    created_at: r.created_at,
+    executed_at: r.executed_at,
+    cancelled_at: r.cancelled_at,
+  }))
 }
 
 function emptyBundle(selector: EpisodeSelector, workspace: RawExportBundle['workspace'], operators: RawExportBundle['operators']): RawExportBundle {

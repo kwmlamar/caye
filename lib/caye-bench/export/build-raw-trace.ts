@@ -1,6 +1,7 @@
 import type { BenchChannel, BenchEffect, BenchRisk } from '../types'
 import type { Booking } from '../production-state'
 import type { RawActorInput, RawEventInput, RawTraceInput, ReplaySeedArtifact } from '../replay/types'
+import { hashArgsObject } from './args-key'
 import type { RawExportBundle, RawPendingActionRow, RawToolCallRow } from './types'
 
 /**
@@ -92,33 +93,71 @@ function extractPendingActionId(args: unknown): string | undefined {
 }
 
 /** Every high-risk `caye_tool_calls` row is EITHER the call that STAGED a
- *  `caye_pending_actions` row (its own `request_id` equals that row's
- *  `created_in_request_id`) OR a later call that actually ran the real
+ *  `caye_pending_actions` row OR a later call that actually ran the real
  *  action — either a resubmission of the same tool matching an
  *  already-staged action, or `confirm_pending_action` referencing one by
  *  id (`tools/write-high/confirm-pending-action.ts`). Never both: the
- *  gate always produces a SEPARATE row for the real execution. So:
- *    - a match on `created_in_request_id` proves THIS row was only a
- *      stage — `authorized: false`, and (since nothing in the world
- *      actually changed) `consequential: false`.
- *    - otherwise, a `caye_pending_actions` row for the same tool (or,
- *      for `confirm_pending_action`, the referenced `pending_action_id`)
- *      with `executed_at` set proves real execution — `authorized: true`.
- *    - otherwise there is no corroborating record either way —
- *      `authorized` stays `undefined` (unknown), which the hard-invariant
- *      gate correctly treats as NOT proven authorized rather than this
- *      exporter manufacturing a `true` it cannot back up.
+ *  gate always produces a SEPARATE row for the real execution.
+ *
+ *  Correlation must be UNIQUE, not just same-tool: two different
+ *  customers' concurrent calls to the same high-risk tool (e.g. two
+ *  `send_payment_link` calls staged/executed close together) must never
+ *  be conflated — matching bare `tool_name` (this function's first
+ *  version) could let one customer's genuinely-executed action stand in
+ *  as "proof" for a completely different, never-confirmed call. Precise
+ *  correlation reuses production's OWN mechanism: `args_key`
+ *  (`stableArgsKey(args)`, `high-risk-gate.ts`) is exactly what the real
+ *  gate's own resubmission-match query keys on
+ *  (`.eq('workspace_id',...).eq('tool_name',...).eq('args_key',...).eq(
+ *  'operator_id',...)`) — replicated here (hashed — see args-key.ts) via
+ *  `argsHash`/`pa.argsKeyHash`/`pa.operatorId`, rather than inventing a
+ *  weaker exporter-only match.
+ *
+ *    - `confirm_pending_action` rows correlate via the referenced
+ *      `pending_action_id` — already unique by construction (a primary
+ *      key), no args-key needed.
+ *    - every other high-risk row: `argsHash` = sha256(stableArgsKey(this
+ *      row's own args)). If it can't be computed (args missing/
+ *      unrepresentable), there is no basis to prove EITHER staging or
+ *      execution uniquely — result is `undefined` (unknown), never a
+ *      guess.
+ *    - a `caye_pending_actions` row this row's OWN `request_id` created,
+ *      for the SAME tool AND the SAME `argsHash`, proves this row was
+ *      only a stage — `authorized: false`, `consequential: false` (see
+ *      below). Requiring `argsHash` agreement (not just
+ *      `created_in_request_id` + `tool_name`) keeps two DIFFERENT
+ *      high-risk calls inside the SAME request from being conflated with
+ *      each other's pending-action row.
+ *    - otherwise, a pending-actions row matching `tool_name` + `argsHash`
+ *      + `operator_id`, with `executed_at` set, proves real execution —
+ *      `authorized: true`. This is production's own resubmission-match
+ *      scope, so it cannot match a different customer's pending action
+ *      even when both target the same tool within the correlation
+ *      window.
+ *    - otherwise: no corroborating record proves either state —
+ *      `authorized` stays `undefined` (unknown). False negatives here
+ *      are preferred over fabricated proof.
  */
 function resolveHighRiskAuthorization(tc: RawToolCallRow, pendingActions: RawPendingActionRow[]): boolean | undefined {
-  const isStagingCall = pendingActions.some((pa) => pa.tool_name === tc.tool_name && pa.created_in_request_id != null && pa.created_in_request_id === tc.request_id)
+  if (tc.tool_name === 'confirm_pending_action') {
+    const referencedPendingActionId = extractPendingActionId(tc.args)
+    if (!referencedPendingActionId) return undefined
+    const confirmed = pendingActions.some((pa) => pa.id === referencedPendingActionId && Boolean(pa.executed_at))
+    return confirmed ? true : undefined
+  }
+
+  const argsHash = hashArgsObject(tc.args)
+  if (argsHash == null) return undefined
+
+  const isStagingCall = pendingActions.some(
+    (pa) => pa.tool_name === tc.tool_name && pa.argsKeyHash === argsHash && pa.created_in_request_id != null && pa.created_in_request_id === tc.request_id
+  )
   if (isStagingCall) return false
 
-  const referencedPendingActionId = tc.tool_name === 'confirm_pending_action' ? extractPendingActionId(tc.args) : undefined
-  const confirmed = pendingActions.some((pa) => {
-    if (!pa.executed_at) return false
-    if (referencedPendingActionId) return pa.id === referencedPendingActionId
-    return pa.tool_name === tc.tool_name
-  })
+  const operatorId = tc.operator_allowlist_id ?? null
+  const confirmed = pendingActions.some(
+    (pa) => pa.tool_name === tc.tool_name && pa.argsKeyHash === argsHash && Boolean(pa.executed_at) && pa.operatorId === operatorId
+  )
   return confirmed ? true : undefined
 }
 

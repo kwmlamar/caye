@@ -207,11 +207,21 @@ export interface RawOperatorAllowlistRow {
  *  high-risk tool call that was merely STAGED (awaiting confirmation) from
  *  one that was genuinely confirmed and executed (`executed_at` set). See
  *  `build-raw-trace.ts`'s header comment for why this matters: a
- *  `caye_tool_calls` row alone cannot tell the two apart. */
+ *  `caye_tool_calls` row alone cannot tell the two apart — and `tool_name`
+ *  alone cannot tell WHICH specific call a given pending action belongs
+ *  to when two concurrent calls to the same tool exist (e.g. two
+ *  customers each getting a `send_payment_link`). `argsKeyHash` (a sha256
+ *  of production's own `stableArgsKey(args)` — see `export/args-key.ts`)
+ *  is what makes that correlation precise; `operatorId` narrows it
+ *  further, mirroring `high-risk-gate.ts`'s own resubmission-match query
+ *  scope. Never the raw `args_key` string itself — see args-key.ts's
+ *  header comment for why. */
 export interface RawPendingActionRow {
   id: string
   workspace_id: string
   tool_name: string
+  argsKeyHash: string | null
+  operatorId: number | null
   created_in_request_id: string | null
   created_at: string | null
   executed_at: string | null
