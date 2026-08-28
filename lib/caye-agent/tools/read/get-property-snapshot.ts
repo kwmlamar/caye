@@ -6,7 +6,7 @@ type Input = { property_id: string }
 
 export const getPropertySnapshotTool: Tool<Input> = {
   name: 'get_property_snapshot',
-  description: 'Load the persistent physical-world snapshot for one property, including structures, systems, assets, and recent observations with provenance. In Caye Direct, when a visual systems card helps, include the returned display_block inside the final rich-result blocks array; property_snapshot is a valid semantic block in addition to the generic block types.',
+  description: 'Load the persistent physical-world snapshot for one property, including structures, systems, assets, and recent observations with provenance. Use this before reasoning about a known property; the Caye Direct server handles any visual property-card presentation after the real lookup succeeds.',
   risk: 'read',
   roles: ['founder'],
   modes: ['back-office'],
@@ -15,13 +15,7 @@ export const getPropertySnapshotTool: Tool<Input> = {
     try {
       const snapshot = await getPropertySnapshot(ctx.workspaceId, args.property_id)
       if (!snapshot) return { ok: false, error: 'Property not found in this workspace.' }
-      return {
-        ok: true,
-        data: {
-          ...snapshot,
-          display_block: { type: 'property_snapshot', propertyId: snapshot.property.id },
-        },
-      }
+      return { ok: true, data: snapshot }
     } catch {
       return { ok: false, error: 'Could not load that property.' }
     }
