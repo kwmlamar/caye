@@ -23,7 +23,7 @@ type CadImageEnv = {
  * when it is clearly not the FEA image, and otherwise fall back to the known-good
  * CadQuery image that Engineering V1 was built and validated against.
  */
-export function resolveCadSandboxImage(env: CadImageEnv = process.env): string {
+export function resolveCadSandboxImage(env: CadImageEnv = process.env as CadImageEnv): string {
   const explicitCadImage = env.ENGINEERING_CAD_SANDBOX_IMAGE?.trim()
   if (explicitCadImage) return explicitCadImage
 
