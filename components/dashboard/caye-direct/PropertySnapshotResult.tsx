@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { getSession } from '@/lib/supabase'
 
 type Observation = {
   id: string
@@ -40,13 +41,20 @@ export function PropertySnapshotResult({ propertyId, workspaceId }: { propertyId
 
   useEffect(() => {
     let active = true
-    fetch(`/api/founder/property-snapshots/${encodeURIComponent(propertyId)}?workspaceId=${encodeURIComponent(workspaceId)}`)
-      .then(async (r) => {
-        if (!r.ok) throw new Error('snapshot unavailable')
-        return r.json()
-      })
-      .then((body) => { if (active) setSnapshot(body.snapshot as Snapshot) })
-      .catch(() => { if (active) setError(true) })
+    ;(async () => {
+      try {
+        const { session } = await getSession()
+        if (!session) throw new Error('Founder session unavailable')
+        const res = await fetch(`/api/founder/property-snapshots/${encodeURIComponent(propertyId)}?workspaceId=${encodeURIComponent(workspaceId)}`, {
+          headers: { Authorization: `Bearer ${session.access_token}` },
+        })
+        if (!res.ok) throw new Error('snapshot unavailable')
+        const body = await res.json()
+        if (active) setSnapshot(body.snapshot as Snapshot)
+      } catch {
+        if (active) setError(true)
+      }
+    })()
     return () => { active = false }
   }, [propertyId, workspaceId])
 
