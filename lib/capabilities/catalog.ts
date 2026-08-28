@@ -1,6 +1,7 @@
 import 'server-only'
 
 import { attentionListCapability } from './attention-list'
+import { engineeringArtifactsListCapability } from './engineering-artifacts-list'
 import { goalsListCapability } from './goals-list'
 import { createCapabilityRegistry } from './registry'
 
@@ -10,5 +11,6 @@ import { createCapabilityRegistry } from './registry'
  */
 export const cayeCapabilityRegistry = createCapabilityRegistry([
   attentionListCapability,
+  engineeringArtifactsListCapability,
   goalsListCapability,
 ])
