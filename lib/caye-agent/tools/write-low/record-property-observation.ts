@@ -24,7 +24,6 @@ export const recordPropertyObservationTool: Tool<Input> = {
   async execute(args, ctx) {
     try {
       const observation = await recordPropertyObservation({ workspaceId: ctx.workspaceId, propertyId: args.property_id, systemId: args.system_id ?? null, assetId: args.asset_id ?? null, key: args.key, numericValue: args.numeric_value, textValue: args.text_value, unit: args.unit, provenanceStatus: args.provenance_status, confidence: args.confidence ?? null, sourceArtifactId: args.source_artifact_id ?? null, sourceMessageId: ctx.engineeringOrigin?.messageId ?? null, notes: args.notes ?? null })
-      ctx.propertySnapshotIds?.push(args.property_id)
       return { ok: true, data: { observation } }
     } catch (error) { return { ok: false, error: error instanceof Error ? error.message : 'Could not record property observation.' } }
   },
