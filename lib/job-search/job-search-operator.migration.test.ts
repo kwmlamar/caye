@@ -25,6 +25,27 @@ describe('job_search_operator_v1 migration (PGlite)', () => {
 
   beforeAll(async () => {
     db = new PGlite()
+    // The migration's job_search_write_profile_fact RPC revokes/grants
+    // EXECUTE against anon/authenticated/service_role (see that block's
+    // SECURITY comment in the migration) — those roles only exist in a
+    // real Supabase Postgres instance, not a fresh PGlite database, so
+    // they must be created first (same pattern as
+    // business-facts-atomic-write-rpc.migration.test.ts).
+    await db.exec(`
+      do $$
+      begin
+        if not exists (select from pg_roles where rolname = 'anon') then
+          create role anon;
+        end if;
+        if not exists (select from pg_roles where rolname = 'authenticated') then
+          create role authenticated;
+        end if;
+        if not exists (select from pg_roles where rolname = 'service_role') then
+          create role service_role;
+        end if;
+      end
+      $$;
+    `)
     const migrationSql = readFileSync(
       join(__dirname, '..', '..', 'supabase', 'migrations', '20260828z_job_search_operator_v1.sql'),
       'utf8',
@@ -198,6 +219,64 @@ describe('job_search_operator_v1 migration (PGlite)', () => {
       expect(keys).toEqual(expect.arrayContaining(['citizenship', 'clearance']))
       expect(active.filter((r) => r.canonical_key === 'citizenship')).toHaveLength(1)
       expect(active.filter((r) => r.canonical_key === 'clearance')).toHaveLength(1)
+    })
+  })
+
+  // Behavioral (not just structural) proof of the founder-isolation
+  // invariant: job_search_write_profile_fact is SECURITY DEFINER, which
+  // means it runs with the *owner's* privileges (and the owner's RLS
+  // exemption) regardless of who calls it. Postgres grants EXECUTE on new
+  // functions to PUBLIC by default, so without an explicit revoke, any
+  // anon/authenticated Supabase client could call this RPC directly and
+  // write founder profile facts despite RLS having zero policies on the
+  // table. This audit found that gap (the migration originally had no
+  // revoke/grant block at all — see PR #196 history) and closed it; this
+  // test exercises the actual privilege boundary so a future regression
+  // fails loudly instead of silently reopening the hole.
+  describe('job_search_write_profile_fact — EXECUTE privilege boundary', () => {
+    it('anon cannot call the RPC directly', async () => {
+      const { rows: profile } = await db.query<{ id: string }>(`select id from public.job_search_profiles limit 1`)
+      await db.query('set role anon')
+      try {
+        await expect(
+          db.query(
+            `select * from public.job_search_write_profile_fact($1, 'privilege-test-anon', 'general', 'q', 'a', 'founder-direct')`,
+            [profile[0].id],
+          ),
+        ).rejects.toThrow(/permission denied/i)
+      } finally {
+        await db.query('reset role')
+      }
+    })
+
+    it('authenticated cannot call the RPC directly', async () => {
+      const { rows: profile } = await db.query<{ id: string }>(`select id from public.job_search_profiles limit 1`)
+      await db.query('set role authenticated')
+      try {
+        await expect(
+          db.query(
+            `select * from public.job_search_write_profile_fact($1, 'privilege-test-auth', 'general', 'q', 'a', 'founder-direct')`,
+            [profile[0].id],
+          ),
+        ).rejects.toThrow(/permission denied/i)
+      } finally {
+        await db.query('reset role')
+      }
+    })
+
+    it('service_role can call the RPC (the only channel application code uses)', async () => {
+      const { rows: profile } = await db.query<{ id: string }>(`select id from public.job_search_profiles limit 1`)
+      await db.query('set role service_role')
+      try {
+        await expect(
+          db.query(
+            `select * from public.job_search_write_profile_fact($1, 'privilege-test-service', 'general', 'q', 'a', 'founder-direct')`,
+            [profile[0].id],
+          ),
+        ).resolves.toBeDefined()
+      } finally {
+        await db.query('reset role')
+      }
     })
   })
 })

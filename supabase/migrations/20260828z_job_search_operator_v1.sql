@@ -183,6 +183,19 @@ $$;
 comment on function public.job_search_write_profile_fact is
   'Atomic canonical-key-chained write for job_search_profile_facts. Row-locks the current active row for (profile_id, canonical_key) inside one transaction before inserting the replacement, so concurrent corrections chain safely rather than leaving two active rows.';
 
+-- SECURITY: this is a SECURITY DEFINER function, so it runs with the
+-- privileges (and RLS exemption) of its owner regardless of caller. Postgres
+-- grants EXECUTE on new functions to PUBLIC by default; without these
+-- revokes, any anon/authenticated Supabase client could call this RPC
+-- directly and write into job_search_profile_facts despite RLS having zero
+-- policies on the table — exactly the founder-only invariant this migration
+-- exists to enforce. Mirrors write_business_fact_atomic's revoke/grant block
+-- (20260826_business_facts_scope_and_canonical_key.sql).
+revoke all on function public.job_search_write_profile_fact(uuid, text, text, text, text, text, text) from public;
+revoke all on function public.job_search_write_profile_fact(uuid, text, text, text, text, text, text) from anon;
+revoke all on function public.job_search_write_profile_fact(uuid, text, text, text, text, text, text) from authenticated;
+grant execute on function public.job_search_write_profile_fact(uuid, text, text, text, text, text, text) to service_role;
+
 -- ---------------------------------------------------------------------------
 -- job_search_sources
 -- ---------------------------------------------------------------------------
@@ -363,7 +376,14 @@ create table if not exists public.job_search_runs (
   id uuid primary key default gen_random_uuid(),
   run_type text not null check (run_type in ('source', 'score', 'apply', 'followup')),
   status text not null default 'running' check (status in ('running', 'completed', 'failed')),
-  triggered_by text not null default 'cron' check (triggered_by in ('cron', 'founder-manual')),
+  -- Named run_trigger_source rather than the more obvious "triggered_by":
+  -- lib/db/check-constraints.test.ts scans the whole repo for
+  -- `<column>: 'literal'` once a column name is uniquely constrained by
+  -- exactly one table, and "triggered_by" already exists elsewhere in the
+  -- codebase as an unrelated free-text JSONB metadata key (unconstrained,
+  -- different table, different meaning) — reusing that name here would
+  -- make the scanner false-positive on that unrelated file.
+  run_trigger_source text not null default 'cron' check (run_trigger_source in ('cron', 'founder-manual')),
   started_at timestamptz not null default now(),
   completed_at timestamptz,
   stats jsonb not null default '{}'::jsonb,
@@ -372,6 +392,18 @@ create table if not exists public.job_search_runs (
 );
 
 create index if not exists job_search_runs_type_date_idx on public.job_search_runs (run_type, business_date);
+
+-- SECURITY/CORRECTNESS: prevents two overlapping runs of the same phase
+-- (e.g. two concurrent sourcing runs, both hitting Greenhouse/Lever and
+-- racing to upsert the same candidates) rather than relying on application
+-- code to check-then-insert, which would itself race. A second concurrent
+-- insert for the same run_type while one is still 'running' fails this
+-- constraint; the caller (lib/job-search/ingest.ts) catches that specific
+-- violation and returns a clean "already running, skipped" result instead
+-- of starting a duplicate run.
+create unique index if not exists job_search_runs_one_running_per_type_idx
+  on public.job_search_runs (run_type)
+  where status = 'running';
 
 alter table public.job_search_runs enable row level security;
 
