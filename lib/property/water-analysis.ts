@@ -11,6 +11,7 @@ export type WaterScenarioInput = {
 export type WaterScenarioResult = {
   label: string
   capturedGallons: number
+  retainedRainGallons: number
   availableBeforeOverflowGallons: number
   overflowGallons: number
   endingStorageGallons: number
@@ -49,17 +50,19 @@ export function analyzeWaterScenario(input: WaterScenarioInput): WaterScenarioRe
 
   const capturedGallons = catchmentAreaSqFt * rainfallInches * GALLONS_PER_SQFT_INCH * collectionEfficiency
   const availableBeforeOverflowGallons = Math.max(0, storageCapacityGallons - startingStorageGallons)
-  const overflowGallons = Math.max(0, capturedGallons - availableBeforeOverflowGallons)
-  const endingStorageGallons = Math.min(storageCapacityGallons, startingStorageGallons + capturedGallons)
+  const retainedRainGallons = Math.min(capturedGallons, availableBeforeOverflowGallons)
+  const overflowGallons = Math.max(0, capturedGallons - retainedRainGallons)
+  const endingStorageGallons = startingStorageGallons + retainedRainGallons
 
   return {
     label,
     capturedGallons,
+    retainedRainGallons,
     availableBeforeOverflowGallons,
     overflowGallons,
     endingStorageGallons,
     storageRunwayDays: endingStorageGallons / dailyDemandGallons,
-    demandCoveredDaysByRainfall: capturedGallons / dailyDemandGallons,
+    demandCoveredDaysByRainfall: retainedRainGallons / dailyDemandGallons,
     assumptions: { rainfallInches, collectionEfficiency, dailyDemandGallons },
   }
 }
@@ -71,6 +74,7 @@ export function compareWaterScenarios(a: WaterScenarioInput, b: WaterScenarioInp
     scenarios: [first, second] as const,
     delta: {
       capturedGallons: second.capturedGallons - first.capturedGallons,
+      retainedRainGallons: second.retainedRainGallons - first.retainedRainGallons,
       endingStorageGallons: second.endingStorageGallons - first.endingStorageGallons,
       storageRunwayDays: second.storageRunwayDays - first.storageRunwayDays,
       overflowGallons: second.overflowGallons - first.overflowGallons,
