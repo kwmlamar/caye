@@ -40,7 +40,6 @@ const NAV_ITEMS: { id: FounderRailId; label: string; icon: ReactNode }[] = [
 
 const TOGGLE_ICON = <><rect x="3" y="3" width="18" height="18" rx="4" /><path d="M9 3v18" /></>
 const NEW_CHAT_ICON = <path d="M12 5v14M5 12h14" />
-const SEARCH_ICON = <><circle cx="11" cy="11" r="6.5" /><path d="m16 16 4 4" /></>
 const MORE_ICON = <><circle cx="12" cy="5" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="12" cy="19" r="1.6" /></>
 const PIN_ICON = <><path d="M12 2 9.5 9 4 11l6 3 1 7 1-7 6-3-5.5-2z" /></>
 const UNPIN_ICON = <><path d="M12 2 9.5 9 4 11l6 3 1 7 1-7 6-3-5.5-2z" /><line x1="3" y1="3" x2="21" y2="21" /></>
@@ -225,7 +224,6 @@ export default function CommandSidebar({
   threads, onSelectThread, onNewThread, creatingThread,
   onRenameThread, onTogglePinThread, onArchiveThread, onDeleteThread,
   operators, onSelectOperator,
-  query, onQueryChange,
   businessName, workspaceStatus, workspaces, activeWorkspaceId, onSelectWorkspace, hasActivity,
 }: {
   collapsed: boolean
@@ -242,8 +240,6 @@ export default function CommandSidebar({
   onDeleteThread: (id: string) => void
   operators: LiveOperator[] | null
   onSelectOperator: (id: number) => void
-  query: string
-  onQueryChange: (q: string) => void
   businessName: string
   workspaceStatus: CustomerStatus
   workspaces: WorkspaceMembership[]
@@ -422,22 +418,6 @@ export default function CommandSidebar({
                 onClick={() => onSelectPage(item.id)}
               />
             ))}
-          </div>
-
-          <div style={{ margin: '10px 11px 0', flexShrink: 0 }}>
-            <label style={{
-              display: 'flex', alignItems: 'center', gap: 6, height: 28, padding: '0 8px',
-              borderRadius: 8, color: TEXT_QUIET, background: 'rgba(255,255,255,0.03)',
-            }}>
-              <Icon path={SEARCH_ICON} size={12} />
-              <input
-                value={query}
-                onChange={(e) => onQueryChange(e.target.value)}
-                placeholder="Search"
-                aria-label="Search conversations"
-                style={{ minWidth: 0, flex: 1, border: 0, outline: 0, background: 'transparent', color: '#f4f4f5', font: '11.5px inherit' }}
-              />
-            </label>
           </div>
 
           <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '0 6px 8px' }}>

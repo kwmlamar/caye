@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef, useTransition } from 'react'
+import { useState, useEffect, useCallback, useTransition } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useCommandOverview } from '@/lib/useCommandOverview'
@@ -129,14 +129,12 @@ export default function FounderHome() {
   // (rendering it) both need this now that chat isn't a modal owning its
   // own isolated state.
   const [threads, setThreads] = useState<ThreadListItem[] | null>(null)
-  const [query, setQuery] = useState('')
   const [creating, setCreating] = useState(false)
-  const searchDebounce = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const loadThreads = useCallback(async (q: string): Promise<ThreadListItem[] | null> => {
+  const loadThreads = useCallback(async (): Promise<ThreadListItem[] | null> => {
     const { session } = await getSession()
     if (!session) return null
-    const url = `/api/founder/caye-direct/threads?workspaceId=${workspaceId}&status=active${q.trim() ? `&q=${encodeURIComponent(q.trim())}` : ''}`
+    const url = `/api/founder/caye-direct/threads?workspaceId=${workspaceId}&status=active`
     const res = await fetch(url, { headers: { Authorization: `Bearer ${session.access_token}` } })
     const json = await res.json()
     return res.ok ? (json.threads as ThreadListItem[]) : null
@@ -145,9 +143,8 @@ export default function FounderHome() {
   useEffect(() => {
     let cancelled = false
     setThreads(null)
-    setQuery('')
     async function load() {
-      const list = await loadThreads('')
+      const list = await loadThreads()
       if (cancelled) return
       setThreads(list ?? [])
       let remembered: string | null = null
@@ -160,17 +157,6 @@ export default function FounderHome() {
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceId, loadThreads])
-
-  useEffect(() => {
-    if (searchDebounce.current) clearTimeout(searchDebounce.current)
-    searchDebounce.current = setTimeout(async () => {
-      const list = await loadThreads(query)
-      if (!list) return
-      setThreads(list)
-    }, 250)
-    return () => { if (searchDebounce.current) clearTimeout(searchDebounce.current) }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query])
 
   // ── Operators ("Team") — read-only visibility into an operator's real
   // WhatsApp conversation with Caye. Ported from the old CayeDirect.tsx
@@ -328,8 +314,6 @@ export default function FounderHome() {
         onDeleteThread={deleteThreadPermanently}
         operators={operators}
         onSelectOperator={selectOperator}
-        query={query}
-        onQueryChange={setQuery}
         businessName={workspace.business_name ?? 'New signup'}
         workspaceStatus={workspace.status}
         workspaces={workspaces}
