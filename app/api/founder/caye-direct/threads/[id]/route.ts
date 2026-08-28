@@ -1,10 +1,10 @@
 /**
  * A single founder-scoped Caye Direct thread.
  *
- * The dashboard still sends workspaceId because that is the founder's current
- * operating context. GET never mutates thread context. POST moves the thread's
- * active workspace to that explicit context (CAS) before running Caye, then
- * the entire agent/tool turn remains scoped to that one workspace.
+ * The dashboard sends workspaceId as the founder's current operating context.
+ * Subject-linked threads may override that incidental selection when a
+ * canonical entity owns a workspace (Property 001 is the first such subject).
+ * Every actual agent/tool turn still executes against exactly one workspace.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -22,6 +22,7 @@ import {
   setThreadActiveWorkspace,
   deleteThread,
 } from '@/lib/caye-direct-threads'
+import { resolveAuthoritativeThreadWorkspace } from '@/lib/caye-direct-thread-scope'
 import { runFounderThreadTurn } from '@/lib/caye-agent/founder-thread-turn'
 import type { RequestedMode } from '@/lib/model-router/types'
 import { resolveRichResultReferences } from '@/lib/caye-direct-rich-result-resolution'
@@ -43,9 +44,6 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   ])
   const linkedEntities = await Promise.all(entities.map(async (e) => ({ ...e, label: await describeEntity(supabase, e) })))
 
-  // A founder thread can now contain messages produced while operating in
-  // different workspaces. Resolve every rich result against the workspace
-  // that actually produced that message, never today's dashboard selection.
   const messages = await Promise.all(dedupeConsecutive(
     rawMessages
       .filter((m) => !isInternalTurnBody(m.body))
@@ -83,31 +81,40 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const thread = await getFounderThreadById(supabase, threadId)
   if (!thread) return NextResponse.json({ error: 'Thread not found' }, { status: 404 })
 
-  // The currently selected dashboard workspace is an explicit founder action.
-  // Move context BEFORE the turn, then runFounderThreadTurn's getThread check
-  // proves the runtime is executing in exactly that workspace. No tool can
-  // silently reach sideways into another tenant during the same turn.
-  if (thread.active_workspace_id !== workspaceId) {
-    const moved = await setThreadActiveWorkspace(supabase, thread.active_workspace_id, threadId, workspaceId)
-    if (!moved) return NextResponse.json({ error: 'Workspace context changed; retry the turn.' }, { status: 409 })
-  }
-
-  const requestedMode = VALID_REQUESTED_MODES.find((m) => m === model)
   try {
+    // Canonical subject ownership outranks incidental dashboard selection.
+    // Example: the pinned Mom's Property thread remains bound to the
+    // TropiTech workspace that owns PROP-001 even while Bimini is open.
+    const authoritativeWorkspaceId = await resolveAuthoritativeThreadWorkspace(supabase, threadId)
+    const turnWorkspaceId = authoritativeWorkspaceId ?? workspaceId
+
+    if (thread.active_workspace_id !== turnWorkspaceId) {
+      const moved = await setThreadActiveWorkspace(supabase, thread.active_workspace_id, threadId, turnWorkspaceId)
+      if (!moved) return NextResponse.json({ error: 'Workspace context changed; retry the turn.' }, { status: 409 })
+    }
+
+    const requestedMode = VALID_REQUESTED_MODES.find((m) => m === model)
     const result = await runFounderThreadTurn(
-      workspaceId,
+      turnWorkspaceId,
       threadId,
       message ?? '',
       requestedMode ? { requestedMode, founderUserId: user.id } : undefined,
       attachments
     )
-    return NextResponse.json({ ...result, activeWorkspaceId: workspaceId })
+    return NextResponse.json({
+      ...result,
+      activeWorkspaceId: turnWorkspaceId,
+      workspaceContextSource: authoritativeWorkspaceId ? 'linked_subject' : 'dashboard',
+    })
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Agent failed'
     if (msg === 'Thread not found') return NextResponse.json({ error: msg }, { status: 404 })
     if (msg === 'Invalid attachment') return NextResponse.json({ error: msg }, { status: 400 })
     if (msg === 'Too many attachments') return NextResponse.json({ error: `Send at most a few files at once.` }, { status: 400 })
     if (msg === 'Attachment unreadable') return NextResponse.json({ error: "Couldn't read that attachment right now — try again in a moment." }, { status: 502 })
+    if (msg === 'Thread has a stale property link' || msg === 'Thread authoritative subjects span multiple workspaces') {
+      return NextResponse.json({ error: msg }, { status: 409 })
+    }
     return NextResponse.json({ error: msg }, { status: 500 })
   }
 }

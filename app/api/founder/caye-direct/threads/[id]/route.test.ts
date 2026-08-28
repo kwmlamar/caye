@@ -11,6 +11,11 @@ vi.mock('@/lib/caye-agent/founder-thread-turn', () => ({
   runFounderThreadTurn: (...args: unknown[]) => runFounderThreadTurnMock(...args),
 }))
 
+const resolveAuthoritativeThreadWorkspaceMock = vi.fn()
+vi.mock('@/lib/caye-direct-thread-scope', () => ({
+  resolveAuthoritativeThreadWorkspace: (...args: unknown[]) => resolveAuthoritativeThreadWorkspaceMock(...args),
+}))
+
 vi.mock('@/lib/supabase-server', () => ({ createServiceClient: () => ({}) }))
 vi.mock('@/lib/caye-direct-threads', () => ({
   getFounderThreadById: vi.fn(),
@@ -59,6 +64,7 @@ describe('founder-scoped Caye Direct thread route', () => {
   beforeEach(() => {
     requireFounderMock.mockReset().mockResolvedValue({ id: 'founder-1' })
     getFounderThreadByIdMock.mockReset().mockResolvedValue(thread as never)
+    resolveAuthoritativeThreadWorkspaceMock.mockReset().mockResolvedValue(null)
     setThreadActiveWorkspaceMock.mockReset().mockResolvedValue(true)
     setThreadPinnedMock.mockReset().mockResolvedValue(true)
     deleteThreadMock.mockReset().mockResolvedValue(true)
@@ -78,11 +84,20 @@ describe('founder-scoped Caye Direct thread route', () => {
     expect(runFounderThreadTurnMock).toHaveBeenCalledWith('ws-1', 'thread-1', 'hello', undefined, undefined)
   })
 
-  it('moves active workspace before running a turn from a different dashboard workspace', async () => {
+  it('moves an ordinary thread to a different explicit dashboard workspace', async () => {
     const res = await POST(req({ workspaceId: 'ws-2', message: 'now check this workspace' }), { params })
     expect(res.status).toBe(200)
     expect(setThreadActiveWorkspaceMock).toHaveBeenCalledWith({}, 'ws-1', 'thread-1', 'ws-2')
     expect(runFounderThreadTurnMock).toHaveBeenCalledWith('ws-2', 'thread-1', 'now check this workspace', undefined, undefined)
+  })
+
+  it('lets an authoritative linked subject outrank the selected dashboard workspace', async () => {
+    resolveAuthoritativeThreadWorkspaceMock.mockResolvedValue('tropitech-ws')
+    const res = await POST(req({ workspaceId: 'bimini-ws', message: "show me Mom's property" }), { params })
+    expect(res.status).toBe(200)
+    expect(setThreadActiveWorkspaceMock).toHaveBeenCalledWith({}, 'ws-1', 'thread-1', 'tropitech-ws')
+    expect(runFounderThreadTurnMock).toHaveBeenCalledWith('tropitech-ws', 'thread-1', "show me Mom's property", undefined, undefined)
+    expect(await res.json()).toMatchObject({ activeWorkspaceId: 'tropitech-ws', workspaceContextSource: 'linked_subject' })
   })
 
   it('fails closed if the context move loses its compare-and-swap race', async () => {
