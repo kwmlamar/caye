@@ -37,6 +37,22 @@ describe('FEA driver script generation', () => {
     expect(source).toContain("append_id_set(deck, '*NSET, NSET=NALL', node_tags)")
     expect(source).not.toContain("','.join(str(i) for i in all_element_ids) + '\\n'")
   })
+  it('exports only 3D volume elements to the CalculiX mesh', () => {
+    const source = feaDriverSource(input)
+    expect(source).toContain("gmsh.model.getEntities(3)")
+    expect(source).toContain("gmsh.model.addPhysicalGroup(3, volume_entity_tags)")
+    expect(source).toContain("gmsh.option.setNumber('Mesh.SaveAll', 0)")
+    expect(source).toContain("gmsh.model.setPhysicalName(3, volume_group, 'VOLUME')")
+  })
+  it('surfaces bounded tail diagnostics when CalculiX exits nonzero', () => {
+    const source = feaDriverSource(input)
+    expect(source).toContain('def solver_diagnostics(proc, limit=6000):')
+    expect(source).toContain('proc.stdout[-3000:]')
+    expect(source).toContain('proc.stderr[-3000:]')
+    expect(source).toContain("('analysis.dat', 'analysis.sta', 'analysis.cvg')")
+    expect(source).toContain("solver_diagnostics(proc)")
+    expect(source).not.toContain("(proc.stderr or proc.stdout)[:1500]")
+  })
   it('never emits raw face/edge IDs — regions are numeric bounds, selected by coordinate proximity', () => {
     const source = feaDriverSource(input)
     expect(source).toContain('in_bounds(pt, region')
