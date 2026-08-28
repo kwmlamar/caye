@@ -26,7 +26,9 @@ describe('property intelligence migration (PGlite)', () => {
       end
       $$;
     `)
-    await db.exec(readFileSync(join(__dirname, '..', '..', 'supabase', 'migrations', '20260828_property_intelligence_v1.sql'), 'utf8'))
+    const migrationsDir = join(__dirname, '..', '..', 'supabase', 'migrations')
+    await db.exec(readFileSync(join(migrationsDir, '20260828_property_intelligence_v1.sql'), 'utf8'))
+    await db.exec(readFileSync(join(migrationsDir, '20260828_property_intelligence_v1_provenance_scope.sql'), 'utf8'))
   })
 
   afterAll(async () => { await db.close() })
@@ -83,6 +85,51 @@ describe('property intelligence migration (PGlite)', () => {
     )).rejects.toThrow()
   })
 
+  it('rejects observation evidence from another workspace at the database layer', async () => {
+    const workspaceA = await workspace()
+    const workspaceB = await workspace()
+    const propertyA = await property(workspaceA, 'Evidence Property')
+    const artifact = await db.query<{ id: string }>(
+      'insert into public.business_artifacts (workspace_id) values ($1) returning id',
+      [workspaceB]
+    )
+    const message = await db.query<{ id: string }>(
+      'insert into public.caye_operator_messages (workspace_id) values ($1) returning id',
+      [workspaceB]
+    )
+
+    await expect(db.query(
+      `insert into public.property_observations
+       (workspace_id, property_id, observation_key, text_value, provenance_status, source_artifact_id)
+       values ($1, $2, 'roof_condition', 'visible wear', 'observed', $3)`,
+      [workspaceA, propertyA, artifact.rows[0].id]
+    )).rejects.toThrow(/source artifact is not in this workspace/)
+
+    await expect(db.query(
+      `insert into public.property_observations
+       (workspace_id, property_id, observation_key, text_value, provenance_status, source_message_id)
+       values ($1, $2, 'occupancy', '10 people design case', 'operator_confirmed', $3)`,
+      [workspaceA, propertyA, message.rows[0].id]
+    )).rejects.toThrow(/source message is not in this workspace/)
+  })
+
+  it('rejects an artifact link whose artifact belongs to another workspace', async () => {
+    const workspaceA = await workspace()
+    const workspaceB = await workspace()
+    const propertyA = await property(workspaceA, 'Artifact Link Property')
+    const artifact = await db.query<{ id: string }>(
+      'insert into public.business_artifacts (workspace_id) values ($1) returning id',
+      [workspaceB]
+    )
+
+    await expect(db.query(
+      `insert into public.property_artifact_links
+       (workspace_id, property_id, artifact_id, relation_type)
+       values ($1, $2, $3, 'photo_of')`,
+      [workspaceA, propertyA, artifact.rows[0].id]
+    )).rejects.toThrow(/artifact evidence is not in this workspace/)
+  })
+
   it('allows a coherent property → structure → system → asset → observation chain', async () => {
     const workspaceId = await workspace()
     const propertyId = await property(workspaceId, 'Coherent Property')
@@ -101,13 +148,24 @@ describe('property intelligence migration (PGlite)', () => {
        values ($1, $2, $3, $4, 'Tank 1', 'water_tank') returning id`,
       [workspaceId, propertyId, structure.rows[0].id, system.rows[0].id]
     )
+    const artifact = await db.query<{ id: string }>(
+      'insert into public.business_artifacts (workspace_id) values ($1) returning id',
+      [workspaceId]
+    )
     const observation = await db.query<{ id: string }>(
       `insert into public.property_observations
-       (workspace_id, property_id, structure_id, system_id, asset_id, observation_key, numeric_value, unit, provenance_status)
-       values ($1, $2, $3, $4, $5, 'capacity', 1000, 'gallon', 'operator_confirmed') returning id`,
-      [workspaceId, propertyId, structure.rows[0].id, system.rows[0].id, asset.rows[0].id]
+       (workspace_id, property_id, structure_id, system_id, asset_id, observation_key, numeric_value, unit, provenance_status, source_artifact_id)
+       values ($1, $2, $3, $4, $5, 'capacity', 1000, 'gallon', 'operator_confirmed', $6) returning id`,
+      [workspaceId, propertyId, structure.rows[0].id, system.rows[0].id, asset.rows[0].id, artifact.rows[0].id]
+    )
+    const link = await db.query<{ id: string }>(
+      `insert into public.property_artifact_links
+       (workspace_id, property_id, asset_id, artifact_id, relation_type)
+       values ($1, $2, $3, $4, 'photo_of') returning id`,
+      [workspaceId, propertyId, asset.rows[0].id, artifact.rows[0].id]
     )
 
     expect(observation.rows[0].id).toBeTruthy()
+    expect(link.rows[0].id).toBeTruthy()
   })
 })
