@@ -37,7 +37,7 @@ const CAPABILITY_RESULT_SCHEMA = {
   },
 } as const
 
-export const CAYE_MCP_TOOLS: readonly McpTool[] = [
+export const CAYE_MCP_TOOLS = [
   {
     name: 'caye_context_snapshot',
     description: 'Read Caye founder context for operator scope or one explicit workspace.',
@@ -100,7 +100,7 @@ export const CAYE_MCP_TOOLS: readonly McpTool[] = [
       properties: { result: CAPABILITY_RESULT_SCHEMA },
     },
   },
-] as const
+] as const satisfies readonly McpTool[]
 
 const CAPABILITY_BY_TOOL = {
   caye_goals_list: 'goals.list',
