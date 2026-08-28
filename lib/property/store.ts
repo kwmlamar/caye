@@ -146,6 +146,19 @@ export async function getPropertySnapshot(workspaceId: string, propertyId: strin
   }
 }
 
+/** Founder-only presentation helper: resolve a canonical property to its owning workspace. */
+export async function getFounderPropertySnapshot(propertyId: string) {
+  const supabase = createServiceClient()
+  const { data, error } = await supabase
+    .from('physical_properties')
+    .select('workspace_id')
+    .eq('id', propertyId)
+    .maybeSingle()
+  if (error) throw new Error('Could not resolve property workspace')
+  if (!data) return null
+  return getPropertySnapshot(data.workspace_id as string, propertyId)
+}
+
 export async function listProperties(workspaceId: string) {
   const supabase = createServiceClient()
   const { data, error } = await supabase.from('physical_properties').select('id,name,property_type,location_label,status,updated_at').eq('workspace_id', workspaceId).neq('status','archived').order('updated_at', { ascending: false })
