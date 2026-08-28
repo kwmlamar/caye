@@ -4,13 +4,22 @@ import { extractRichResult, validateRichResult } from '@/lib/caye-direct-rich-re
 import { propertyRichResultFromTurns } from './turn-rich-result'
 
 describe('property snapshot rich results', () => {
-  it('derives a trusted property card from a real structured snapshot tool call', () => {
+  it('derives a trusted property card only after a successful structured snapshot tool result', () => {
     const propertyId = '123e4567-e89b-12d3-a456-426614174000'
-    const turns: Anthropic.MessageParam[] = [{
-      role: 'assistant',
-      content: [{ type: 'tool_use', id: 'toolu_1', name: 'get_property_snapshot', input: { property_id: propertyId } }],
-    }]
+    const turns: Anthropic.MessageParam[] = [
+      { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_1', name: 'get_property_snapshot', input: { property_id: propertyId } }] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: '{"ok":true}', is_error: false }] },
+    ]
     expect(propertyRichResultFromTurns(turns)?.blocks).toEqual([{ type: 'property_snapshot', propertyId }])
+  })
+
+  it('does not create a property card from an attempted lookup that failed', () => {
+    const propertyId = '123e4567-e89b-12d3-a456-426614174000'
+    const turns: Anthropic.MessageParam[] = [
+      { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_failed', name: 'get_property_snapshot', input: { property_id: propertyId } }] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_failed', content: '{"ok":false}', is_error: true }] },
+    ]
+    expect(propertyRichResultFromTurns(turns)).toBeUndefined()
   })
 
   it('does not create a property card from prose or a different tool call', () => {
@@ -18,6 +27,7 @@ describe('property snapshot rich results', () => {
     const turns: Anthropic.MessageParam[] = [
       { role: 'assistant', content: `get_property_snapshot ${propertyId}` },
       { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_2', name: 'get_customer', input: { customer_id: propertyId } }] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_2', content: '{"ok":true}', is_error: false }] },
     ]
     expect(propertyRichResultFromTurns(turns)).toBeUndefined()
   })
