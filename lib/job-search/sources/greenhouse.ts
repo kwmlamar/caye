@@ -11,6 +11,7 @@
  */
 import type { RawJobPosting, RemoteType } from '../types'
 import type { SourceAdapter } from './types'
+import { stripHtml } from './html-text'
 
 type GreenhouseJob = {
   id: number
@@ -23,11 +24,6 @@ type GreenhouseJob = {
   offices?: { name?: string }[]
 }
 
-function stripHtml(html: string | null | undefined): string | null {
-  if (!html) return null
-  return html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
-}
-
 function inferRemoteType(locationName: string | null | undefined): RemoteType {
   if (!locationName) return 'unknown'
   const lower = locationName.toLowerCase()
@@ -38,7 +34,10 @@ function inferRemoteType(locationName: string | null | undefined): RemoteType {
 
 async function fetchBoard(boardToken: string): Promise<RawJobPosting[]> {
   const url = `https://boards-api.greenhouse.io/v1/boards/${encodeURIComponent(boardToken)}/jobs?content=true`
-  const res = await fetch(url, { headers: { accept: 'application/json' } })
+  // A hung connection to one board must not stall the whole sourcing run —
+  // Promise.allSettled only helps once each individual fetch actually
+  // settles.
+  const res = await fetch(url, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(15_000) })
   if (!res.ok) {
     throw new Error(`Greenhouse board "${boardToken}" fetch failed: ${res.status}`)
   }
@@ -54,7 +53,14 @@ async function fetchBoard(boardToken: string): Promise<RawJobPosting[]> {
       applyUrl: job.absolute_url,
       company: boardToken,
       title: job.title,
-      requisitionId: job.requisition_id ?? null,
+      // Falls back to Greenhouse's own internal job id (always present,
+      // guaranteed unique per posting) when the company hasn't set a
+      // requisition_id — dedupe.ts's canonical-key fallback path
+      // (company+title+location, used when requisitionId is absent)
+      // would otherwise silently merge two genuinely distinct open reqs
+      // that happen to share an identical title and location string
+      // (audited 2026-08-28, PR #196).
+      requisitionId: job.requisition_id ?? String(job.id),
       location: locationName,
       remoteType: inferRemoteType(locationName),
       employmentType: null,
@@ -73,9 +79,13 @@ export const greenhouseAdapter: SourceAdapter = {
     const boards = Array.isArray((config as { boards?: unknown }).boards)
       ? ((config as { boards: unknown[] }).boards.filter((b): b is string => typeof b === 'string'))
       : []
-    if (boards.length === 0) return []
+    if (boards.length === 0) return { postings: [], errors: [] }
 
     const results = await Promise.allSettled(boards.map(fetchBoard))
-    return results.flatMap((r) => (r.status === 'fulfilled' ? r.value : []))
+    const postings = results.flatMap((r) => (r.status === 'fulfilled' ? r.value : []))
+    const errors = results
+      .map((r, i) => (r.status === 'rejected' ? `greenhouse board "${boards[i]}": ${r.reason instanceof Error ? r.reason.message : String(r.reason)}` : null))
+      .filter((e): e is string => e !== null)
+    return { postings, errors }
   },
 }
