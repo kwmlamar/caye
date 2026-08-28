@@ -6,12 +6,13 @@ type Input = { property_id: string }
 
 export const getPropertySnapshotTool: Tool<Input> = {
   name: 'get_property_snapshot',
-  description: 'Load the persistent physical-world snapshot for one property, including structures, systems, assets, and recent observations with provenance. Use this before reasoning about a known property; the Caye Direct server handles any visual property-card presentation after the real lookup succeeds.',
+  description: 'Load the persistent physical-world snapshot for one property from founder Caye Direct, including structures, systems, assets, and recent observations with provenance. Use this before reasoning about a known property; the Caye Direct server handles any visual property-card presentation after the real lookup succeeds.',
   risk: 'read',
   roles: ['founder'],
   modes: ['back-office'],
   inputSchema: { type: 'object', properties: { property_id: { type: 'string' } }, required: ['property_id'], additionalProperties: false },
   async execute(args, ctx) {
+    if (ctx.channel !== 'dashboard') return { ok: false, error: 'Property intelligence is currently available only in founder Caye Direct.' }
     try {
       const snapshot = await getPropertySnapshot(ctx.workspaceId, args.property_id)
       if (!snapshot) return { ok: false, error: 'Property not found in this workspace.' }

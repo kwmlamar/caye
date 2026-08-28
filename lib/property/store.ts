@@ -122,24 +122,26 @@ export async function getPropertySnapshot(workspaceId: string, propertyId: strin
   if (propertyError) throw new Error('Could not load property')
   if (!property) return null
 
-  const [structuresResult, systemsResult, assetsResult, observationsResult] = await Promise.all([
+  const [structuresResult, systemsResult, assetsResult, currentObservationsResult, observationsResult] = await Promise.all([
     supabase.from('property_structures').select('id,name,structure_type,metadata').eq('workspace_id', workspaceId).eq('property_id', propertyId).order('created_at'),
     supabase.from('property_systems').select('id,structure_id,name,system_type,status,metadata').eq('workspace_id', workspaceId).eq('property_id', propertyId).order('created_at'),
     supabase.from('property_assets').select('id,structure_id,system_id,name,asset_type,manufacturer,model,status,specifications,metadata').eq('workspace_id', workspaceId).eq('property_id', propertyId).order('created_at'),
+    supabase.from('property_current_observations').select('id,structure_id,system_id,asset_id,observation_key,numeric_value,text_value,unit,provenance_status,confidence,observed_at,created_at,notes').eq('workspace_id', workspaceId).eq('property_id', propertyId).order('observed_at', { ascending: false }).order('created_at', { ascending: false }),
     supabase.from('property_observations').select('id,structure_id,system_id,asset_id,observation_key,numeric_value,text_value,unit,provenance_status,confidence,observed_at,created_at,notes').eq('workspace_id', workspaceId).eq('property_id', propertyId).order('observed_at', { ascending: false }).order('created_at', { ascending: false }).limit(100),
   ])
 
-  if (structuresResult.error || systemsResult.error || assetsResult.error || observationsResult.error) {
+  if (structuresResult.error || systemsResult.error || assetsResult.error || currentObservationsResult.error || observationsResult.error) {
     throw new Error('Property snapshot is incomplete; one or more system reads failed')
   }
 
   const observations = (observationsResult.data ?? []) as SnapshotObservation[]
+  const currentObservations = (currentObservationsResult.data ?? []) as SnapshotObservation[]
   return {
     property,
     structures: structuresResult.data ?? [],
     systems: systemsResult.data ?? [],
     assets: assetsResult.data ?? [],
-    current_observations: currentPropertyObservations(observations),
+    current_observations: currentObservations,
     observations,
   }
 }
