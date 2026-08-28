@@ -3,11 +3,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import { getSession } from '@/lib/supabase'
 
+type Prediction = { id: string; alternative_id: string; metric_key: string; numeric_value: number; unit: string; provenance_status: string }
 type Snapshot = {
   project: { id: string; name: string; objective: string; problem_statement?: string | null; status: string; priority: string; success_criteria: string[] }
   baselines: Array<{ id: string; revision: number; status: string; frozen_at?: string | null }>
   alternatives: Array<{ id: string; alternative_key: string; revision: number; title: string; description: string; status: string; estimated_cost?: number | null; cost_currency?: string | null }>
-  predictions: Array<{ id: string; alternative_id: string; metric_key: string; numeric_value: number; unit: string; provenance_status: string }>
+  predictions: Prediction[]
   decisions: Array<{ id: string; alternative_id: string; selected_at: string; superseded_at?: string | null }>
   execution_evidence: Array<{ id: string; evidence_type: string; notes?: string | null; occurred_at: string }>
   outcomes: Array<{ id: string; metric_key: string; property_observation_id: string }>
@@ -17,6 +18,16 @@ type Snapshot = {
 
 function badge(value: string) {
   return <span style={{ border: '1px solid rgba(255,255,255,.10)', borderRadius: 999, padding: '3px 7px', color: '#a1a1aa', fontSize: 9, textTransform: 'uppercase', letterSpacing: '.05em' }}>{value.replaceAll('_',' ')}</span>
+}
+
+function metricLabel(key: string) {
+  return key.replaceAll('_', ' ')
+}
+
+function formatPrediction(prediction?: Prediction) {
+  if (!prediction) return '—'
+  const value = Number.isInteger(prediction.numeric_value) ? prediction.numeric_value.toString() : prediction.numeric_value.toFixed(1)
+  return `${value} ${prediction.unit}`
 }
 
 export function EngineeringProjectResult({ projectId }: { projectId: string }) {
@@ -38,6 +49,7 @@ export function EngineeringProjectResult({ projectId }: { projectId: string }) {
   }, [projectId])
 
   const selectedAlternativeId = useMemo(() => snapshot?.decisions.find((d) => !d.superseded_at)?.alternative_id ?? null, [snapshot])
+  const metricKeys = useMemo(() => snapshot ? Array.from(new Set(snapshot.predictions.map((p) => p.metric_key))) : [], [snapshot])
   if (error) return <div style={{ padding: 10, border: '1px solid rgba(255,255,255,.08)', borderRadius: 10, fontSize: 12, color: '#a1a1aa' }}>Engineering project snapshot unavailable.</div>
   if (!snapshot) return <div style={{ padding: 10, border: '1px solid rgba(255,255,255,.08)', borderRadius: 10, fontSize: 12, color: '#a1a1aa' }}>Loading engineering project…</div>
 
@@ -50,6 +62,29 @@ export function EngineeringProjectResult({ projectId }: { projectId: string }) {
 
     {snapshot.project.success_criteria?.length > 0 && <div><div style={{ color: '#8e8e96', fontSize: 9, textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 5 }}>Success criteria</div>{snapshot.project.success_criteria.map((c, i) => <div key={i} style={{ fontSize: 11, padding: '2px 0' }}>• {c}</div>)}</div>}
 
+    {snapshot.alternatives.length > 1 && metricKeys.length > 0 && <div style={{ overflowX: 'auto', border: '1px solid rgba(255,255,255,.07)', borderRadius: 10 }}>
+      <div style={{ padding: '9px 10px', color: '#8e8e96', fontSize: 9, textTransform: 'uppercase', letterSpacing: '.06em', borderBottom: '1px solid rgba(255,255,255,.06)' }}>Alternative comparison</div>
+      <table style={{ width: '100%', minWidth: 620, borderCollapse: 'collapse', fontSize: 10 }}>
+        <thead>
+          <tr>
+            <th style={{ textAlign: 'left', padding: 9, color: '#8e8e96', fontWeight: 500 }}>Metric</th>
+            {snapshot.alternatives.map((a) => <th key={a.id} style={{ textAlign: 'left', padding: 9, color: a.id === selectedAlternativeId ? '#72cfd9' : '#d4d4d8', fontWeight: 600 }}>{a.title}</th>)}
+          </tr>
+        </thead>
+        <tbody>
+          <tr style={{ borderTop: '1px solid rgba(255,255,255,.05)' }}><td style={{ padding: 9, color: '#8e8e96' }}>estimated cost</td>{snapshot.alternatives.map((a) => <td key={a.id} style={{ padding: 9 }}>{a.estimated_cost != null ? `${a.estimated_cost} ${a.cost_currency ?? ''}` : 'Needs quote'}</td>)}</tr>
+          {metricKeys.map((key) => <tr key={key} style={{ borderTop: '1px solid rgba(255,255,255,.05)' }}>
+            <td style={{ padding: 9, color: '#8e8e96' }}>{metricLabel(key)}</td>
+            {snapshot.alternatives.map((a) => {
+              const prediction = snapshot.predictions.find((p) => p.alternative_id === a.id && p.metric_key === key)
+              return <td key={a.id} style={{ padding: 9 }}><div>{formatPrediction(prediction)}</div>{prediction && <div style={{ color: '#71717a', fontSize: 8, marginTop: 2 }}>{prediction.provenance_status.replaceAll('_', ' ')}</div>}</td>
+            })}
+          </tr>)}
+        </tbody>
+      </table>
+      <div style={{ padding: '8px 10px', color: '#71717a', fontSize: 9, borderTop: '1px solid rgba(255,255,255,.06)' }}>Predictions are planning estimates, not measured outcomes. Missing values stay blank rather than being invented for visual symmetry.</div>
+    </div>}
+
     <div style={{ display: 'grid', gap: 7 }}>
       <div style={{ color: '#8e8e96', fontSize: 9, textTransform: 'uppercase', letterSpacing: '.06em' }}>Alternatives</div>
       {snapshot.alternatives.length === 0 ? <div style={{ color: '#71717a', fontSize: 11 }}>No interventions recorded yet.</div> : snapshot.alternatives.map((a) => {
@@ -57,8 +92,8 @@ export function EngineeringProjectResult({ projectId }: { projectId: string }) {
         return <div key={a.id} style={{ border: a.id === selectedAlternativeId ? '1px solid rgba(78,190,206,.45)' : '1px solid rgba(255,255,255,.07)', borderRadius: 10, padding: 10 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}><strong style={{ fontSize: 12 }}>{a.title}</strong><span style={{ fontSize: 9, color: '#8e8e96' }}>REV {a.revision} · {a.id === selectedAlternativeId ? 'SELECTED' : a.status.toUpperCase()}</span></div>
           <div style={{ color: '#a1a1aa', fontSize: 10, marginTop: 3 }}>{a.description}</div>
-          {a.estimated_cost != null && <div style={{ fontSize: 10, marginTop: 5 }}>Estimated cost: {a.estimated_cost} {a.cost_currency ?? ''}</div>}
-          {preds.length > 0 && <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 7 }}>{preds.map((p) => <span key={p.id} style={{ fontSize: 9, padding: '4px 6px', borderRadius: 6, background: 'rgba(255,255,255,.04)' }}>{p.metric_key}: {p.numeric_value} {p.unit} · {p.provenance_status}</span>)}</div>}
+          {a.estimated_cost != null ? <div style={{ fontSize: 10, marginTop: 5 }}>Estimated cost: {a.estimated_cost} {a.cost_currency ?? ''}</div> : <div style={{ fontSize: 10, marginTop: 5, color: '#8e8e96' }}>Cost: needs quote</div>}
+          {preds.length > 0 && <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 7 }}>{preds.map((p) => <span key={p.id} style={{ fontSize: 9, padding: '4px 6px', borderRadius: 6, background: 'rgba(255,255,255,.04)' }}>{metricLabel(p.metric_key)}: {formatPrediction(p)} · {p.provenance_status}</span>)}</div>}
         </div>
       })}
     </div>
