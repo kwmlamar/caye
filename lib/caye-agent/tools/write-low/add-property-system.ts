@@ -12,7 +12,6 @@ export const addPropertySystemTool: Tool<Input> = {
   async execute(args, ctx) {
     try {
       const system = await addPropertySystem({ workspaceId: ctx.workspaceId, propertyId: args.property_id, name: args.name, systemType: args.system_type, status: args.status, metadata: args.notes ? { notes: args.notes } : {} })
-      ctx.propertySnapshotIds?.push(args.property_id)
       return { ok: true, data: { system } }
     } catch (error) { return { ok: false, error: error instanceof Error ? error.message : 'Could not add property system.' } }
   },
