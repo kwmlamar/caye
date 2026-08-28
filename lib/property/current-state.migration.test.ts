@@ -28,8 +28,8 @@ describe('property current-state projection (PGlite)', () => {
     `)
     const migrationsDir = join(__dirname, '..', '..', 'supabase', 'migrations')
     await db.exec(readFileSync(join(migrationsDir, '20260828_property_intelligence_v1.sql'), 'utf8'))
+    await db.exec(readFileSync(join(migrationsDir, '20260828_property_intelligence_v1_current_state.sql'), 'utf8'))
     await db.exec(readFileSync(join(migrationsDir, '20260828_property_intelligence_v1_provenance_scope.sql'), 'utf8'))
-    await db.exec(readFileSync(join(migrationsDir, '20260828030000_property_intelligence_current_state.sql'), 'utf8'))
   })
 
   afterAll(async () => { await db.close() })
