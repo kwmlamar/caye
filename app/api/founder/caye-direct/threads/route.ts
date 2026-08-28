@@ -1,19 +1,10 @@
 /**
- * GET  /api/founder/caye-direct/threads?workspaceId=<uuid>&q=<search>
+ * GET  /api/founder/caye-direct/threads?q=<search>
  * POST /api/founder/caye-direct/threads   { workspaceId }
  *
- * Topic-thread history for Caye Direct (2026-08-13 redesign) — the
- * ChatGPT-style sidebar. Distinct from the operator-scoped
- * /api/founder/caye-direct route, which now backs the read-only operator-
- * observability overlay. See lib/caye-direct-threads.ts and
- * supabase/migrations/20260813_caye_direct_threads.sql for the model.
- *
- * GET lists threads for the sidebar (client buckets into Today/Yesterday/
- * Previous 7 days/Older). POST creates an empty thread ("+ New
- * conversation") — sending the first message happens against
- * /threads/:id, which is also where the title gets generated.
- *
- * Auth: Bearer JWT, checked against FOUNDER_USER_IDS.
+ * Founder Direct history is founder-scoped. GET returns conversations across
+ * workspaces by default. POST still requires an initial workspace because
+ * every actual Caye turn must execute against one concrete tenant.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -22,9 +13,6 @@ import { requireFounder } from '@/lib/founder'
 import { createThread, listThreads } from '@/lib/caye-direct-threads'
 
 export async function GET(req: NextRequest) {
-  const workspaceId = req.nextUrl.searchParams.get('workspaceId')
-  if (!workspaceId) return NextResponse.json({ error: 'workspaceId is required' }, { status: 400 })
-
   const user = await requireFounder(req)
   if (!user) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
@@ -34,7 +22,11 @@ export async function GET(req: NextRequest) {
 
   const supabase = createServiceClient()
   try {
-    const threads = await listThreads(supabase, workspaceId, { q, status })
+    // Deliberately ignore the legacy workspaceId query parameter. Existing
+    // dashboard clients may still send it, but chat ownership is founder-
+    // scoped now. A future explicit workspace filter should use a distinct
+    // parameter instead of accidentally restoring tenant-owned threads.
+    const threads = await listThreads(supabase, null, { q, status })
     return NextResponse.json({ threads })
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Failed to list threads'

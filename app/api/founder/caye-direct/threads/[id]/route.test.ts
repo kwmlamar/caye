@@ -13,51 +13,55 @@ vi.mock('@/lib/caye-agent/founder-thread-turn', () => ({
 
 vi.mock('@/lib/supabase-server', () => ({ createServiceClient: () => ({}) }))
 vi.mock('@/lib/caye-direct-threads', () => ({
-  getThread: vi.fn(),
+  getFounderThreadById: vi.fn(),
   getThreadEntities: vi.fn(),
   getThreadMessages: vi.fn(),
   describeEntity: vi.fn(),
   renameThread: vi.fn(),
   setThreadStatus: vi.fn(),
   setThreadPinned: vi.fn(),
+  setThreadActiveWorkspace: vi.fn(),
   deleteThread: vi.fn(),
 }))
 vi.mock('@/lib/caye-direct-rich-result-resolution', () => ({ resolveRichResultReferences: vi.fn() }))
 
 import { POST, PATCH, DELETE } from './route'
-import { setThreadPinned, deleteThread } from '@/lib/caye-direct-threads'
+import {
+  getFounderThreadById,
+  setThreadPinned,
+  setThreadActiveWorkspace,
+  deleteThread,
+} from '@/lib/caye-direct-threads'
 
+const getFounderThreadByIdMock = vi.mocked(getFounderThreadById)
 const setThreadPinnedMock = vi.mocked(setThreadPinned)
+const setThreadActiveWorkspaceMock = vi.mocked(setThreadActiveWorkspace)
 const deleteThreadMock = vi.mocked(deleteThread)
 
 function req(body: unknown): NextRequest {
   return new NextRequest('http://localhost/api/founder/caye-direct/threads/thread-1', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-token' },
-    body: JSON.stringify(body),
+    method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-token' }, body: JSON.stringify(body),
   })
 }
-
 function patchReq(body: unknown): NextRequest {
   return new NextRequest('http://localhost/api/founder/caye-direct/threads/thread-1', {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-token' },
-    body: JSON.stringify(body),
+    method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-token' }, body: JSON.stringify(body),
   })
 }
-
-function deleteReq(workspaceId: string | null): NextRequest {
-  const url = workspaceId
-    ? `http://localhost/api/founder/caye-direct/threads/thread-1?workspaceId=${workspaceId}`
-    : 'http://localhost/api/founder/caye-direct/threads/thread-1'
-  return new NextRequest(url, { method: 'DELETE', headers: { Authorization: 'Bearer test-token' } })
+function deleteReq(): NextRequest {
+  return new NextRequest('http://localhost/api/founder/caye-direct/threads/thread-1', { method: 'DELETE', headers: { Authorization: 'Bearer test-token' } })
 }
 
 const params = Promise.resolve({ id: 'thread-1' })
+const thread = { id: 'thread-1', active_workspace_id: 'ws-1' }
 
-describe('POST /api/founder/caye-direct/threads/[id] — attachments (multimodal Caye Direct follow-up)', () => {
+describe('founder-scoped Caye Direct thread route', () => {
   beforeEach(() => {
     requireFounderMock.mockReset().mockResolvedValue({ id: 'founder-1' })
+    getFounderThreadByIdMock.mockReset().mockResolvedValue(thread as never)
+    setThreadActiveWorkspaceMock.mockReset().mockResolvedValue(true)
+    setThreadPinnedMock.mockReset().mockResolvedValue(true)
+    deleteThreadMock.mockReset().mockResolvedValue(true)
     runFounderThreadTurnMock.mockReset().mockResolvedValue({ replyText: 'Here it is.', threadId: 'thread-1' })
   })
 
@@ -67,96 +71,63 @@ describe('POST /api/founder/caye-direct/threads/[id] — attachments (multimodal
     expect(runFounderThreadTurnMock).not.toHaveBeenCalled()
   })
 
-  it('accepts an attachment-only send with no text', async () => {
+  it('keeps the existing workspace when the dashboard context matches', async () => {
+    const res = await POST(req({ workspaceId: 'ws-1', message: 'hello' }), { params })
+    expect(res.status).toBe(200)
+    expect(setThreadActiveWorkspaceMock).not.toHaveBeenCalled()
+    expect(runFounderThreadTurnMock).toHaveBeenCalledWith('ws-1', 'thread-1', 'hello', undefined, undefined)
+  })
+
+  it('moves active workspace before running a turn from a different dashboard workspace', async () => {
+    const res = await POST(req({ workspaceId: 'ws-2', message: 'now check this workspace' }), { params })
+    expect(res.status).toBe(200)
+    expect(setThreadActiveWorkspaceMock).toHaveBeenCalledWith({}, 'ws-1', 'thread-1', 'ws-2')
+    expect(runFounderThreadTurnMock).toHaveBeenCalledWith('ws-2', 'thread-1', 'now check this workspace', undefined, undefined)
+  })
+
+  it('fails closed if the context move loses its compare-and-swap race', async () => {
+    setThreadActiveWorkspaceMock.mockResolvedValue(false)
+    const res = await POST(req({ workspaceId: 'ws-2', message: 'hello' }), { params })
+    expect(res.status).toBe(409)
+    expect(runFounderThreadTurnMock).not.toHaveBeenCalled()
+  })
+
+  it('accepts an attachment-only send and keeps attachment scope explicit', async () => {
     const res = await POST(req({ workspaceId: 'ws-1', attachmentArtifactIds: ['artifact-1'] }), { params })
     expect(res.status).toBe(200)
     expect(runFounderThreadTurnMock).toHaveBeenCalledWith('ws-1', 'thread-1', '', undefined, ['artifact-1'])
   })
 
-  it('forwards a plain text message with no attachments unchanged', async () => {
-    await POST(req({ workspaceId: 'ws-1', message: 'hello' }), { params })
-    expect(runFounderThreadTurnMock).toHaveBeenCalledWith('ws-1', 'thread-1', 'hello', undefined, undefined)
-  })
-
-  it('filters out non-string entries from attachmentArtifactIds rather than forwarding them', async () => {
+  it('filters non-string attachment ids', async () => {
     await POST(req({ workspaceId: 'ws-1', message: 'x', attachmentArtifactIds: ['artifact-1', 42, null, ''] }), { params })
     expect(runFounderThreadTurnMock).toHaveBeenCalledWith('ws-1', 'thread-1', 'x', undefined, ['artifact-1'])
   })
 
-  it('maps "Invalid attachment" to 400, distinct from a generic 500', async () => {
-    runFounderThreadTurnMock.mockRejectedValue(new Error('Invalid attachment'))
-    const res = await POST(req({ workspaceId: 'ws-1', attachmentArtifactIds: ['forged-id'] }), { params })
-    expect(res.status).toBe(400)
-    const json = await res.json()
-    expect(json.error).toBe('Invalid attachment')
+  it('preserves attachment error mappings', async () => {
+    runFounderThreadTurnMock.mockRejectedValueOnce(new Error('Invalid attachment'))
+    expect((await POST(req({ workspaceId: 'ws-1', attachmentArtifactIds: ['forged'] }), { params })).status).toBe(400)
+    runFounderThreadTurnMock.mockRejectedValueOnce(new Error('Too many attachments'))
+    expect((await POST(req({ workspaceId: 'ws-1', attachmentArtifactIds: ['a'] }), { params })).status).toBe(400)
+    runFounderThreadTurnMock.mockRejectedValueOnce(new Error('Attachment unreadable'))
+    expect((await POST(req({ workspaceId: 'ws-1', attachmentArtifactIds: ['a'] }), { params })).status).toBe(502)
   })
 
-  it('maps "Too many attachments" to 400', async () => {
-    runFounderThreadTurnMock.mockRejectedValue(new Error('Too many attachments'))
-    const res = await POST(req({ workspaceId: 'ws-1', attachmentArtifactIds: ['a', 'b', 'c', 'd', 'e', 'f', 'g'] }), { params })
-    expect(res.status).toBe(400)
-  })
-
-  it('maps "Attachment unreadable" to 502 with a retry-friendly message, distinct from a client-input 400', async () => {
-    runFounderThreadTurnMock.mockRejectedValue(new Error('Attachment unreadable'))
-    const res = await POST(req({ workspaceId: 'ws-1', attachmentArtifactIds: ['artifact-1'] }), { params })
-    expect(res.status).toBe(502)
-    const json = await res.json()
-    expect(json.error).toMatch(/try again/i)
-  })
-
-  it('still maps "Thread not found" to 404 alongside the new attachment handling', async () => {
-    runFounderThreadTurnMock.mockRejectedValue(new Error('Thread not found'))
+  it('404s a missing founder thread before any turn runs', async () => {
+    getFounderThreadByIdMock.mockResolvedValue(null)
     const res = await POST(req({ workspaceId: 'ws-1', message: 'hi' }), { params })
     expect(res.status).toBe(404)
-  })
-})
-
-describe('PATCH /api/founder/caye-direct/threads/[id] — pin/unpin (sidebar "more" menu)', () => {
-  beforeEach(() => {
-    requireFounderMock.mockReset().mockResolvedValue({ id: 'founder-1' })
-    setThreadPinnedMock.mockReset().mockResolvedValue(true)
+    expect(runFounderThreadTurnMock).not.toHaveBeenCalled()
   })
 
-  it('pins a thread', async () => {
-    const res = await PATCH(patchReq({ workspaceId: 'ws-1', pinned: true }), { params })
+  it('pins using the thread actual active workspace rather than stale client workspace', async () => {
+    const res = await PATCH(patchReq({ workspaceId: 'stale-ws', pinned: true }), { params })
     expect(res.status).toBe(200)
     expect(setThreadPinnedMock).toHaveBeenCalledWith({}, 'ws-1', 'thread-1', true)
   })
 
-  it('unpins a thread', async () => {
-    await PATCH(patchReq({ workspaceId: 'ws-1', pinned: false }), { params })
-    expect(setThreadPinnedMock).toHaveBeenCalledWith({}, 'ws-1', 'thread-1', false)
-  })
-
-  it('404s when the thread does not belong to the workspace', async () => {
-    setThreadPinnedMock.mockResolvedValue(false)
-    const res = await PATCH(patchReq({ workspaceId: 'ws-1', pinned: true }), { params })
-    expect(res.status).toBe(404)
-  })
-})
-
-describe('DELETE /api/founder/caye-direct/threads/[id] — sidebar "more" menu, distinct from Archive', () => {
-  beforeEach(() => {
-    requireFounderMock.mockReset().mockResolvedValue({ id: 'founder-1' })
-    deleteThreadMock.mockReset().mockResolvedValue(true)
-  })
-
-  it('requires workspaceId', async () => {
-    const res = await DELETE(deleteReq(null), { params })
-    expect(res.status).toBe(400)
-    expect(deleteThreadMock).not.toHaveBeenCalled()
-  })
-
-  it('deletes the thread', async () => {
-    const res = await DELETE(deleteReq('ws-1'), { params })
+  it('deletes without requiring a workspace query parameter', async () => {
+    const res = await DELETE(deleteReq(), { params })
     expect(res.status).toBe(200)
     expect(deleteThreadMock).toHaveBeenCalledWith({}, 'ws-1', 'thread-1')
-  })
-
-  it('404s when the thread does not belong to the workspace', async () => {
-    deleteThreadMock.mockResolvedValue(false)
-    const res = await DELETE(deleteReq('ws-1'), { params })
-    expect(res.status).toBe(404)
   })
 })

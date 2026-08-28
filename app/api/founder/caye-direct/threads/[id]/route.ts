@@ -1,25 +1,10 @@
 /**
- * GET    /api/founder/caye-direct/threads/:id?workspaceId=<uuid>
- * POST   /api/founder/caye-direct/threads/:id   { workspaceId, message }
- * PATCH  /api/founder/caye-direct/threads/:id   { workspaceId, title?, status?, pinned? }
- * DELETE /api/founder/caye-direct/threads/:id?workspaceId=<uuid>
+ * A single founder-scoped Caye Direct thread.
  *
- * A single Caye Direct thread. GET returns metadata + resolved linked
- * entities + visible messages (same visibility rules as the operator
- * route: isInternalTurnBody filtered, tool markers stripped, consecutive
- * duplicates collapsed). POST sends a founder message IN THIS THREAD —
- * same agent, same caye_operator_messages table as every other Caye
- * Direct/WhatsApp turn, but context loading is thread-scoped
- * (loadDirectThreadContext) instead of the operator's global sliding
- * window. PATCH renames, archives, or pins/unpins. DELETE hard-removes the
- * thread (the organization layer only — see deleteThread's doc comment),
- * distinct from archiving.
- *
- * POST always sends as the founder, exactly like the legacy operator-
- * scoped route — there is still no way to send as another operator from
- * the dashboard. See app/api/founder/caye-direct/route.ts's doc comment.
- *
- * Auth: Bearer JWT, checked against FOUNDER_USER_IDS.
+ * The dashboard still sends workspaceId because that is the founder's current
+ * operating context. GET never mutates thread context. POST moves the thread's
+ * active workspace to that explicit context (CAS) before running Caye, then
+ * the entire agent/tool turn remains scoped to that one workspace.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -27,13 +12,14 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { requireFounder } from '@/lib/founder'
 import { isInternalTurnBody, visibleBody, dedupeConsecutive } from '@/lib/caye-operator-messages'
 import {
-  getThread,
+  getFounderThreadById,
   getThreadEntities,
   getThreadMessages,
   describeEntity,
   renameThread,
   setThreadStatus,
   setThreadPinned,
+  setThreadActiveWorkspace,
   deleteThread,
 } from '@/lib/caye-direct-threads'
 import { runFounderThreadTurn } from '@/lib/caye-agent/founder-thread-turn'
@@ -43,32 +29,31 @@ import { resolveRichResultReferences } from '@/lib/caye-direct-rich-result-resol
 const VALID_REQUESTED_MODES: readonly RequestedMode[] = ['auto', 'claude', 'openai', 'api']
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const workspaceId = req.nextUrl.searchParams.get('workspaceId')
-  if (!workspaceId) return NextResponse.json({ error: 'workspaceId is required' }, { status: 400 })
-
   const user = await requireFounder(req)
   if (!user) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
   const { id: threadId } = await params
   const supabase = createServiceClient()
-
-  const thread = await getThread(supabase, workspaceId, threadId)
+  const thread = await getFounderThreadById(supabase, threadId)
   if (!thread) return NextResponse.json({ error: 'Thread not found' }, { status: 404 })
 
   const [entities, rawMessages] = await Promise.all([
     getThreadEntities(supabase, threadId),
     getThreadMessages(supabase, threadId),
   ])
+  const linkedEntities = await Promise.all(entities.map(async (e) => ({ ...e, label: await describeEntity(supabase, e) })))
 
-  const linkedEntities = await Promise.all(
-    entities.map(async (e) => ({ ...e, label: await describeEntity(supabase, e) }))
-  )
-
+  // A founder thread can now contain messages produced while operating in
+  // different workspaces. Resolve every rich result against the workspace
+  // that actually produced that message, never today's dashboard selection.
   const messages = await Promise.all(dedupeConsecutive(
     rawMessages
       .filter((m) => !isInternalTurnBody(m.body))
       .map((m) => ({ ...m, body: visibleBody(m.body) }))
-  ).map(async m => ({ ...m, rich_result: await resolveRichResultReferences(supabase, workspaceId, m.rich_result) })))
+  ).map(async (m) => ({
+    ...m,
+    rich_result: await resolveRichResultReferences(supabase, m.workspace_id, m.rich_result),
+  })))
 
   return NextResponse.json({ thread, linkedEntities, messages })
 }
@@ -94,14 +79,20 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (!user) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
   const { id: threadId } = await params
+  const supabase = createServiceClient()
+  const thread = await getFounderThreadById(supabase, threadId)
+  if (!thread) return NextResponse.json({ error: 'Thread not found' }, { status: 404 })
 
-  // `model` is the Caye Direct model selector (2026-08-17) — omitted or
-  // unrecognized falls through to undefined, which keeps runFounderThreadTurn
-  // on its original cayeAgent()/execute.ts path exactly as before this
-  // feature existed. founderUserId comes from the verified session above,
-  // never from the request body — see runCayeDirectRouterTurn's doc comment.
+  // The currently selected dashboard workspace is an explicit founder action.
+  // Move context BEFORE the turn, then runFounderThreadTurn's getThread check
+  // proves the runtime is executing in exactly that workspace. No tool can
+  // silently reach sideways into another tenant during the same turn.
+  if (thread.active_workspace_id !== workspaceId) {
+    const moved = await setThreadActiveWorkspace(supabase, thread.active_workspace_id, threadId, workspaceId)
+    if (!moved) return NextResponse.json({ error: 'Workspace context changed; retry the turn.' }, { status: 409 })
+  }
+
   const requestedMode = VALID_REQUESTED_MODES.find((m) => m === model)
-
   try {
     const result = await runFounderThreadTurn(
       workspaceId,
@@ -110,16 +101,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       requestedMode ? { requestedMode, founderUserId: user.id } : undefined,
       attachments
     )
-    return NextResponse.json(result)
+    return NextResponse.json({ ...result, activeWorkspaceId: workspaceId })
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Agent failed'
     if (msg === 'Thread not found') return NextResponse.json({ error: msg }, { status: 404 })
     if (msg === 'Invalid attachment') return NextResponse.json({ error: msg }, { status: 400 })
     if (msg === 'Too many attachments') return NextResponse.json({ error: `Send at most a few files at once.` }, { status: 400 })
-    // Not a client input problem (the id was valid and workspace-scoped) —
-    // bytes just couldn't be read back from storage this attempt. Never
-    // silently answer without them (see runFounderThreadTurn's hard
-    // invariant) — surface it as a real, retryable failure instead.
     if (msg === 'Attachment unreadable') return NextResponse.json({ error: "Couldn't read that attachment right now — try again in a moment." }, { status: 502 })
     return NextResponse.json({ error: msg }, { status: 500 })
   }
@@ -127,40 +114,40 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const body = await req.json().catch(() => null)
-  const { workspaceId, title, status, pinned } = (body ?? {}) as {
+  const { title, status, pinned } = (body ?? {}) as {
     workspaceId?: string
     title?: string
     status?: 'active' | 'archived'
     pinned?: boolean
   }
-  if (!workspaceId) return NextResponse.json({ error: 'workspaceId is required' }, { status: 400 })
 
   const user = await requireFounder(req)
   if (!user) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
   const { id: threadId } = await params
   const supabase = createServiceClient()
+  const thread = await getFounderThreadById(supabase, threadId)
+  if (!thread) return NextResponse.json({ error: 'Thread not found' }, { status: 404 })
 
   let ok = true
-  if (title?.trim()) ok = (await renameThread(supabase, workspaceId, threadId, title)) && ok
-  if (status) ok = (await setThreadStatus(supabase, workspaceId, threadId, status)) && ok
-  if (typeof pinned === 'boolean') ok = (await setThreadPinned(supabase, workspaceId, threadId, pinned)) && ok
-
-  if (!ok) return NextResponse.json({ error: 'Thread not found' }, { status: 404 })
+  const activeWorkspaceId = thread.active_workspace_id
+  if (title?.trim()) ok = (await renameThread(supabase, activeWorkspaceId, threadId, title)) && ok
+  if (status) ok = (await setThreadStatus(supabase, activeWorkspaceId, threadId, status)) && ok
+  if (typeof pinned === 'boolean') ok = (await setThreadPinned(supabase, activeWorkspaceId, threadId, pinned)) && ok
+  if (!ok) return NextResponse.json({ error: 'Thread changed concurrently' }, { status: 409 })
   return NextResponse.json({ ok: true })
 }
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const workspaceId = req.nextUrl.searchParams.get('workspaceId')
-  if (!workspaceId) return NextResponse.json({ error: 'workspaceId is required' }, { status: 400 })
-
   const user = await requireFounder(req)
   if (!user) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
   const { id: threadId } = await params
   const supabase = createServiceClient()
+  const thread = await getFounderThreadById(supabase, threadId)
+  if (!thread) return NextResponse.json({ error: 'Thread not found' }, { status: 404 })
 
-  const ok = await deleteThread(supabase, workspaceId, threadId)
-  if (!ok) return NextResponse.json({ error: 'Thread not found' }, { status: 404 })
+  const ok = await deleteThread(supabase, thread.active_workspace_id, threadId)
+  if (!ok) return NextResponse.json({ error: 'Thread changed concurrently' }, { status: 409 })
   return NextResponse.json({ ok: true })
 }
