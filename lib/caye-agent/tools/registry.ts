@@ -99,6 +99,7 @@ import {
   recordEngineeringExecutionTool,
   linkEngineeringOutcomeTool,
   compareEngineeringProjectOutcomesTool,
+  recordEngineeringVerdictTool,
 } from '@/lib/engineering-projects/tools'
 
 type AnyTool = Tool<never>
@@ -215,6 +216,7 @@ export const TOOL_REGISTRY: AnyTool[] = [
   selectEngineeringAlternativeTool as AnyTool,
   recordEngineeringExecutionTool as AnyTool,
   linkEngineeringOutcomeTool as AnyTool,
+  recordEngineeringVerdictTool as AnyTool,
   createParametricPart as AnyTool,
   reviseParametricPart as AnyTool,
   runStaticStructuralAnalysis as AnyTool,
