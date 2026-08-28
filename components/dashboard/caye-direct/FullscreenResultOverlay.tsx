@@ -47,6 +47,7 @@ export function FullscreenResultOverlay({
         padding: 18,
         display: 'grid',
         placeItems: 'center',
+        color: '#f4f4f5',
       }}
     >
       <div style={{
@@ -59,6 +60,7 @@ export function FullscreenResultOverlay({
         overflow: 'hidden',
         display: 'grid',
         gridTemplateRows: '48px minmax(0,1fr)',
+        color: '#f4f4f5',
       }}>
         <div style={{
           display: 'flex',
@@ -68,7 +70,7 @@ export function FullscreenResultOverlay({
           padding: '0 14px 0 18px',
           borderBottom: '1px solid rgba(255,255,255,.08)',
         }}>
-          <div style={{ minWidth: 0, fontSize: 12, fontWeight: 650, color: '#d9d9df', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</div>
+          <div style={{ minWidth: 0, fontSize: 12, fontWeight: 650, color: '#e4e4e7', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</div>
           <button
             type="button"
             onClick={onClose}
@@ -78,16 +80,16 @@ export function FullscreenResultOverlay({
               width: 30,
               height: 30,
               borderRadius: 8,
-              border: '1px solid rgba(255,255,255,.10)',
-              background: 'rgba(255,255,255,.04)',
-              color: '#c8c8cf',
+              border: '1px solid rgba(255,255,255,.12)',
+              background: 'rgba(255,255,255,.055)',
+              color: '#e4e4e7',
               cursor: 'pointer',
               fontSize: 17,
               lineHeight: 1,
             }}
           >×</button>
         </div>
-        <div style={{ minHeight: 0, overflow: 'auto', padding: 18 }}>{children}</div>
+        <div style={{ minHeight: 0, overflow: 'auto', padding: 18, color: '#f4f4f5' }}>{children}</div>
       </div>
     </div>,
     document.body,
@@ -110,10 +112,17 @@ export function ExpandResultButton({ onClick, label = 'Open full screen' }: { on
         borderRadius: 8,
         border: '1px solid rgba(255,255,255,.10)',
         background: 'rgba(255,255,255,.035)',
-        color: '#aeb0b8',
+        color: '#c7c9d0',
         cursor: 'pointer',
-        fontSize: 13,
+        padding: 0,
       }}
-    >↗</button>
+    >
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M8 3H3v5" />
+        <path d="M16 3h5v5" />
+        <path d="M8 21H3v-5" />
+        <path d="M16 21h5v-5" />
+      </svg>
+    </button>
   )
 }
