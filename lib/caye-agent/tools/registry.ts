@@ -73,6 +73,7 @@ import { relateToDirectThread } from './write-low/relate-to-direct-thread'
 import { annotateArtifactTool } from './write-low/annotate-artifact'
 import { retrieveArtifactForOperator } from './write-low/retrieve-artifact-for-operator'
 import { createPropertyTool } from './write-low/create-property'
+import { addPropertyStructureTool } from './write-low/add-property-structure'
 import { addPropertySystemTool } from './write-low/add-property-system'
 import { addPropertyAssetTool } from './write-low/add-property-asset'
 import { recordPropertyObservationTool } from './write-low/record-property-observation'
@@ -268,6 +269,7 @@ export const TOOL_REGISTRY: AnyTool[] = [
   annotateArtifactTool as AnyTool,
   retrieveArtifactForOperator as AnyTool,
   createPropertyTool as AnyTool,
+  addPropertyStructureTool as AnyTool,
   addPropertySystemTool as AnyTool,
   addPropertyAssetTool as AnyTool,
   recordPropertyObservationTool as AnyTool,
