@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
 import { signInWithOAuth, getSession, claimWorkspace } from "@/lib/supabase"
+import { internalRedirectPath } from '@/lib/internal-redirect'
 import { CayeMark } from "@/components/brand/CayeMark"
 
 function isMobileViewport() {
@@ -55,11 +56,16 @@ function LoginPageInner() {
   // workspace already exists and already finished discovery, it just has
   // no dashboard login yet.
   const claimWorkspaceId = searchParams.get('ws')
+  const nextPath = internalRedirectPath(searchParams.get('next'))
   const [checking, setChecking] = useState(true) // true while checking existing session
 
   useEffect(() => {
     getSession().then(async ({ session }) => {
       if (session?.user) {
+        if (nextPath) {
+          router.replace(nextPath)
+          return
+        }
         if (claimWorkspaceId) {
           await claimWorkspace(claimWorkspaceId, session.user.id)
           router.replace(appRoute(claimWorkspaceId))
@@ -70,13 +76,13 @@ function LoginPageInner() {
         setChecking(false)
       }
     })
-  }, [router, claimWorkspaceId])
+  }, [router, claimWorkspaceId, nextPath])
 
   const handleOAuth = (provider: 'google' | 'facebook') => {
     signInWithOAuth(provider, {
       redirectTo: claimWorkspaceId
         ? `${window.location.origin}/auth/callback?ws=${claimWorkspaceId}`
-        : `${window.location.origin}/auth/callback`
+        : `${window.location.origin}/auth/callback${nextPath ? `?next=${encodeURIComponent(nextPath)}` : ''}`
     })
   }
 

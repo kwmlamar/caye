@@ -3,6 +3,7 @@
 import { Suspense, useEffect, useRef } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { getSupabase, claimWorkspace } from "@/lib/supabase"
+import { internalRedirectPath } from '@/lib/internal-redirect'
 
 function CallbackFallback() {
   return (
@@ -27,12 +28,17 @@ function AuthCallbackInner() {
   // workspace that already exists from a WhatsApp-first signup — see
   // app/login/page.tsx and lib/onboarding-whatsapp.ts.
   const claimWorkspaceId = searchParams.get('ws')
+  const nextPath = internalRedirectPath(searchParams.get('next'))
   const processed = useRef(false)
 
   useEffect(() => {
     const client = getSupabase()
 
     async function routeAfterAuth(userId: string) {
+      if (nextPath) {
+        router.push(nextPath)
+        return
+      }
       if (claimWorkspaceId) {
         // Discovery already finished for this workspace over WhatsApp —
         // this sign-in is only attaching a dashboard login, not creating
@@ -96,7 +102,7 @@ function AuthCallbackInner() {
       subscription.unsubscribe()
       clearTimeout(fallbackTimer)
     }
-  }, [router, claimWorkspaceId])
+  }, [router, claimWorkspaceId, nextPath])
 
   return <CallbackFallback />
 }

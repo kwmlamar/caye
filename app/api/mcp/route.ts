@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authenticateMcpFounder } from '@/lib/mcp/auth'
+import { mcpProtectedResourceMetadataUrl } from '@/lib/mcp/oauth'
 import {
   CAYE_MCP_PROTOCOL_VERSION,
   callCayeMcpTool,
@@ -41,16 +42,19 @@ function parseRpcRequest(body: unknown): JsonRpcRequest | null {
 /**
  * Stateless MCP 2026-07-28 endpoint.
  *
- * Authentication is dedicated server-to-server founder auth. Browser founder
- * sessions are intentionally irrelevant here. The MCP layer packages Caye's
- * existing read capability gateway; it does not own business semantics or writes.
+ * Authentication accepts the server-to-server founder bearer credential or a
+ * Supabase OAuth 2.1 grant for a verified founder. Browser sessions remain
+ * irrelevant. The MCP layer packages Caye's existing read capability gateway;
+ * it does not own business semantics or writes.
  */
 export async function POST(req: NextRequest) {
-  const auth = authenticateMcpFounder(req.headers.get('authorization'))
+  const auth = await authenticateMcpFounder(req.headers.get('authorization'))
   if (!auth) {
     return NextResponse.json({ error: 'Unauthorized' }, {
       status: 401,
-      headers: { 'WWW-Authenticate': 'Bearer realm="caye-mcp"' },
+      headers: {
+        'WWW-Authenticate': `Bearer realm="caye-mcp", resource_metadata="${mcpProtectedResourceMetadataUrl()}"`,
+      },
     })
   }
 
