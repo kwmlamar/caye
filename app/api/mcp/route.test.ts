@@ -36,15 +36,16 @@ function request(method: string, body: Record<string, unknown>, name?: string) {
 describe('Caye MCP route', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    mocks.authenticateMcpFounder.mockReturnValue({ founderUserId: 'founder-user' })
+    mocks.authenticateMcpFounder.mockResolvedValue({ founderUserId: 'founder-user' })
     mocks.mcpToolsListResult.mockReturnValue({ tools: [], ttlMs: 60_000, cacheScope: 'private' })
     mocks.mcpDiscoveryResult.mockReturnValue({ supportedVersions: ['2026-07-28'] })
   })
 
   it('fails closed before parsing MCP traffic when server auth fails', async () => {
-    mocks.authenticateMcpFounder.mockReturnValue(null)
+    mocks.authenticateMcpFounder.mockResolvedValue(null)
     const res = await POST(request('tools/list', { jsonrpc: '2.0', id: 1, method: 'tools/list' }))
     expect(res.status).toBe(401)
+    expect(res.headers.get('www-authenticate')).toContain('resource_metadata=')
     expect(mocks.mcpToolsListResult).not.toHaveBeenCalled()
   })
 
