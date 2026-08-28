@@ -3,6 +3,7 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { compareMetrics } from './comparison'
 
 export type EngineeringProjectStatus = 'planning'|'selected'|'executing'|'measuring'|'completed'|'abandoned'
+export type EngineeringProjectVerdict = 'succeeded'|'partially_succeeded'|'failed'|'inconclusive'
 
 async function requireProject(workspaceId: string, projectId: string) {
   const supabase = createServiceClient()
@@ -20,18 +21,11 @@ async function requirePropertyObservation(workspaceId: string, propertyId: strin
   return data
 }
 
-export async function createEngineeringProject(input: {
-  workspaceId: string; propertyId: string; structureId?: string|null; systemId?: string|null; assetId?: string|null;
-  name: string; objective: string; problemStatement?: string|null; priority?: 'low'|'medium'|'high'|'urgent'; successCriteria?: string[]
-}) {
+export async function createEngineeringProject(input: { workspaceId: string; propertyId: string; structureId?: string|null; systemId?: string|null; assetId?: string|null; name: string; objective: string; problemStatement?: string|null; priority?: 'low'|'medium'|'high'|'urgent'; successCriteria?: string[] }) {
   const supabase = createServiceClient()
   const { data: property, error: propertyError } = await supabase.from('physical_properties').select('id').eq('workspace_id', input.workspaceId).eq('id', input.propertyId).maybeSingle()
   if (propertyError || !property) throw new Error('Property not found in this workspace')
-  const { data, error } = await supabase.from('engineering_projects').insert({
-    workspace_id: input.workspaceId, property_id: input.propertyId, structure_id: input.structureId ?? null,
-    system_id: input.systemId ?? null, asset_id: input.assetId ?? null, name: input.name.trim(), objective: input.objective.trim(),
-    problem_statement: input.problemStatement?.trim() || null, priority: input.priority ?? 'medium', success_criteria: input.successCriteria ?? [],
-  }).select('id,name,objective,status,priority,property_id,success_criteria,created_at').single()
+  const { data, error } = await supabase.from('engineering_projects').insert({ workspace_id: input.workspaceId, property_id: input.propertyId, structure_id: input.structureId ?? null, system_id: input.systemId ?? null, asset_id: input.assetId ?? null, name: input.name.trim(), objective: input.objective.trim(), problem_statement: input.problemStatement?.trim() || null, priority: input.priority ?? 'medium', success_criteria: input.successCriteria ?? [] }).select('id,name,objective,status,priority,property_id,success_criteria,created_at').single()
   if (error || !data) throw new Error('Could not create engineering project')
   return data
 }
@@ -64,27 +58,16 @@ export async function establishEngineeringBaseline(input: { workspaceId: string;
   return frozen
 }
 
-export async function addEngineeringAlternative(input: {
-  workspaceId: string; projectId: string; alternativeKey: string; title: string; description: string;
-  assumptions?: string[]; dependencies?: string[]; estimatedCost?: number; costCurrency?: string;
-  predictions?: Array<{ metricKey: string; numericValue: number; unit: string; provenanceStatus: 'operator_confirmed'|'inferred'|'estimated'; confidence?: number|null; rationale?: string|null; analysisRef?: string|null; artifactRef?: string|null }>
-}) {
+export async function addEngineeringAlternative(input: { workspaceId: string; projectId: string; alternativeKey: string; title: string; description: string; assumptions?: string[]; dependencies?: string[]; estimatedCost?: number; costCurrency?: string; predictions?: Array<{ metricKey: string; numericValue: number; unit: string; provenanceStatus: 'operator_confirmed'|'inferred'|'estimated'; confidence?: number|null; rationale?: string|null; analysisRef?: string|null; artifactRef?: string|null }> }) {
   await requireProject(input.workspaceId, input.projectId)
   const supabase = createServiceClient()
   const { data: latest } = await supabase.from('engineering_project_alternatives').select('revision,id').eq('workspace_id', input.workspaceId).eq('project_id', input.projectId).eq('alternative_key', input.alternativeKey).order('revision', { ascending: false }).limit(1).maybeSingle()
   const revision = (latest?.revision ?? 0) + 1
   if (latest?.id) await supabase.from('engineering_project_alternatives').update({ status: 'superseded' }).eq('workspace_id', input.workspaceId).eq('id', latest.id).eq('status','candidate')
-  const { data: alternative, error } = await supabase.from('engineering_project_alternatives').insert({
-    workspace_id: input.workspaceId, project_id: input.projectId, alternative_key: input.alternativeKey.trim(), revision,
-    title: input.title.trim(), description: input.description.trim(), assumptions: input.assumptions ?? [], dependencies: input.dependencies ?? [],
-    estimated_cost: input.estimatedCost ?? null, cost_currency: input.estimatedCost === undefined ? null : input.costCurrency ?? 'USD',
-  }).select('id,alternative_key,revision,title,status,estimated_cost,cost_currency').single()
+  const { data: alternative, error } = await supabase.from('engineering_project_alternatives').insert({ workspace_id: input.workspaceId, project_id: input.projectId, alternative_key: input.alternativeKey.trim(), revision, title: input.title.trim(), description: input.description.trim(), assumptions: input.assumptions ?? [], dependencies: input.dependencies ?? [], estimated_cost: input.estimatedCost ?? null, cost_currency: input.estimatedCost === undefined ? null : input.costCurrency ?? 'USD' }).select('id,alternative_key,revision,title,status,estimated_cost,cost_currency').single()
   if (error || !alternative) throw new Error('Could not create engineering alternative')
   if (input.predictions?.length) {
-    const { error: predictionError } = await supabase.from('engineering_project_predictions').insert(input.predictions.map((p) => ({
-      workspace_id: input.workspaceId, project_id: input.projectId, alternative_id: alternative.id, metric_key: p.metricKey.trim(), numeric_value: p.numericValue,
-      unit: p.unit.trim(), provenance_status: p.provenanceStatus, confidence: p.confidence ?? null, rationale: p.rationale ?? null, analysis_ref: p.analysisRef ?? null, artifact_ref: p.artifactRef ?? null,
-    })))
+    const { error: predictionError } = await supabase.from('engineering_project_predictions').insert(input.predictions.map((p) => ({ workspace_id: input.workspaceId, project_id: input.projectId, alternative_id: alternative.id, metric_key: p.metricKey.trim(), numeric_value: p.numericValue, unit: p.unit.trim(), provenance_status: p.provenanceStatus, confidence: p.confidence ?? null, rationale: p.rationale ?? null, analysis_ref: p.analysisRef ?? null, artifact_ref: p.artifactRef ?? null })))
     if (predictionError) throw new Error('Could not record engineering predictions')
   }
   return alternative
@@ -98,7 +81,7 @@ export async function selectEngineeringAlternative(input: { workspaceId: string;
   if (error || !alt) throw new Error('Alternative is not part of this project')
   const now = new Date().toISOString()
   await supabase.from('engineering_project_decisions').update({ superseded_at: now }).eq('workspace_id', input.workspaceId).eq('project_id', input.projectId).is('superseded_at', null)
-  await supabase.from('engineering_project_alternatives').update({ status: 'rejected' }).eq('workspace_id', input.workspaceId).eq('project_id', input.projectId).eq('status','selected')
+  await supabase.from('engineering_project_alternatives').update({ status: 'superseded' }).eq('workspace_id', input.workspaceId).eq('project_id', input.projectId).eq('status','selected')
   const { data: decision, error: decisionError } = await supabase.from('engineering_project_decisions').insert({ workspace_id: input.workspaceId, project_id: input.projectId, alternative_id: input.alternativeId, source_message_id: input.sourceMessageId, rationale: input.rationale ?? null }).select('id,alternative_id,selected_at').single()
   if (decisionError || !decision) throw new Error('Could not record engineering decision')
   await Promise.all([
@@ -111,7 +94,7 @@ export async function selectEngineeringAlternative(input: { workspaceId: string;
 export async function recordEngineeringExecutionEvidence(input: { workspaceId: string; projectId: string; alternativeId?: string|null; sourceMessageId: string; sourceArtifactId?: string|null; installedAssetId?: string|null; evidenceType: 'operator_confirmation'|'artifact'|'installed_asset'; notes?: string|null; occurredAt: string }) {
   await requireProject(input.workspaceId, input.projectId)
   const supabase = createServiceClient()
-  const { data: sourceMessage, error: sourceError } = await supabase.from('caye_operator_messages').select('id,direction,origin').eq('workspace_id', input.workspaceId).eq('id', input.sourceMessageId).eq('direction','inbound').eq('origin','dashboard').maybeSingle()
+  const { data: sourceMessage, error: sourceError } = await supabase.from('caye_operator_messages').select('id').eq('workspace_id', input.workspaceId).eq('id', input.sourceMessageId).eq('direction','inbound').eq('origin','dashboard').maybeSingle()
   if (sourceError || !sourceMessage) throw new Error('Execution evidence requires the current human founder message')
   const { data, error } = await supabase.from('engineering_project_execution_evidence').insert({ workspace_id: input.workspaceId, project_id: input.projectId, alternative_id: input.alternativeId ?? null, source_message_id: input.sourceMessageId, source_artifact_id: input.sourceArtifactId ?? null, installed_asset_id: input.installedAssetId ?? null, evidence_type: input.evidenceType, notes: input.notes ?? null, occurred_at: input.occurredAt }).select('id,evidence_type,occurred_at').single()
   if (error || !data) throw new Error('Could not record execution evidence')
@@ -140,12 +123,28 @@ export async function compareEngineeringProjectOutcomes(workspaceId: string, pro
     supabase.from('engineering_project_outcomes').select('metric_key,property_observation_id').eq('workspace_id', workspaceId).eq('project_id', projectId),
   ])
   if (predictionError || outcomeError) throw new Error('Could not load project comparison data')
-  const actual = [] as Array<{ metricKey: string; numericValue: number; unit: string }>
+  const actual: Array<{ metricKey: string; numericValue: number; unit: string }> = []
   for (const outcome of outcomes ?? []) {
     const { data: observation } = await supabase.from('property_observations').select('numeric_value,unit').eq('workspace_id', workspaceId).eq('id', outcome.property_observation_id).maybeSingle()
     if (observation && typeof observation.numeric_value === 'number' && observation.unit) actual.push({ metricKey: outcome.metric_key, numericValue: observation.numeric_value, unit: observation.unit })
   }
   return compareMetrics((predictions ?? []).map((p) => ({ metricKey: p.metric_key, numericValue: Number(p.numeric_value), unit: p.unit })), actual)
+}
+
+export async function recordEngineeringVerdict(input: { workspaceId: string; projectId: string; verdict: EngineeringProjectVerdict; reasonCodes?: string[]; summary: string; sourceMessageId: string }) {
+  await requireProject(input.workspaceId, input.projectId)
+  const supabase = createServiceClient()
+  const { data: sourceMessage, error: sourceError } = await supabase.from('caye_operator_messages').select('id').eq('workspace_id', input.workspaceId).eq('id', input.sourceMessageId).eq('direction','inbound').eq('origin','dashboard').maybeSingle()
+  if (sourceError || !sourceMessage) throw new Error('Project verdict requires the current human founder message')
+  const { count, error: outcomeError } = await supabase.from('engineering_project_outcomes').select('id', { count: 'exact', head: true }).eq('workspace_id', input.workspaceId).eq('project_id', input.projectId)
+  if (outcomeError) throw new Error('Could not verify project outcome evidence')
+  if ((count ?? 0) === 0 && input.verdict !== 'inconclusive') throw new Error('A conclusive project verdict requires at least one linked outcome observation')
+  const now = new Date().toISOString()
+  await supabase.from('engineering_project_verdicts').update({ superseded_at: now }).eq('workspace_id', input.workspaceId).eq('project_id', input.projectId).is('superseded_at', null)
+  const { data, error } = await supabase.from('engineering_project_verdicts').insert({ workspace_id: input.workspaceId, project_id: input.projectId, verdict: input.verdict, reason_codes: [...new Set(input.reasonCodes ?? [])], summary: input.summary.trim(), source_message_id: input.sourceMessageId }).select('id,verdict,reason_codes,summary,created_at').single()
+  if (error || !data) throw new Error('Could not record engineering project verdict')
+  await supabase.from('engineering_projects').update({ status: input.verdict === 'inconclusive' ? 'measuring' : 'completed', updated_at: now }).eq('workspace_id', input.workspaceId).eq('id', input.projectId)
+  return data
 }
 
 export async function getEngineeringProjectSnapshot(workspaceId: string, projectId: string) {
@@ -162,9 +161,10 @@ export async function getEngineeringProjectSnapshot(workspaceId: string, project
     supabase.from('engineering_project_verdicts').select('*').eq('workspace_id', workspaceId).eq('project_id', projectId).order('created_at', { ascending: false }),
   ])
   if (projectResult.error || baselineResult.error || alternativesResult.error || predictionsResult.error || decisionResult.error || executionResult.error || outcomesResult.error || verdictResult.error) throw new Error('Engineering project snapshot is incomplete')
-  const baselineItems = [] as unknown[]
+  const baselineItems: Array<{ baseline_id: string; observation_ids: string[] }> = []
   for (const baseline of baselineResult.data ?? []) {
-    const { data: items } = await supabase.from('engineering_project_baseline_items').select('property_observation_id').eq('workspace_id', workspaceId).eq('baseline_id', baseline.id)
+    const { data: items, error } = await supabase.from('engineering_project_baseline_items').select('property_observation_id').eq('workspace_id', workspaceId).eq('baseline_id', baseline.id)
+    if (error) throw new Error('Engineering project baseline is incomplete')
     baselineItems.push({ baseline_id: baseline.id, observation_ids: (items ?? []).map((i) => i.property_observation_id) })
   }
   const comparison = await compareEngineeringProjectOutcomes(workspaceId, projectId)
