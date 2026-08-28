@@ -6,6 +6,7 @@ describe('Caye capability catalog', () => {
   it('exposes the initial read-only semantic surface', () => {
     expect(capabilityManifest(cayeCapabilityRegistry)).toEqual([
       expect.objectContaining({ name: 'attention.list', access: 'read', risk: 'read_only' }),
+      expect.objectContaining({ name: 'engineering.artifacts.list', access: 'read', risk: 'read_only' }),
       expect.objectContaining({ name: 'goals.list', access: 'read', risk: 'read_only' }),
     ])
   })
