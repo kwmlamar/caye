@@ -25,9 +25,10 @@ function ArtifactViewer({ artifact, expanded, reset, onReset, onExpand }: { arti
       height: expanded ? '100%' : undefined,
       display: expanded ? 'grid' : undefined,
       gridTemplateRows: expanded ? '48px minmax(0,1fr) 42px auto' : undefined,
+      color: expanded ? '#f4f4f5' : undefined,
     }}>
       <div style={{ padding: expanded ? '12px 14px' : '10px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
-        <span style={{ fontSize: expanded ? 15 : 12, fontWeight: 700 }}>{artifact.name}</span>
+        <span style={{ fontSize: expanded ? 15 : 12, fontWeight: 700, color: expanded ? '#f4f4f5' : undefined }}>{artifact.name}</span>
         <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
           <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: '#72cfd9' }}>REV {artifact.revision}</span>
           {!expanded && onExpand ? <ExpandResultButton onClick={onExpand} label={`Open ${artifact.name} revision ${artifact.revision} full screen`} /> : null}
@@ -41,11 +42,11 @@ function ArtifactViewer({ artifact, expanded, reset, onReset, onExpand }: { arti
           <Controls />
         </Canvas>
       </div>
-      <div style={{ padding: expanded ? '10px 14px' : '9px 12px', display: 'flex', justifyContent: 'space-between', fontSize: expanded ? 12 : 10.5, color: '#b8b8bf' }}>
+      <div style={{ padding: expanded ? '10px 14px' : '9px 12px', display: 'flex', justifyContent: 'space-between', fontSize: expanded ? 12 : 10.5, color: expanded ? '#d7d7dc' : '#b8b8bf' }}>
         <span>{b ? `${Number(b.x ?? 0).toFixed(1)} × ${Number(b.y ?? 0).toFixed(1)} × ${Number(b.z ?? 0).toFixed(1)} mm` : 'Bounds pending'}</span>
         <button type="button" onClick={onReset} style={{ border: 0, background: 'transparent', color: '#72cfd9', cursor: 'pointer', font: 'inherit' }}>Reset view</button>
       </div>
-      <p style={{ margin: expanded ? '0 14px 14px' : '0 12px 11px', fontSize: expanded ? 11 : 10, color: '#8e8e96', lineHeight: 1.4 }}>{artifact.calculationMetadata.disclaimer ?? 'Geometry preview only; it is not structural verification.'}</p>
+      <p style={{ margin: expanded ? '0 14px 14px' : '0 12px 11px', fontSize: expanded ? 11 : 10, color: expanded ? '#b8bac2' : '#8e8e96', lineHeight: 1.4 }}>{artifact.calculationMetadata.disclaimer ?? 'Geometry preview only; it is not structural verification.'}</p>
     </section>
   )
 }
