@@ -797,8 +797,15 @@ export default function CayeDirectThread(props: Props) {
         }
         .caye-direct-scroll::-webkit-scrollbar { width: 6px; }
         .caye-direct-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 3px; }
-        .caye-direct-message-column { width:min(100%, 840px); min-height:100%; margin:0 auto; display:flex; flex-direction:column; gap:3px; }
-        .caye-direct-thread-header { min-height:58px; padding:11px clamp(18px, 4vw, 48px); display:flex; align-items:center; gap:10px; background:rgba(10,10,12,.5); box-shadow:inset 0 -1px rgba(255,255,255,.04); }
+        /* One reading-width gutter, shared by the header, message column and
+           composer so they always share the same left/right edge — sized off
+           this panel's own width (not the browser viewport, which is often
+           wider than the panel once a sidebar/conversation list sits beside
+           it) so margins actually grow on a wide panel and hold a sane
+           minimum on a narrow one, the way ChatGPT's thread column does. */
+        .caye-direct-thread { --caye-direct-gutter: max(20px, calc((100% - 720px) / 2)); }
+        .caye-direct-message-column { width:100%; min-height:100%; margin:0; display:flex; flex-direction:column; gap:3px; }
+        .caye-direct-thread-header { min-height:58px; padding:11px var(--caye-direct-gutter); display:flex; align-items:center; gap:10px; background:rgba(10,10,12,.5); box-shadow:inset 0 -1px rgba(255,255,255,.04); }
         .caye-direct-thread-header.is-compact { min-height:43px; padding-top:4px; padding-bottom:5px; background:transparent; box-shadow:none; }
         .caye-direct-thread-heading { min-width:0; display:flex; flex-direction:column; gap:2px; }
         .caye-direct-thread-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:600 14px var(--font-display); color:#f4f4f5; }
@@ -807,8 +814,8 @@ export default function CayeDirectThread(props: Props) {
         .caye-direct-thread-action:hover { background:rgba(255,255,255,.07); color:#f4f4f5; }
         .caye-direct-sender { margin:0 0 4px 26px; color:#8e8e96; font:10px var(--font-mono); letter-spacing:.025em; }
         .caye-direct-sender.is-you { margin:0 0 4px 0; text-align:right; }
-        .caye-direct-composer-shell { width:min(100%, 840px); margin:0 auto; }
-        .caye-direct-read-only-note { width:min(100%, 840px); margin:0 auto; color:#73737b; font-size:11.5px; text-align:center; line-height:1.45; }
+        .caye-direct-composer-shell { width:100%; }
+        .caye-direct-read-only-note { width:100%; color:#73737b; font-size:11.5px; text-align:center; line-height:1.45; }
         .caye-direct-scroll ::selection { background: rgba(78, 190, 206, 0.35); color: inherit; }
         .caye-direct-scroll ::-moz-selection { background: rgba(78, 190, 206, 0.35); color: inherit; }
         .caye-direct-textarea::placeholder { color: rgba(244,244,245,0.32); }
@@ -880,7 +887,7 @@ export default function CayeDirectThread(props: Props) {
           ref={scrollRef}
           onScroll={handleScroll}
           className="caye-direct-scroll"
-          style={{ height: '100%', overflowY: 'auto', padding: '18px clamp(18px, 4vw, 48px) 24px' }}
+          style={{ height: '100%', overflowY: 'auto', padding: '18px var(--caye-direct-gutter) 24px' }}
         >
           <div className="caye-direct-message-column">
             {loading ? (
@@ -1008,11 +1015,11 @@ export default function CayeDirectThread(props: Props) {
       </div>
 
       {readOnly ? (
-        <div style={{ padding: '11px 18px 13px', background: 'transparent' }}>
+        <div style={{ padding: '11px var(--caye-direct-gutter) 13px', background: 'transparent' }}>
           <div className="caye-direct-read-only-note">{headerLabel} texts Caye directly on WhatsApp. You&apos;re viewing their conversation, not sending as either person.</div>
         </div>
       ) : props.composerVisible !== false ? (
-        <div style={{ padding: '12px clamp(18px, 4vw, 48px) 16px', background: 'transparent', position: 'relative' }}>
+        <div style={{ padding: '12px var(--caye-direct-gutter) 16px', background: 'transparent', position: 'relative' }}>
           {voiceActive ? (
             <div className="caye-direct-composer-shell">
               <CayeVoiceSession
@@ -1026,7 +1033,7 @@ export default function CayeDirectThread(props: Props) {
           {mode === 'thread' && (
             <div style={{
               display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-              width: 'min(100%, 840px)', margin: '0 auto 6px', padding: '0 4px',
+              width: '100%', margin: '0 0 6px', padding: '0 4px',
             }}>
               <select
                 value={modelMode}
@@ -1066,25 +1073,26 @@ export default function CayeDirectThread(props: Props) {
               style={{ display: 'none' }}
             />
             {attachments.length > 0 && (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 10 }}>
                 {attachments.map((a) => (
                   <div key={a.clientId} style={{
-                    position: 'relative', width: 56, height: 56, borderRadius: 10, overflow: 'hidden',
+                    position: 'relative', width: 84, height: 84, borderRadius: 12, overflow: 'hidden',
                     border: `1px solid ${a.status === 'error' ? 'rgba(239,68,68,0.5)' : 'rgba(255,255,255,0.12)'}`,
                     background: 'rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    animation: 'caye-msg-in 0.18s ease-out',
                   }} title={a.status === 'error' ? a.errorMessage : a.file.name}>
                     {a.file.type.startsWith('image/') ? (
                       <img src={a.previewUrl} alt={a.file.name} style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: a.status === 'error' ? 0.4 : 1 }} />
                     ) : (
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#72cfd9" strokeWidth="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /></svg>
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#72cfd9" strokeWidth="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /></svg>
                     )}
                     {a.status === 'uploading' && (
                       <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        <div style={{ width: 14, height: 14, border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#4EBECE', borderRadius: '50%', animation: 'caye-attachment-spin 0.7s linear infinite' }} />
+                        <div style={{ width: 18, height: 18, border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#4EBECE', borderRadius: '50%', animation: 'caye-attachment-spin 0.7s linear infinite' }} />
                       </div>
                     )}
                     {a.status === 'error' && (
-                      <div style={{ position: 'absolute', inset: 0, background: 'rgba(239,68,68,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fca5a5', fontSize: 9, textAlign: 'center', padding: 2 }}>
+                      <div style={{ position: 'absolute', inset: 0, background: 'rgba(239,68,68,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fca5a5', fontSize: 10, textAlign: 'center', padding: 4 }}>
                         Failed
                       </div>
                     )}
@@ -1093,7 +1101,7 @@ export default function CayeDirectThread(props: Props) {
                       onClick={() => removeAttachment(a.clientId)}
                       aria-label={`Remove ${a.file.name}`}
                       style={{
-                        position: 'absolute', top: 2, right: 2, width: 16, height: 16, borderRadius: '50%',
+                        position: 'absolute', top: 3, right: 3, width: 18, height: 18, borderRadius: '50%',
                         background: 'rgba(0,0,0,0.65)', border: 'none', color: '#fff', cursor: 'pointer',
                         display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, lineHeight: 1, fontSize: 11,
                       }}
