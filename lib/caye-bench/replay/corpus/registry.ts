@@ -96,8 +96,16 @@ export function validateCorpus(entries: CorpusEntry[]): void {
       throw new Error(`corpus/registry: duplicate traceId "${entry.traceId}" in corpus`)
     }
     seen.add(entry.traceId)
-    if (entry.knownReplayDefects?.length && !entry.knownDefectNote) {
-      throw new Error(`corpus/registry: entry "${entry.traceId}" declares knownReplayDefects but no knownDefectNote explaining them`)
+    const status = entry.status ?? 'active'
+    if (status !== 'active' && status !== 'pending_replay_fixture') {
+      throw new Error(`corpus/registry: entry "${entry.traceId}" has unknown status "${status}"`)
+    }
+    for (const defect of entry.knownReplayDefects ?? []) {
+      if (!defect.invariant || !defect.detailContains || !defect.note) {
+        throw new Error(
+          `corpus/registry: entry "${entry.traceId}" declares a knownReplayDefects entry missing invariant/detailContains/note — bare invariant-only allowlisting is exactly the over-broad suppression this shape replaced.`
+        )
+      }
     }
   }
 }

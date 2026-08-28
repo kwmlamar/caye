@@ -52,19 +52,43 @@ describe.skipIf(!SAVE)('Caye Bench v2.5 — save a reviewed export preview as a 
       .map((s) => s.trim())
       .filter(Boolean)
     const knownDefectNote = process.env.CAYE_BENCH_EXPORT_KNOWN_DEFECT_NOTE
-    const knownReplayDefects = (process.env.CAYE_BENCH_EXPORT_KNOWN_DEFECTS ?? '')
+    const knownReplayDefectsRaw = (process.env.CAYE_BENCH_EXPORT_KNOWN_DEFECTS ?? '')
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean)
-    if (knownReplayDefects.length > 0 && !knownDefectNote) {
+    if (knownReplayDefectsRaw.length > 0 && !knownDefectNote) {
       throw new Error('CAYE_BENCH_EXPORT_KNOWN_DEFECTS was set without CAYE_BENCH_EXPORT_KNOWN_DEFECT_NOTE explaining it.')
     }
+    // Each entry is "invariant::detail-substring", not a bare invariant id
+    // — a bare invariant would suppress EVERY future violation of that
+    // category on this trace, forever, which is exactly what the
+    // narrowly-scoped ExpectedDefect shape (corpus/types.ts) exists to
+    // prevent. detailContains must match a substring of the violation's
+    // `detail` text (see BenchInvariantGate.evaluate in gate.ts for what
+    // that text looks like per invariant).
+    const knownReplayDefects = knownReplayDefectsRaw.map((raw) => {
+      const [invariant, detailContains] = raw.split('::')
+      if (!invariant || !detailContains) {
+        throw new Error(
+          `CAYE_BENCH_EXPORT_KNOWN_DEFECTS entry "${raw}" must be "invariant::detail-substring" ` +
+            `(e.g. "fabricated_action_or_result::draft_in_inbox") — a bare invariant id would suppress every future violation of that category.`
+        )
+      }
+      return { invariant, detailContains, note: knownDefectNote as string }
+    })
 
     const entry = {
       categories,
       incidentRefs: incidentRefs.length > 0 ? incidentRefs : undefined,
       addedAt: new Date().toISOString().slice(0, 10),
-      ...(knownReplayDefects.length > 0 ? { knownReplayDefects, knownDefectNote } : {}),
+      // Freshly captured production fixtures start 'pending_replay_fixture'
+      // — deliberately NOT counted as corpus coverage until a human adds
+      // turnScripts and flips this to 'active' in registry.ts (or the
+      // fixture JSON). See corpus/types.ts's CorpusEntryStatus for why
+      // this default matters: an unwired fixture must never silently
+      // "protect" anything.
+      status: 'pending_replay_fixture' as const,
+      ...(knownReplayDefects.length > 0 ? { knownReplayDefects } : {}),
     }
 
     const outDir = join(__dirname, '..', 'replay', 'fixtures', 'production')
@@ -78,12 +102,13 @@ describe.skipIf(!SAVE)('Caye Bench v2.5 — save a reviewed export preview as a 
     // eslint-disable-next-line no-console
     console.log(`\n[export] saved fixture: ${outPath}`)
     // eslint-disable-next-line no-console
-    console.log('[export] next: git add it, run `npm run caye:bench:corpus` to confirm it passes, then commit.')
+    console.log('[export] status: pending_replay_fixture — NOT yet counted as corpus coverage or protecting anything.')
     // eslint-disable-next-line no-console
-    console.log('[export] NOTE: this trace has no bundled turnScripts yet — the corpus runner needs one added to')
-    console.log('[export] lib/caye-bench/replay/corpus/registry.ts (or embedded in the fixture) before it can run offline;')
+    console.log('[export] next: add turnScripts for this trace (embed in the fixture JSON, or in registry.ts) and set')
     // eslint-disable-next-line no-console
-    console.log('[export] until then, run it with --live or exclude it from the default corpus run.')
+    console.log('[export] entry.status to "active", then run `npm run caye:bench:corpus` to confirm it passes before committing.')
+    // eslint-disable-next-line no-console
+    console.log('[export] an "active" entry with no turnScripts fails the corpus run as a coverage gap — by design.')
 
     expect(existsSync(outPath)).toBe(true)
   })

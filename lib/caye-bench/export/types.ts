@@ -203,6 +203,20 @@ export interface RawOperatorAllowlistRow {
   name: string | null
   role: string
 }
+/** `caye_pending_actions` — the ONLY table that actually distinguishes a
+ *  high-risk tool call that was merely STAGED (awaiting confirmation) from
+ *  one that was genuinely confirmed and executed (`executed_at` set). See
+ *  `build-raw-trace.ts`'s header comment for why this matters: a
+ *  `caye_tool_calls` row alone cannot tell the two apart. */
+export interface RawPendingActionRow {
+  id: string
+  workspace_id: string
+  tool_name: string
+  created_in_request_id: string | null
+  created_at: string | null
+  executed_at: string | null
+  cancelled_at: string | null
+}
 export interface RawWorkspaceRow {
   id: string
   business_name: string | null
@@ -217,6 +231,7 @@ export interface RawExportBundle {
   messages: RawMessageRow[]
   operatorMessages: RawOperatorMessageRow[]
   toolCalls: RawToolCallRow[]
+  pendingActions: RawPendingActionRow[]
   bookings: RawBookingRow[]
   businessFacts: RawBusinessFactRow[]
   operatorLearningAudit: RawOperatorLearningAuditRow[]

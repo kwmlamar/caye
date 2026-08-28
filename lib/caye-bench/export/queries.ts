@@ -113,6 +113,43 @@ async function fetchBusinessFacts(client: ServiceClient, workspaceId: string, ca
   return (data ?? []) as RawExportBundle['businessFacts']
 }
 
+/** Bounded fetch of `caye_pending_actions` for whatever high-risk tool
+ *  calls this episode already captured — the only table that can tell a
+ *  merely-STAGED high-risk call apart from a genuinely executed one (see
+ *  build-raw-trace.ts). Bounded the same way every other query here is:
+ *  explicit workspace id, an anchor (the tool names actually present,
+ *  plus `confirm_pending_action` since that's how a staged action is
+ *  later confirmed), a generous-but-capped time window around the
+ *  captured tool calls (pending actions expire well under an hour in
+ *  production), and a hard row cap. Returns [] without a query when there
+ *  are no high-risk tool calls to correlate against.
+ */
+async function fetchPendingActionsForToolCalls(client: ServiceClient, workspaceId: string, toolCalls: RawExportBundle['toolCalls']): Promise<RawExportBundle['pendingActions']> {
+  const highRiskToolNames = Array.from(new Set(toolCalls.filter((tc) => tc.risk === 'high').map((tc) => tc.tool_name)))
+  if (highRiskToolNames.length === 0) return []
+
+  const timestamps = toolCalls.map((tc) => tc.created_at).filter((t): t is string => Boolean(t)).map((t) => Date.parse(t)).filter((n) => !Number.isNaN(n))
+  const windowStart = timestamps.length > 0 ? new Date(Math.min(...timestamps) - 60 * 60 * 1000).toISOString() : undefined
+  const windowEnd = timestamps.length > 0 ? new Date(Math.max(...timestamps) + 60 * 60 * 1000).toISOString() : undefined
+
+  // No `args` in this select, deliberately — resolveHighRiskAuthorization
+  // (build-raw-trace.ts) only ever needs tool_name/created_in_request_id/
+  // executed_at/id to correlate a caye_tool_calls row, never the pending
+  // action's own args (which could carry a message body or other
+  // customer-identifying content). Same "nothing fetched just in case"
+  // discipline as every other query in this file.
+  let query = client
+    .from('caye_pending_actions')
+    .select('id, workspace_id, tool_name, created_in_request_id, created_at, executed_at, cancelled_at')
+    .eq('workspace_id', workspaceId)
+    .in('tool_name', [...highRiskToolNames, 'confirm_pending_action'])
+  if (windowStart) query = query.gte('created_at', windowStart)
+  if (windowEnd) query = query.lte('created_at', windowEnd)
+  const { data, error } = await query.order('created_at', { ascending: true }).limit(TIME_WINDOW_HARD_MAX_ROWS)
+  if (error) throw new Error(`export/queries: caye_pending_actions fetch failed: ${error.message}`)
+  return (data ?? []) as RawExportBundle['pendingActions']
+}
+
 function emptyBundle(selector: EpisodeSelector, workspace: RawExportBundle['workspace'], operators: RawExportBundle['operators']): RawExportBundle {
   return {
     selector,
@@ -122,6 +159,7 @@ function emptyBundle(selector: EpisodeSelector, workspace: RawExportBundle['work
     messages: [],
     operatorMessages: [],
     toolCalls: [],
+    pendingActions: [],
     bookings: [],
     businessFacts: [],
     operatorLearningAudit: [],
@@ -213,6 +251,7 @@ export async function captureConsequentialActionEpisode(client: ServiceClient, s
   if (bundle.toolCalls.length === 0) {
     throw new Error(`export/queries: no tool calls for request_id "${selector.requestId}" in workspace "${selector.workspaceId}"`)
   }
+  bundle.pendingActions = await fetchPendingActionsForToolCalls(client, selector.workspaceId, bundle.toolCalls)
   return bundle
 }
 
@@ -297,6 +336,7 @@ export async function captureTimeWindowEpisode(client: ServiceClient, selector: 
     .limit(limit)
   if (tcError) throw new Error(`export/queries: caye_tool_calls (time-window) fetch failed: ${tcError.message}`)
   bundle.toolCalls = (toolCalls ?? []) as RawExportBundle['toolCalls']
+  bundle.pendingActions = await fetchPendingActionsForToolCalls(client, selector.workspaceId, bundle.toolCalls)
 
   const { data: bookings, error: bError } = await client
     .from('bookings')

@@ -1,7 +1,7 @@
 import type { BenchChannel, BenchEffect, BenchRisk } from '../types'
 import type { Booking } from '../production-state'
 import type { RawActorInput, RawEventInput, RawTraceInput, ReplaySeedArtifact } from '../replay/types'
-import type { RawExportBundle } from './types'
+import type { RawExportBundle, RawPendingActionRow, RawToolCallRow } from './types'
 
 /**
  * export/build-raw-trace.ts — pure reshaping, still fully raw/identifying.
@@ -23,11 +23,29 @@ import type { RawExportBundle } from './types'
  *     OUTBOUND row is Caye's own reply, which belongs in
  *     `historicalEffects` (what actually happened), not in the events an
  *     operator "said."
- *   - `caye_tool_calls` become `historicalEffects` directly: a row in
- *     this table is, by construction, something that already ran through
- *     the real gate in production — `authorized: true` here reflects
- *     that fact about the SOURCE SYSTEM, not an assumption this exporter
- *     makes.
+ *   - `caye_tool_calls` become `historicalEffects` directly. What a row's
+ *     existence actually proves depends on `risk`:
+ *       - `read`/`low_write`: `execute.ts`'s role gate
+ *         (`if (!tool.roles.includes(callerRole)) continue`) runs BEFORE
+ *         `runToolWithRecovery`/`recordToolCall` — a role-forbidden call
+ *         never produces a row at all — and these tools execute
+ *         immediately, no staging concept applies. A logged row here IS
+ *         proof of a role-permitted, immediately-executed call:
+ *         `authorized: true` is a fact about the source system.
+ *       - `high` (high-risk): `gateHighRisk()` (`tools/high-risk-gate.ts`)
+ *         wraps every high-risk tool. On its FIRST call it only inserts a
+ *         `caye_pending_actions` row and returns `{ok:true, data:{pending:
+ *         true, executed:false, ...}}` — `normalizeResult` folds that into
+ *         `status:'SUCCESS'`, and `recordToolCall`'s insert never stores
+ *         `result.data`, so the `pending`/`executed` marker is discarded:
+ *         a merely-STAGED, never-confirmed high-risk call is
+ *         indistinguishable from a real success by looking at
+ *         `caye_tool_calls` alone. `resolveHighRiskAuthorization` below
+ *         cross-references `caye_pending_actions.executed_at` (the one
+ *         field that actually distinguishes staged from executed) rather
+ *         than assuming `status:'SUCCESS'` proves authorization; where no
+ *         corroborating record is available, `authorized` is left
+ *         `undefined` (unknown) rather than manufactured as `true`.
  *   - `bookings`/`caye_owner_attention` become `seed` state (what Caye
  *     could see going in), not events — matching how `production-state.ts`
  *     already models durable state versus a chronological event stream.
@@ -63,6 +81,45 @@ function mapToolCallOutcome(status: string): { outcome: BenchEffect['outcome']; 
 function mapBookingStatus(rawStatus: string | null): Booking['status'] {
   if (rawStatus === 'confirmed' || rawStatus === 'completed' || rawStatus === 'cancelled') return rawStatus
   return 'pending'
+}
+
+function extractPendingActionId(args: unknown): string | undefined {
+  if (args && typeof args === 'object' && 'pending_action_id' in (args as Record<string, unknown>)) {
+    const v = (args as Record<string, unknown>).pending_action_id
+    return typeof v === 'string' ? v : undefined
+  }
+  return undefined
+}
+
+/** Every high-risk `caye_tool_calls` row is EITHER the call that STAGED a
+ *  `caye_pending_actions` row (its own `request_id` equals that row's
+ *  `created_in_request_id`) OR a later call that actually ran the real
+ *  action — either a resubmission of the same tool matching an
+ *  already-staged action, or `confirm_pending_action` referencing one by
+ *  id (`tools/write-high/confirm-pending-action.ts`). Never both: the
+ *  gate always produces a SEPARATE row for the real execution. So:
+ *    - a match on `created_in_request_id` proves THIS row was only a
+ *      stage — `authorized: false`, and (since nothing in the world
+ *      actually changed) `consequential: false`.
+ *    - otherwise, a `caye_pending_actions` row for the same tool (or,
+ *      for `confirm_pending_action`, the referenced `pending_action_id`)
+ *      with `executed_at` set proves real execution — `authorized: true`.
+ *    - otherwise there is no corroborating record either way —
+ *      `authorized` stays `undefined` (unknown), which the hard-invariant
+ *      gate correctly treats as NOT proven authorized rather than this
+ *      exporter manufacturing a `true` it cannot back up.
+ */
+function resolveHighRiskAuthorization(tc: RawToolCallRow, pendingActions: RawPendingActionRow[]): boolean | undefined {
+  const isStagingCall = pendingActions.some((pa) => pa.tool_name === tc.tool_name && pa.created_in_request_id != null && pa.created_in_request_id === tc.request_id)
+  if (isStagingCall) return false
+
+  const referencedPendingActionId = tc.tool_name === 'confirm_pending_action' ? extractPendingActionId(tc.args) : undefined
+  const confirmed = pendingActions.some((pa) => {
+    if (!pa.executed_at) return false
+    if (referencedPendingActionId) return pa.id === referencedPendingActionId
+    return pa.tool_name === tc.tool_name
+  })
+  return confirmed ? true : undefined
 }
 
 export interface BuildRawTraceMeta {
@@ -207,18 +264,28 @@ export function buildRawTrace(bundle: RawExportBundle, meta: BuildRawTraceMeta):
   }))
 
   const historicalEffects: BenchEffect[] = bundle.toolCalls.map((tc) => {
-    const { outcome, uncertainty } = mapToolCallOutcome(tc.status)
+    const isHighRisk = tc.risk === 'high'
+    const authorized = isHighRisk ? resolveHighRiskAuthorization(tc, bundle.pendingActions) : true
+    const isStagingOnly = isHighRisk && authorized === false
+    const { outcome, uncertainty } = isStagingOnly
+      ? // A staging-only call never ran the real action — status:'SUCCESS'
+        // here means "successfully staged," not "successfully executed."
+        // Reporting it as a plain success would be exactly the kind of
+        // manufactured evidence this reconstruction must avoid.
+        { outcome: 'noop' as const, uncertainty: 'none' as const }
+      : mapToolCallOutcome(tc.status)
     return {
       id: `toolcall-${tc.id}`,
       workspaceId: 'placeholder', // remapped by sanitizeRawTrace
       at: tc.created_at ?? bundle.capturedAt,
       kind: 'tool_call',
       risk: mapRisk(tc.risk),
-      consequential: tc.risk !== 'read',
-      // A row existing in caye_tool_calls means it already passed through
-      // the real production gate/role-check when it happened — this
-      // reflects a fact about the source system, not an assumption.
-      authorized: true,
+      // A staging-only high-risk call didn't change anything in the world
+      // — see resolveHighRiskAuthorization's header comment — so it isn't
+      // itself a consequential effect the hard-invariant gate should
+      // evaluate as one.
+      consequential: tc.risk !== 'read' && !isStagingOnly,
+      authorized,
       outcome,
       uncertainty,
       evidence: [{ kind: 'tool_result', ref: tc.tool_name, summary: tc.error ?? tc.error_code ?? tc.status }],

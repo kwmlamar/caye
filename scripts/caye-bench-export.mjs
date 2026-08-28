@@ -13,7 +13,13 @@
 //   npm run caye:bench:export -- save \
 //     --from=.caye-bench-export-tmp/<slug>.preview.json --name=<fixture-name> \
 //     --categories=conversation,correction [--incident-refs=CAY-123] \
-//     [--known-defects=fabricated_action_or_result --known-defect-note="..."]
+//     [--known-defects=fabricated_action_or_result::draft_in_inbox --known-defect-note="..."]
+//
+// A freshly saved fixture starts status: pending_replay_fixture — it does
+// NOT count as corpus coverage or fail the corpus run — until turnScripts
+// are added and its status is flipped to "active" in registry.ts (or the
+// fixture JSON itself). An "active" entry with no turnScripts fails the
+// corpus run as a distinct coverage gap, by design.
 //
 // `preview` requires real Supabase credentials (NEXT_PUBLIC_SUPABASE_URL /
 // SUPABASE_SERVICE_ROLE_KEY) — it is the ONLY step that touches production.
@@ -36,7 +42,10 @@ function parseArgs(argv) {
 function usage() {
   console.error('Usage:')
   console.error('  npm run caye:bench:export -- preview --episode=<kind> --workspace=<id> [episode-specific ids] --trace-id=<slug> --description="<summary>"')
-  console.error('  npm run caye:bench:export -- save --from=<preview-file> --name=<fixture-name> --categories=<a,b,c> [--incident-refs=<a,b>] [--known-defects=<a,b> --known-defect-note="..."]')
+  console.error(
+    '  npm run caye:bench:export -- save --from=<preview-file> --name=<fixture-name> --categories=<a,b,c> [--incident-refs=<a,b>] ' +
+      '[--known-defects=<invariant::detail-substring,...> --known-defect-note="..."]'
+  )
   console.error('')
   console.error('Episode kinds: conversation, booking, correction, consequential-action, proactive-notification, artifact, time-window')
   console.error('Episode-specific id flags: --conversation=, --booking=, --source-message=, --request-id=, --attention-item=, --artifact=, --start-at= --end-at=')

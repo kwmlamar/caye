@@ -71,9 +71,12 @@ export function diffCorpusReports(baseline: CorpusReport, candidate: CorpusRepor
       presence: 'both',
       newUnexpectedViolations: [...candViolationKeys].filter((k) => !baseViolationKeys.has(k)),
       fixedUnexpectedViolations: [...baseViolationKeys].filter((k) => !candViolationKeys.has(k)),
-      behaviorVerdictChanged: base.comparison.behaviorVerdict !== cand.comparison.behaviorVerdict,
-      baselineBehaviorVerdict: base.comparison.behaviorVerdict,
-      candidateBehaviorVerdict: cand.comparison.behaviorVerdict,
+      // `comparison` is only present for an evaluated trace — a
+      // coverage_gap/pending entry on either side has no behavior verdict
+      // to compare, not a "same" verdict.
+      behaviorVerdictChanged: base.comparison?.behaviorVerdict !== cand.comparison?.behaviorVerdict,
+      baselineBehaviorVerdict: base.comparison?.behaviorVerdict,
+      candidateBehaviorVerdict: cand.comparison?.behaviorVerdict,
     })
   }
 
