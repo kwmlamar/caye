@@ -34,7 +34,10 @@ function pyBoundsTuple(region: ResolvedRegion): string {
  *   2. Node sets for every referenced region are selected by coordinate
  *      proximity against the resolved bounds/tolerance (never by gmsh's own
  *      face/edge numbering, which is not guaranteed stable).
- *   3. The raw mesh (nodes + elements) is written as mesh.inp.
+ *   3. The volume-only raw mesh (nodes + 3D elements) is written as mesh.inp.
+ *      Gmsh also creates lower-dimensional boundary elements internally; they
+ *      must not enter the CalculiX deck because they have no shell/beam
+ *      section and are not part of this solid analysis.
  *   4. A full CalculiX deck (material, boundary fixity, distributed nodal
  *      loads, static step, node/element print requests) is assembled and
  *      written as analysis.inp.
@@ -91,6 +94,29 @@ def fail(stage, message):
     print(f"FEA_FAILURE stage={stage} message={message}", file=sys.stderr)
     sys.exit(1)
 
+def text_tail(path, limit=3000):
+    try:
+        with open(path, errors='replace') as f:
+            text = f.read()
+        if not text:
+            return ''
+        return f"[{path} tail]\n{text[-limit:]}"
+    except (FileNotFoundError, OSError):
+        return ''
+
+def solver_diagnostics(proc, limit=6000):
+    chunks = []
+    if proc.stdout:
+        chunks.append(f"[ccx stdout tail]\n{proc.stdout[-3000:]}")
+    if proc.stderr:
+        chunks.append(f"[ccx stderr tail]\n{proc.stderr[-3000:]}")
+    for path in ('analysis.dat', 'analysis.sta', 'analysis.cvg'):
+        tail = text_tail(path)
+        if tail:
+            chunks.append(tail)
+    diagnostic = '\n'.join(chunks) or 'ccx produced no diagnostic text'
+    return diagnostic[-limit:]
+
 def in_bounds(pt, bounds, tol):
     x, y, z = pt
     (x0, x1), (y0, y1), (z0, z1) = bounds
@@ -136,6 +162,17 @@ for name, region in REGIONS.items():
         fail('region_selection', f'region {name} matched zero mesh nodes')
     node_sets[name] = ids
 
+# The STEP model also has 0D/1D/2D entities and Gmsh meshes their boundaries.
+# If those lower-dimensional elements are written to Abaqus INP, CalculiX
+# treats them as real beam/shell elements even though this analysis only
+# defines a solid section. Keep only 3D entities in a physical group and let
+# Mesh.SaveAll=0 omit the boundary mesh from the exported solver deck.
+volume_entity_tags = [tag for dim, tag in gmsh.model.getEntities(3)]
+if not volume_entity_tags:
+    fail('mesh_generate', 'no volume entities found after STEP import')
+volume_group = gmsh.model.addPhysicalGroup(3, volume_entity_tags)
+gmsh.model.setPhysicalName(3, volume_group, 'VOLUME')
+gmsh.option.setNumber('Mesh.SaveAll', 0)
 gmsh.write('mesh.inp')
 gmsh.finalize()
 
@@ -179,7 +216,7 @@ with open('analysis.inp', 'w') as f:
 
 proc = subprocess.run(['ccx', 'analysis'], capture_output=True, text=True, timeout=200)
 if proc.returncode != 0:
-    fail('solve', f'ccx exited {proc.returncode}: {(proc.stderr or proc.stdout)[:1500]}')
+    fail('solve', f'ccx exited {proc.returncode}: {solver_diagnostics(proc)}')
 
 try:
     with open('analysis.dat') as f:
