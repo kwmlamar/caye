@@ -2,15 +2,30 @@
 
 import { useEffect, useState } from 'react'
 
+type Observation = {
+  id: string
+  structure_id?: string | null
+  system_id?: string | null
+  asset_id?: string | null
+  observation_key: string
+  numeric_value?: number | null
+  text_value?: string | null
+  unit?: string | null
+  provenance_status: string
+  confidence?: number | null
+  observed_at: string
+}
+
 type Snapshot = {
   property: { id: string; name: string; property_type: string; location_label?: string | null; status: string }
   structures: Array<{ id: string; name: string; structure_type: string }>
   systems: Array<{ id: string; structure_id?: string | null; name: string; system_type: string; status: string }>
   assets: Array<{ id: string; structure_id?: string | null; system_id?: string | null; name: string; asset_type: string; manufacturer?: string | null; model?: string | null; status: string; specifications?: Record<string, unknown> }>
-  observations: Array<{ id: string; structure_id?: string | null; system_id?: string | null; asset_id?: string | null; observation_key: string; numeric_value?: number | null; text_value?: string | null; unit?: string | null; provenance_status: string; confidence?: number | null; observed_at: string }>
+  current_observations: Observation[]
+  observations: Observation[]
 }
 
-function valueFor(o: Snapshot['observations'][number]) {
+function valueFor(o: Observation) {
   if (typeof o.numeric_value === 'number') return `${o.numeric_value}${o.unit ? ` ${o.unit}` : ''}`
   return o.text_value ?? '—'
 }
@@ -38,12 +53,7 @@ export function PropertySnapshotResult({ propertyId, workspaceId }: { propertyId
   if (error) return <div style={{ padding: 10, border: '1px solid rgba(255,255,255,.08)', borderRadius: 10, fontSize: 12, color: '#a1a1aa' }}>Property snapshot unavailable.</div>
   if (!snapshot) return <div style={{ padding: 10, border: '1px solid rgba(255,255,255,.08)', borderRadius: 10, fontSize: 12, color: '#a1a1aa' }}>Loading property model…</div>
 
-  const latestByKey = new Map<string, Snapshot['observations'][number]>()
-  for (const observation of snapshot.observations) {
-    const key = `${observation.asset_id ?? observation.system_id ?? observation.structure_id ?? 'property'}:${observation.observation_key}`
-    if (!latestByKey.has(key)) latestByKey.set(key, observation)
-  }
-  const latest = [...latestByKey.values()].slice(0, 12)
+  const latest = snapshot.current_observations.slice(0, 12)
 
   return (
     <div style={{ border: '1px solid rgba(255,255,255,.10)', background: 'rgba(255,255,255,.025)', borderRadius: 14, padding: 14, display: 'grid', gap: 12 }}>
@@ -79,7 +89,7 @@ export function PropertySnapshotResult({ propertyId, workspaceId }: { propertyId
 
       {latest.length > 0 && (
         <div>
-          <div style={{ color: '#8e8e96', fontSize: 10, letterSpacing: '.06em', textTransform: 'uppercase', marginBottom: 5 }}>Latest known state</div>
+          <div style={{ color: '#8e8e96', fontSize: 10, letterSpacing: '.06em', textTransform: 'uppercase', marginBottom: 5 }}>Current known state</div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(175px,1fr))', gap: 5 }}>
             {latest.map((observation) => (
               <div key={observation.id} style={{ padding: '7px 8px', background: 'rgba(255,255,255,.035)', borderRadius: 7 }}>
