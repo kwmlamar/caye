@@ -24,13 +24,7 @@ export type CapabilityNamespace =
 
 export type CapabilityName = `${CapabilityNamespace}.${string}`
 
-/**
- * Public, model-agnostic description of a capability.
- *
- * This intentionally exposes semantic contracts, not database/storage details or
- * implementation-specific function names. A reasoning layer should only need this
- * manifest plus the invocation envelope to use Caye safely.
- */
+/** Public semantic description only. Reasoning layers never receive handlers. */
 export type CapabilityManifestEntry = {
   name: CapabilityName
   version: 1
@@ -58,7 +52,7 @@ export type CapabilityInvocation = {
   scope: CapabilityScope
   args: unknown
   caller: CapabilityCaller
-  /** Required by any implementation that can cause a durable or external side effect. */
+  /** Required by implementations that can cause a durable or external side effect. */
   idempotencyKey?: string
 }
 
@@ -80,14 +74,43 @@ export type CapabilityFailure = {
   retryable: boolean
 }
 
-export type CapabilityResult<T = unknown> = {
-  status: CapabilityResultStatus
-  data: T | null
-  evidence: CapabilityEvidenceRef[]
-  executionRef: string | null
-  auditRef: string | null
-  failure: CapabilityFailure | null
-}
+type NonExecutedStatus = Exclude<CapabilityResultStatus, 'executed' | 'failed'>
+
+/**
+ * Result shape encodes the trust boundary instead of leaving it to caller convention:
+ * - only `executed` may carry an executionRef;
+ * - `executed` must carry one;
+ * - only `failed` may carry a failure object;
+ * - `failed` must carry one.
+ *
+ * This makes "the model said it did it" structurally different from evidence that
+ * Caye actually crossed an execution boundary.
+ */
+export type CapabilityResult<T = unknown> =
+  | {
+      status: NonExecutedStatus
+      data: T | null
+      evidence: CapabilityEvidenceRef[]
+      executionRef: null
+      auditRef: string | null
+      failure: null
+    }
+  | {
+      status: 'executed'
+      data: T | null
+      evidence: CapabilityEvidenceRef[]
+      executionRef: string
+      auditRef: string | null
+      failure: null
+    }
+  | {
+      status: 'failed'
+      data: T | null
+      evidence: CapabilityEvidenceRef[]
+      executionRef: null
+      auditRef: string | null
+      failure: CapabilityFailure
+    }
 
 export type CapabilityExecutionContext = {
   actor: CapabilityActor
@@ -105,6 +128,6 @@ export function capabilitySucceeded(result: CapabilityResult): boolean {
   return result.status !== 'failed'
 }
 
-export function capabilityWasExecuted(result: CapabilityResult): boolean {
-  return result.status === 'executed' && Boolean(result.executionRef)
+export function capabilityWasExecuted(result: CapabilityResult): result is Extract<CapabilityResult, { status: 'executed' }> {
+  return result.status === 'executed'
 }
