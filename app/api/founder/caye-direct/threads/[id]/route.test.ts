@@ -19,10 +19,16 @@ vi.mock('@/lib/caye-direct-threads', () => ({
   describeEntity: vi.fn(),
   renameThread: vi.fn(),
   setThreadStatus: vi.fn(),
+  setThreadPinned: vi.fn(),
+  deleteThread: vi.fn(),
 }))
 vi.mock('@/lib/caye-direct-rich-result-resolution', () => ({ resolveRichResultReferences: vi.fn() }))
 
-import { POST } from './route'
+import { POST, PATCH, DELETE } from './route'
+import { setThreadPinned, deleteThread } from '@/lib/caye-direct-threads'
+
+const setThreadPinnedMock = vi.mocked(setThreadPinned)
+const deleteThreadMock = vi.mocked(deleteThread)
 
 function req(body: unknown): NextRequest {
   return new NextRequest('http://localhost/api/founder/caye-direct/threads/thread-1', {
@@ -30,6 +36,21 @@ function req(body: unknown): NextRequest {
     headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-token' },
     body: JSON.stringify(body),
   })
+}
+
+function patchReq(body: unknown): NextRequest {
+  return new NextRequest('http://localhost/api/founder/caye-direct/threads/thread-1', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-token' },
+    body: JSON.stringify(body),
+  })
+}
+
+function deleteReq(workspaceId: string | null): NextRequest {
+  const url = workspaceId
+    ? `http://localhost/api/founder/caye-direct/threads/thread-1?workspaceId=${workspaceId}`
+    : 'http://localhost/api/founder/caye-direct/threads/thread-1'
+  return new NextRequest(url, { method: 'DELETE', headers: { Authorization: 'Bearer test-token' } })
 }
 
 const params = Promise.resolve({ id: 'thread-1' })
@@ -87,6 +108,55 @@ describe('POST /api/founder/caye-direct/threads/[id] — attachments (multimodal
   it('still maps "Thread not found" to 404 alongside the new attachment handling', async () => {
     runFounderThreadTurnMock.mockRejectedValue(new Error('Thread not found'))
     const res = await POST(req({ workspaceId: 'ws-1', message: 'hi' }), { params })
+    expect(res.status).toBe(404)
+  })
+})
+
+describe('PATCH /api/founder/caye-direct/threads/[id] — pin/unpin (sidebar "more" menu)', () => {
+  beforeEach(() => {
+    requireFounderMock.mockReset().mockResolvedValue({ id: 'founder-1' })
+    setThreadPinnedMock.mockReset().mockResolvedValue(true)
+  })
+
+  it('pins a thread', async () => {
+    const res = await PATCH(patchReq({ workspaceId: 'ws-1', pinned: true }), { params })
+    expect(res.status).toBe(200)
+    expect(setThreadPinnedMock).toHaveBeenCalledWith({}, 'ws-1', 'thread-1', true)
+  })
+
+  it('unpins a thread', async () => {
+    await PATCH(patchReq({ workspaceId: 'ws-1', pinned: false }), { params })
+    expect(setThreadPinnedMock).toHaveBeenCalledWith({}, 'ws-1', 'thread-1', false)
+  })
+
+  it('404s when the thread does not belong to the workspace', async () => {
+    setThreadPinnedMock.mockResolvedValue(false)
+    const res = await PATCH(patchReq({ workspaceId: 'ws-1', pinned: true }), { params })
+    expect(res.status).toBe(404)
+  })
+})
+
+describe('DELETE /api/founder/caye-direct/threads/[id] — sidebar "more" menu, distinct from Archive', () => {
+  beforeEach(() => {
+    requireFounderMock.mockReset().mockResolvedValue({ id: 'founder-1' })
+    deleteThreadMock.mockReset().mockResolvedValue(true)
+  })
+
+  it('requires workspaceId', async () => {
+    const res = await DELETE(deleteReq(null), { params })
+    expect(res.status).toBe(400)
+    expect(deleteThreadMock).not.toHaveBeenCalled()
+  })
+
+  it('deletes the thread', async () => {
+    const res = await DELETE(deleteReq('ws-1'), { params })
+    expect(res.status).toBe(200)
+    expect(deleteThreadMock).toHaveBeenCalledWith({}, 'ws-1', 'thread-1')
+  })
+
+  it('404s when the thread does not belong to the workspace', async () => {
+    deleteThreadMock.mockResolvedValue(false)
+    const res = await DELETE(deleteReq('ws-1'), { params })
     expect(res.status).toBe(404)
   })
 })

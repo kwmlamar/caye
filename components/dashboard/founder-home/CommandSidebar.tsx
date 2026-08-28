@@ -1,12 +1,12 @@
 'use client'
 
-import { useState, type ReactNode } from 'react'
+import { useState, useRef, useEffect, type ReactNode } from 'react'
 import type { FounderRailId } from '@/lib/types'
 import type { WorkspaceMembership } from '@/lib/workspace-context'
 import type { CustomerStatus } from '@/types/database'
 import FounderProfile from './FounderProfile'
 import WorkspaceSwitcher from './WorkspaceSwitcher'
-import { AQUA, TEXT_QUIET, glass } from '../surface'
+import { AQUA, TEXT_QUIET, glass, sidebarPopoverSurface, paneShadowSoft } from '../surface'
 
 export type ActiveView =
   | { type: 'page'; id: FounderRailId }
@@ -19,6 +19,7 @@ export interface ThreadListItem {
   status: 'active' | 'archived'
   last_activity_at: string
   created_by: 'founder' | 'caye'
+  pinned_at: string | null
 }
 
 export interface LiveOperator {
@@ -40,12 +41,90 @@ const NAV_ITEMS: { id: FounderRailId; label: string; icon: ReactNode }[] = [
 const TOGGLE_ICON = <><rect x="3" y="3" width="18" height="18" rx="4" /><path d="M9 3v18" /></>
 const NEW_CHAT_ICON = <path d="M12 5v14M5 12h14" />
 const SEARCH_ICON = <><circle cx="11" cy="11" r="6.5" /><path d="m16 16 4 4" /></>
+const MORE_ICON = <><circle cx="12" cy="5" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="12" cy="19" r="1.6" /></>
+const PIN_ICON = <><path d="M12 2 9.5 9 4 11l6 3 1 7 1-7 6-3-5.5-2z" /></>
+const UNPIN_ICON = <><path d="M12 2 9.5 9 4 11l6 3 1 7 1-7 6-3-5.5-2z" /><line x1="3" y1="3" x2="21" y2="21" /></>
+const RENAME_ICON = <><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></>
+const ARCHIVE_ICON = <><rect x="3" y="4" width="18" height="4" rx="1" /><path d="M5 8v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8" /><path d="M10 12h4" /></>
+const DELETE_ICON = <><path d="M4 7h16" /><path d="M10 11v6M14 11v6" /><path d="M6 7l1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13" /><path d="M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3" /></>
 
 function Icon({ path, size = 16, stroke = 'currentColor' }: { path: ReactNode; size?: number; stroke?: string }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
       {path}
     </svg>
+  )
+}
+
+/** ChatGPT-style per-chat "more" menu — Rename, Pin/Unpin, Archive, Delete.
+ *  No Share item: Caye Direct threads are founder-only business history,
+ *  not something meant to leave the dashboard. */
+function ThreadRowMenu({
+  pinned, onRename, onTogglePin, onArchive, onDelete, onClose,
+}: {
+  pinned: boolean
+  onRename: () => void
+  onTogglePin: () => void
+  onArchive: () => void
+  onDelete: () => void
+  onClose: () => void
+}) {
+  const rootRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    function onDocClick(e: MouseEvent) {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) onClose()
+    }
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('mousedown', onDocClick)
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', onDocClick)
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [onClose])
+
+  const items: { label: string; icon: ReactNode; onClick: () => void; danger?: boolean }[] = [
+    { label: 'Rename', icon: RENAME_ICON, onClick: onRename },
+    { label: pinned ? 'Unpin chat' : 'Pin chat', icon: pinned ? UNPIN_ICON : PIN_ICON, onClick: onTogglePin },
+    { label: 'Archive', icon: ARCHIVE_ICON, onClick: onArchive },
+    { label: 'Delete', icon: DELETE_ICON, onClick: onDelete, danger: true },
+  ]
+
+  return (
+    <div
+      ref={rootRef}
+      role="menu"
+      className="cs-thread-menu"
+      style={{
+        position: 'absolute', top: '100%', right: 4, zIndex: 100,
+        width: 176, borderRadius: 12, padding: 5,
+        ...sidebarPopoverSurface(),
+        boxShadow: paneShadowSoft,
+      }}
+    >
+      {items.map((item) => (
+        <button
+          key={item.label}
+          type="button"
+          role="menuitem"
+          onClick={(e) => { e.stopPropagation(); item.onClick() }}
+          style={{
+            width: '100%', display: 'flex', alignItems: 'center', gap: 9, padding: '7px 9px',
+            border: 0, borderRadius: 8, background: 'transparent',
+            color: item.danger ? '#f87171' : '#e4e4e7',
+            cursor: 'pointer', textAlign: 'left', font: '500 12px inherit',
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = item.danger ? 'rgba(248,113,113,0.1)' : 'rgba(255,255,255,0.05)' }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
+        >
+          <Icon path={item.icon} size={13} />
+          {item.label}
+        </button>
+      ))}
+    </div>
   )
 }
 
@@ -144,6 +223,7 @@ export default function CommandSidebar({
   collapsed, onToggleCollapsed,
   activeView, onSelectPage,
   threads, onSelectThread, onNewThread, creatingThread,
+  onRenameThread, onTogglePinThread, onArchiveThread, onDeleteThread,
   operators, onSelectOperator,
   query, onQueryChange,
   businessName, workspaceStatus, workspaces, activeWorkspaceId, onSelectWorkspace, hasActivity,
@@ -156,6 +236,10 @@ export default function CommandSidebar({
   onSelectThread: (id: string) => void
   onNewThread: () => void
   creatingThread: boolean
+  onRenameThread: (id: string, title: string) => void
+  onTogglePinThread: (id: string, pinned: boolean) => void
+  onArchiveThread: (id: string) => void
+  onDeleteThread: (id: string) => void
   operators: LiveOperator[] | null
   onSelectOperator: (id: number) => void
   query: string
@@ -167,13 +251,121 @@ export default function CommandSidebar({
   onSelectWorkspace: (workspaceId: string) => void
   hasActivity: (workspaceId: string) => boolean
 }) {
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null)
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+  const renameInputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (renamingId) renameInputRef.current?.focus()
+  }, [renamingId])
+
+  function startRename(thread: ThreadListItem) {
+    setRenamingId(thread.id)
+    setRenameValue(thread.title || '')
+    setOpenMenuId(null)
+  }
+
+  function commitRename() {
+    if (!renamingId) return
+    const trimmed = renameValue.trim()
+    if (trimmed) onRenameThread(renamingId, trimmed)
+    setRenamingId(null)
+  }
+
+  const pinnedThreads = (threads ?? [])
+    .filter((t) => t.pinned_at)
+    .sort((a, b) => new Date(b.pinned_at as string).getTime() - new Date(a.pinned_at as string).getTime())
+  const unpinnedThreads = (threads ?? []).filter((t) => !t.pinned_at)
   const groups = BUCKET_ORDER
-    .map((label) => ({ label, items: (threads ?? []).filter((t) => bucketLabel(t.last_activity_at) === label) }))
+    .map((label) => ({ label, items: unpinnedThreads.filter((t) => bucketLabel(t.last_activity_at) === label) }))
     .filter((group) => group.items.length > 0)
   const sortedOperators = (operators ?? []).slice().sort((a, b) => livePriority(a) - livePriority(b) || (a.name || '').localeCompare(b.name || ''))
 
+  function renderThreadRow(thread: ThreadListItem) {
+    const active = activeView.type === 'thread' && activeView.id === thread.id
+    const menuOpen = openMenuId === thread.id
+    if (renamingId === thread.id) {
+      return (
+        <div key={thread.id} style={{ padding: '2px 8px' }}>
+          <input
+            ref={renameInputRef}
+            value={renameValue}
+            onChange={(e) => setRenameValue(e.target.value)}
+            onBlur={commitRename}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') { e.preventDefault(); commitRename() }
+              if (e.key === 'Escape') setRenamingId(null)
+            }}
+            style={{
+              width: '100%', padding: '5px 7px', border: `1px solid ${AQUA}55`, borderRadius: 7,
+              background: 'rgba(255,255,255,0.05)', color: '#f4f4f5', font: '500 12px inherit', outline: 'none',
+            }}
+          />
+        </div>
+      )
+    }
+    return (
+      <div key={thread.id} className={`cs-thread-row ${menuOpen ? 'is-menu-open' : ''}`} style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+        <button
+          type="button"
+          onClick={() => onSelectThread(thread.id)}
+          style={{
+            position: 'relative', flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 6,
+            padding: '6px 26px 6px 8px', overflow: 'hidden', border: 0, borderRadius: 8,
+            background: active ? 'rgba(78,190,206,0.11)' : 'transparent',
+            color: active ? '#f4f4f5' : '#b1b1b9', cursor: 'pointer', textAlign: 'left',
+            font: '500 12px inherit', whiteSpace: 'nowrap',
+          }}
+        >
+          {thread.created_by === 'caye' && (
+            <span aria-label="Started by Caye" style={{ width: 5, height: 5, flex: '0 0 5px', borderRadius: '50%', background: AQUA }} />
+          )}
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{thread.title || 'New conversation'}</span>
+        </button>
+        <button
+          type="button"
+          className="cs-thread-more"
+          aria-label="More options"
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          onClick={(e) => { e.stopPropagation(); setOpenMenuId((current) => current === thread.id ? null : thread.id) }}
+          style={{
+            position: 'absolute', right: 4, top: '50%', transform: 'translateY(-50%)',
+            width: 22, height: 22, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            border: 0, borderRadius: 6, cursor: 'pointer',
+            background: menuOpen ? 'rgba(255,255,255,0.09)' : 'transparent',
+            color: menuOpen ? '#f4f4f5' : '#9c9ca3',
+          }}
+        >
+          <Icon path={MORE_ICON} size={13} />
+        </button>
+        {menuOpen && (
+          <ThreadRowMenu
+            pinned={!!thread.pinned_at}
+            onRename={() => startRename(thread)}
+            onTogglePin={() => { onTogglePinThread(thread.id, !thread.pinned_at); setOpenMenuId(null) }}
+            onArchive={() => { onArchiveThread(thread.id); setOpenMenuId(null) }}
+            onDelete={() => {
+              setOpenMenuId(null)
+              if (window.confirm(`Delete "${thread.title || 'New conversation'}"? This can't be undone.`)) onDeleteThread(thread.id)
+            }}
+            onClose={() => setOpenMenuId(null)}
+          />
+        )}
+      </div>
+    )
+  }
+
   return (
     <>
+      <style>{`
+        @keyframes cs-thread-menu-in { from { opacity:0; transform:translateY(-4px) scale(.97); } to { opacity:1; transform:translateY(0) scale(1); } }
+        .cs-thread-menu { animation: cs-thread-menu-in 0.12s ease-out; }
+        .cs-thread-more { opacity: 0; pointer-events: none; transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease; }
+        .cs-thread-row:hover .cs-thread-more, .cs-thread-row.is-menu-open .cs-thread-more { opacity: 1; pointer-events: auto; }
+        @media (prefers-reduced-motion: reduce) { .cs-thread-menu { animation: none; } }
+      `}</style>
       {collapsed && <ToggleButton collapsed={collapsed} onToggle={onToggleCollapsed} floating />}
 
       <nav
@@ -182,7 +374,8 @@ export default function CommandSidebar({
           width: collapsed ? 0 : 244, flexShrink: 0, overflow: 'hidden',
           display: 'flex', flexDirection: 'column',
           background: 'rgba(15,15,17,0.4)',
-          transition: 'width 0.18s cubic-bezier(.2,.8,.2,1)',
+          marginRight: collapsed ? 0 : 12,
+          transition: 'width 0.18s cubic-bezier(.2,.8,.2,1), margin-right 0.18s cubic-bezier(.2,.8,.2,1)',
           ...glass(0.02),
         }}
       >
@@ -275,6 +468,13 @@ export default function CommandSidebar({
               </div>
             )}
 
+            {pinnedThreads.length > 0 && (
+              <div>
+                <div style={{ padding: '8px 8px 3px', color: '#5c5c64', fontSize: 9.5, letterSpacing: '0.03em' }}>Pinned</div>
+                {pinnedThreads.map((thread) => renderThreadRow(thread))}
+              </div>
+            )}
+
             <SectionLabel>Direct</SectionLabel>
             {threads === null ? (
               <div style={{ padding: '6px 8px', color: TEXT_QUIET, fontSize: 11 }}>Loading…</div>
@@ -286,28 +486,7 @@ export default function CommandSidebar({
                   <div style={{ padding: '8px 8px 3px', color: '#5c5c64', fontSize: 9.5, letterSpacing: '0.03em' }}>
                     {group.label}
                   </div>
-                  {group.items.map((thread) => {
-                    const active = activeView.type === 'thread' && activeView.id === thread.id
-                    return (
-                      <button
-                        key={thread.id}
-                        type="button"
-                        onClick={() => onSelectThread(thread.id)}
-                        style={{
-                          position: 'relative', width: '100%', display: 'flex', alignItems: 'center', gap: 6,
-                          padding: '6px 8px', overflow: 'hidden', border: 0, borderRadius: 8,
-                          background: active ? 'rgba(78,190,206,0.11)' : 'transparent',
-                          color: active ? '#f4f4f5' : '#b1b1b9', cursor: 'pointer', textAlign: 'left',
-                          font: '500 12px inherit', whiteSpace: 'nowrap',
-                        }}
-                      >
-                        {thread.created_by === 'caye' && (
-                          <span aria-label="Started by Caye" style={{ width: 5, height: 5, flex: '0 0 5px', borderRadius: '50%', background: AQUA }} />
-                        )}
-                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{thread.title || 'New conversation'}</span>
-                      </button>
-                    )
-                  })}
+                  {group.items.map((thread) => renderThreadRow(thread))}
                 </div>
               ))
             )}
