@@ -109,12 +109,27 @@ export function validateRichResult(value: unknown): RichResult | null {
     return null
   }
 
+  // Rich blocks are presentation, not an alternate route around action-claim
+  // grounding. V1 therefore rejects any structured block text that would be
+  // considered an ungrounded completion claim with no tool evidence. A truly
+  // completed action can still be reported in the normal grounded narrative.
   const displayText = JSON.stringify(blocks)
   if (enforceActionGrounding(displayText, []).violations.length > 0) return null
 
   return { version: 1, narrative, blocks }
 }
 
+/**
+ * Models may place the rich envelope in a fenced block after normal prose.
+ * We inspect all fences and accept exactly one block that validates as a
+ * RichResult. Ordinary markdown/code fences are ignored rather than being
+ * mistaken for UI data. Plain text remains fully compatible.
+ *
+ * A fence that parses as JSON and carries the envelope shape
+ * ({version:1, blocks:[...]}) but fails validateRichResult — e.g. a model
+ * trying to author a server-only engineering/property block — is a protocol
+ * artifact, not reader content. Strip it instead of leaking raw JSON.
+ */
 export function extractRichResult(textValue: string): { narrative: string; result?: RichResult } {
   const candidates: RichResult[] = []
   let narrative = textValue
@@ -123,12 +138,12 @@ export function extractRichResult(textValue: string): { narrative: string; resul
     try {
       parsedJson = JSON.parse(match[1])
     } catch {
-      continue
+      continue // ordinary code/markdown fence; not JSON at all
     }
     const looksLikeEnvelope =
       !!parsedJson && typeof parsedJson === 'object' && !Array.isArray(parsedJson) &&
       (parsedJson as { version?: unknown }).version === 1 && Array.isArray((parsedJson as { blocks?: unknown }).blocks)
-    if (!looksLikeEnvelope) continue
+    if (!looksLikeEnvelope) continue // ordinary JSON-shaped fence; not a rich-result attempt
 
     const parsed = validateRichResult(parsedJson)
     if (parsed) candidates.push(parsed)
