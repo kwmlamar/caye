@@ -1,5 +1,6 @@
 import { sanitizeRawTrace } from '../sanitize'
 import type { RawTraceInput } from '../types'
+import type { BenchModelRound } from '../../model-double'
 
 /**
  * fixtures/mrs-max-correction-reuse.ts
@@ -88,3 +89,16 @@ export const mrsMaxCorrectionReuseTrace = sanitizeRawTrace(raw, {
   salt: 'caye-bench-v2-fixture-salt-not-a-real-export-secret',
   sanitizedAt: '2026-08-27T00:00:00.000Z',
 })
+
+/** See jeff-dworkin-draft-failure.ts's companion export for why this
+ *  lives alongside the trace rather than inline in a test file. */
+export const mrsMaxCorrectionReuseTurnScripts: Record<string, BenchModelRound[]> = {
+  'evt-1': [
+    { toolCalls: [{ name: 'update_business_fact', args: { fact_key: 'cruise_pickup_location', value: 'Casino Tram Stop' } }] },
+    { text: 'Updated — cruise guests now meet at the Casino Tram Stop.' },
+  ],
+  'evt-2': [
+    { toolCalls: [{ name: 'get_business_fact', args: { fact_key: 'cruise_pickup_location' } }] },
+    { toolCalls: [{ name: 'send_customer_reply', args: { conversation_id: 'conv_theo', body: 'We meet cruise guests at the Casino Tram Stop!' } }] },
+  ],
+}
