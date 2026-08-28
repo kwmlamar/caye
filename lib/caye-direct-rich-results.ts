@@ -13,6 +13,7 @@ export type RichResultBlock =
   | { type: 'engineering_analysis'; analysisId: string }
   | { type: 'business_artifact'; artifactId: string }
   | { type: 'property_snapshot'; propertyId: string }
+  | { type: 'engineering_project'; projectId: string }
 
 export interface ArtifactReference { id: string; name: string; mimeType?: string }
 export interface RichResultProvenance {
@@ -103,7 +104,7 @@ export function validateRichResult(value: unknown): RichResult | null {
     // These blocks point at server-authoritative resources and are only
     // introduced by trusted orchestration after a real tool/runtime event.
     // Model-authored fenced JSON never gets to manufacture one.
-    if (b.type === 'engineering_artifact' || b.type === 'engineering_analysis' || b.type === 'business_artifact' || b.type === 'property_snapshot') return null
+    if (b.type === 'engineering_artifact' || b.type === 'engineering_analysis' || b.type === 'business_artifact' || b.type === 'property_snapshot' || b.type === 'engineering_project') return null
 
     return null
   }
