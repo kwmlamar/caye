@@ -1,5 +1,6 @@
 import { sanitizeRawTrace } from '../sanitize'
 import type { RawTraceInput } from '../types'
+import type { BenchModelRound } from '../../model-double'
 
 /**
  * fixtures/autumn-mcneill-redundant-notification.ts
@@ -100,3 +101,9 @@ export const autumnMcneillRedundantNotificationTrace = sanitizeRawTrace(raw, {
   salt: 'caye-bench-v2-fixture-salt-not-a-real-export-secret',
   sanitizedAt: '2026-08-27T00:00:00.000Z',
 })
+
+/** See jeff-dworkin-draft-failure.ts's companion export for why this
+ *  lives alongside the trace rather than inline in a test file. */
+export const autumnMcneillRedundantNotificationTurnScripts: Record<string, BenchModelRound[]> = {
+  'evt-1': [{ text: 'All quiet on the front desk — nothing new needs your attention.' }],
+}

@@ -51,7 +51,12 @@ vi.mock('@/lib/llm-telemetry', () => ({
 }))
 
 import { modelDouble, liveModelRunner } from '../model-double'
-import { REPLAY_FIXTURES } from './fixtures'
+import {
+  REPLAY_FIXTURES,
+  jeffDworkinDraftFailureTurnScripts,
+  mrsMaxCorrectionReuseTurnScripts,
+  autumnMcneillRedundantNotificationTurnScripts,
+} from './fixtures'
 import { runReplay } from './run-replay'
 import { formatComparisonReportHuman } from './format-report'
 
@@ -80,23 +85,7 @@ describe.skipIf(!LIVE)('Caye Bench v2 — LIVE replay (manual/CLI only, never pa
 describe('Caye Bench v2 — offline self-test (scripted, deterministic, CI-safe)', () => {
   it('jeff-dworkin-draft-failure: the fabricated root-cause claim is fixed, the ambiguous outcome is honestly reported', async () => {
     const trace = REPLAY_FIXTURES['jeff-dworkin-draft-failure']
-    const evt1 = trace.events[0].id
-    const report = await runReplay(trace, {
-      turnScripts: {
-        [evt1]: [
-          { toolCalls: [{ name: 'draft_in_inbox', args: { conversation_id: 'conv_jeff', body: 'Thanks for the trip!' } }] },
-          {
-            // Deliberately scripts the SAME fabricated sentence the real
-            // incident produced — proving the REAL action-claim-guard
-            // (enforceActionGrounding, applied inside execute.ts) strips
-            // it, not that a scripted stub was simply told to behave.
-            text:
-              'I tried a few more times but it looks like the staging system is down right now, or there might be a backend ' +
-              "issue on our end — I've kept your draft here. This is probably worth flagging to the TropiTech team.",
-          },
-        ],
-      },
-    })
+    const report = await runReplay(trace, { turnScripts: jeffDworkinDraftFailureTurnScripts })
 
     expect(report.historical.violations.map((v) => v.invariant)).toContain('fabricated_action_or_result')
     const replayMessage = report.replay.effects.find((e) => e.kind === 'message')
@@ -108,19 +97,7 @@ describe('Caye Bench v2 — offline self-test (scripted, deterministic, CI-safe)
 
   it('mrs-max-correction-reuse: a later, unrelated conversation reads the corrected durable fact, not the stale one', async () => {
     const trace = REPLAY_FIXTURES['mrs-max-correction-reuse']
-    const [evt1, evt2] = trace.events.map((e) => e.id)
-    const report = await runReplay(trace, {
-      turnScripts: {
-        [evt1]: [
-          { toolCalls: [{ name: 'update_business_fact', args: { fact_key: 'cruise_pickup_location', value: 'Casino Tram Stop' } }] },
-          { text: 'Updated — cruise guests now meet at the Casino Tram Stop.' },
-        ],
-        [evt2]: [
-          { toolCalls: [{ name: 'get_business_fact', args: { fact_key: 'cruise_pickup_location' } }] },
-          { toolCalls: [{ name: 'send_customer_reply', args: { conversation_id: 'conv_theo', body: 'We meet cruise guests at the Casino Tram Stop!' } }] },
-        ],
-      },
-    })
+    const report = await runReplay(trace, { turnScripts: mrsMaxCorrectionReuseTurnScripts })
 
     expect(report.historical.violations.map((v) => v.invariant)).toContain('ignored_authoritative_correction')
     const factEffect = report.replay.effects.find((e) => e.factKey === 'cruise_pickup_location')
@@ -131,12 +108,7 @@ describe('Caye Bench v2 — offline self-test (scripted, deterministic, CI-safe)
 
   it('autumn-mcneill-redundant-notification: an operator-already-known item is not announced', async () => {
     const trace = REPLAY_FIXTURES['autumn-mcneill-redundant-notification']
-    const evt1 = trace.events[0].id
-    const report = await runReplay(trace, {
-      turnScripts: {
-        [evt1]: [{ text: 'All quiet on the front desk — nothing new needs your attention.' }],
-      },
-    })
+    const report = await runReplay(trace, { turnScripts: autumnMcneillRedundantNotificationTurnScripts })
 
     const replayMessage = report.replay.effects.find((e) => e.kind === 'message')
     expect(replayMessage?.operatorInterruption).not.toBe(true)
