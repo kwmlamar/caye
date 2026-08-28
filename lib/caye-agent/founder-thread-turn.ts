@@ -19,6 +19,7 @@ import { engineeringRichResult } from '@/lib/engineering/rich-result'
 import { engineeringAnalysisRichResult } from '@/lib/engineering/fea/rich-result'
 import { resolveWorkspaceAttachments, buildAttachmentContentBlocks, MAX_ATTACHMENTS_PER_TURN } from '@/lib/artifacts/attachments'
 import { businessArtifactRichResult, mergeRichResults } from '@/lib/artifacts/rich-result'
+import { propertyRichResultFromTurns } from '@/lib/property/turn-rich-result'
 
 export interface FounderThreadTurnResult {
   replyText: string
@@ -165,7 +166,14 @@ export async function runFounderThreadTurn(
     engineeringAnalysisIds: string[] = []
   ): Promise<void> {
     if (turns.length === 0) return
-    const richResult = mergeRichResults(mergeRichResults(engineeringRichResult(engineeringArtifactIds), businessArtifactRichResult(businessArtifactIds)), engineeringAnalysisRichResult(engineeringAnalysisIds))
+    const propertyResult = propertyRichResultFromTurns(turns)
+    const richResult = mergeRichResults(
+      mergeRichResults(
+        mergeRichResults(engineeringRichResult(engineeringArtifactIds), businessArtifactRichResult(businessArtifactIds)),
+        engineeringAnalysisRichResult(engineeringAnalysisIds)
+      ),
+      propertyResult
+    )
     const inserted = await persistAgentTurns(supabase, workspaceId, turns, operator, undefined, undefined, 'dashboard', 'visible', richResult)
     const insertedIds = inserted.map((r) => r.id)
     await Promise.all([
@@ -211,8 +219,11 @@ export async function runFounderThreadTurn(
     })
     const richResult = mergeRichResults(
       mergeRichResults(
-        mergeRichResults(engineeringRichResult(routerResult.engineeringArtifactIds ?? []), businessArtifactRichResult(routerResult.businessArtifactIds ?? [])),
-        engineeringAnalysisRichResult(routerResult.engineeringAnalysisIds ?? [])
+        mergeRichResults(
+          mergeRichResults(engineeringRichResult(routerResult.engineeringArtifactIds ?? []), businessArtifactRichResult(routerResult.businessArtifactIds ?? [])),
+          engineeringAnalysisRichResult(routerResult.engineeringAnalysisIds ?? [])
+        ),
+        propertyRichResultFromTurns(routerResult.newTurns)
       ),
       routerResult.richResult
     )
@@ -251,8 +262,11 @@ export async function runFounderThreadTurn(
     replyText: agentResult.replyText,
     threadId,
     richResult: mergeRichResults(
-      mergeRichResults(engineeringRichResult(agentResult.engineeringArtifactIds ?? []), businessArtifactRichResult(agentResult.businessArtifactIds ?? [])),
-      engineeringAnalysisRichResult(agentResult.engineeringAnalysisIds ?? [])
+      mergeRichResults(
+        mergeRichResults(engineeringRichResult(agentResult.engineeringArtifactIds ?? []), businessArtifactRichResult(agentResult.businessArtifactIds ?? [])),
+        engineeringAnalysisRichResult(agentResult.engineeringAnalysisIds ?? [])
+      ),
+      propertyRichResultFromTurns(agentResult.newTurns)
     ),
   }
 }
