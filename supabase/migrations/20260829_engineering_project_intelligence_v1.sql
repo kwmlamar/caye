@@ -86,31 +86,24 @@ create unique index if not exists engineering_project_one_active_verdict_idx on 
 
 create or replace function public.caye_assert_engineering_project_relation_scope()
 returns trigger language plpgsql set search_path = public as $$
-declare project_property_id uuid;
+declare project_property_id uuid; row_data jsonb;
 begin
+  row_data := to_jsonb(new);
   select property_id into project_property_id from public.engineering_projects p where p.id = new.project_id and p.workspace_id = new.workspace_id;
   if project_property_id is null then raise exception 'engineering project is not in this workspace'; end if;
-  if tg_table_name = 'engineering_project_predictions' and not exists (select 1 from public.engineering_project_alternatives a where a.id = new.alternative_id and a.project_id = new.project_id and a.workspace_id = new.workspace_id) then raise exception 'prediction alternative is not part of this project'; end if;
+  if tg_table_name = 'engineering_project_predictions' and not exists (select 1 from public.engineering_project_alternatives a where a.id = ((row_data->>'alternative_id')::uuid) and a.project_id = new.project_id and a.workspace_id = new.workspace_id) then raise exception 'prediction alternative is not part of this project'; end if;
   if tg_table_name = 'engineering_project_decisions' then
-    if not exists (select 1 from public.engineering_project_alternatives a where a.id = new.alternative_id and a.project_id = new.project_id and a.workspace_id = new.workspace_id) then raise exception 'decision alternative is not part of this project'; end if;
-    if not exists (select 1 from public.caye_operator_messages m where m.id = new.source_message_id and m.workspace_id = new.workspace_id and m.direction = 'inbound' and m.origin = 'dashboard') then raise exception 'engineering decision source must be an inbound founder dashboard message in this workspace'; end if;
+    if not exists (select 1 from public.engineering_project_alternatives a where a.id = ((row_data->>'alternative_id')::uuid) and a.project_id = new.project_id and a.workspace_id = new.workspace_id) then raise exception 'decision alternative is not part of this project'; end if;
+    if not exists (select 1 from public.caye_operator_messages m where m.id = ((row_data->>'source_message_id')::uuid) and m.workspace_id = new.workspace_id and m.direction = 'inbound' and m.origin = 'dashboard') then raise exception 'engineering decision source must be an inbound founder dashboard message in this workspace'; end if;
   end if;
   if tg_table_name = 'engineering_project_execution_evidence' then
-    if new.alternative_id is not null and not exists (select 1 from public.engineering_project_alternatives a where a.id = new.alternative_id and a.project_id = new.project_id and a.workspace_id = new.workspace_id) then raise exception 'execution alternative is not part of this project'; end if;
-    if not exists (select 1 from public.caye_operator_messages m where m.id = new.source_message_id and m.workspace_id = new.workspace_id and m.direction = 'inbound' and m.origin = 'dashboard') then raise exception 'execution source must be an inbound founder dashboard message in this workspace'; end if;
-    if new.source_artifact_id is not null and not exists (select 1 from public.business_artifacts a where a.id = new.source_artifact_id and a.workspace_id = new.workspace_id) then raise exception 'execution artifact is not in this workspace'; end if;
-    if new.installed_asset_id is not null and not exists (select 1 from public.property_assets a where a.id = new.installed_asset_id and a.workspace_id = new.workspace_id and a.property_id = project_property_id) then raise exception 'installed asset is not part of this project property'; end if;
+    if nullif(row_data->>'alternative_id','') is not null and not exists (select 1 from public.engineering_project_alternatives a where a.id = ((row_data->>'alternative_id')::uuid) and a.project_id = new.project_id and a.workspace_id = new.workspace_id) then raise exception 'execution alternative is not part of this project'; end if;
+    if not exists (select 1 from public.caye_operator_messages m where m.id = ((row_data->>'source_message_id')::uuid) and m.workspace_id = new.workspace_id and m.direction = 'inbound' and m.origin = 'dashboard') then raise exception 'execution source must be an inbound founder dashboard message in this workspace'; end if;
+    if nullif(row_data->>'source_artifact_id','') is not null and not exists (select 1 from public.business_artifacts a where a.id = ((row_data->>'source_artifact_id')::uuid) and a.workspace_id = new.workspace_id) then raise exception 'execution artifact is not in this workspace'; end if;
+    if nullif(row_data->>'installed_asset_id','') is not null and not exists (select 1 from public.property_assets a where a.id = ((row_data->>'installed_asset_id')::uuid) and a.workspace_id = new.workspace_id and a.property_id = project_property_id) then raise exception 'installed asset is not part of this project property'; end if;
   end if;
-  -- This function is shared by several project tables with different row shapes.
-  -- Convert NEW to jsonb before reading the outcome-only field so PostgreSQL does
-  -- not try to resolve property_observation_id on decision/execution row types.
-  if tg_table_name = 'engineering_project_outcomes' and not exists (
-    select 1 from public.property_observations o
-    where o.id = ((to_jsonb(new)->>'property_observation_id')::uuid)
-      and o.workspace_id = new.workspace_id
-      and o.property_id = project_property_id
-  ) then raise exception 'outcome observation is not part of this project property'; end if;
-  if tg_table_name = 'engineering_project_verdicts' and not exists (select 1 from public.caye_operator_messages m where m.id = new.source_message_id and m.workspace_id = new.workspace_id and m.direction = 'inbound' and m.origin = 'dashboard') then raise exception 'verdict source must be an inbound founder dashboard message in this workspace'; end if;
+  if tg_table_name = 'engineering_project_outcomes' and not exists (select 1 from public.property_observations o where o.id = ((row_data->>'property_observation_id')::uuid) and o.workspace_id = new.workspace_id and o.property_id = project_property_id) then raise exception 'outcome observation is not part of this project property'; end if;
+  if tg_table_name = 'engineering_project_verdicts' and not exists (select 1 from public.caye_operator_messages m where m.id = ((row_data->>'source_message_id')::uuid) and m.workspace_id = new.workspace_id and m.direction = 'inbound' and m.origin = 'dashboard') then raise exception 'verdict source must be an inbound founder dashboard message in this workspace'; end if;
   return new;
 end $$;
 revoke all on function public.caye_assert_engineering_project_relation_scope() from public, anon, authenticated;
