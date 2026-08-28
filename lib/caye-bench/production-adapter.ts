@@ -1,29 +1,11 @@
-import type Anthropic from '@anthropic-ai/sdk'
-import { runToolLoop } from '../caye-agent/execute'
-import type { Role, Tool, ToolMode, ToolRisk } from '../caye-agent/tools/types'
-import { buildBackOfficeSystemPrompt } from '../caye-agent/modes/back-office'
-import { buildFrontDeskSituationSystemPrompt } from '../caye-agent/modes/front-desk-situation'
-import { buildSyntheticSituation } from '../caye-agent/replay/fixtures/helpers'
+import type { Role } from '../caye-agent/tools/types'
 import { shouldSendGhostedLeadNudge } from '../nudge-eligibility'
-import { wrapWithProductionGate, makeProductionConfirmTool } from './production-gate'
-import { modelDouble, scriptedRounds, type BenchModelRound } from './model-double'
-import { createWorkspaceState, historyFor, rawTurnsFor, type WorkspaceState } from './production-state'
-import {
-  makeCheckAvailability,
-  makeGetBusinessFact,
-  makeUpdateBusinessFact,
-  makeSendCustomerReply,
-  makeEscalateToOwner,
-  makeCreateCustomerBooking,
-  makeRescheduleBooking,
-  makeMarkBookingCompleted,
-  makeStoreArtifact,
-  makeRetrieveArtifact,
-  makeDraftInInbox,
-  makeSendReviewRequest,
-  makeGetRecentBookings,
-} from './production-tools'
-import type { BenchAdapter, BenchEffect, BenchEvidence, BenchInputEvent, BenchRisk, BenchScenario, BenchStepContext } from './types'
+import type { BenchModelRound } from './model-double'
+import { createWorkspaceState, type WorkspaceState } from './production-state'
+import { buildToolSetup, type ToolSetup } from './tool-setup'
+import { runProductionTurn, runInternalConfirm } from './turn-runner'
+import { nextEffectId, toolEvidence, idempotencyKeyFor, messageEffect, riskToBenchRisk } from './effect-helpers'
+import type { BenchAdapter, BenchEffect, BenchInputEvent, BenchScenario, BenchStepContext } from './types'
 
 /**
  * production-adapter.ts
@@ -47,12 +29,12 @@ import type { BenchAdapter, BenchEffect, BenchEvidence, BenchInputEvent, BenchRi
  *     pure proactive-nudge eligibility rule.
  *
  * ISOLATED, not real: the Anthropic model call itself (mocked at the
- * `loggedMessagesCreate` seam — see `model-double.ts`; no live API, no
- * live credentials, per the harness's own constraint) and the durable
- * store each tool reads/writes (`production-state.ts`'s `WorkspaceState`,
- * an in-memory stand-in for the Supabase tables the real tools use —
- * `production-tools.ts`'s header comment explains why tool BODIES are
- * fixtures while the surrounding execution machinery is real).
+ * `loggedMessagesCreate` seam — see `model-double.ts`; THIS adapter never
+ * supplies a script-free turn, so it never needs live credentials) and the
+ * durable store each tool reads/writes (`production-state.ts`'s
+ * `WorkspaceState`, an in-memory stand-in for the Supabase tables the real
+ * tools use — `production-tools.ts`'s header comment explains why tool
+ * BODIES are fixtures while the surrounding execution machinery is real).
  *
  * WHY THE ADAPTER IS EVENT-ID-KEYED, NOT GENERIC
  * `canonicalBenchScenarios` (scenarios.ts) is a small, fixed, hand-written
@@ -65,26 +47,15 @@ import type { BenchAdapter, BenchEffect, BenchEvidence, BenchInputEvent, BenchRi
  * event id keeps every turn deterministic while still running the REAL
  * tool loop underneath — the same trade-off `replay/fixtures/*.ts`
  * already makes for its own scripted-turn fixtures.
+ *
+ * Caye Bench v2 (`replay/replay-adapter.ts`) is the generic counterpart:
+ * historical replay traces are arbitrary, not a fixed catalog, so it lets
+ * the model reason for real instead of following a script. The two
+ * adapters share their tool registry, turn-running, and effect-
+ * construction plumbing — `tool-setup.ts`, `turn-runner.ts`,
+ * `effect-helpers.ts` — extracted here so neither is a drifting copy of
+ * the other.
  */
-
-const BUSINESS_NAME = 'Bimini Bench Tours'
-const TIMEZONE = 'America/Nassau'
-
-interface TurnCallRecord {
-  toolName: string
-  risk: ToolRisk
-  args: unknown
-  ok: boolean
-  status?: string
-  resultData: unknown
-  pendingOnly: boolean
-  executed: boolean
-}
-
-interface ToolSetup {
-  tools: Tool<never>[]
-  callSink: { current: TurnCallRecord[] }
-}
 
 interface EventCtx {
   event: BenchInputEvent
@@ -95,235 +66,6 @@ interface EventCtx {
 }
 
 type EventHandler = (ectx: EventCtx) => Promise<BenchEffect[]>
-
-// ---------------------------------------------------------------------------
-// Tool wiring
-// ---------------------------------------------------------------------------
-
-/** Tools genuinely confirm-gated in production — `create_customer_booking`
- *  and `reschedule_booking` are `write-high`, back-office only, exactly
- *  like the real registry. `send_customer_reply` is ALSO `risk: 'high'`
- *  but is evidence-gated and executes immediately in real production
- *  (STATE.md: front-desk sends are autonomous once evidence supports
- *  them) — it must NOT go through the stage/confirm mechanic here either. */
-const GATED_TOOL_NAMES = new Set(['create_customer_booking', 'reschedule_booking'])
-
-function outcomeFromResult(data: unknown): { pendingOnly: boolean; executed: boolean } {
-  const d = data as Record<string, unknown> | undefined
-  const pendingOnly = !!(d && d.pending === true && d.executed === false)
-  return { pendingOnly, executed: !pendingOnly }
-}
-
-function instrument(tool: Tool<never>, sink: { current: TurnCallRecord[] }): Tool<never> {
-  return {
-    ...tool,
-    execute: async (args: never, ctx) => {
-      const result = await tool.execute(args, ctx)
-      const { pendingOnly, executed } = outcomeFromResult(result.data)
-      sink.current.push({
-        toolName: tool.name,
-        risk: tool.risk,
-        args,
-        ok: result.ok,
-        status: (result as { status?: string }).status,
-        resultData: result.data,
-        pendingOnly,
-        executed: result.ok && executed,
-      })
-      return result
-    },
-  }
-}
-
-function buildToolSetup(state: WorkspaceState): ToolSetup {
-  const callSink = { current: [] as TurnCallRecord[] }
-  const raw: Tool<never>[] = [
-    makeCheckAvailability(),
-    makeGetBusinessFact(state),
-    makeUpdateBusinessFact(state),
-    makeSendCustomerReply(),
-    makeEscalateToOwner(),
-    makeCreateCustomerBooking(state),
-    makeRescheduleBooking(state),
-    makeMarkBookingCompleted(state),
-    makeStoreArtifact(state),
-    makeRetrieveArtifact(state),
-    makeDraftInInbox(state),
-    makeSendReviewRequest(state),
-    makeGetRecentBookings(state),
-  ]
-  const rawByName = new Map(raw.map((t) => [t.name, t]))
-  const gated = raw.map((t) => (GATED_TOOL_NAMES.has(t.name) ? wrapWithProductionGate(t, state.gate, () => Date.now()) : t))
-  const confirmTool = makeProductionConfirmTool(state.gate, rawByName, () => Date.now()) as unknown as Tool<never>
-  const tools = [...gated, confirmTool].map((t) => instrument(t, callSink))
-  return { tools, callSink }
-}
-
-// ---------------------------------------------------------------------------
-// Turn execution
-// ---------------------------------------------------------------------------
-
-interface RunTurnArgs {
-  state: WorkspaceState
-  toolSetup: ToolSetup
-  mode: ToolMode
-  actorId: string
-  callerRole: Role
-  operatorId?: number | null
-  operatorName?: string
-  channel: 'whatsapp' | 'instagram' | 'messenger' | 'email'
-  userText: string
-  script: BenchModelRound[]
-  requestId: string
-  now: string
-}
-
-async function runProductionTurn(args: RunTurnArgs): Promise<{ replyText: string; calls: TurnCallRecord[] }> {
-  const before = args.toolSetup.callSink.current.length
-  let systemPrompt: string
-  let initialMessages: Anthropic.MessageParam[]
-
-  if (args.mode === 'front-desk') {
-    const rawTurns = rawTurnsFor(args.state, args.actorId)
-    rawTurns.push({ role: 'user', content: args.userText, at: args.now })
-    const situation = buildSyntheticSituation({
-      channel: 'front-desk',
-      workspaceId: args.state.workspaceId,
-      now: args.now,
-      turns: rawTurns,
-      timezone: TIMEZONE,
-    })
-    systemPrompt = buildFrontDeskSituationSystemPrompt({ businessName: BUSINESS_NAME, channel: args.channel, situation, toolsOffered: true })
-    initialMessages = situation.historyForModel
-  } else {
-    const history = historyFor(args.state, args.actorId)
-    history.push({ role: 'user', content: args.userText })
-    systemPrompt = buildBackOfficeSystemPrompt({
-      profile: { operatorName: args.operatorName ?? 'Operator', businessName: BUSINESS_NAME },
-      caller: { role: args.callerRole, name: args.operatorName ?? 'Operator' },
-    })
-    initialMessages = history
-  }
-
-  modelDouble.current = scriptedRounds(args.script)
-  const result = await runToolLoop({
-    client: {} as never,
-    model: 'caye-bench-fake-model',
-    maxTokens: 1024,
-    systemPrompt,
-    initialMessages,
-    ctx: {
-      workspaceId: args.state.workspaceId,
-      callerRole: args.callerRole,
-      operatorId: args.operatorId ?? null,
-      requestId: args.requestId,
-      origin: 'chat',
-      workspaceTimezone: TIMEZONE,
-    },
-    mode: args.mode,
-    tools: args.toolSetup.tools,
-  })
-
-  if (args.mode === 'front-desk') {
-    rawTurnsFor(args.state, args.actorId).push({ role: 'assistant', content: result.replyText, at: args.now })
-  } else {
-    historyFor(args.state, args.actorId).push(...result.newTurns)
-  }
-
-  return { replyText: result.replyText, calls: args.toolSetup.callSink.current.slice(before) }
-}
-
-/**
- * Confirms an already-staged high-risk action from a genuinely SEPARATE
- * request (a real, distinct `runToolLoop` invocation, not a second round
- * of the same one) — the exact discontinuity the real gate requires —
- * without polluting any actor's visible conversation history, since this
- * represents Caye's own internal operational follow-through rather than a
- * turn a human would see repeated back to them.
- */
-async function runInternalConfirm(args: {
-  state: WorkspaceState
-  toolSetup: ToolSetup
-  callerRole: Role
-  operatorId?: number | null
-  requestId: string
-  pendingActionId: string
-}): Promise<{ calls: TurnCallRecord[] }> {
-  const before = args.toolSetup.callSink.current.length
-  modelDouble.current = scriptedRounds([
-    { toolCalls: [{ name: 'confirm_pending_action', args: { pending_action_id: args.pendingActionId } }] },
-    { text: 'Done.' },
-  ])
-  await runToolLoop({
-    client: {} as never,
-    model: 'caye-bench-fake-model',
-    maxTokens: 256,
-    systemPrompt: 'You are Caye, completing an already-authorized operational action.',
-    initialMessages: [{ role: 'user', content: 'Proceed.' }],
-    ctx: {
-      workspaceId: args.state.workspaceId,
-      callerRole: args.callerRole,
-      operatorId: args.operatorId ?? null,
-      requestId: args.requestId,
-      origin: 'chat',
-      workspaceTimezone: TIMEZONE,
-    },
-    mode: 'back-office',
-    tools: args.toolSetup.tools,
-  })
-  return { calls: args.toolSetup.callSink.current.slice(before) }
-}
-
-// ---------------------------------------------------------------------------
-// Effect construction
-// ---------------------------------------------------------------------------
-
-let effectSeq = 0
-function nextEffectId(prefix: string): string {
-  effectSeq += 1
-  return `${prefix}-${effectSeq}`
-}
-
-function riskToBenchRisk(r: ToolRisk): BenchRisk {
-  return r === 'read' ? 'read' : r === 'high' ? 'high_write' : 'low_write'
-}
-
-function toolEvidence(call: TurnCallRecord): BenchEvidence[] {
-  // A failed tool call (ToolResult.ok === false) is not required to carry
-  // a `data` field — several fixtures here return only
-  // `{ ok: false, error, status, error_code }` on failure, matching the
-  // real `ToolResult` shape. JSON.stringify(undefined) returns the
-  // (non-string) value `undefined`, not "undefined", so this must not
-  // assume `.resultData` is always JSON-stringifiable.
-  const summary = call.resultData !== undefined ? JSON.stringify(call.resultData) : `ok=${call.ok} status=${call.status ?? 'n/a'}`
-  return [{ kind: 'tool_result', ref: call.toolName, summary: summary.slice(0, 300) }]
-}
-
-function idempotencyKeyFor(call: TurnCallRecord): string {
-  return `${call.toolName}:${JSON.stringify(call.args)}`
-}
-
-function messageEffect(args: {
-  workspaceId: string
-  at: string
-  event: BenchInputEvent
-  replyText: string
-  metadata?: Record<string, unknown>
-  factKey?: string
-  factValue?: string
-}): BenchEffect {
-  return {
-    id: nextEffectId('msg'),
-    workspaceId: args.workspaceId,
-    at: args.at,
-    kind: 'message',
-    channel: args.event.channel,
-    risk: 'read',
-    outcome: 'success',
-    metadata: { customerId: args.event.actor.role === 'customer' ? args.event.actor.id : undefined, ...args.metadata },
-    ...(args.factKey ? { factKey: args.factKey, factValue: args.factValue } : {}),
-  }
-}
 
 /** Stages a high-risk action, then confirms it from a genuinely separate
  *  internal request, and returns the resulting `state_write` effect —

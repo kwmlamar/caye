@@ -4,7 +4,7 @@ import { modelDouble } from './model-double'
 
 vi.mock('server-only', () => ({}))
 vi.mock('@/lib/llm-telemetry', () => ({
-  loggedMessagesCreate: async (_client: unknown, params: { messages: Anthropic.MessageParam[] }) => modelDouble.current(params),
+  loggedMessagesCreate: async (client: Anthropic, params: Anthropic.MessageCreateParamsNonStreaming) => modelDouble.current(client, params),
 }))
 // `runToolWithRecovery` (lib/caye-agent/orchestrator.ts) fires off a
 // best-effort `caye_tool_calls` telemetry insert per tool call, caught
