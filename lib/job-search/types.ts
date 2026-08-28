@@ -57,8 +57,15 @@ export type WorkAuthSignals = {
   citizenshipRequired: boolean
   /** Explicit active security clearance requirement found. */
   clearanceRequired: boolean
-  /** Sponsorship/work-authorization language present but not clearly resolvable either way. */
-  ambiguousSponsorshipLanguage: boolean
+  /**
+   * Sponsorship/work-authorization/citizenship/clearance-eligibility
+   * language present but not clearly resolvable either way by the
+   * deterministic hard-block patterns. This is the fallback the whole
+   * gate leans on: any topic-relevant language the hard-block patterns
+   * didn't recognize lands here rather than silently falling through as
+   * `clear` — see policy-gate.ts's AMBIGUOUS_* pattern lists.
+   */
+  ambiguousEligibilityLanguage: boolean
   /** Free-text evidence snippets backing the flags above, for founder explainability. */
   evidence: string[]
 }
