@@ -1,5 +1,6 @@
 import { sanitizeRawTrace } from '../sanitize'
 import type { RawTraceInput } from '../types'
+import type { BenchModelRound } from '../../model-double'
 
 /**
  * fixtures/jeff-dworkin-draft-failure.ts
@@ -85,3 +86,27 @@ export const jeffDworkinDraftFailureTrace = sanitizeRawTrace(raw, {
   salt: 'caye-bench-v2-fixture-salt-not-a-real-export-secret',
   sanitizedAt: '2026-08-27T00:00:00.000Z',
 })
+
+/**
+ * Deterministic, offline-safe scripted turns for this trace's single
+ * event — shared by `cli-runner.test.ts`'s pipeline self-test and the
+ * corpus runner (`corpus/registry.ts`), so both exercise the exact same
+ * scenario instead of two independent, driftable copies. See
+ * `cli-runner.test.ts`'s header comment for why NOT requiring
+ * `ANTHROPIC_API_KEY` matters here: `npm run caye:bench:corpus` has to
+ * run in CI/pre-merge without live credentials.
+ */
+export const jeffDworkinDraftFailureTurnScripts: Record<string, BenchModelRound[]> = {
+  'evt-1': [
+    { toolCalls: [{ name: 'draft_in_inbox', args: { conversation_id: 'conv_jeff', body: 'Thanks for the trip!' } }] },
+    {
+      // Deliberately scripts the SAME fabricated sentence the real
+      // incident produced — proving the REAL action-claim-guard
+      // (enforceActionGrounding, applied inside execute.ts) strips it,
+      // not that a scripted stub was simply told to behave.
+      text:
+        'I tried a few more times but it looks like the staging system is down right now, or there might be a backend ' +
+        "issue on our end — I've kept your draft here. This is probably worth flagging to the TropiTech team.",
+    },
+  ],
+}

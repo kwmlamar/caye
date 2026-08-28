@@ -32,3 +32,9 @@ yarn-error.log*
 .claude/skills/
 .impeccable/
 skills-lock.json
+
+# Caye Bench — raw/unreviewed production export previews (sanitized, but
+# not yet human-reviewed and not yet through the explicit --save step)
+# and generated report output must never be committed accidentally.
+.caye-bench-export-tmp/
+lib/caye-bench/replay/corpus/__output__/
