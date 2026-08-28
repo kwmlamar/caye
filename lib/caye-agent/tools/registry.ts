@@ -32,6 +32,9 @@ import { getOutreachStatus } from './read/get-outreach-operational-status'
 import { getOutreachTargeting } from './read/get-outreach-targeting'
 import { getArtifact } from './read/get-artifact'
 import { searchArtifacts } from './read/search-artifacts'
+import { listPropertiesTool } from './read/list-properties'
+import { getPropertySnapshotTool } from './read/get-property-snapshot'
+import { analyzePropertyWaterTool } from './read/analyze-property-water'
 import { getConnectLink } from './write-low/get-connect-link'
 import { recordChannelIntake } from './write-low/record-channel-intake'
 import { markHandled } from './write-low/mark-handled'
@@ -69,6 +72,10 @@ import { notifyDriver } from './write-low/notify-driver'
 import { relateToDirectThread } from './write-low/relate-to-direct-thread'
 import { annotateArtifactTool } from './write-low/annotate-artifact'
 import { retrieveArtifactForOperator } from './write-low/retrieve-artifact-for-operator'
+import { createPropertyTool } from './write-low/create-property'
+import { addPropertySystemTool } from './write-low/add-property-system'
+import { addPropertyAssetTool } from './write-low/add-property-asset'
+import { recordPropertyObservationTool } from './write-low/record-property-observation'
 import { getMyAssignments } from './read/get-my-assignments'
 import { getLogisticsFacts } from './read/get-logistics-facts'
 import { escalateDriverQuestion } from './write-low/escalate-driver-question'
@@ -218,6 +225,10 @@ export const TOOL_REGISTRY: AnyTool[] = [
   // Multimodal Business Memory (#87)
   getArtifact as AnyTool,
   searchArtifacts as AnyTool,
+  // Property Intelligence v0.1: founder-only physical-world memory + deterministic analysis.
+  listPropertiesTool as AnyTool,
+  getPropertySnapshotTool as AnyTool,
+  analyzePropertyWaterTool as AnyTool,
   // Low-risk write
   getConnectLink as AnyTool,
   recordChannelIntake as AnyTool,
@@ -256,6 +267,10 @@ export const TOOL_REGISTRY: AnyTool[] = [
   relateToDirectThread as AnyTool,
   annotateArtifactTool as AnyTool,
   retrieveArtifactForOperator as AnyTool,
+  createPropertyTool as AnyTool,
+  addPropertySystemTool as AnyTool,
+  addPropertyAssetTool as AnyTool,
+  recordPropertyObservationTool as AnyTool,
   // Engineering V1 is intentionally founder-only and constrained to a fixed
   // CAD template; it is not a generic code execution surface.
   createParametricPart as AnyTool,
