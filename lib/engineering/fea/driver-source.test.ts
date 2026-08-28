@@ -26,13 +26,16 @@ describe('FEA driver script generation', () => {
     expect(source).toContain('*CLOAD')
     expect(source).toContain('*NODE PRINT')
     expect(source).toContain('*EL PRINT')
-    // The two regex/f-string escape classes that broke silently under a
-    // non-raw template literal (see feaDriverSource's String.raw comment):
-    // \s\d escapes must survive intact for CalculiX .dat parsing, and \n
-    // inside an f-string must stay a literal two-character escape rather
-    // than becoming a real newline that splits the Python string literal.
     expect(source).toContain(String.raw`\s*\d+\s+\d+`)
-    expect(source).toContain(String.raw`f"*ELSET, ELSET=EALL\n"`)
+  })
+  it('wraps CalculiX node and element sets to at most 16 ids per physical line', () => {
+    const source = feaDriverSource(input)
+    expect(source).toContain('def append_id_set(deck, keyword, ids):')
+    expect(source).toContain('for start in range(0, len(ids), 16):')
+    expect(source).toContain("ids[start:start + 16]")
+    expect(source).toContain("append_id_set(deck, '*ELSET, ELSET=EALL', all_element_ids)")
+    expect(source).toContain("append_id_set(deck, '*NSET, NSET=NALL', node_tags)")
+    expect(source).not.toContain("','.join(str(i) for i in all_element_ids) + '\\n'")
   })
   it('never emits raw face/edge IDs — regions are numeric bounds, selected by coordinate proximity', () => {
     const source = feaDriverSource(input)
