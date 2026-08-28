@@ -5,16 +5,19 @@ import type {
   RegisteredCapability,
 } from './types'
 
-export type CapabilityRegistry = ReadonlyMap<CapabilityName, RegisteredCapability>
+/** V0.1 exposes only no-argument read capabilities. */
+type V01RegisteredCapability = RegisteredCapability<Record<string, never>, unknown>
+
+export type CapabilityRegistry = ReadonlyMap<CapabilityName, V01RegisteredCapability>
 
 /**
  * Build an allowlisted registry. Duplicate semantic names are rejected so callers
  * can never depend on insertion order to determine which implementation executes.
  */
 export function createCapabilityRegistry(
-  capabilities: readonly RegisteredCapability[],
+  capabilities: readonly V01RegisteredCapability[],
 ): CapabilityRegistry {
-  const registry = new Map<CapabilityName, RegisteredCapability>()
+  const registry = new Map<CapabilityName, V01RegisteredCapability>()
 
   for (const capability of capabilities) {
     const { name } = capability.manifest
@@ -41,6 +44,6 @@ export function capabilityManifest(registry: CapabilityRegistry): CapabilityMani
 export function getRegisteredCapability(
   registry: CapabilityRegistry,
   name: CapabilityName,
-): RegisteredCapability | null {
+): V01RegisteredCapability | null {
   return registry.get(name) ?? null
 }
