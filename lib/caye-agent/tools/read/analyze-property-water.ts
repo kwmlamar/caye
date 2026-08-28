@@ -42,12 +42,13 @@ const scenarioSchema = {
 
 export const analyzePropertyWaterTool: Tool<Input> = {
   name: 'analyze_property_water',
-  description: 'Run deterministic rainwater catchment and storage/runway arithmetic from explicit inputs. Use this instead of doing the arithmetic in prose. It does NOT establish potable safety, pipe sizing, pump adequacy, structural safety, future rainfall, or code compliance. Supply compare_to to compare an intervention against a baseline.',
+  description: 'Run deterministic rainwater catchment and storage/runway arithmetic from explicit inputs in founder Caye Direct. Use this instead of doing the arithmetic in prose. It does NOT establish potable safety, pipe sizing, pump adequacy, structural safety, future rainfall, or code compliance. Supply compare_to to compare an intervention against a baseline.',
   risk: 'read',
   roles: ['founder'],
   modes: ['back-office'],
   inputSchema: { type: 'object', properties: { scenario: scenarioSchema, compare_to: scenarioSchema }, required: ['scenario'], additionalProperties: false },
-  async execute(args) {
+  async execute(args, ctx) {
+    if (ctx.channel !== 'dashboard') return { ok: false, error: 'Property engineering analysis is currently available only in founder Caye Direct.' }
     try {
       const result = args.compare_to
         ? compareWaterScenarios(normalize(args.scenario), normalize(args.compare_to))
