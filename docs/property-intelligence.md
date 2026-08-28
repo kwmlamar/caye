@@ -13,19 +13,19 @@ The v0.1 hierarchy is:
 - `property_observations`: timestamped values/facts with explicit provenance
 - `property_artifact_links`: semantic links to existing `business_artifacts`; images/PDFs are not duplicated
 
-Every server write verifies the target property is in the current workspace. Structure, system, asset, source-artifact, and source-message references are additionally checked against the same property/workspace before persistence.
+Every server write verifies the target property is in the current workspace. Structure, system, asset, source-artifact, and source-message references are additionally checked against the same property/workspace before persistence, and the database repeats the property/workspace relationship constraint with composite foreign keys.
 
 ## Truth and provenance
 
 Observations must remain distinguishable by source quality:
 
-- `measured`: an actual measurement from an instrument or explicit measuring process
+- `measured`: an instrument/deterministic measurement-ingestion result; reserved from model-authored writes in v0.1
 - `observed`: directly visible/observed state
-- `operator_confirmed`: stated as fact by the authorized operator/founder
+- `operator_confirmed`: stated as fact by the authorized operator/founder, including measurements the operator reports
 - `inferred`: derived from other evidence
 - `estimated`: a planning approximation
 
-An estimate must never silently become a measurement. Numeric observations require explicit units. Model output does not upgrade provenance.
+An estimate must never silently become a measurement. Numeric observations require explicit units. Model output does not upgrade provenance. The model-facing asset-creation tool also cannot write arbitrary quantitative `specifications`; capacities, dimensions, ratings, and similar facts must go through provenance-aware observations.
 
 ## Engineering analysis
 
@@ -44,7 +44,7 @@ Those require separate qualified analysis paths.
 
 ## Caye Direct presentation
 
-A `property_snapshot` rich-result block is a semantic pointer to a property id. The browser never receives database credentials or storage URLs from that block. Rendering re-fetches the snapshot through a founder-authenticated API route that scopes the lookup to the active workspace. An invalid or foreign property id therefore renders as unavailable instead of exposing data.
+A `property_snapshot` rich-result block is a semantic pointer to a property id. The model cannot author this trusted block directly. Founder-thread orchestration derives it from an actual structured `get_property_snapshot` tool call, and the browser then re-fetches the snapshot through a founder-authenticated API route scoped to the active workspace. A guessed, malformed, or foreign property id therefore cannot become trusted property content.
 
 ## Relationship to artifacts and engineering jobs
 
