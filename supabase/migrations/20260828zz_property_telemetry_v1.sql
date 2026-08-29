@@ -24,10 +24,11 @@ create table if not exists public.property_sensor_devices (
   last_seen_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  unique (workspace_id, device_key),
-  unique (provider, provider_application_id, provider_device_id)
+  unique (workspace_id, device_key)
 );
 
+create unique index if not exists property_sensor_devices_provider_identity_idx
+  on public.property_sensor_devices(provider, coalesce(provider_application_id, ''), provider_device_id);
 create index if not exists property_sensor_devices_property_idx
   on public.property_sensor_devices(property_id, status);
 create index if not exists property_sensor_devices_asset_idx
@@ -78,7 +79,10 @@ create index if not exists property_telemetry_measurements_device_metric_time_id
 create index if not exists property_telemetry_measurements_property_metric_time_idx
   on public.property_telemetry_measurements(property_id, metric_key, observed_at desc);
 
-create or replace view public.property_current_telemetry as
+-- security_invoker is critical here: the view must inherit the caller's RLS context rather
+-- than accidentally exposing service-role-only telemetry through the view owner.
+create or replace view public.property_current_telemetry
+with (security_invoker = true) as
 select distinct on (m.device_id, m.metric_key)
   m.id,
   m.workspace_id,
@@ -113,4 +117,4 @@ comment on table public.property_telemetry_events is
 comment on table public.property_telemetry_measurements is
   'Provider-agnostic numeric measurements normalized from raw sensor events. Derived values must identify quality/calibration.';
 comment on view public.property_current_telemetry is
-  'Latest normalized telemetry value per device and metric; not a substitute for historical measurements.';
+  'Latest normalized telemetry value per device and metric; security-invoker view, not a substitute for historical measurements.';
