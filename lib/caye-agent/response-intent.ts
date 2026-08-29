@@ -50,10 +50,18 @@ export interface ToolResponseClassification {
  * The previous instruction for a generic failure told the model to say
  * "it did not go through and that you are on it." By the time this function
  * runs, `runToolWithRecovery` has already exhausted this tool's retry budget —
- * there is no further attempt happening this turn, so "you are on it" was a
- * promise nothing backed. Live Bimini transcripts show the failure mode that
- * phrasing invites: fake progress, an invented root cause, then an invented
- * platform escalation.
+ * there is no further retry of THAT SAME operation happening automatically,
+ * so "you are on it" was a promise nothing backed. Live Bimini transcripts
+ * show the failure mode that phrasing invites: fake progress, an invented
+ * root cause, then an invented platform escalation.
+ *
+ * 2026-08-28 follow-up: exhausting one operation is not the same thing as
+ * failing the operator's whole objective. The previous wording said "nothing
+ * further is happening right now," which encouraged the model to abort a
+ * multi-part objective even when independent diagnostics, recovery actions,
+ * or other useful subgoals were still available. Failures are now explicitly
+ * local: the identical call is done for this turn unless a distinct recovery
+ * changes its preconditions, while the rest of the objective stays live.
  *
  * Real operator/owner messaging is different: send_operator_message and
  * escalate_to_owner can genuinely reach people in the workspace. The ban
@@ -83,7 +91,7 @@ export function classifyToolResponse(
       return {
         intent: 'failed',
         instruction:
-          'Say plainly that it did not go through. This turn already exhausted every retry available for this operation — do not say you are on it, still working on it, still trying, or will retry; nothing further is happening right now. Do not guess or invent a reason (no "backend issue", no "the system is down", no naming an internal cause) — you were not told why, only that it failed. Do not claim you notified, flagged, or escalated this to TropiTech, engineering, developers, or support unless a real tool result proves that exact action. Never ask the operator to do the failed work themselves, and never repeat raw error text.',
+          'Say plainly that this specific operation did not go through. Its normal retry budget is exhausted, so do not immediately repeat the identical call, and do not say you are on it, still working on it, still trying, or will retry unless a separate action in this turn actually changes the conditions. IMPORTANT: this failure is local to this operation, not a reason to abandon the operator\'s whole objective. Continue any other independently achievable parts of the request. If a distinct diagnostic or recovery capability is available, relevant, and within your authority, use it; if that changes the conditions, resume the blocked objective. If no available capability can diagnose or recover it, state exactly what remains blocked and what useful work is still preserved. Do not guess or invent a reason (no "backend issue", no "the system is down", no naming an internal cause) unless evidence actually established it. Do not name internal tool identifiers in the operator-facing reply; describe the business action in plain English. Do not claim you notified, flagged, or escalated this to TropiTech, engineering, developers, or support unless a real tool result proves that exact action. Never ask the operator to do the failed work themselves, never repeat raw error text, and never erase successful or still-actionable parts of a multi-step objective just because one operation failed.',
       }
 
     case 'NOT_FOUND':
