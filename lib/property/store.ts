@@ -165,6 +165,23 @@ export async function getFounderPropertySnapshot(propertyId: string) {
   return getPropertySnapshot(workspaceId, propertyId)
 }
 
+/**
+ * Founder-only presentation helper: list properties across every workspace, not
+ * scoped to one. Mirrors the cross-workspace read authority already established
+ * by getFounderPropertySnapshot — founder tooling reads properties by their own
+ * id/identity, not by first knowing which workspace owns them.
+ */
+export async function listFounderProperties() {
+  const supabase = createServiceClient()
+  const { data, error } = await supabase
+    .from('physical_properties')
+    .select('id,name,location_label,status')
+    .neq('status', 'archived')
+    .order('updated_at', { ascending: false })
+  if (error) throw new Error('Could not list properties')
+  return data ?? []
+}
+
 export async function listProperties(workspaceId: string) {
   const supabase = createServiceClient()
   const { data, error } = await supabase.from('physical_properties').select('id,name,property_type,location_label,status,updated_at').eq('workspace_id', workspaceId).neq('status','archived').order('updated_at', { ascending: false })

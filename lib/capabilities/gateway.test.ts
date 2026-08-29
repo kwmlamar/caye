@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   engineeringExecute: vi.fn(),
   writeExecute: vi.fn(),
   propertySnapshotExecute: vi.fn(),
+  propertyListExecute: vi.fn(),
 }))
 
 vi.mock('./catalog', () => ({
@@ -44,6 +45,13 @@ vi.mock('./catalog', () => ({
         access: 'read', risk: 'read_only', inputSchemaId: 'in', outputSchemaId: 'out',
       },
       execute: mocks.propertySnapshotExecute,
+    }],
+    ['property.list', {
+      manifest: {
+        name: 'property.list', version: 1, namespace: 'property', description: 'property list',
+        access: 'read', risk: 'read_only', inputSchemaId: 'in', outputSchemaId: 'out',
+      },
+      execute: mocks.propertyListExecute,
     }],
   ]),
 }))
@@ -119,9 +127,28 @@ describe('founder capability gateway service', () => {
       'engineering.artifacts.list',
       'goals.list',
       'goals.write-test',
+      'property.list',
       'property.snapshot',
     ])
     expect(manifest.every((item) => !('execute' in item))).toBe(true)
+  })
+
+  it('resolves property.list with no args and no workspace scope, for fresh-session discovery', async () => {
+    mocks.propertyListExecute.mockResolvedValue(observed([{ id: 'property-1', name: 'Bimini Villa' }]))
+
+    const result = await invokeFounderReadCapability('trusted-founder', {
+      capability: 'property.list',
+      version: 1,
+      workspaceId: null,
+      args: {},
+    })
+
+    expect(result.status).toBe('observed')
+    expect(mocks.propertyListExecute).toHaveBeenCalledWith({}, {
+      actor: { kind: 'founder', userId: 'trusted-founder' },
+      scope: { workspaceId: null },
+      caller: 'external_reasoner',
+    })
   })
 
   it('accepts propertyId only for a capability that declares an id-scoped selector', async () => {

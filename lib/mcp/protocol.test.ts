@@ -33,12 +33,13 @@ describe('Caye MCP protocol adapter', () => {
     })
   })
 
-  it('publishes only the five bounded read tools in deterministic order', () => {
+  it('publishes only the six bounded read tools in deterministic order', () => {
     expect(CAYE_MCP_TOOLS.map((tool) => tool.name)).toEqual([
       'caye_context_snapshot',
       'caye_goals_list',
       'caye_attention_list',
       'caye_engineering_artifacts_list',
+      'caye_property_list',
       'caye_property_snapshot',
     ])
     expect(CAYE_MCP_TOOLS.every((tool) => tool.annotations.readOnlyHint === true)).toBe(true)
@@ -125,5 +126,50 @@ describe('Caye MCP protocol adapter', () => {
     })
     expect(result?.isError).toBe(true)
     expect(mocks.invokeFounderReadCapability).not.toHaveBeenCalled()
+  })
+
+  it('a fresh session can discover a property selector via caye_property_list with no prior knowledge of any id', async () => {
+    const listResult = {
+      status: 'observed' as const,
+      data: [{ id: 'property-1', name: 'Bimini Villa', locationLabel: 'North Bimini' }],
+      evidence: [{ kind: 'record' as const, id: 'property-1' }],
+      executionRef: null,
+      auditRef: null,
+      failure: null,
+    }
+    mocks.invokeFounderReadCapability.mockResolvedValue(listResult)
+
+    const result = await callCayeMcpTool('founder-user', 'caye_property_list', {})
+
+    expect(mocks.invokeFounderReadCapability).toHaveBeenCalledWith('founder-user', {
+      capability: 'property.list',
+      version: 1,
+      workspaceId: null,
+      args: {},
+    })
+    expect(result?.structuredContent).toEqual({ result: listResult })
+    expect(result?.isError).toBe(false)
+  })
+
+  it('caye_property_list accepts no arguments — undefined, empty object, and null all succeed', async () => {
+    for (const args of [undefined, {}, null]) {
+      const result = await callCayeMcpTool('founder-user', 'caye_property_list', args)
+      expect(result?.isError).toBe(false)
+    }
+    expect(mocks.invokeFounderReadCapability).toHaveBeenCalledTimes(3)
+  })
+
+  it('rejects any argument passed to caye_property_list instead of silently ignoring it', async () => {
+    const result = await callCayeMcpTool('founder-user', 'caye_property_list', { workspaceId: 'workspace-a' })
+    expect(result?.isError).toBe(true)
+    expect(mocks.invokeFounderReadCapability).not.toHaveBeenCalled()
+  })
+
+  it('discovery -> snapshot: caye_property_list never delegates to property.snapshot, and vice versa, through the gateway', async () => {
+    await callCayeMcpTool('founder-user', 'caye_property_list', {})
+    expect(mocks.invokeFounderReadCapability).toHaveBeenLastCalledWith('founder-user', expect.objectContaining({ capability: 'property.list' }))
+
+    await callCayeMcpTool('founder-user', 'caye_property_snapshot', { propertyId: 'property-1' })
+    expect(mocks.invokeFounderReadCapability).toHaveBeenLastCalledWith('founder-user', expect.objectContaining({ capability: 'property.snapshot' }))
   })
 })

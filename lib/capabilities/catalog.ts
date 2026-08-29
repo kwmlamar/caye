@@ -5,6 +5,7 @@ import { engineeringArtifactsListCapability } from './engineering-artifacts-list
 import { goalsListCapability } from './goals-list'
 import { jobSearchQueueCapability } from './job-search-queue'
 import { jobSearchSummaryCapability } from './job-search-summary'
+import { propertyListCapability } from './property-list'
 import { propertySnapshotCapability } from './property-snapshot'
 import { createCapabilityRegistry } from './registry'
 
@@ -20,7 +21,9 @@ export const cayeCapabilityRegistry = createCapabilityRegistry([
   // see each capability's own doc comment.
   jobSearchSummaryCapability,
   jobSearchQueueCapability,
-  // CAY-28 — founder-only physical property snapshot. Resolves workspace
-  // scope canonically from propertyId; see property-snapshot.ts.
+  // CAY-28 — founder-only physical property intelligence. property.list is
+  // discovery (fresh-session safe); property.snapshot resolves workspace
+  // scope canonically from the propertyId returned by property.list.
+  propertyListCapability,
   propertySnapshotCapability,
 ])

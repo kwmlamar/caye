@@ -80,8 +80,15 @@ export const CAYE_MCP_TOOLS = [
     outputSchema: { type: 'object', additionalProperties: false, required: ['result'], properties: { result: CAPABILITY_RESULT_SCHEMA } },
   },
   {
+    name: 'caye_property_list',
+    description: 'Discover founder-visible properties (name, safe location, and the id to pass to caye_property_snapshot). Call this first in a fresh session — do not guess a property id.',
+    annotations: READ_ONLY_ANNOTATIONS,
+    inputSchema: { type: 'object', additionalProperties: false, properties: {} },
+    outputSchema: { type: 'object', additionalProperties: false, required: ['result'], properties: { result: CAPABILITY_RESULT_SCHEMA } },
+  },
+  {
     name: 'caye_property_snapshot',
-    description: 'Read a founder-visible physical property snapshot for exactly one property id.',
+    description: 'Read a founder-visible physical property snapshot for exactly one property id returned by caye_property_list.',
     annotations: READ_ONLY_ANNOTATIONS,
     inputSchema: {
       type: 'object',
@@ -97,6 +104,10 @@ const CAPABILITY_BY_TOOL = {
   caye_goals_list: 'goals.list',
   caye_attention_list: 'attention.list',
   caye_engineering_artifacts_list: 'engineering.artifacts.list',
+} as const
+
+const NO_ARG_TOOLS = {
+  caye_property_list: 'property.list',
 } as const
 
 const PROPERTY_ID_SCOPED_TOOLS = {
@@ -138,6 +149,13 @@ function workspaceFromArguments(args: unknown, required: boolean): { ok: true; w
   return { ok: true, workspaceId: workspaceId.trim() }
 }
 
+function noArgumentsProvided(args: unknown): { ok: true } | { ok: false; result: ToolCallResult } {
+  if (args === undefined || args === null) return { ok: true }
+  if (typeof args !== 'object' || Array.isArray(args)) return { ok: false, result: invalidToolInput('Tool arguments must be an object.') }
+  if (Object.keys(args as Record<string, unknown>).length > 0) return { ok: false, result: invalidToolInput('This tool does not accept arguments.') }
+  return { ok: true }
+}
+
 function propertyIdFromArguments(args: unknown): { ok: true; propertyId: string } | { ok: false; result: ToolCallResult } {
   if (typeof args !== 'object' || args === null || Array.isArray(args)) {
     return { ok: false, result: invalidToolInput('propertyId is required.') }
@@ -163,6 +181,20 @@ export async function callCayeMcpTool(founderUserId: string, name: string, args:
     return toolResult({ snapshot }, false)
   }
 
+  const noArgCapability = NO_ARG_TOOLS[name as keyof typeof NO_ARG_TOOLS]
+  if (noArgCapability) {
+    const scope = noArgumentsProvided(args)
+    if (!scope.ok) return scope.result
+
+    const result: CapabilityResult = await invokeFounderReadCapability(founderUserId, {
+      capability: noArgCapability,
+      version: 1,
+      workspaceId: null,
+      args: {},
+    })
+    return toolResult({ result }, result.status === 'failed')
+  }
+
   const propertyScopedCapability = PROPERTY_ID_SCOPED_TOOLS[name as keyof typeof PROPERTY_ID_SCOPED_TOOLS]
   if (propertyScopedCapability) {
     const scope = propertyIdFromArguments(args)
@@ -177,7 +209,7 @@ export async function callCayeMcpTool(founderUserId: string, name: string, args:
     return toolResult({ result }, result.status === 'failed')
   }
 
-  const capability = CAPABILITY_BY_TOOL[name as Exclude<ToolName, 'caye_context_snapshot' | 'caye_property_snapshot'>]
+  const capability = CAPABILITY_BY_TOOL[name as Exclude<ToolName, 'caye_context_snapshot' | 'caye_property_list' | 'caye_property_snapshot'>]
   if (!capability) return null
   const scope = workspaceFromArguments(args, capability !== 'goals.list')
   if (!scope.ok) return scope.result
