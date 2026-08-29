@@ -68,13 +68,17 @@ const PATTERNS: [HighRiskSemanticKey | 'first_name' | 'last_name' | 'email' | 'p
   ['criminal_history', /criminal|convict|felony/i],
   ['disability', /disab(?:led|ility)/i],
   ['veteran_status', /veteran/i],
-  ['demographic', /\b(race|ethnicit|gender|sex\b|pronoun)\b/i],
+  // The trailing \b after the group used to swallow every inflected form:
+  // "pronouns" and "ethnicity" both failed to match, because \b cannot hold
+  // between "pronoun"/"s" or "ethnicit"/"y". ("Race/Ethnicity" only appeared
+  // to work because "race" matched first.) Suffixes are explicit now.
+  ['demographic', /\b(race|ethnic\w*|gender\w*|sex|pronouns?)\b/i],
   ['relocation', /relocat/i],
   ['compensation', /salary|compensation|desired\s+pay|pay\s+expectation/i],
   ['legal_attestation', /attest|certify|acknowledge.*(?:true|accurate)|legal(?:ly)?\s+bind/i],
   ['willingness_to_travel', /travel/i],
   ['drivers_license', /driver.?s?\s+licen[cs]e/i],
-  ['availability_start_date', /start\s+date|available\s+(?:to\s+)?start|availability/i],
+  ['availability_start_date', /start\s+date|available\s+(?:to\s+)?start|availability|(?:when|how\s+soon).{0,30}\bstart\b|earliest\s+start|notice\s+period/i],
   ['background_check_acknowledgment', /background\s+check/i],
   ['arbitration_acknowledgment', /arbitrat/i],
   ['first_name', /first\s*name/i],

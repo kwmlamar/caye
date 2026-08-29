@@ -7,7 +7,7 @@ let fake = makeFakeSupabase()
 vi.mock('@/lib/supabase-server', () => ({ createServiceClient: () => fake.client }))
 vi.mock('../events', () => ({ logJobSearchEvent: vi.fn(async () => {}) }))
 
-const { getExecutionRolloutSettings, setAutomationEnabled, setDryRun, setDailySubmissionCap, setEmergencyPaused, getRemainingDailySubmissionCapacity } = await import('./rollout')
+const { MAX_DAILY_SUBMISSION_CAP, getExecutionRolloutSettings, setAutomationEnabled, setDryRun, setDailySubmissionCap, setEmergencyPaused, getRemainingDailySubmissionCapacity } = await import('./rollout')
 
 const DEFAULT_ROW = {
   id: true,
@@ -64,6 +64,20 @@ describe('rollout setters (#194)', () => {
     await setEmergencyPaused(true, 'founder', 'testing')
     expect((await getExecutionRolloutSettings()).emergencyPaused).toBe(true)
   })
+
+  it('setDailySubmissionCap refuses a cap above the hard ceiling', async () => {
+    // A safety control any caller can set to 150 or 1500 is not a safety
+    // control. Raising the ceiling must be a code+migration change.
+    await expect(setDailySubmissionCap(150, 'founder')).rejects.toThrow(/may not exceed/i)
+    await expect(setDailySubmissionCap(MAX_DAILY_SUBMISSION_CAP + 1, 'founder')).rejects.toThrow()
+    // ...and the stored value is untouched by the rejected call.
+    expect((await getExecutionRolloutSettings()).dailySubmissionCap).toBe(3)
+  })
+
+  it('setDailySubmissionCap accepts a cap at the ceiling', async () => {
+    await setDailySubmissionCap(MAX_DAILY_SUBMISSION_CAP, 'founder')
+    expect((await getExecutionRolloutSettings()).dailySubmissionCap).toBe(MAX_DAILY_SUBMISSION_CAP)
+  })
 })
 
 describe('getRemainingDailySubmissionCapacity (#194)', () => {
@@ -81,5 +95,19 @@ describe('getRemainingDailySubmissionCapacity (#194)', () => {
     const todayIso = new Date().toISOString()
     for (let i = 0; i < 10; i++) fake.tables.job_search_applications.push({ id: `a${i}`, status: 'SUBMITTED', submitted_at: todayIso })
     expect(await getRemainingDailySubmissionCapacity()).toBe(0)
+  })
+
+  it('counts SUBMISSION_UNCERTAIN against the cap — it may have reached the employer', async () => {
+    const todayIso = new Date().toISOString()
+    fake.tables.job_search_applications.push(
+      { id: 'a1', status: 'SUBMITTED', submitted_at: todayIso },
+      { id: 'a2', status: 'SUBMISSION_UNCERTAIN', submitted_at: todayIso },
+    )
+    expect(await getRemainingDailySubmissionCapacity()).toBe(1)
+  })
+
+  it('ignores attempts from a previous day', async () => {
+    fake.tables.job_search_applications.push({ id: 'old', status: 'SUBMITTED', submitted_at: '2020-01-01T00:00:00.000Z' })
+    expect(await getRemainingDailySubmissionCapacity()).toBe(3)
   })
 })

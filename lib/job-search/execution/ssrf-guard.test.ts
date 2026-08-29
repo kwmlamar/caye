@@ -67,3 +67,40 @@ describe('validateDestination — SSRF/network-safety guard (#194)', () => {
     expect(r.allowed).toBe(false)
   })
 })
+
+describe('validateDestination — credential/port/normalization tricks (post-audit)', () => {
+  it('rejects a URL with embedded credentials even when the host IS allowlisted', () => {
+    // The mirror image of the classic trick. `...@evil.example` already fails
+    // the host allowlist; THIS form passes it and would have shipped an
+    // Authorization header to the real ATS.
+    const r = validateDestination('https://user:pass@boards-api.greenhouse.io/v1/boards/x/jobs/1')
+    expect(r.allowed).toBe(false)
+    if (!r.allowed) expect(r.reason).toMatch(/embedded credentials/i)
+  })
+
+  it('rejects a username-only URL', () => {
+    expect(validateDestination('https://attacker@boards-api.greenhouse.io/x').allowed).toBe(false)
+  })
+
+  it('rejects an allowlisted host on a non-standard port', () => {
+    const r = validateDestination('https://boards-api.greenhouse.io:8443/v1/boards/x/jobs/1')
+    expect(r.allowed).toBe(false)
+    if (!r.allowed) expect(r.reason).toMatch(/port/i)
+  })
+
+  it('still allows the explicit default ports', () => {
+    expect(validateDestination('https://boards-api.greenhouse.io:443/x').allowed).toBe(true)
+    expect(validateDestination('http://boards-api.greenhouse.io:80/x').allowed).toBe(true)
+  })
+
+  it('normalizes a trailing-dot FQDN so it cannot slip past an exact-match allowlist', () => {
+    const r = validateDestination('https://boards-api.greenhouse.io./x')
+    expect(r.allowed).toBe(true)
+    if (r.allowed) expect(r.hostname).toBe('boards-api.greenhouse.io')
+  })
+
+  it('a lookalike suffix host still reports the attacker domain, so the exact-match allowlist rejects it', () => {
+    const r = validateDestination('https://boards-api.greenhouse.io.attacker.com/x')
+    if (r.allowed) expect(r.hostname).toBe('boards-api.greenhouse.io.attacker.com')
+  })
+})
