@@ -1,6 +1,7 @@
 import type { Tool } from './types'
 import { createServiceClient } from '@/lib/supabase-server'
 import { gateHighRisk } from './high-risk-gate'
+import { gateBoundedOutreachTarget } from './outreach-target-authorization'
 import { HIGH_RISK_TOOLS } from './high-risk-registry'
 import { cancelPendingExternalDraftsForConversation, EXTERNAL_DRAFT_INTENT_REQUIRED, verifyExternalDraftIntent } from './external-draft-intent'
 import { updateActiveWork } from '@/lib/whatsapp/active-work'
@@ -118,7 +119,9 @@ async function stageInlineDraftFallback(args: never, ctx: Parameters<AnyTool['ex
 }
 
 function registeredHighRiskTool(tool: AnyTool): AnyTool {
-  const gated = gateHighRisk(tool) as AnyTool
+  const gated = (tool.name === 'expand_outreach_target'
+    ? gateBoundedOutreachTarget(tool)
+    : gateHighRisk(tool)) as AnyTool
   if (tool.name === 'draft_in_inbox') {
     return { ...gated, async execute(args, ctx) {
       const intentError = await verifyExternalDraftIntent(ctx)
