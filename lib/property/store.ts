@@ -146,8 +146,8 @@ export async function getPropertySnapshot(workspaceId: string, propertyId: strin
   }
 }
 
-/** Founder-only presentation helper: resolve a canonical property to its owning workspace. */
-export async function getFounderPropertySnapshot(propertyId: string) {
+/** Resolves the canonical owning workspace for a property id, independent of caller-supplied scope. */
+export async function resolveFounderPropertyWorkspaceId(propertyId: string): Promise<string | null> {
   const supabase = createServiceClient()
   const { data, error } = await supabase
     .from('physical_properties')
@@ -155,8 +155,31 @@ export async function getFounderPropertySnapshot(propertyId: string) {
     .eq('id', propertyId)
     .maybeSingle()
   if (error) throw new Error('Could not resolve property workspace')
-  if (!data) return null
-  return getPropertySnapshot(data.workspace_id as string, propertyId)
+  return data ? (data.workspace_id as string) : null
+}
+
+/** Founder-only presentation helper: resolve a canonical property to its owning workspace. */
+export async function getFounderPropertySnapshot(propertyId: string) {
+  const workspaceId = await resolveFounderPropertyWorkspaceId(propertyId)
+  if (!workspaceId) return null
+  return getPropertySnapshot(workspaceId, propertyId)
+}
+
+/**
+ * Founder-only presentation helper: list properties across every workspace, not
+ * scoped to one. Mirrors the cross-workspace read authority already established
+ * by getFounderPropertySnapshot — founder tooling reads properties by their own
+ * id/identity, not by first knowing which workspace owns them.
+ */
+export async function listFounderProperties() {
+  const supabase = createServiceClient()
+  const { data, error } = await supabase
+    .from('physical_properties')
+    .select('id,name,location_label,status')
+    .neq('status', 'archived')
+    .order('updated_at', { ascending: false })
+  if (error) throw new Error('Could not list properties')
+  return data ?? []
 }
 
 export async function listProperties(workspaceId: string) {

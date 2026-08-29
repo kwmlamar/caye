@@ -97,6 +97,54 @@ describe('founder capability gateway route', () => {
     expect(JSON.stringify(mocks.invokeFounderReadCapability.mock.calls[0])).not.toContain('attacker-supplied-id')
   })
 
+  it('passes a caller-supplied propertyId through to the gateway for id-scoped capabilities', async () => {
+    mocks.requireFounder.mockResolvedValue({ id: 'trusted-founder-id' })
+    mocks.invokeFounderReadCapability.mockResolvedValue({
+      status: 'observed',
+      data: { property: { id: 'property-1' } },
+      evidence: [],
+      executionRef: null,
+      auditRef: null,
+      failure: null,
+    })
+
+    const req = new NextRequest('http://localhost/api/founder/capabilities', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        capability: 'property.snapshot',
+        version: 1,
+        workspaceId: null,
+        propertyId: 'property-1',
+      }),
+    })
+
+    const res = await POST(req)
+
+    expect(res.status).toBe(200)
+    expect(mocks.invokeFounderReadCapability).toHaveBeenCalledWith('trusted-founder-id', {
+      capability: 'property.snapshot',
+      version: 1,
+      workspaceId: null,
+      propertyId: 'property-1',
+      args: undefined,
+    })
+  })
+
+  it('rejects a non-string propertyId before invoking the gateway', async () => {
+    mocks.requireFounder.mockResolvedValue({ id: 'founder-user-id' })
+    const req = new NextRequest('http://localhost/api/founder/capabilities', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ capability: 'property.snapshot', version: 1, propertyId: 42 }),
+    })
+
+    const res = await POST(req)
+
+    expect(res.status).toBe(400)
+    expect(mocks.invokeFounderReadCapability).not.toHaveBeenCalled()
+  })
+
   it('rejects malformed invocation requests before execution', async () => {
     mocks.requireFounder.mockResolvedValue({ id: 'founder-user-id' })
     const req = new NextRequest('http://localhost/api/founder/capabilities', {

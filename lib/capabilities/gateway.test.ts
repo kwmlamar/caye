@@ -5,6 +5,8 @@ const mocks = vi.hoisted(() => ({
   attentionExecute: vi.fn(),
   engineeringExecute: vi.fn(),
   writeExecute: vi.fn(),
+  propertySnapshotExecute: vi.fn(),
+  propertyListExecute: vi.fn(),
 }))
 
 vi.mock('./catalog', () => ({
@@ -36,6 +38,20 @@ vi.mock('./catalog', () => ({
         access: 'write', risk: 'consequential', inputSchemaId: 'in', outputSchemaId: 'out',
       },
       execute: mocks.writeExecute,
+    }],
+    ['property.snapshot', {
+      manifest: {
+        name: 'property.snapshot', version: 1, namespace: 'property', description: 'property',
+        access: 'read', risk: 'read_only', inputSchemaId: 'in', outputSchemaId: 'out',
+      },
+      execute: mocks.propertySnapshotExecute,
+    }],
+    ['property.list', {
+      manifest: {
+        name: 'property.list', version: 1, namespace: 'property', description: 'property list',
+        access: 'read', risk: 'read_only', inputSchemaId: 'in', outputSchemaId: 'out',
+      },
+      execute: mocks.propertyListExecute,
     }],
   ]),
 }))
@@ -111,8 +127,84 @@ describe('founder capability gateway service', () => {
       'engineering.artifacts.list',
       'goals.list',
       'goals.write-test',
+      'property.list',
+      'property.snapshot',
     ])
     expect(manifest.every((item) => !('execute' in item))).toBe(true)
+  })
+
+  it('resolves property.list with no args and no workspace scope, for fresh-session discovery', async () => {
+    mocks.propertyListExecute.mockResolvedValue(observed([{ id: 'property-1', name: 'Bimini Villa' }]))
+
+    const result = await invokeFounderReadCapability('trusted-founder', {
+      capability: 'property.list',
+      version: 1,
+      workspaceId: null,
+      args: {},
+    })
+
+    expect(result.status).toBe('observed')
+    expect(mocks.propertyListExecute).toHaveBeenCalledWith({}, {
+      actor: { kind: 'founder', userId: 'trusted-founder' },
+      scope: { workspaceId: null },
+      caller: 'external_reasoner',
+    })
+  })
+
+  it('accepts propertyId only for a capability that declares an id-scoped selector', async () => {
+    mocks.propertySnapshotExecute.mockResolvedValue(observed({ property: { id: 'property-1' } }))
+
+    const result = await invokeFounderReadCapability('trusted-founder', {
+      capability: 'property.snapshot',
+      version: 1,
+      workspaceId: null,
+      propertyId: 'property-1',
+    })
+
+    expect(result.status).toBe('observed')
+    expect(mocks.propertySnapshotExecute).toHaveBeenCalledWith({ propertyId: 'property-1' }, {
+      actor: { kind: 'founder', userId: 'trusted-founder' },
+      scope: { workspaceId: null },
+      caller: 'external_reasoner',
+    })
+  })
+
+  it('fails closed when property.snapshot is invoked without a propertyId', async () => {
+    const result = await invokeFounderReadCapability('founder', {
+      capability: 'property.snapshot',
+      version: 1,
+      workspaceId: null,
+    })
+
+    expect(result).toMatchObject({ status: 'failed', failure: { code: 'invalid_args' } })
+    expect(mocks.propertySnapshotExecute).not.toHaveBeenCalled()
+  })
+
+  it('ignores a caller-supplied workspaceId for property.snapshot rather than using it as authority', async () => {
+    mocks.propertySnapshotExecute.mockResolvedValue(observed({ property: { id: 'property-1' } }))
+
+    await invokeFounderReadCapability('trusted-founder', {
+      capability: 'property.snapshot',
+      version: 1,
+      workspaceId: 'attacker-supplied-workspace',
+      propertyId: 'property-1',
+    })
+
+    expect(mocks.propertySnapshotExecute).toHaveBeenCalledWith({ propertyId: 'property-1' }, expect.objectContaining({
+      scope: { workspaceId: 'attacker-supplied-workspace' },
+    }))
+  })
+
+  it('rejects propertyId for a capability that does not declare an id-scoped selector', async () => {
+    const result = await invokeFounderReadCapability('founder', {
+      capability: 'goals.list',
+      version: 1,
+      workspaceId: null,
+      propertyId: 'smuggled-property',
+    })
+
+    expect(result).toMatchObject({ status: 'failed', failure: { code: 'invalid_args' } })
+    expect(mocks.goalsExecute).not.toHaveBeenCalled()
   })
 
   it('builds a fresh-session snapshot without exposing the founder auth id', async () => {

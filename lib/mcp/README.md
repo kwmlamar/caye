@@ -42,8 +42,8 @@ After the production deployment and Supabase configuration above:
 3. Choose **OAuth**. Do not choose **No Auth** or paste `CAYE_MCP_FOUNDER_TOKEN` anywhere.
 4. Select **Scan tools**. ChatGPT follows the protected-resource metadata to Supabase, registers a client, and opens Caye's `/oauth/consent` page.
 5. Sign in as a Caye founder and approve the explicitly shown read-only request. A non-founder account is denied; a valid OAuth token alone does not grant founder authority.
-6. Confirm the scan exposes exactly `caye_context_snapshot`, `caye_goals_list`, `caye_attention_list`, and `caye_engineering_artifacts_list`, then create/publish the app according to your ChatGPT workspace policy.
-7. In a fresh ChatGPT conversation, enable the app and call `caye_goals_list`. Supabase refresh tokens keep the connection valid after short-lived access tokens expire.
+6. Confirm the scan exposes exactly `caye_context_snapshot`, `caye_goals_list`, `caye_attention_list`, `caye_engineering_artifacts_list`, `caye_property_list`, and `caye_property_snapshot`, then create/publish the app according to your ChatGPT workspace policy.
+7. In a fresh ChatGPT conversation, enable the app and call `caye_goals_list`. Supabase refresh tokens keep the connection valid after short-lived access tokens expire. For property questions, call `caye_property_list` first — a fresh session has no other way to learn a valid property id — then pass the `id` it returns to `caye_property_snapshot`.
 
 ## Server-to-server client connection
 
@@ -61,5 +61,7 @@ The v0.1 tool surface is intentionally read-only for both OAuth and server-to-se
 - `caye_goals_list`
 - `caye_attention_list`
 - `caye_engineering_artifacts_list`
+- `caye_property_list` (no arguments; never workspace-scoped — discovers founder-visible properties by name/location so a fresh session can find a valid `propertyId` without already knowing one)
+- `caye_property_snapshot` (takes a `propertyId` from `caye_property_list`, not a `workspaceId` — the founder gateway resolves the owning workspace canonically from the property itself)
 
 No SQL, storage, generic RPC, arbitrary HTTP, filesystem, or write capability is exposed by this adapter.
