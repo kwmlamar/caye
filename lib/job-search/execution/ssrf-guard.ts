@@ -95,7 +95,27 @@ export function validateDestination(rawUrl: string): DestinationCheck {
     return { allowed: false, hostname: url.hostname || null, reason: `Non-HTTP(S) scheme "${url.protocol}" is never a valid submission destination.` }
   }
 
-  const hostname = url.hostname.toLowerCase()
+  // Embedded credentials. `https://boards-api.greenhouse.io@evil.example/`
+  // already fails the host allowlist (URL parsing puts `evil.example` in
+  // hostname), but the mirror image — `https://user:pass@boards-api.greenhouse.io/`
+  // — passes the allowlist and would silently ship an Authorization header to
+  // the ATS. A legitimate ATS URL never carries userinfo; refuse both shapes
+  // outright so neither depends on the allowlist catching it.
+  if (url.username || url.password) {
+    return { allowed: false, hostname: url.hostname || null, reason: 'URL carries embedded credentials (user:pass@) — never a legitimate ATS destination.' }
+  }
+
+  // Non-default ports. A real ATS is on 443 (or 80 pre-upgrade). An explicit
+  // odd port is either a mistake or an attempt to reach something else on an
+  // allowlisted name; either way it is not a destination we submit to.
+  if (url.port !== '' && url.port !== '443' && url.port !== '80') {
+    return { allowed: false, hostname: url.hostname || null, reason: `Non-standard port ${url.port} is never a valid ATS destination.` }
+  }
+
+  // Trailing-dot FQDN ("host.io.") is a distinct string that would miss an
+  // exact-match allowlist while resolving identically. Normalize it here so
+  // the allowlist sees one canonical form.
+  const hostname = url.hostname.toLowerCase().replace(/\.$/, '')
 
   if (PROHIBITED_HOSTNAMES.has(hostname)) {
     return { allowed: false, hostname, reason: `"${hostname}" is a loopback/local hostname, never a legitimate ATS destination.` }

@@ -81,8 +81,23 @@ export async function setDryRun(dryRun: boolean, actor: string): Promise<void> {
   await updateSettings({ dry_run: dryRun }, actor, { execution_dry_run: dryRun })
 }
 
+/**
+ * Hard ceiling on the rollout cap, enforced in code (and mirrored by a CHECK
+ * constraint in the migration) rather than left to the caller.
+ *
+ * The cap exists to bound blast radius during initial validation. Without an
+ * upper bound, one confirmed `set_daily_submission_cap` call with a fat-
+ * fingered or model-suggested argument (150, 1500) quietly removes the very
+ * limit the other controls are counting on — a safety control that can be set
+ * to infinity is not a safety control.
+ */
+export const MAX_DAILY_SUBMISSION_CAP = 10
+
 export async function setDailySubmissionCap(cap: number, actor: string): Promise<void> {
   if (!Number.isInteger(cap) || cap < 0) throw new Error('Daily submission cap must be a non-negative integer.')
+  if (cap > MAX_DAILY_SUBMISSION_CAP) {
+    throw new Error(`Daily submission cap may not exceed ${MAX_DAILY_SUBMISSION_CAP}. Raising the ceiling itself is a deliberate code change, not a runtime setting.`)
+  }
   await updateSettings({ daily_submission_cap: cap }, actor, { execution_daily_submission_cap: cap })
 }
 
@@ -90,6 +105,32 @@ export async function setEmergencyPaused(paused: boolean, actor: string, reason?
   await updateSettings({ emergency_paused: paused }, actor, { execution_emergency_paused: paused, reason: reason ?? null })
 }
 
+/**
+ * Remaining submissions under today's cap.
+ *
+ * NOT A RESERVATION — and deliberately named/documented as such. This is a
+ * point-in-time read. Two workers can both read "2 remaining" and both
+ * proceed, which is how a cap of 3 becomes 4+ submissions. That race is
+ * currently harmless ONLY because no provider can submit at all
+ * (AtsExecutorProvider.canSubmit is false everywhere; see
+ * providers/greenhouse.ts). It is not harmless the moment that changes.
+ *
+ * BEFORE ANY PROVIDER SETS canSubmit = true, this must be replaced by an
+ * atomic reservation: a row inserted into a per-day counter table under a
+ * unique constraint (or a SECURITY DEFINER RPC doing an atomic
+ * increment-and-check with a fixed search_path, PUBLIC/anon/authenticated
+ * revoked, service_role granted, and behavioral SET ROLE privilege tests —
+ * the corrected pattern from the CAY-192 audit). A worker that cannot
+ * reserve capacity must not submit. Counting after the fact cannot bound
+ * concurrent writers, no matter how the count is written.
+ *
+ * SUBMISSION_UNCERTAIN counts against the cap alongside SUBMITTED: an
+ * uncertain attempt may well have reached the employer, and a cap that
+ * ignores it would let ambiguous attempts consume unbounded real capacity.
+ * (Both statuses stamp `submitted_at` at release time — for an uncertain
+ * attempt it records when the possibly-delivered attempt was made, which is
+ * exactly the timestamp a daily cap needs.)
+ */
 export async function getRemainingDailySubmissionCapacity(): Promise<number> {
   const settings = await getExecutionRolloutSettings()
   const supabase = createServiceClient()
@@ -99,7 +140,7 @@ export async function getRemainingDailySubmissionCapacity(): Promise<number> {
   const { count, error } = await supabase
     .from('job_search_applications')
     .select('id', { count: 'exact', head: true })
-    .eq('status', 'SUBMITTED')
+    .in('status', ['SUBMITTED', 'SUBMISSION_UNCERTAIN'])
     .gte('submitted_at', todayStart.toISOString())
 
   if (error) return 0

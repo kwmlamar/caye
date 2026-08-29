@@ -175,7 +175,11 @@ create table if not exists public.job_search_execution_settings (
   id boolean primary key default true check (id),
   automation_enabled boolean not null default false,
   dry_run boolean not null default true,
-  daily_submission_cap integer not null default 3 check (daily_submission_cap >= 0),
+  -- Upper bound enforced in the schema, not only in rollout.ts's
+  -- setDailySubmissionCap: a safety cap that any writer can set to an
+  -- arbitrary number is not a safety cap. Raising this ceiling is a
+  -- deliberate migration, never a runtime setting.
+  daily_submission_cap integer not null default 3 check (daily_submission_cap >= 0 and daily_submission_cap <= 10),
   allowlisted_providers jsonb not null default '["greenhouse"]'::jsonb,
   allowlisted_employer_domains jsonb not null default '[]'::jsonb,
   emergency_paused boolean not null default false,
