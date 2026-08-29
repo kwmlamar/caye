@@ -144,6 +144,34 @@ export function selectToolSurface(args: Pick<ToolLoopArgs, 'tools' | 'mode' | 'r
   }
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/**
+ * Tool-name leaks are an abstraction/UX failure, not evidence that the whole
+ * operator reply is unsafe. The old guard replaced the ENTIRE response with
+ * "No operational action was taken", erasing valid partial progress and even
+ * contradicting real tool outcomes. Redact only the closed-vocabulary internal
+ * identifiers and preserve the already action-grounded business content.
+ */
+export function redactToolNameLeaks(text: string, toolNames: readonly string[]): {
+  text: string
+  redactedNames: string[]
+} {
+  let sanitized = text
+  const redactedNames: string[] = []
+  let leaked = detectToolNameLeak(sanitized, toolNames)
+
+  while (leaked) {
+    redactedNames.push(leaked)
+    sanitized = sanitized.replace(new RegExp(`\\b${escapeRegExp(leaked)}\\b`, 'g'), 'the relevant operation')
+    leaked = detectToolNameLeak(sanitized, toolNames)
+  }
+
+  return { text: sanitized, redactedNames }
+}
+
 /**
  * Run a Claude tool-use loop against the registered back-office tools.
  *
@@ -196,22 +224,17 @@ export async function runToolLoop(args: ToolLoopArgs): Promise<ToolLoopResult> {
     }
     return grounded
   }
-  // Backstop for a model naming its own tools out loud (2026-08-17 Pam Ott
-  // incident — "should I stage it as a send_reply?"). The prompt already
-  // says never to do this; this is the code-level net under that, same
-  // shape as applyActionGrounding above. Checked against the tools this
-  // turn's registry actually contains, so it can never drift from what's
-  // really callable. On a hit, the whole reply is swapped for a clean
-  // generic line rather than trying to surgically edit around the leaked
-  // token — same reaction this codebase already uses for every other
-  // internal-leak catch (operator-brief.ts, outbound-worker/route.ts).
   const applyToolNameLeakGuard = (text: string): string => {
-    const leaked = detectToolNameLeak(text, toolRegistry.map((t) => t.name))
-    if (!leaked) return text
-    console.error(
-      `[caye-agent/execute] reply named an internal tool ("${leaked}") — workspace=${args.ctx.workspaceId} — falling back`
+    const { text: sanitized, redactedNames } = redactToolNameLeaks(
+      text,
+      toolRegistry.map((t) => t.name)
     )
-    return 'I could not safely complete that request in this turn. No operational action was taken.'
+    if (redactedNames.length > 0) {
+      console.error(
+        `[caye-agent/execute] redacted internal tool name(s) from operator reply — workspace=${args.ctx.workspaceId} names=${redactedNames.join(',')}`
+      )
+    }
+    return sanitized
   }
 
   // PHASE 3B — structural final-output safety for front-desk (2026-08-16).
