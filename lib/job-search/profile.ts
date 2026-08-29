@@ -25,6 +25,9 @@ export type JobSearchProfile = {
   workAuthorization: Record<string, unknown>
   locationPreferences: Record<string, unknown>
   targetTitles: string[]
+  /** CAY-194: required by real ATS submission forms. Null until the founder verifies their profile with real contact details. */
+  contactEmail: string | null
+  contactPhone: string | null
 }
 
 export async function getActiveProfile(): Promise<JobSearchProfile | null> {
@@ -51,6 +54,8 @@ export async function getActiveProfile(): Promise<JobSearchProfile | null> {
     workAuthorization: data.work_authorization ?? {},
     locationPreferences: data.location_preferences ?? {},
     targetTitles: Array.isArray(data.target_titles) ? data.target_titles : [],
+    contactEmail: data.contact_email ?? null,
+    contactPhone: data.contact_phone ?? null,
   }
 }
 
