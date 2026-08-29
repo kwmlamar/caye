@@ -19,9 +19,50 @@
  */
 import type { HighRiskSemanticKey } from './types'
 
+/**
+ * Labels whose meaning DEPENDS ON A NEGATION that a single canonical
+ * yes/no fact cannot carry.
+ *
+ * This is the sharpest failure mode in the whole classifier. Consider two
+ * real questions:
+ *
+ *   A. "Will you now or in the future require sponsorship?"
+ *   B. "Are you legally authorized to work in the US WITHOUT sponsorship?"
+ *
+ * Both contain "sponsor". Both were previously classified `sponsorship` and
+ * would therefore reuse the SAME stored answer — but the correct answers are
+ * exact opposites. Answering B with A's answer is not a near-miss; it is an
+ * affirmative false statement to an employer on a legal question.
+ *
+ * A keyword classifier cannot resolve this, and inverting a boolean by
+ * pattern-matching "without"/"not" is exactly the kind of clever inference
+ * that must never sit in a consequential path. So: any label matching a
+ * negation marker alongside a polarity-sensitive topic is refused outright
+ * (classified `null` -> unresolved -> escalated to the founder), rather than
+ * mapped to a key whose stored answer would silently invert.
+ */
+const NEGATION_MARKER = /\bwithout\b|\bnot\b|\bno longer\b|\bnever\b|\bunable\b|\bdo not\b|\bdon'?t\b|\bexcept\b|\bother than\b/i
+
+/** Topics where a stored yes/no answer flips meaning under negation. */
+const POLARITY_SENSITIVE = new Set<string>([
+  'sponsorship',
+  'work_authorization',
+  'citizenship',
+  'clearance',
+  'criminal_history',
+  'drivers_license',
+  'relocation',
+  'willingness_to_travel',
+])
+
 const PATTERNS: [HighRiskSemanticKey | 'first_name' | 'last_name' | 'email' | 'phone' | 'resume' | 'cover_letter', RegExp][] = [
+  // work_authorization is tested BEFORE sponsorship on purpose. "Are you
+  // legally authorized to work in the United States?" is a work-authorization
+  // question even when it goes on to mention sponsorship; the original order
+  // classified every such label as `sponsorship` and would have answered an
+  // authorization question from a sponsorship fact.
+  ['work_authorization', /work\s+authoriz|authoriz(?:ed|ation)\s+to\s+work|legally\s+(?:able|eligible|authorized)\s+to\s+work|right\s+to\s+work|eligible\s+to\s+work/i],
   ['sponsorship', /sponsor/i],
-  ['work_authorization', /work\s+authoriz|authorized\s+to\s+work|legally\s+(?:able|eligible)\s+to\s+work/i],
   ['citizenship', /citizen(?:ship)?/i],
   ['clearance', /security\s+clearance|clearance\s+level/i],
   ['criminal_history', /criminal|convict|felony/i],
@@ -46,7 +87,10 @@ const PATTERNS: [HighRiskSemanticKey | 'first_name' | 'last_name' | 'email' | 'p
 
 export function classifyFieldLabel(label: string): string | null {
   for (const [key, pattern] of PATTERNS) {
-    if (pattern.test(label)) return key
+    if (!pattern.test(label)) continue
+    // Refuse rather than risk an inverted answer. See NEGATION_MARKER above.
+    if (POLARITY_SENSITIVE.has(key) && NEGATION_MARKER.test(label)) return null
+    return key
   }
   return null
 }
