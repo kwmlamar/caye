@@ -142,4 +142,9 @@ export const REPO_MIGRATIONS: readonly string[] = [
   '20260828_property_intelligence_v1_current_state',
   '20260828_property_intelligence_v1_provenance_scope',
   '20260828z_job_search_operator_v1',
+  '20260828zz_property_telemetry_v1',
+  '20260829_engineering_project_intelligence_v1',
+  '20260829_property_planned_sensor_identity',
+  '20260829b_job_search_application_execution',
+  '20260829c_job_search_browser_execution',
 ]

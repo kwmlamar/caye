@@ -131,7 +131,7 @@ describe('greenhouseAtsProvider.discoverFields (#194)', () => {
   })
 })
 
-describe('greenhouseAtsProvider.submit — refuses, and never touches the network (#194, post-audit)', () => {
+describe('greenhouseAtsProvider browser capability (#216)', () => {
   let fetchSpy: ReturnType<typeof vi.spyOn>
 
   const field: DiscoveredField = {
@@ -160,47 +160,13 @@ describe('greenhouseAtsProvider.submit — refuses, and never touches the networ
     }
   }
 
-  beforeEach(() => {
-    fetchSpy = vi.spyOn(globalThis, 'fetch')
-  })
-  afterEach(() => {
-    fetchSpy.mockRestore()
+  it('declares the applicant-controlled browser implementation explicitly capable', () => {
+    expect(greenhouseAtsProvider.canSubmit).toBe(true)
   })
 
-  // The single most important guarantee in this file. Greenhouse's
-  // application-submission endpoint requires the EMPLOYER's Job Board API key
-  // as HTTP Basic Auth (their docs: GETs are public, "only the POST
-  // submission endpoint requires authentication"). We cannot hold that key
-  // for an arbitrary employer, so there is no lawful automated submission
-  // channel and the provider must never open a connection to attempt one.
-  it('declares canSubmit=false so the executor can never route a real submission here', () => {
-    expect(greenhouseAtsProvider.canSubmit).toBe(false)
-  })
-
-  it('returns not_supported and makes ZERO network calls, whatever it is handed', async () => {
-    const result = await greenhouseAtsProvider.submit(request(), [field])
-    expect(result.outcome).toBe('not_supported')
-    expect(fetchSpy).not.toHaveBeenCalled()
-  })
-
-  it('explains the real reason (employer-held API key), not a transient-sounding failure', async () => {
-    const result = await greenhouseAtsProvider.submit(request(), [field])
-    if (result.outcome !== 'not_supported') throw new Error('expected not_supported')
-    expect(result.reason).toMatch(/API key/i)
-    // 'not_supported' carries no `retryable` field at all — this outcome must
-    // never be mistaken for something a retry could fix.
-    expect(result).not.toHaveProperty('retryable')
-  })
-
-  it('still refuses when every required field IS resolved — completeness is not authorization', async () => {
-    const result = await greenhouseAtsProvider.submit(request(), [field])
-    expect(result.outcome).toBe('not_supported')
-    expect(fetchSpy).not.toHaveBeenCalled()
-  })
-
-  it('never reports submitted, and never produces confirmation evidence', async () => {
-    const result = await greenhouseAtsProvider.submit(request(), [field])
-    expect(result.outcome).not.toBe('submitted')
-    expect(result).not.toHaveProperty('evidence')
+  it('does not reintroduce the employer API POST path', () => {
+    // Browser submission is deliberately implemented in greenhouse-browser;
+    // the public API adapter remains read-only field discovery.
+    expect(greenhouseAtsProvider.submit.toString()).toMatch(/submitGreenhouseInBrowser/)
   })
 })

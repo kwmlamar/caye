@@ -69,6 +69,7 @@ import type { DiscoveredField, FieldDiscoveryResult, SubmissionResult } from '..
 import { safeFetch } from '../safe-fetch'
 import { isAllowedAtsHost } from '../allowed-destinations'
 import { classifyFieldLabel } from '../field-classifier'
+import { submitGreenhouseInBrowser } from './greenhouse-browser'
 
 const GREENHOUSE_API_HOST = 'boards-api.greenhouse.io'
 const REQUEST_TIMEOUT_MS = 15_000
@@ -150,7 +151,13 @@ export const greenhouseAtsProvider: AtsExecutorProvider = {
   providerKey: 'greenhouse',
 
   /** See the module header. Greenhouse's public API has no applicant-usable submission channel. */
-  canSubmit: false,
+  canSubmit: true,
+
+  async dryRun(request, fields) {
+    const result = await submitGreenhouseInBrowser({ ...request, dryRun: true }, fields)
+    if (result.outcome === 'failed' && /Dry run completed/.test(result.reason)) return { outcome: 'ready' as const, reason: result.reason }
+    return { outcome: 'needs_human' as const, reason: result.outcome === 'submitted' ? 'Dry-run browser attempted an impossible submitted state.' : result.reason }
+  },
 
   async discoverFields(applyUrl: string): Promise<FieldDiscoveryResult> {
     const parsed = parseGreenhouseApplyUrl(applyUrl)
@@ -218,11 +225,7 @@ export const greenhouseAtsProvider: AtsExecutorProvider = {
    * the request-building code was deleted rather than disabled, so no future
    * config change can resurrect an unauthenticated submission attempt.
    */
-  async submit(): Promise<SubmissionResult> {
-    return {
-      outcome: 'not_supported',
-      reason:
-        "Greenhouse's application-submission endpoint requires the employer's own Job Board API key (HTTP Basic Auth); only the read-only job and question endpoints are public. Caye cannot hold that key for an employer, so it never attempts a submission.",
-    }
+  async submit(request, fields): Promise<SubmissionResult> {
+    return submitGreenhouseInBrowser(request, fields)
   },
 }
