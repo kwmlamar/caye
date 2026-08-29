@@ -9,7 +9,28 @@ vi.mock('../events', () => ({ logJobSearchEvent: vi.fn(async () => {}) }))
 
 const discoverFields = vi.fn()
 const submit = vi.fn()
-vi.mock('./providers/greenhouse', () => ({ greenhouseAtsProvider: { providerKey: 'greenhouse', discoverFields: (...args: unknown[]) => discoverFields(...args), submit: (...args: unknown[]) => submit(...args) } }))
+/**
+ * `canSubmit` mirrors the real provider's capability flag. It is FALSE by
+ * default here because that is what the real Greenhouse provider declares —
+ * its submission endpoint needs the employer's own API key. Tests that need
+ * to exercise the submission-path safety logic opt in explicitly via
+ * `allowSubmission()`, which makes it impossible to write a test that
+ * accidentally assumes submission is available.
+ */
+let canSubmit = false
+const allowSubmission = () => {
+  canSubmit = true
+}
+vi.mock('./providers/greenhouse', () => ({
+  greenhouseAtsProvider: {
+    providerKey: 'greenhouse',
+    get canSubmit() {
+      return canSubmit
+    },
+    discoverFields: (...args: unknown[]) => discoverFields(...args),
+    submit: (...args: unknown[]) => submit(...args),
+  },
+}))
 
 const { executeApplication } = await import('./executor')
 
@@ -32,13 +53,30 @@ function baseline() {
   })
 }
 
-const sponsorshipField = { providerFieldId: 'question_555', label: 'Will you require sponsorship?', semanticKey: 'sponsorship', inputType: 'select' as const, required: true, allowedOptions: ['Yes', 'No'], confidence: 0.9 }
+const sponsorshipField = { providerFieldId: 'question_555', label: 'Will you require sponsorship?', semanticKey: 'sponsorship', inputType: 'text' as const, required: true, allowedOptions: null, confidence: 0.9 }
 const unknownField = { providerFieldId: 'question_999', label: 'Anything else you want us to know?', semanticKey: null, inputType: 'textarea' as const, required: true, allowedOptions: null, confidence: 0 }
+
+/** A canonical fact that is recent enough to pass the re-confirmation window. */
+function fact(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'fact-1',
+    profile_id: 'profile-1',
+    canonical_key: 'sponsorship',
+    category: 'work_authorization',
+    question: 'Will you require sponsorship?',
+    answer: 'No, I have OPT/EAD.',
+    source: 'founder-direct',
+    superseded_at: null,
+    last_verified_at: new Date().toISOString(),
+    ...overrides,
+  }
+}
 
 beforeEach(() => {
   fake = baseline()
   discoverFields.mockReset()
   submit.mockReset()
+  canSubmit = false
 })
 
 function latestAttempt() {
@@ -66,8 +104,9 @@ describe('executeApplication — unresolved/unknown fields always escalate, neve
 
 describe('executeApplication — canonical answer resolution (#194 scenarios 8 & 9)', () => {
   it('a verified founder-direct canonical answer fills the field correctly', async () => {
-    fake.tables.job_search_profile_facts.push({ id: 'fact-1', profile_id: 'profile-1', canonical_key: 'sponsorship', category: 'work_authorization', question: 'Will you require sponsorship?', answer: 'No, I have OPT/EAD.', source: 'founder-direct', superseded_at: null })
+    fake.tables.job_search_profile_facts.push(fact())
     fake.tables.job_search_execution_settings[0].dry_run = false
+    allowSubmission()
     discoverFields.mockResolvedValue({ outcome: 'clear', fields: [sponsorshipField], domainValidations: [] })
     submit.mockResolvedValue({ outcome: 'submitted', evidence: { confirmationId: 'gh-123', method: 'ats_api_response', receivedAt: '2026-01-01T00:00:00.000Z' }, response: { status: 200 } })
 
@@ -80,7 +119,7 @@ describe('executeApplication — canonical answer resolution (#194 scenarios 8 &
   })
 
   it('an INFERRED (never verified) fact never auto-fills a high-risk field', async () => {
-    fake.tables.job_search_profile_facts.push({ id: 'fact-2', profile_id: 'profile-1', canonical_key: 'sponsorship', category: 'work_authorization', question: 'Will you require sponsorship?', answer: 'Guessed answer', source: 'inferred', superseded_at: null })
+    fake.tables.job_search_profile_facts.push(fact({ id: 'fact-2', answer: 'Guessed answer', source: 'inferred' }))
     discoverFields.mockResolvedValue({ outcome: 'clear', fields: [sponsorshipField], domainValidations: [] })
 
     const result = await executeApplication('app-1')
@@ -90,7 +129,7 @@ describe('executeApplication — canonical answer resolution (#194 scenarios 8 &
   })
 
   it('a superseded (no longer active) fact never auto-fills', async () => {
-    fake.tables.job_search_profile_facts.push({ id: 'fact-3', profile_id: 'profile-1', canonical_key: 'sponsorship', category: 'work_authorization', question: 'x', answer: 'stale', source: 'founder-direct', superseded_at: '2026-01-01T00:00:00.000Z' })
+    fake.tables.job_search_profile_facts.push(fact({ id: 'fact-3', answer: 'stale', superseded_at: '2026-01-01T00:00:00.000Z' }))
     discoverFields.mockResolvedValue({ outcome: 'clear', fields: [sponsorshipField], domainValidations: [] })
     const result = await executeApplication('app-1')
     expect(result.outcome).toBe('needs_human')
@@ -99,7 +138,8 @@ describe('executeApplication — canonical answer resolution (#194 scenarios 8 &
 
 describe('executeApplication — dry run (#194 scenario 26)', () => {
   it('dry run never calls provider.submit and never reaches SUBMITTED', async () => {
-    fake.tables.job_search_profile_facts.push({ id: 'fact-1', profile_id: 'profile-1', canonical_key: 'sponsorship', category: 'work_authorization', question: 'q', answer: 'No.', source: 'founder-direct', superseded_at: null })
+    fake.tables.job_search_profile_facts.push(fact({ answer: 'No.' }))
+    allowSubmission() // even with a submission-capable provider, dry run must not submit
     // dry_run defaults to true in baseline()
     discoverFields.mockResolvedValue({ outcome: 'clear', fields: [sponsorshipField], domainValidations: [] })
 
@@ -130,6 +170,7 @@ describe('executeApplication — CAPTCHA/anti-bot/prohibited-destination discove
 describe('executeApplication — audit trail (#194 scenario 27)', () => {
   it('records the exact resume artifact id, provider, and confirmation evidence for a real submission', async () => {
     fake.tables.job_search_execution_settings[0].dry_run = false
+    allowSubmission()
     discoverFields.mockResolvedValue({ outcome: 'clear', fields: [], domainValidations: [{ url: GREENHOUSE_URL, hostname: 'job-boards.greenhouse.io', allowed: true, reason: 'ok' }] })
     submit.mockResolvedValue({ outcome: 'submitted', evidence: { confirmationId: 'gh-999', method: 'ats_api_response', receivedAt: '2026-01-01T00:00:00.000Z' }, response: { status: 201 } })
 
@@ -146,6 +187,7 @@ describe('executeApplication — audit trail (#194 scenario 27)', () => {
 describe('executeApplication — network/uncertainty classification (#194 scenarios 16, 17, 18)', () => {
   it('a retryable failed submission is returned to PREPARED, safe to retry later', async () => {
     fake.tables.job_search_execution_settings[0].dry_run = false
+    allowSubmission()
     discoverFields.mockResolvedValue({ outcome: 'clear', fields: [], domainValidations: [] })
     submit.mockResolvedValue({ outcome: 'failed', reason: 'network error before dispatch', retryable: true })
 
@@ -157,6 +199,7 @@ describe('executeApplication — network/uncertainty classification (#194 scenar
 
   it('SUBMISSION_UNCERTAIN is never automatically retried by a second executeApplication call', async () => {
     fake.tables.job_search_execution_settings[0].dry_run = false
+    allowSubmission()
     discoverFields.mockResolvedValue({ outcome: 'clear', fields: [], domainValidations: [] })
     submit.mockResolvedValue({ outcome: 'submission_uncertain', reason: 'connection reset mid-response' })
 
@@ -180,6 +223,156 @@ describe('executeApplication — resource/claim lifecycle on unexpected failure 
     expect(result.outcome).toBe('needs_human')
     expect(fake.tables.job_search_applications[0].status).not.toBe('APPLYING')
     expect(fake.tables.job_search_applications[0].execution_claim_token).toBeNull()
+  })
+})
+
+describe('executeApplication — provider capability gate (post-audit)', () => {
+  it('a provider that declares canSubmit=false is never asked to submit, even with automation on and dry run off', async () => {
+    fake.tables.job_search_execution_settings[0].dry_run = false
+    // canSubmit stays false — the real Greenhouse provider's actual value.
+    discoverFields.mockResolvedValue({ outcome: 'clear', fields: [], domainValidations: [] })
+    submit.mockResolvedValue({ outcome: 'not_supported', reason: "requires the employer's own Job Board API key" })
+
+    const result = await executeApplication('app-1')
+
+    expect(result.outcome).toBe('needs_human')
+    expect(fake.tables.job_search_applications[0].status).toBe('NEEDS_HUMAN')
+    // Never SUBMITTED, and the recorded attempt says needs_human, not submitted.
+    expect(latestAttempt().outcome).toBe('needs_human')
+    expect(latestAttempt().confirmation_evidence).toBeNull()
+  })
+
+  it('the founder-facing reason explains it is prepared, without leaking internals', async () => {
+    fake.tables.job_search_execution_settings[0].dry_run = false
+    discoverFields.mockResolvedValue({ outcome: 'clear', fields: [], domainValidations: [] })
+    submit.mockResolvedValue({ outcome: 'not_supported', reason: "Greenhouse's submission endpoint requires the employer's own Job Board API key." })
+
+    const result = await executeApplication('app-1')
+
+    if (result.outcome !== 'needs_human') throw new Error('expected needs_human')
+    expect(result.reason).toMatch(/API key/i)
+    expect(result.reason).not.toMatch(/claim_token|supabase|job_search_|TTL/i)
+  })
+})
+
+describe('executeApplication — rollout revalidation after the claim (TOCTOU, post-audit)', () => {
+  // Preflight reads the kill switches before the claim; discovery then takes
+  // real wall-clock time. Each of these flips a switch DURING that window and
+  // asserts the switch still wins.
+  function flipDuringDiscovery(patch: Record<string, unknown>) {
+    discoverFields.mockImplementation(async () => {
+      Object.assign(fake.tables.job_search_execution_settings[0], patch)
+      return { outcome: 'clear', fields: [], domainValidations: [] }
+    })
+  }
+
+  it('emergency pause issued between preflight and submit prevents submission', async () => {
+    fake.tables.job_search_execution_settings[0].dry_run = false
+    allowSubmission()
+    flipDuringDiscovery({ emergency_paused: true })
+
+    const result = await executeApplication('app-1')
+
+    expect(submit).not.toHaveBeenCalled()
+    expect(result.outcome).toBe('needs_human')
+    if (result.outcome === 'needs_human') expect(result.reason).toMatch(/emergency-paused/i)
+    expect(fake.tables.job_search_applications[0].status).toBe('NEEDS_HUMAN')
+  })
+
+  it('automation disabled between preflight and submit prevents submission', async () => {
+    fake.tables.job_search_execution_settings[0].dry_run = false
+    allowSubmission()
+    flipDuringDiscovery({ automation_enabled: false })
+
+    const result = await executeApplication('app-1')
+
+    expect(submit).not.toHaveBeenCalled()
+    expect(result.outcome).toBe('needs_human')
+    if (result.outcome === 'needs_human') expect(result.reason).toMatch(/disabled/i)
+  })
+
+  it('dry run re-enabled between preflight and submit downgrades to a dry run — no real submission', async () => {
+    fake.tables.job_search_execution_settings[0].dry_run = false
+    allowSubmission()
+    flipDuringDiscovery({ dry_run: true })
+
+    const result = await executeApplication('app-1')
+
+    expect(submit).not.toHaveBeenCalled()
+    expect(result.outcome).toBe('needs_human')
+    if (result.outcome === 'needs_human') expect(result.dryRun).toBe(true)
+    expect(latestAttempt().dry_run).toBe(true)
+  })
+})
+
+describe('executeApplication — a real submission is never reported without durable evidence (post-audit)', () => {
+  it('a submission whose claim was reaped mid-flight reports uncertain, not submitted', async () => {
+    fake.tables.job_search_execution_settings[0].dry_run = false
+    allowSubmission()
+    discoverFields.mockResolvedValue({ outcome: 'clear', fields: [], domainValidations: [] })
+    submit.mockImplementation(async () => {
+      // Simulate the lease being reaped/stolen while the POST was in flight:
+      // the token no longer matches, so the release will match zero rows.
+      fake.tables.job_search_applications[0].execution_claim_token = null
+      return { outcome: 'submitted', evidence: { confirmationId: 'gh-777', method: 'ats_api_response', receivedAt: '2026-01-01T00:00:00.000Z' }, response: { status: 200 } }
+    })
+
+    const result = await executeApplication('app-1')
+
+    // We really did submit, but we could not finalize the row — reporting
+    // "submitted" here would assert a state the database does not hold.
+    expect(result.outcome).toBe('submission_uncertain')
+    if (result.outcome === 'submission_uncertain') expect(result.reason).toMatch(/gh-777/)
+    expect(fake.tables.job_search_applications[0].status).not.toBe('SUBMITTED')
+  })
+
+  it('the audit row is written BEFORE the status flip, so evidence can never be missing for a SUBMITTED row', async () => {
+    fake.tables.job_search_execution_settings[0].dry_run = false
+    allowSubmission()
+    discoverFields.mockResolvedValue({ outcome: 'clear', fields: [], domainValidations: [] })
+    submit.mockResolvedValue({ outcome: 'submitted', evidence: { confirmationId: 'gh-555', method: 'ats_api_response', receivedAt: '2026-01-01T00:00:00.000Z' }, response: { status: 200 } })
+
+    const result = await executeApplication('app-1')
+
+    expect(result.outcome).toBe('submitted')
+    const app = fake.tables.job_search_applications[0]
+    expect(app.status).toBe('SUBMITTED')
+    const attempt = latestAttempt()
+    expect(attempt.outcome).toBe('submitted')
+    expect((attempt.confirmation_evidence as { confirmationId: string }).confirmationId).toBe('gh-555')
+  })
+
+  it('an uncertain submission consumes daily submission capacity (it may have reached the employer)', async () => {
+    fake.tables.job_search_execution_settings[0].dry_run = false
+    allowSubmission()
+    discoverFields.mockResolvedValue({ outcome: 'clear', fields: [], domainValidations: [] })
+    submit.mockResolvedValue({ outcome: 'submission_uncertain', reason: 'connection reset' })
+
+    await executeApplication('app-1')
+
+    const app = fake.tables.job_search_applications[0]
+    expect(app.status).toBe('SUBMISSION_UNCERTAIN')
+    expect(app.submitted_at).toBeTruthy()
+  })
+})
+
+describe('executeApplication — optional fields never block and are never auto-filled (post-audit)', () => {
+  const optionalDemographic = { providerFieldId: 'question_eeoc', label: 'Gender', semanticKey: 'demographic', inputType: 'select' as const, required: false, allowedOptions: [{ label: 'Decline to self-identify', value: '3' }], confidence: 0.9 }
+
+  it('an optional voluntary self-identification field is left blank, not escalated and not auto-filled', async () => {
+    fake.tables.job_search_profile_facts.push(fact({ id: 'fact-demo', canonical_key: 'demographic', category: 'demographic', answer: 'Male' }))
+    fake.tables.job_search_execution_settings[0].dry_run = false
+    allowSubmission()
+    discoverFields.mockResolvedValue({ outcome: 'clear', fields: [optionalDemographic], domainValidations: [] })
+    submit.mockResolvedValue({ outcome: 'submitted', evidence: { confirmationId: 'gh-1', method: 'ats_api_response', receivedAt: '2026-01-01T00:00:00.000Z' }, response: { status: 200 } })
+
+    const result = await executeApplication('app-1')
+
+    // Not a blocker...
+    expect(result.outcome).toBe('submitted')
+    // ...and never answered from a stored fact.
+    const sent = submit.mock.calls[0][0]
+    expect(sent.answers.some((a: { field: { providerFieldId: string } }) => a.field.providerFieldId === 'question_eeoc')).toBe(false)
   })
 })
 

@@ -20,6 +20,7 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { getActiveFacts, getActiveProfile } from '../profile'
 import { logJobSearchEvent } from '../events'
 import { runPreflight, type PreflightContext } from './preflight'
+import { getExecutionRolloutSettings } from './rollout'
 import { claimApplicationForExecution, releaseExecutionClaim, type ApplicationClaim } from './claim'
 import { greenhouseAtsProvider } from './providers/greenhouse'
 import { unsupportedProvider } from './providers/unsupported'
@@ -41,6 +42,32 @@ function selectProvider(provider: ExecutionProvider): AtsExecutorProvider {
   return unsupportedProvider(provider)
 }
 
+/**
+ * Re-reads the rollout kill switches AFTER the claim is held and immediately
+ * before anything consequential.
+ *
+ * Preflight reads these too, but preflight necessarily runs before the claim,
+ * and between the two there is a multi-second window (claim round-trips, a
+ * network field-discovery call with a 15s timeout, profile/fact/artifact
+ * reads). A founder who hits emergency pause during that window expects it to
+ * take effect NOW — an in-flight execution that already passed preflight must
+ * not be allowed to continue on a stale reading. The claim serializes workers;
+ * it does not freeze settings.
+ *
+ * Fails closed: getExecutionRolloutSettings() already returns the maximally
+ * restricted settings if the read errors.
+ */
+async function revalidateRolloutOrStop(): Promise<{ ok: true; dryRun: boolean } | { ok: false; reason: string }> {
+  const rollout = await getExecutionRolloutSettings()
+  if (rollout.emergencyPaused) {
+    return { ok: false, reason: 'Execution was emergency-paused after this attempt started — stopping before any submission.' }
+  }
+  if (!rollout.automationEnabled) {
+    return { ok: false, reason: 'Application automation was disabled after this attempt started — stopping before any submission.' }
+  }
+  return { ok: true, dryRun: rollout.dryRun }
+}
+
 async function recordAttempt(params: {
   applicationId: string
   attemptNumber: number
@@ -55,7 +82,7 @@ async function recordAttempt(params: {
   confirmationEvidence?: Record<string, unknown>
   resumeArtifactId?: string | null
   failureReason?: string | null
-}): Promise<void> {
+}): Promise<boolean> {
   const supabase = createServiceClient()
   const { error } = await supabase.from('job_search_execution_attempts').insert({
     application_id: params.applicationId,
@@ -74,11 +101,11 @@ async function recordAttempt(params: {
     completed_at: new Date().toISOString(),
   })
   // A unique(application_id, attempt_number) collision here means another
-  // concurrent call already recorded this exact attempt — benign, not a
-  // reason to fail the whole execution result.
-  if (error && error.code !== '23505') {
-    console.error('[job-search] failed to write execution attempt audit row', error.message)
-  }
+  // concurrent call already recorded this exact attempt — benign, and the
+  // attempt IS durably recorded, so this still counts as audited.
+  if (!error || error.code === '23505') return true
+  console.error('[job-search] failed to write execution attempt audit row', error.message)
+  return false
 }
 
 async function fetchArtifactContent(applicationId: string, artifactType: 'resume' | 'cover_letter'): Promise<{ id: string; content: string } | null> {
@@ -193,13 +220,19 @@ async function runClaimedExecution(claim: ApplicationClaim, providerKey: Executi
   const resolutions: FieldResolution[] = []
   const blockers: HumanReviewBlocker[] = []
   for (const field of answerableFields) {
-    if (!field.required && !field.semanticKey) continue // optional, unclassified — safe to leave blank, not a blocker
-    if (!field.required && field.semanticKey) {
-      // Optional but semantically high-risk (e.g. voluntary EEOC
-      // demographic questions): never auto-fill even if a fact exists —
-      // these are self-identification questions, not facts to reuse.
-      continue
-    }
+    // An OPTIONAL field is always left blank, and never becomes a blocker.
+    //
+    // Both branches this replaces did the same thing (`continue`), which read
+    // as if two policies existed when only one did. The single policy, stated
+    // once: leaving an optional field blank is always legal on an ATS form, so
+    // an optional field can neither be auto-filled (voluntary
+    // self-identification questions — EEOC demographics, disability, veteran
+    // status — are the founder's to answer, never a fact to reuse) nor block
+    // submission (which would manufacture human work for a field nobody has
+    // to answer). If a deliberate "decline to self-identify" policy is ever
+    // wanted, it must come from an explicit, recorded founder decision, not
+    // from this loop inventing one.
+    if (!field.required) continue
     const resolution = resolveDiscoveredField(field, facts)
     resolutions.push(resolution)
     if (resolution.status === 'unresolved') {
@@ -241,8 +274,19 @@ async function runClaimedExecution(claim: ApplicationClaim, providerKey: Executi
 
   const allAnswers = [...resolutions, ...structuralAnswers]
 
-  if (context.dryRun) {
-    await releaseExecutionClaim(claim, 'NEEDS_HUMAN', { needs_human_reason: 'Dry run completed — destination, field discovery, and canonical answers all checked out. Submission was NOT attempted (automation dry_run is enabled). Disable dry run to allow a real submission.' })
+  // TOCTOU close: everything above (a network discovery call, several DB
+  // reads) happened after preflight read these switches. Re-read them now,
+  // while the claim is held and before anything consequential.
+  const revalidated = await revalidateRolloutOrStop()
+  if (!revalidated.ok) {
+    return finishNeedsHuman(revalidated.reason, [{ category: 'rollout_stopped', label: 'Execution stopped by a rollout control', reason: revalidated.reason }], discovery.domainValidations)
+  }
+  // Dry-run is taken from the RE-READ value, never the preflight snapshot: a
+  // founder who re-enabled dry run mid-flight must get a dry run.
+  const dryRun = revalidated.dryRun || context.dryRun
+
+  if (dryRun) {
+    await releaseExecutionClaim(claim, 'NEEDS_HUMAN', { needs_human_reason: 'Dry run completed — destination, field discovery, and canonical answers all checked out. Nothing was submitted.' })
     await recordAttempt({
       applicationId: claim.applicationId,
       attemptNumber: claim.attemptNumber,
@@ -254,6 +298,29 @@ async function runClaimedExecution(claim: ApplicationClaim, providerKey: Executi
       resumeArtifactId: resumeArtifact.id,
     })
     return { outcome: 'needs_human', reason: 'dry_run_ready', dryRun: true }
+  }
+
+  // Capability gate. `canSubmit` is a property of the provider implementation,
+  // not a setting — no combination of rollout flags can make this true for a
+  // provider that has no lawful submission channel. Greenhouse is false (its
+  // submission endpoint needs the employer's own API key), so in practice
+  // every prepared application terminates here, fully prepared, awaiting the
+  // founder. This is the honest end of the pipeline today.
+  if (!provider.canSubmit) {
+    const notSupported = await provider.submit(
+      {
+        applicationId: claim.applicationId,
+        candidateId: context.candidateId,
+        applyUrl: context.applyUrl,
+        resume: { id: resumeArtifact.id, applicationId: claim.applicationId, variantId: context.resumeVariantId, content: resumeArtifact.content, artifactType: 'resume' },
+        coverLetter: coverLetterArtifact?.content ?? null,
+        answers: allAnswers,
+        founder: { fullName: profile.fullName ?? '', email: profile.contactEmail ?? '', phone: profile.contactPhone },
+      },
+      fields,
+    )
+    const reason = notSupported.outcome === 'not_supported' ? notSupported.reason : 'Provider cannot submit automatically.'
+    return finishNeedsHuman(reason, [{ category: 'submission_not_supported', label: describeBlockerCategory('submission_not_supported'), reason }], discovery.domainValidations)
   }
 
   if (!profile.contactEmail) return finishNeedsHuman('Founder profile has no contact email.', [{ category: 'profile_incomplete', label: 'Founder profile incomplete', reason: 'No contact email.' }])
@@ -271,9 +338,19 @@ async function runClaimedExecution(claim: ApplicationClaim, providerKey: Executi
     fields,
   )
 
+  if (submission.outcome === 'not_supported') {
+    return finishNeedsHuman(submission.reason, [{ category: 'submission_not_supported', label: describeBlockerCategory('submission_not_supported'), reason: submission.reason }], discovery.domainValidations)
+  }
+
   if (submission.outcome === 'submitted') {
-    await releaseExecutionClaim(claim, 'SUBMITTED', { submitted_at: new Date().toISOString(), method: 'automated_ats', dry_run: false })
-    await recordAttempt({
+    // ORDER MATTERS. The evidence row is written BEFORE the status flip, not
+    // after. If the process dies between the two, the surviving state is
+    // "there is an attempt row proving a submission happened, but the
+    // application is still APPLYING" — which the stale-claim reaper turns
+    // into NEEDS_HUMAN with the evidence intact for a human to reconcile.
+    // The original order produced the opposite and far worse failure: status
+    // SUBMITTED with no evidence anywhere that it actually was.
+    const audited = await recordAttempt({
       applicationId: claim.applicationId,
       attemptNumber: claim.attemptNumber,
       provider: providerKey,
@@ -285,12 +362,39 @@ async function runClaimedExecution(claim: ApplicationClaim, providerKey: Executi
       submissionResponse: submission.response,
       confirmationEvidence: submission.evidence as unknown as Record<string, unknown>,
     })
+    if (!audited) {
+      // A real submission happened but we could not durably record it. Never
+      // report success we cannot evidence.
+      await releaseExecutionClaim(claim, 'SUBMISSION_UNCERTAIN', {
+        needs_human_reason: `The application was submitted (confirmation ${submission.evidence.confirmationId}) but the audit record could not be written. Verify the employer's ATS before any retry — do NOT re-submit blindly.`,
+      })
+      return { outcome: 'submission_uncertain', reason: 'Submitted, but the audit record could not be persisted.' }
+    }
+
+    const released = await releaseExecutionClaim(claim, 'SUBMITTED', { submitted_at: new Date().toISOString(), method: 'automated_ats', dry_run: false })
+    if (!released) {
+      // Our lease was gone (reaped as stale, or taken) — the row is no longer
+      // ours to finalize, and it now says something other than SUBMITTED while
+      // a real submission did occur. That divergence must be loud, not
+      // silently reported as success.
+      await logJobSearchEvent({
+        eventType: 'application_needs_human',
+        entityType: 'application',
+        entityId: claim.applicationId,
+        payload: { reason: 'submitted_but_claim_lost', confirmationId: submission.evidence.confirmationId },
+      })
+      return { outcome: 'submission_uncertain', reason: `Submitted (confirmation ${submission.evidence.confirmationId}) but the execution lease had already expired, so the application status could not be finalized. A human must reconcile this before any retry.` }
+    }
+
     await logJobSearchEvent({ eventType: 'application_submitted', entityType: 'application', entityId: claim.applicationId, payload: { confirmationId: submission.evidence.confirmationId } })
     return { outcome: 'submitted', confirmationId: submission.evidence.confirmationId }
   }
 
   if (submission.outcome === 'submission_uncertain') {
-    await releaseExecutionClaim(claim, 'SUBMISSION_UNCERTAIN', { needs_human_reason: submission.reason })
+    // submitted_at is stamped even though delivery is unconfirmed: this
+    // attempt may have reached the employer, so it must consume daily
+    // submission capacity exactly as a confirmed one does.
+    await releaseExecutionClaim(claim, 'SUBMISSION_UNCERTAIN', { needs_human_reason: submission.reason, submitted_at: new Date().toISOString() })
     await recordAttempt({
       applicationId: claim.applicationId,
       attemptNumber: claim.attemptNumber,

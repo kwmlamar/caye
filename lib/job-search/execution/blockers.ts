@@ -42,6 +42,20 @@ export function describeBlockerCategory(category: string): string {
       return 'Submission status is uncertain'
     case 'account_required':
       return 'Provider requires creating an account'
+    case 'submission_not_supported':
+      return 'This employer’s system has no way for Caye to submit on your behalf — the application is prepared for you to send'
+    case 'rollout_stopped':
+      return 'Execution was stopped by a safety control mid-attempt'
+    case 'profile_incomplete':
+      return 'Founder profile is missing information the form requires'
+    case 'profile_missing':
+      return 'No founder profile is available'
+    case 'artifact_missing':
+      return 'The tailored resume for this application is missing'
+    case 'discovery_failed':
+      return 'The application form could not be read'
+    case 'malformed_url':
+      return 'The apply link is not a usable application URL'
     default:
       return `Unrecognized blocker ("${category}")`
   }

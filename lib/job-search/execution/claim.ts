@@ -104,14 +104,26 @@ export async function claimApplicationForExecution(applicationId: string): Promi
   return { applicationId, token, attemptNumber: nextAttempt }
 }
 
-/** Only the current lease holder (matching claim_token) may release it. Sets the application to its final status. */
+/**
+ * Only the current lease holder (matching claim_token) may release it. Sets
+ * the application to its final status.
+ *
+ * Returns whether the release actually applied. This is not cosmetic: the
+ * `.eq('execution_claim_token', claim.token)` guard means a worker whose
+ * lease expired (and was reaped to NEEDS_HUMAN, clearing the token) silently
+ * matches ZERO rows. Callers previously ignored that and went on to report
+ * success — so a stale worker could believe it had written SUBMITTED while
+ * the row said NEEDS_HUMAN, and the audit trail and the application status
+ * would disagree with no signal anywhere. A caller that performed a real
+ * external action MUST check this and escalate when it is false.
+ */
 export async function releaseExecutionClaim(
   claim: ApplicationClaim,
   finalStatus: 'SUBMITTED' | 'NEEDS_HUMAN' | 'SUBMISSION_UNCERTAIN' | 'FAILED' | 'PREPARED',
   patch: Record<string, unknown> = {},
-): Promise<void> {
+): Promise<boolean> {
   const supabase = createServiceClient()
-  await supabase
+  const { data, error } = await supabase
     .from('job_search_applications')
     .update({
       status: finalStatus,
@@ -122,4 +134,8 @@ export async function releaseExecutionClaim(
     })
     .eq('id', claim.applicationId)
     .eq('execution_claim_token', claim.token)
+    .select('id')
+
+  if (error) return false
+  return (data ?? []).length > 0
 }
