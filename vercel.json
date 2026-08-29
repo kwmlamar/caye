@@ -1,0 +1,17 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "crons": [
+    {
+      "path": "/api/caye/job-search-email-poll",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/caye/job-search-sourcing",
+      "schedule": "0 */4 * * *"
+    },
+    {
+      "path": "/api/caye/job-search-prepare",
+      "schedule": "10 */4 * * *"
+    }
+  ]
+}
