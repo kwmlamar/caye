@@ -46,92 +46,71 @@ export async function POST(request: NextRequest) {
   }
 
   const supabase = createServiceClient()
-  const { data: device, error: deviceError } = await supabase
-    .from('property_sensor_devices')
-    .select('id, workspace_id, property_id')
-    .eq('provider', normalized.provider)
-    .eq('provider_application_id', normalized.providerApplicationId)
-    .eq('provider_device_id', normalized.providerDeviceId)
-    .maybeSingle()
+  const metrics = normalized.metrics.map((metric) => ({
+    metric_key: metric.metricKey,
+    numeric_value: metric.numericValue,
+    unit: metric.unit,
+    quality: metric.quality,
+  }))
 
-  if (deviceError) {
-    console.error('[property-telemetry] Device lookup failed:', deviceError)
-    return NextResponse.json({ error: 'Device lookup failed' }, { status: 500 })
+  // Keep raw-event persistence, normalized measurements, and the device heartbeat in one
+  // database transaction. A partial write followed by a provider retry must never look like
+  // a harmless duplicate while silently losing the measurement.
+  const { data: ingestResult, error: ingestError } = await supabase.rpc(
+    'ingest_property_telemetry_event',
+    {
+      p_provider: normalized.provider,
+      p_provider_application_id: normalized.providerApplicationId,
+      p_provider_device_id: normalized.providerDeviceId,
+      p_provider_event_id: normalized.providerEventId,
+      p_observed_at: normalized.observedAt,
+      p_raw_payload: payload,
+      p_radio_metadata: normalized.radioMetadata,
+      p_metrics: metrics,
+    },
+  )
+
+  if (ingestError) {
+    console.error('[property-telemetry] Atomic ingest failed:', ingestError)
+    return NextResponse.json({ error: 'Telemetry persistence failed' }, { status: 500 })
   }
-  if (!device) {
+
+  const result = ingestResult && typeof ingestResult === 'object' && !Array.isArray(ingestResult)
+    ? ingestResult as Record<string, unknown>
+    : null
+
+  if (!result) {
+    console.error('[property-telemetry] Atomic ingest returned an invalid result')
+    return NextResponse.json({ error: 'Telemetry persistence failed' }, { status: 500 })
+  }
+
+  if (result.status === 'unknown_device') {
     // Do not auto-enrol hardware from an inbound webhook. Device-to-property authority is explicit.
     return NextResponse.json({ error: 'Unknown telemetry device' }, { status: 404 })
   }
 
-  const eventRow = {
-    workspace_id: device.workspace_id,
-    property_id: device.property_id,
-    device_id: device.id,
-    provider: normalized.provider,
-    provider_event_id: normalized.providerEventId,
-    observed_at: normalized.observedAt,
-    raw_payload: payload,
-    radio_metadata: normalized.radioMetadata,
-    processing_status: normalized.metrics.length > 0 ? 'normalized' : 'rejected',
-    rejection_reason: normalized.metrics.length > 0 ? null : 'No supported sensor metrics in decoded payload',
+  if (result.status === 'duplicate') {
+    return NextResponse.json(
+      {
+        status: 'ok',
+        duplicate: true,
+        event_id: result.event_id ?? null,
+        normalized_metrics: normalized.metrics.map((metric) => metric.metricKey),
+      },
+      { status: 200 },
+    )
   }
 
-  const { data: event, error: eventError } = await supabase
-    .from('property_telemetry_events')
-    .insert(eventRow)
-    .select('id')
-    .single()
-
-  if (eventError) {
-    if (eventError.code === '23505') {
-      return NextResponse.json({ status: 'ok', duplicate: true }, { status: 200 })
-    }
-    console.error('[property-telemetry] Raw event insert failed:', eventError)
-    return NextResponse.json({ error: 'Telemetry event persistence failed' }, { status: 500 })
-  }
-
-  if (normalized.metrics.length > 0) {
-    const rows = normalized.metrics.map((metric) => ({
-      workspace_id: device.workspace_id,
-      property_id: device.property_id,
-      device_id: device.id,
-      event_id: event.id,
-      metric_key: metric.metricKey,
-      numeric_value: metric.numericValue,
-      unit: metric.unit,
-      observed_at: normalized.observedAt,
-      quality: metric.quality,
-    }))
-
-    const { error: measurementError } = await supabase
-      .from('property_telemetry_measurements')
-      .insert(rows)
-
-    if (measurementError) {
-      console.error('[property-telemetry] Measurement insert failed:', measurementError)
-      return NextResponse.json({ error: 'Telemetry normalization failed' }, { status: 500 })
-    }
-  }
-
-  const { error: deviceUpdateError } = await supabase
-    .from('property_sensor_devices')
-    .update({
-      last_seen_at: normalized.observedAt,
-      status: 'active',
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', device.id)
-
-  if (deviceUpdateError) {
-    console.error('[property-telemetry] Device heartbeat update failed:', deviceUpdateError)
-    return NextResponse.json({ error: 'Device heartbeat update failed' }, { status: 500 })
+  if (result.status !== 'accepted') {
+    console.error('[property-telemetry] Unexpected atomic ingest status:', result.status)
+    return NextResponse.json({ error: 'Telemetry persistence failed' }, { status: 500 })
   }
 
   return NextResponse.json(
     {
       status: 'ok',
       duplicate: false,
-      event_id: event.id,
+      event_id: result.event_id ?? null,
       normalized_metrics: normalized.metrics.map((metric) => metric.metricKey),
     },
     { status: 200 },

@@ -79,6 +79,148 @@ create index if not exists property_telemetry_measurements_device_metric_time_id
 create index if not exists property_telemetry_measurements_property_metric_time_idx
   on public.property_telemetry_measurements(property_id, metric_key, observed_at desc);
 
+-- One RPC owns the entire ingest transaction. This prevents a raw event from being committed
+-- without its normalized measurements, which would otherwise make a provider retry look like
+-- a harmless duplicate and permanently lose the measurement.
+create or replace function public.ingest_property_telemetry_event(
+  p_provider text,
+  p_provider_application_id text,
+  p_provider_device_id text,
+  p_provider_event_id text,
+  p_observed_at timestamptz,
+  p_raw_payload jsonb,
+  p_radio_metadata jsonb,
+  p_metrics jsonb
+) returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_device public.property_sensor_devices%rowtype;
+  v_event_id uuid;
+  v_metric jsonb;
+  v_metric_count integer := 0;
+begin
+  if jsonb_typeof(coalesce(p_metrics, '[]'::jsonb)) <> 'array' then
+    raise exception 'p_metrics must be a JSON array';
+  end if;
+
+  select * into v_device
+  from public.property_sensor_devices
+  where provider = p_provider
+    and coalesce(provider_application_id, '') = coalesce(p_provider_application_id, '')
+    and provider_device_id = p_provider_device_id
+  limit 1;
+
+  if not found then
+    return jsonb_build_object('status', 'unknown_device');
+  end if;
+
+  begin
+    insert into public.property_telemetry_events (
+      workspace_id,
+      property_id,
+      device_id,
+      provider,
+      provider_event_id,
+      observed_at,
+      raw_payload,
+      radio_metadata,
+      processing_status
+    ) values (
+      v_device.workspace_id,
+      v_device.property_id,
+      v_device.id,
+      p_provider,
+      p_provider_event_id,
+      p_observed_at,
+      p_raw_payload,
+      coalesce(p_radio_metadata, '{}'::jsonb),
+      'received'
+    ) returning id into v_event_id;
+  exception when unique_violation then
+    select id into v_event_id
+    from public.property_telemetry_events
+    where provider = p_provider and provider_event_id = p_provider_event_id;
+
+    return jsonb_build_object(
+      'status', 'duplicate',
+      'event_id', v_event_id,
+      'metric_count', (
+        select count(*)
+        from public.property_telemetry_measurements
+        where event_id = v_event_id
+      )
+    );
+  end;
+
+  for v_metric in
+    select value from jsonb_array_elements(coalesce(p_metrics, '[]'::jsonb))
+  loop
+    insert into public.property_telemetry_measurements (
+      workspace_id,
+      property_id,
+      device_id,
+      event_id,
+      metric_key,
+      numeric_value,
+      unit,
+      observed_at,
+      quality,
+      calibration_version,
+      metadata
+    ) values (
+      v_device.workspace_id,
+      v_device.property_id,
+      v_device.id,
+      v_event_id,
+      v_metric->>'metric_key',
+      (v_metric->>'numeric_value')::double precision,
+      v_metric->>'unit',
+      p_observed_at,
+      coalesce(v_metric->>'quality', 'raw_sensor'),
+      nullif(v_metric->>'calibration_version', ''),
+      coalesce(v_metric->'metadata', '{}'::jsonb)
+    );
+    v_metric_count := v_metric_count + 1;
+  end loop;
+
+  if v_metric_count = 0 then
+    update public.property_telemetry_events
+    set processing_status = 'rejected',
+        rejection_reason = 'No supported sensor metrics in decoded payload'
+    where id = v_event_id;
+  else
+    update public.property_telemetry_events
+    set processing_status = 'normalized',
+        rejection_reason = null
+    where id = v_event_id;
+  end if;
+
+  -- Never move the heartbeat backwards when delayed uplinks arrive out of order.
+  update public.property_sensor_devices
+  set last_seen_at = case
+        when last_seen_at is null then p_observed_at
+        else greatest(last_seen_at, p_observed_at)
+      end,
+      status = 'active',
+      updated_at = now()
+  where id = v_device.id;
+
+  return jsonb_build_object(
+    'status', 'accepted',
+    'event_id', v_event_id,
+    'metric_count', v_metric_count
+  );
+end;
+$$;
+
+revoke all on function public.ingest_property_telemetry_event(text, text, text, text, timestamptz, jsonb, jsonb, jsonb) from public;
+revoke all on function public.ingest_property_telemetry_event(text, text, text, text, timestamptz, jsonb, jsonb, jsonb) from anon;
+revoke all on function public.ingest_property_telemetry_event(text, text, text, text, timestamptz, jsonb, jsonb, jsonb) from authenticated;
+grant execute on function public.ingest_property_telemetry_event(text, text, text, text, timestamptz, jsonb, jsonb, jsonb) to service_role;
+
 -- security_invoker is critical here: the view must inherit the caller's RLS context rather
 -- than accidentally exposing service-role-only telemetry through the view owner.
 create or replace view public.property_current_telemetry
@@ -113,8 +255,10 @@ alter table public.property_telemetry_measurements enable row level security;
 comment on table public.property_sensor_devices is
   'Service-role-only registry for physical sensors linked to Property Intelligence entities.';
 comment on table public.property_telemetry_events is
-  'Immutable raw telemetry ingress. Provider-specific payloads terminate at this boundary.';
+  'Raw telemetry ingress. Provider payload and event identity are immutable facts; processing fields may advance inside the atomic ingest transaction.';
 comment on table public.property_telemetry_measurements is
   'Provider-agnostic numeric measurements normalized from raw sensor events. Derived values must identify quality/calibration.';
+comment on function public.ingest_property_telemetry_event(text, text, text, text, timestamptz, jsonb, jsonb, jsonb) is
+  'Service-role-only atomic telemetry ingest: resolve registered device, persist raw event + normalized metrics, and advance heartbeat in one transaction.';
 comment on view public.property_current_telemetry is
   'Latest normalized telemetry value per device and metric; security-invoker view, not a substitute for historical measurements.';

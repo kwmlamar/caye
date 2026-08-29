@@ -47,6 +47,13 @@ function requiredString(value: unknown, label: string): string {
   return value.trim()
 }
 
+function requiredTimestamp(value: unknown, label: string): string {
+  const raw = requiredString(value, label)
+  const parsed = Date.parse(raw)
+  if (!Number.isFinite(parsed)) throw new Error(`Invalid ${label}`)
+  return new Date(parsed).toISOString()
+}
+
 /**
  * Normalize a The Things Stack uplink while keeping provider-specific shape at the edge.
  * This intentionally stores only raw sensor facts here. Water depth, percentage, gallons,
@@ -64,20 +71,25 @@ export function normalizeTtnUplink(payload: JsonRecord): NormalizedTtnUplink {
 
   const providerApplicationId = requiredString(applicationIds.application_id, 'application id')
   const providerDeviceId = requiredString(endDeviceIds.device_id, 'device id')
-  const observedAt = requiredString(
+  const observedAt = requiredTimestamp(
     uplink.received_at ?? payload.received_at,
     'uplink received_at',
   )
 
   const frameCounter = finiteNumber(uplink.f_cnt)
+  const sessionKeyId = typeof uplink.session_key_id === 'string' && uplink.session_key_id.trim()
+    ? uplink.session_key_id.trim()
+    : null
   const correlationIds = Array.isArray(payload.correlation_ids)
     ? payload.correlation_ids.filter((value): value is string => typeof value === 'string')
     : []
 
-  // TTS correlation IDs are useful but not guaranteed to be stable across every integration.
-  // Device + application + frame counter is stable for normal uplinks; received_at is a fallback.
+  // Frame counters can reset after a LoRaWAN rejoin. When TTS supplies session_key_id,
+  // include it so a valid frame in a new session cannot collide with an old one.
   const providerEventId = frameCounter !== null
-    ? `${providerApplicationId}:${providerDeviceId}:f_cnt:${frameCounter}`
+    ? sessionKeyId
+      ? `${providerApplicationId}:${providerDeviceId}:session:${sessionKeyId}:f_cnt:${frameCounter}`
+      : `${providerApplicationId}:${providerDeviceId}:f_cnt:${frameCounter}`
     : correlationIds[0] || `${providerApplicationId}:${providerDeviceId}:at:${observedAt}`
 
   const metrics: NormalizedTelemetryMetric[] = []
@@ -114,6 +126,7 @@ export function normalizeTtnUplink(payload: JsonRecord): NormalizedTtnUplink {
   const radioMetadata: Record<string, unknown> = {
     f_cnt: frameCounter,
     f_port: finiteNumber(uplink.f_port),
+    session_key_id: sessionKeyId,
     rssi: rssi ?? finiteNumber(firstRx?.rssi),
     snr: snr ?? finiteNumber(firstRx?.snr),
     gateway_id: firstGateway?.gateway_id ?? null,

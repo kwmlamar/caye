@@ -12,6 +12,7 @@ function basePayload(decoded: Record<string, unknown> = {}) {
     uplink_message: {
       f_cnt: 42,
       f_port: 2,
+      session_key_id: 'session-123',
       received_at: '2026-08-28T23:14:59.000Z',
       decoded_payload: decoded,
       rx_metadata: [
@@ -32,7 +33,9 @@ describe('normalizeTtnUplink', () => {
     expect(result.provider).toBe('ttn')
     expect(result.providerApplicationId).toBe('moms-property-water')
     expect(result.providerDeviceId).toBe('tank-a-radar')
-    expect(result.providerEventId).toBe('moms-property-water:tank-a-radar:f_cnt:42')
+    expect(result.providerEventId).toBe(
+      'moms-property-water:tank-a-radar:session:session-123:f_cnt:42',
+    )
     expect(result.observedAt).toBe('2026-08-28T23:14:59.000Z')
     expect(result.metrics).toEqual([
       { metricKey: 'radar_distance', numericValue: 137, unit: 'cm', quality: 'raw_sensor' },
@@ -43,6 +46,7 @@ describe('normalizeTtnUplink', () => {
     expect(result.radioMetadata).toMatchObject({
       f_cnt: 42,
       f_port: 2,
+      session_key_id: 'session-123',
       rssi: -89,
       snr: 7.25,
       gateway_id: 'house-gateway',
@@ -69,9 +73,31 @@ describe('normalizeTtnUplink', () => {
     expect(result.providerEventId).toBe('as:up:abc')
   })
 
+  it('does not collide across LoRaWAN sessions when frame counters reset', () => {
+    const first = normalizeTtnUplink(basePayload({ Distance: 100 }))
+    const secondPayload = basePayload({ Distance: 100 })
+    secondPayload.uplink_message.session_key_id = 'session-456'
+    const second = normalizeTtnUplink(secondPayload)
+
+    expect(first.providerEventId).not.toBe(second.providerEventId)
+  })
+
+  it('falls back to device + frame counter when session id is unavailable', () => {
+    const payload = basePayload({ Distance: 100 })
+    delete (payload.uplink_message as { session_key_id?: string }).session_key_id
+    const result = normalizeTtnUplink(payload)
+    expect(result.providerEventId).toBe('moms-property-water:tank-a-radar:f_cnt:42')
+  })
+
   it('rejects malformed payloads rather than guessing device identity', () => {
     expect(() => normalizeTtnUplink({ uplink_message: { decoded_payload: {} } })).toThrow(
       'Invalid TTN uplink payload',
     )
+  })
+
+  it('rejects malformed timestamps before they reach the database', () => {
+    const payload = basePayload({ Distance: 100 })
+    payload.uplink_message.received_at = 'definitely-not-a-time'
+    expect(() => normalizeTtnUplink(payload)).toThrow('Invalid uplink received_at')
   })
 })
