@@ -16,6 +16,13 @@ import { describe, expect, it, vi } from 'vitest'
 vi.mock('server-only', () => ({}))
 vi.mock('@/lib/supabase-server', () => ({ createServiceClient: () => ({}) }))
 
+// Imported once at module scope rather than inside a test: pulling in the
+// whole tool registry is slow enough to blow a 5s per-test timeout when the
+// full suite runs in parallel.
+const { selectToolSurface } = await import('../../caye-agent/execute')
+const { greenhouseAtsProvider } = await import('./providers/greenhouse')
+const { unsupportedProvider } = await import('./providers/unsupported')
+
 const REPO_ROOT = path.resolve(__dirname, '..', '..', '..')
 const EXECUTION_DIR = path.resolve(__dirname)
 const JOB_SEARCH_DIR = path.resolve(__dirname, '..')
@@ -92,39 +99,34 @@ describe('Rollout controls are unreachable from any customer-facing surface (pos
   // `roles`/`modes` fields the tools declare about themselves.
   const ROLLOUT_TOOL = /automation|dry_run|submission_cap|application_execution/
 
-  async function toolNamesFor(mode: 'front-desk' | 'back-office' | 'admin-shell', callerRole: 'owner' | 'staff' | 'founder' | 'driver') {
-    const { selectToolSurface } = await import('../../caye-agent/execute')
+  function toolNamesFor(mode: 'front-desk' | 'back-office' | 'admin-shell', callerRole: 'owner' | 'staff' | 'founder' | 'driver') {
     return selectToolSurface({ ctx: { workspaceId: 'ws_test', callerRole, requestId: 'req' }, mode }).tools.map((t) => t.name)
   }
 
-  it.each(['owner', 'staff', 'founder', 'driver'] as const)('the front-desk (customer-facing) surface exposes no rollout control to %s', async (role) => {
-    const names = await toolNamesFor('front-desk', role)
-    expect(names.filter((n) => ROLLOUT_TOOL.test(n))).toEqual([])
+  it.each(['owner', 'staff', 'founder', 'driver'] as const)('the front-desk (customer-facing) surface exposes no rollout control to %s', (role) => {
+    expect(toolNamesFor('front-desk', role).filter((n) => ROLLOUT_TOOL.test(n))).toEqual([])
   })
 
-  it.each(['owner', 'staff', 'driver'] as const)('a non-founder (%s) can reach no rollout control in any mode', async (role) => {
+  it.each(['owner', 'staff', 'driver'] as const)('a non-founder (%s) can reach no rollout control in any mode', (role) => {
     for (const mode of ['front-desk', 'back-office', 'admin-shell'] as const) {
-      const names = await toolNamesFor(mode, role)
-      expect(names.filter((n) => ROLLOUT_TOOL.test(n))).toEqual([])
+      expect(toolNamesFor(mode, role).filter((n) => ROLLOUT_TOOL.test(n))).toEqual([])
     }
   })
 
-  it('the capability-INCREASING controls are admin-shell-only, even for the founder', async () => {
+  it('the capability-INCREASING controls are admin-shell-only, even for the founder', () => {
     // Asymmetry by design: the founder can hit the brakes from either channel,
     // but anything that makes real submission more possible is confined to the
     // deliberate admin surface.
-    const backOffice = await toolNamesFor('back-office', 'founder')
+    const backOffice = toolNamesFor('back-office', 'founder')
+    const adminShell = toolNamesFor('admin-shell', 'founder')
     for (const risky of ['enable_application_automation', 'disable_dry_run_mode', 'set_daily_submission_cap']) {
       expect(backOffice).not.toContain(risky)
-    }
-    const adminShell = await toolNamesFor('admin-shell', 'founder')
-    for (const risky of ['enable_application_automation', 'disable_dry_run_mode', 'set_daily_submission_cap']) {
       expect(adminShell).toContain(risky)
     }
   })
 
-  it('the safety-INCREASING controls stay available to the founder in back-office too', async () => {
-    const backOffice = await toolNamesFor('back-office', 'founder')
+  it('the safety-INCREASING controls stay available to the founder in back-office too', () => {
+    const backOffice = toolNamesFor('back-office', 'founder')
     expect(backOffice).toContain('pause_application_execution')
     expect(backOffice).toContain('enable_dry_run_mode')
     expect(backOffice).toContain('disable_application_automation')
@@ -157,12 +159,10 @@ describe('executeApplication is not reachable from any agent tool or HTTP route 
     expect(offenders).toEqual([])
   })
 
-  it('no ATS provider declares itself able to submit', async () => {
+  it('no ATS provider declares itself able to submit', () => {
     // The capability gate the executor relies on. If a provider ever flips
     // this to true, the daily-cap reservation race documented in rollout.ts
     // must be closed first — this test is the tripwire for that review.
-    const { greenhouseAtsProvider } = await import('./providers/greenhouse')
-    const { unsupportedProvider } = await import('./providers/unsupported')
     expect(greenhouseAtsProvider.canSubmit).toBe(false)
     expect(unsupportedProvider('lever').canSubmit).toBe(false)
   })
