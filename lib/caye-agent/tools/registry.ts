@@ -86,6 +86,17 @@ import { listJobSearchQueue } from './admin/read/list-job-search-queue'
 import { explainJobSearchRejection } from './admin/read/explain-job-search-rejection'
 import { pauseJobSearch } from './admin/write-low/pause-job-search'
 import { resumeJobSearch } from './admin/write-low/resume-job-search'
+import { listApplicationsNeedingReview } from './admin/read/list-applications-needing-review'
+import { explainApplicationStatus } from './admin/read/explain-application-status'
+import { getApplicationSubmissionEvidence } from './admin/read/get-application-submission-evidence'
+import { getExecutionDailySummary } from './admin/read/get-execution-daily-summary'
+import { pauseApplicationExecution } from './admin/write-low/pause-application-execution'
+import { resumeApplicationExecution } from './admin/write-low/resume-application-execution'
+import { enableDryRunMode } from './admin/write-low/enable-dry-run-mode'
+import { disableApplicationAutomation } from './admin/write-low/disable-application-automation'
+import { enableApplicationAutomation } from './admin/write-high/enable-application-automation'
+import { disableDryRunMode } from './admin/write-high/disable-dry-run-mode'
+import { setDailySubmissionCap } from './admin/write-high/set-daily-submission-cap'
 import { checkAvailabilityTool } from './read/front-desk/check-availability'
 import { lookupPriceTool } from './read/front-desk/lookup-price'
 import { findBookingsTool } from './read/front-desk/find-bookings'
@@ -250,6 +261,23 @@ export const TOOL_REGISTRY: AnyTool[] = [
   explainJobSearchRejection as AnyTool,
   pauseJobSearch as AnyTool,
   resumeJobSearch as AnyTool,
+  // CAY-194 — real ATS application-submission execution (follow-up to
+  // CAY-192). Read tools + low-risk safety switches are unwrapped;
+  // anything that makes execution MORE capable of a real submission
+  // (enabling automation, disabling dry-run, changing the daily cap) is
+  // gateAdminHighRisk-wrapped, same confirmation mechanism as
+  // set_workspace_autonomy above.
+  listApplicationsNeedingReview as AnyTool,
+  explainApplicationStatus as AnyTool,
+  getApplicationSubmissionEvidence as AnyTool,
+  getExecutionDailySummary as AnyTool,
+  pauseApplicationExecution as AnyTool,
+  resumeApplicationExecution as AnyTool,
+  enableDryRunMode as AnyTool,
+  disableApplicationAutomation as AnyTool,
+  gateAdminHighRisk(enableApplicationAutomation) as AnyTool,
+  gateAdminHighRisk(disableDryRunMode) as AnyTool,
+  gateAdminHighRisk(setDailySubmissionCap) as AnyTool,
 ]
 
 export function findTool(name: string): AnyTool | undefined {

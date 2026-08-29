@@ -7,6 +7,9 @@ const PENDING_TTL_MINUTES = 15
 
 function describeAdminPendingAction(toolName: string, args: Record<string, unknown>): string {
   if (toolName === 'trigger_cron') return `Run cron: ${args.cron_name}`
+  if (toolName === 'enable_application_automation') return 'Enable real ATS application-submission automation'
+  if (toolName === 'disable_dry_run_mode') return 'Disable dry-run mode — real submissions can reach an ATS'
+  if (toolName === 'set_daily_submission_cap') return `Set daily ATS submission cap to ${args.cap}`
   return `Run ${toolName}`
 }
 

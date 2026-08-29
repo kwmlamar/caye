@@ -18,9 +18,21 @@ describe('production tool surface', () => {
     const staff = selectToolSurface({ ctx: contextFor('staff'), mode: 'back-office' }).metrics
     // The numbers make the concrete optimization reviewable: owners lose
     // founder-only schemas; staff see only schemas they could execute.
-    expect(owner).toMatchObject({ exposedToolCount: 73, excludedByRoleCount: 4, excludedToolSchemaBytes: 3586 })
-    expect(founder).toMatchObject({ exposedToolCount: 77, excludedByRoleCount: 0, excludedToolSchemaBytes: 0 })
-    expect(staff).toMatchObject({ exposedToolCount: 13, excludedByRoleCount: 64, excludedToolSchemaBytes: 73576 })
+    //
+    // These are a DRIFT DETECTOR, not a target. They had gone stale on main
+    // well before CAY-194 (owner excludedByRoleCount was asserted as 4 while
+    // the real value was already 29, and founder exposedToolCount as 77
+    // against a real 99), so the test had stopped failing informatively and
+    // started failing constantly. Refreshed here to the true post-CAY-194
+    // values. If a change moves these, update them deliberately and say why
+    // in the PR — do not "fix" the test by loosening the assertion.
+    //
+    // The owner count deliberately does NOT move with CAY-194: all 11 new
+    // application-execution tools are founder-only, so owners gain nothing
+    // and only the excluded-by-role figures grow.
+    expect(owner).toMatchObject({ exposedToolCount: 73, excludedByRoleCount: 37, excludedToolSchemaBytes: 23362 })
+    expect(founder).toMatchObject({ exposedToolCount: 110, excludedByRoleCount: 0, excludedToolSchemaBytes: 0 })
+    expect(staff).toMatchObject({ exposedToolCount: 13, excludedByRoleCount: 97, excludedToolSchemaBytes: 93352 })
   })
 
   it.each(['owner', 'staff', 'founder', 'driver'] as const)('only exposes schemas executable by %s', (callerRole) => {
