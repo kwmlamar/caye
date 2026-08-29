@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyConnectToken } from '@/lib/channels/connect-token'
+import { isFounderUserId } from '@/lib/founder'
 
 const ZOHO_AUTH_URL = 'https://accounts.zoho.com/oauth/v2/auth'
 const SCOPES = 'ZohoMail.messages.ALL,ZohoMail.accounts.READ,ZohoMail.folders.READ,ZohoCalendar.event.ALL,ZohoCalendar.calendar.READ'
@@ -27,6 +28,10 @@ export async function GET(req: NextRequest) {
   const redirectUri = `${process.env.NEXT_PUBLIC_APP_URL}/api/auth/zoho/callback`
 
   const source = req.nextUrl.searchParams.get('source') || 'desktop'
+  const rawToken = req.nextUrl.searchParams.get('t') || ''
+  if (source === 'job-search' && !isFounderUserId(workspaceId)) {
+    return NextResponse.redirect(`${process.env.NEXT_PUBLIC_APP_URL || 'https://www.meetcaye.com'}/connect?link_error=forbidden`)
+  }
 
   const params = new URLSearchParams({
     response_type: 'code',
@@ -38,7 +43,9 @@ export async function GET(req: NextRequest) {
     // when the user explicitly consents — otherwise reconnects return only an
     // access_token and the stored refresh_token gets clobbered.
     prompt: 'consent',
-    state: `${workspaceId}:${source}`,
+    state: source === 'job-search'
+      ? `founder-job-search:${rawToken}`
+      : `${workspaceId}:${source}`,
   })
 
   return NextResponse.redirect(`${ZOHO_AUTH_URL}?${params.toString()}`)

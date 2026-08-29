@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { verifyConnectToken } from '@/lib/channels/connect-token'
+import { isFounderUserId } from '@/lib/founder'
 import { createServiceClient } from '@/lib/supabase-server'
 
 const ZOHO_TOKEN_URL = 'https://accounts.zoho.com/oauth/v2/token'
@@ -13,8 +15,14 @@ export async function GET(req: NextRequest) {
   const rawState = searchParams.get('state') || ''
   const zohoError = searchParams.get('error')
 
-  // Parse state (format: workspaceId:source)
-  const [workspaceId, sourceVal] = rawState.split(':')
+  // Customer state remains workspaceId:source. Founder job-search state
+  // carries the original signed connect token through the provider roundtrip.
+  const founderState = rawState.startsWith('founder-job-search:')
+  const founderToken = founderState ? rawState.slice('founder-job-search:'.length) : null
+  const verifiedFounder = founderState ? verifyConnectToken(founderToken, 'zoho') : null
+  const [legacyWorkspaceId, sourceVal] = rawState.split(':')
+  const workspaceId = founderState && verifiedFounder?.ok ? verifiedFounder.workspaceId : legacyWorkspaceId
+  const isFounderJobSearch = founderState && verifiedFounder?.ok && isFounderUserId(workspaceId)
   const isMobile = sourceVal === 'mobile'
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL!
@@ -22,7 +30,9 @@ export async function GET(req: NextRequest) {
   // 'founder' = connected from Caye Command's Channels card, not the
   // workspace's own Settings page — send them back to Caye Command
   // instead of a settings tab they never navigated from.
-  const desktopUrl = sourceVal === 'founder'
+  const desktopUrl = isFounderJobSearch
+    ? `${appUrl}/connect/done?channel=zoho`
+    : sourceVal === 'founder'
     ? `${appUrl}/dashboard/${workspaceId}`
     : `${appUrl}/dashboard/${workspaceId}/settings?tab=channels`
   const desktopSep = desktopUrl.includes('?') ? '&' : '?'
@@ -39,7 +49,7 @@ export async function GET(req: NextRequest) {
   const ok = land
   const fail = land
 
-  if (zohoError || !code || !workspaceId) {
+  if (zohoError || !code || !workspaceId || (founderState && !isFounderJobSearch)) {
     console.error('[zoho/callback] Access denied or missing params:', { zohoError, code: !!code, workspaceId })
     return NextResponse.redirect(fail('zoho_error=access_denied'))
   }
@@ -111,6 +121,42 @@ export async function GET(req: NextRequest) {
   }
 
   const supabase = createServiceClient()
+
+  if (isFounderJobSearch) {
+    await supabase.from('founder_connected_accounts')
+      .update({ is_active: false, updated_at: new Date().toISOString() })
+      .eq('founder_user_id', workspaceId)
+      .eq('provider', 'zoho')
+      .neq('account_id', zohoAccountId)
+
+    let founderRefreshToken: string | null = refresh_token || null
+    if (!founderRefreshToken) {
+      const { data: existing } = await supabase.from('founder_connected_accounts')
+        .select('refresh_token').eq('provider', 'zoho').eq('account_id', zohoAccountId).maybeSingle()
+      founderRefreshToken = existing?.refresh_token ?? null
+    }
+
+    const { error: founderError } = await supabase.from('founder_connected_accounts').upsert({
+      founder_user_id: workspaceId,
+      provider: 'zoho',
+      account_id: zohoAccountId,
+      email_address: zohoEmail,
+      access_token,
+      refresh_token: founderRefreshToken,
+      token_expires_at: tokenExpiresAt,
+      metadata: { zoho_api_domain: api_domain || 'https://www.zohoapis.com', inbox_folder_id: inboxFolderId },
+      is_active: true,
+      needs_reauth: false,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'provider,account_id' })
+    if (founderError) {
+      console.error('[zoho/callback] founder account upsert error:', founderError)
+      return NextResponse.redirect(fail('zoho_error=db_save'))
+    }
+    // Critical isolation point: do not announce, discover, or create a
+    // connected_accounts row. Those are all customer-workspace behaviors.
+    return NextResponse.redirect(ok('job_search_zoho_connected=1'))
+  }
 
   // Deactivate any existing email accounts for this workspace that are a different account
   await supabase
@@ -188,4 +234,3 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.redirect(ok('zoho_connected=1'))
 }
-
