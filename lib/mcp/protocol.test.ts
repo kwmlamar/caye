@@ -33,12 +33,13 @@ describe('Caye MCP protocol adapter', () => {
     })
   })
 
-  it('publishes only the four bounded read tools in deterministic order', () => {
+  it('publishes only the five bounded read tools in deterministic order', () => {
     expect(CAYE_MCP_TOOLS.map((tool) => tool.name)).toEqual([
       'caye_context_snapshot',
       'caye_goals_list',
       'caye_attention_list',
       'caye_engineering_artifacts_list',
+      'caye_property_snapshot',
     ])
     expect(CAYE_MCP_TOOLS.every((tool) => tool.annotations.readOnlyHint === true)).toBe(true)
     expect(CAYE_MCP_TOOLS.every((tool) => tool.annotations.destructiveHint === false)).toBe(true)
@@ -96,5 +97,33 @@ describe('Caye MCP protocol adapter', () => {
 
   it('returns null for tools outside the fixed MCP catalog', async () => {
     expect(await callCayeMcpTool('founder-user', 'raw_sql', {})).toBeNull()
+  })
+
+  it('routes caye_property_snapshot through the gateway with a canonical propertyId, not workspace scope', async () => {
+    const result = await callCayeMcpTool('founder-user', 'caye_property_snapshot', { propertyId: 'property-1' })
+    expect(mocks.invokeFounderReadCapability).toHaveBeenCalledWith('founder-user', {
+      capability: 'property.snapshot',
+      version: 1,
+      workspaceId: null,
+      propertyId: 'property-1',
+    })
+    expect(result?.structuredContent).toEqual({ result: observed })
+    expect(result?.isError).toBe(false)
+  })
+
+  it('fails closed when caye_property_snapshot is called without a propertyId', async () => {
+    const result = await callCayeMcpTool('founder-user', 'caye_property_snapshot', {})
+    expect(result?.isError).toBe(true)
+    expect(mocks.invokeFounderReadCapability).not.toHaveBeenCalled()
+    expect(JSON.stringify(result?.structuredContent)).toContain('invalid_args')
+  })
+
+  it('rejects attempts to smuggle a workspaceId into caye_property_snapshot arguments', async () => {
+    const result = await callCayeMcpTool('founder-user', 'caye_property_snapshot', {
+      propertyId: 'property-1',
+      workspaceId: 'smuggled-workspace',
+    })
+    expect(result?.isError).toBe(true)
+    expect(mocks.invokeFounderReadCapability).not.toHaveBeenCalled()
   })
 })

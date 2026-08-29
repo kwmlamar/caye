@@ -42,7 +42,7 @@ After the production deployment and Supabase configuration above:
 3. Choose **OAuth**. Do not choose **No Auth** or paste `CAYE_MCP_FOUNDER_TOKEN` anywhere.
 4. Select **Scan tools**. ChatGPT follows the protected-resource metadata to Supabase, registers a client, and opens Caye's `/oauth/consent` page.
 5. Sign in as a Caye founder and approve the explicitly shown read-only request. A non-founder account is denied; a valid OAuth token alone does not grant founder authority.
-6. Confirm the scan exposes exactly `caye_context_snapshot`, `caye_goals_list`, `caye_attention_list`, and `caye_engineering_artifacts_list`, then create/publish the app according to your ChatGPT workspace policy.
+6. Confirm the scan exposes exactly `caye_context_snapshot`, `caye_goals_list`, `caye_attention_list`, `caye_engineering_artifacts_list`, and `caye_property_snapshot`, then create/publish the app according to your ChatGPT workspace policy.
 7. In a fresh ChatGPT conversation, enable the app and call `caye_goals_list`. Supabase refresh tokens keep the connection valid after short-lived access tokens expire.
 
 ## Server-to-server client connection
@@ -61,5 +61,6 @@ The v0.1 tool surface is intentionally read-only for both OAuth and server-to-se
 - `caye_goals_list`
 - `caye_attention_list`
 - `caye_engineering_artifacts_list`
+- `caye_property_snapshot` (takes a `propertyId`, not a `workspaceId` — the founder gateway resolves the owning workspace canonically from the property itself)
 
 No SQL, storage, generic RPC, arbitrary HTTP, filesystem, or write capability is exposed by this adapter.

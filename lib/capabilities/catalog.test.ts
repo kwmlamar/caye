@@ -8,6 +8,9 @@ describe('Caye capability catalog', () => {
       expect.objectContaining({ name: 'attention.list', access: 'read', risk: 'read_only' }),
       expect.objectContaining({ name: 'engineering.artifacts.list', access: 'read', risk: 'read_only' }),
       expect.objectContaining({ name: 'goals.list', access: 'read', risk: 'read_only' }),
+      expect.objectContaining({ name: 'job_search.queue.list', access: 'read', risk: 'read_only' }),
+      expect.objectContaining({ name: 'job_search.summary', access: 'read', risk: 'read_only' }),
+      expect.objectContaining({ name: 'property.snapshot', access: 'read', risk: 'read_only' }),
     ])
   })
 

@@ -61,11 +61,15 @@ export async function POST(req: NextRequest) {
   if (input.workspaceId !== null && input.workspaceId !== undefined && typeof input.workspaceId !== 'string') {
     return NextResponse.json({ error: 'workspaceId must be a string or null' }, { status: 400 })
   }
+  if (input.propertyId !== undefined && typeof input.propertyId !== 'string') {
+    return NextResponse.json({ error: 'propertyId must be a string' }, { status: 400 })
+  }
 
   const result = await invokeFounderReadCapability(founder.id, {
     capability: input.capability,
     version: input.version,
     workspaceId: (input.workspaceId as string | null | undefined) ?? null,
+    propertyId: input.propertyId as string | undefined,
     args: input.args,
   })
 

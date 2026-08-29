@@ -8,8 +8,18 @@ export type FounderCapabilityInvocationInput = {
   capability: string
   version: number
   workspaceId: string | null
+  /** Only accepted by capabilities that declare a canonical id-scoped selector (e.g. property.snapshot). */
+  propertyId?: string
   args?: unknown
 }
+
+/**
+ * Capabilities that resolve their own canonical scope from an explicit, founder-
+ * visible id rather than from context.scope.workspaceId. Adding a capability here
+ * is a deliberate, narrow exception to the zero-argument default below — not a
+ * generic args passthrough.
+ */
+const PROPERTY_ID_SCOPED_CAPABILITIES = new Set<CapabilityName>(['property.snapshot'])
 
 export type FounderContextSnapshot = {
   actor: { kind: 'founder' }
@@ -57,9 +67,6 @@ export async function invokeFounderReadCapability(
   if (input.workspaceId !== null && (!input.workspaceId || typeof input.workspaceId !== 'string')) {
     return failed('invalid_args', 'workspaceId must be a non-empty string or null.')
   }
-  if (!emptyArgs(input.args)) {
-    return failed('invalid_args', 'This capability version does not accept arguments.')
-  }
 
   const capability = getRegisteredCapability(cayeCapabilityRegistry, input.capability as CapabilityName)
   if (!capability) return failed('not_found', 'Capability not found.')
@@ -70,8 +77,28 @@ export async function invokeFounderReadCapability(
     return failed('unavailable', 'This gateway only exposes read-only capabilities.')
   }
 
+  const isPropertyIdScoped = PROPERTY_ID_SCOPED_CAPABILITIES.has(capability.manifest.name)
+  let executeArgs: Record<string, never> | { propertyId: string }
+  if (isPropertyIdScoped) {
+    if (typeof input.propertyId !== 'string' || input.propertyId.trim().length === 0) {
+      return failed('invalid_args', `${capability.manifest.name} requires a non-empty propertyId.`)
+    }
+    if (!emptyArgs(input.args)) {
+      return failed('invalid_args', 'This capability version does not accept additional arguments.')
+    }
+    executeArgs = { propertyId: input.propertyId.trim() }
+  } else {
+    if (input.propertyId !== undefined) {
+      return failed('invalid_args', 'This capability does not accept a propertyId.')
+    }
+    if (!emptyArgs(input.args)) {
+      return failed('invalid_args', 'This capability version does not accept arguments.')
+    }
+    executeArgs = {}
+  }
+
   try {
-    return await capability.execute({}, {
+    return await capability.execute(executeArgs as Record<string, never>, {
       actor: { kind: 'founder', userId: authenticatedFounderUserId },
       scope: { workspaceId: input.workspaceId },
       caller: 'external_reasoner',
