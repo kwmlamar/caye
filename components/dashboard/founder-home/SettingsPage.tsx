@@ -2,6 +2,7 @@
 
 import { useState, type ReactNode } from 'react'
 import ChannelsCard from './ChannelsCard'
+import JobSearchMailCard from './JobSearchMailCard'
 import SettingsCard from './SettingsCard'
 import CostPage from './CostPage'
 import HealthPage from './HealthPage'
@@ -75,7 +76,7 @@ export default function SettingsPage({ workspaceId }: { workspaceId: string }) {
   let body: ReactNode
   switch (tab) {
     case 'caye': body = <div style={{ padding: 20, display: 'flex', flexDirection: 'column' }}><SettingsCard workspaceId={workspaceId} compact={false} /></div>; break
-    case 'channels': body = <div style={{ padding: 20 }}><ChannelsCard workspaceId={workspaceId} /></div>; break
+    case 'channels': body = <div style={{ padding: 20 }}><ChannelsCard workspaceId={workspaceId} /><JobSearchMailCard /></div>; break
     case 'performance': body = <GlobalPerformance />; break
     case 'cost': body = <CostPage />; break
     case 'health': body = <HealthPage />; break
