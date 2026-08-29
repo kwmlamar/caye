@@ -84,6 +84,7 @@ import { setWorkspaceAutonomy } from './admin/write-high/set-workspace-autonomy'
 import { gateAdminHighRisk } from './admin/admin-high-risk-gate'
 import { getJobSearchSummary } from './admin/read/get-job-search-summary'
 import { listJobSearchQueue } from './admin/read/list-job-search-queue'
+import { listJobSearchCandidates } from './admin/read/list-job-search-candidates'
 import { explainJobSearchRejection } from './admin/read/explain-job-search-rejection'
 import { pauseJobSearch } from './admin/write-low/pause-job-search'
 import { resumeJobSearch } from './admin/write-low/resume-job-search'
@@ -261,6 +262,7 @@ export const TOOL_REGISTRY: AnyTool[] = [
   // lib/job-search/application-executor.ts's doc comment).
   getJobSearchSummary as AnyTool,
   listJobSearchQueue as AnyTool,
+  listJobSearchCandidates as AnyTool,
   explainJobSearchRejection as AnyTool,
   pauseJobSearch as AnyTool,
   resumeJobSearch as AnyTool,
