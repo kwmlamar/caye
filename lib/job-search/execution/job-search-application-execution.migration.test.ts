@@ -71,6 +71,24 @@ describe('job_search_application_execution migration (PGlite)', () => {
     expect(rows[0].emergency_paused).toBe(false)
   })
 
+  it('the database refuses a daily submission cap above the ceiling, not just the application layer', async () => {
+    // Defence in depth: rollout.ts's setDailySubmissionCap also refuses this,
+    // but a safety cap enforced only in the one code path that happens to
+    // call it is not enforced. Any writer, including a manual SQL fix-up,
+    // hits the same wall.
+    await expect(db.query(`update public.job_search_execution_settings set daily_submission_cap = 150 where id = true`)).rejects.toThrow()
+    await expect(db.query(`update public.job_search_execution_settings set daily_submission_cap = 11 where id = true`)).rejects.toThrow()
+    await expect(db.query(`update public.job_search_execution_settings set daily_submission_cap = -1 where id = true`)).rejects.toThrow()
+
+    // ...and the value is unchanged after every rejected write.
+    const { rows } = await db.query<{ daily_submission_cap: number }>(`select daily_submission_cap from public.job_search_execution_settings`)
+    expect(rows[0].daily_submission_cap).toBe(3)
+
+    // The ceiling itself is still reachable.
+    await db.query(`update public.job_search_execution_settings set daily_submission_cap = 10 where id = true`)
+    await db.query(`update public.job_search_execution_settings set daily_submission_cap = 3 where id = true`)
+  })
+
   it('job_search_applications now accepts SUBMISSION_UNCERTAIN as a status', async () => {
     const { rows: candidate } = await db.query<{ id: string }>(
       `insert into public.job_search_candidates (canonical_key, company, title, source_url, apply_url) values ('exec-key-1', 'Co', 'Title', 'http://x', 'http://x') returning id`,
