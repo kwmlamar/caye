@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireFounder } from '@/lib/founder'
 import { getFounderPropertySnapshot } from '@/lib/property/store'
+import { getFounderPropertyTelemetrySnapshot } from '@/lib/property/telemetry-snapshot'
 
 /**
  * Resolve one canonical property after founder auth.
@@ -12,7 +13,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
   const { id } = await params
   const snapshot = await getFounderPropertySnapshot(id)
-  return snapshot
-    ? NextResponse.json({ type: 'property_snapshot', snapshot })
-    : NextResponse.json({ error: 'Property not found' }, { status: 404 })
+  if (!snapshot) return NextResponse.json({ error: 'Property not found' }, { status: 404 })
+
+  const telemetry = await getFounderPropertyTelemetrySnapshot(id)
+  return NextResponse.json({
+    type: 'property_snapshot',
+    snapshot: { ...snapshot, ...telemetry },
+  })
 }
