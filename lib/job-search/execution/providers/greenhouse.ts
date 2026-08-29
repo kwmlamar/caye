@@ -21,17 +21,51 @@
  * browser automation against jobs.lever.co's hosted form — deliberately
  * out of scope for this PR (see providers/unsupported.ts).
  *
- * IMPORTANT — VERIFY BEFORE REAL ROLLOUT: the exact request/response shape
- * below (the `fields[].name` POST key format, the multipart field names,
- * and the success-response shape) is implemented from Greenhouse's public
- * documentation as of this PR's authoring. It has NOT been exercised
- * against a real Greenhouse board with a real submission — rollout is
- * disabled by default (see rollout.ts) specifically so this can be
- * verified against a real sandbox job before any real submission occurs.
- * See the PR description's "manual steps before first real submission."
+ * ============================================================================
+ * SUBMISSION IS NOT SUPPORTED THROUGH THIS API — VERIFIED 2026-08-29
+ * ============================================================================
+ * An earlier revision of this file POSTed a multipart application body to
+ * boards-api.greenhouse.io. That was wrong, and it is deleted rather than
+ * left behind a flag, because the capability does not exist for us:
+ *
+ *   1. AUTHENTICATION. Greenhouse's own docs are explicit that the GETs are
+ *      public but the submission POST is not: "Job Board data is publicly
+ *      available, so authentication is not required for any GET endpoints"
+ *      — only the POST "requires HTTP Basic Auth over SSL/TLS: the Basic
+ *      Auth username is your API key (found on the API Credentials page)."
+ *      That key is the EMPLOYER's Job Board API key, issued inside their
+ *      Greenhouse account. It exists so an employer can power their OWN
+ *      career-site form. An outside applicant cannot hold it for an
+ *      arbitrary employer, and must not try to. The deleted code sent no
+ *      Authorization header at all, so every real attempt would have been
+ *      rejected — the "unverified wire format" the PR originally flagged was
+ *      not merely unverified, it was unusable.
+ *
+ *   2. NO SERVER-SIDE VALIDATION TO RELY ON. Greenhouse further documents
+ *      that it "will not confirm the inclusion of required fields" and
+ *      "will not reject applications that are missing required fields."
+ *      So even with a key, a 2xx would not be evidence of a complete or
+ *      correct application — exactly the positive-evidence property the
+ *      SUBMITTED transition depends on.
+ *
+ *   3. GREENHOUSE'S OWN GUIDANCE is to use their Embedded Job Application
+ *      rather than a custom form, citing their built-in spam/abuse
+ *      protections.
+ *
+ * What remains here is `discoverFields`, which uses only the PUBLIC,
+ * read-only GET and is genuinely verified: the parsing below was checked
+ * against a live public board (gitlab, job 8503792002) on 2026-08-29.
+ * Discovery is what makes the prepare/readiness report real. `submit`
+ * unconditionally refuses and performs no network call whatsoever.
+ *
+ * Making real submission possible is a PRODUCT decision, not a wire-format
+ * fix: it needs a lawful authenticated channel (an employer-granted key, an
+ * official partner integration, or an explicitly-consented browser session
+ * driven by the founder). Until one exists, this provider prepares and
+ * escalates — it never submits.
  */
 import type { AtsExecutorProvider } from './types'
-import type { DiscoveredField, DomainValidation, FieldDiscoveryResult, SubmissionRequest, SubmissionResult } from '../types'
+import type { DiscoveredField, FieldDiscoveryResult, SubmissionResult } from '../types'
 import { safeFetch } from '../safe-fetch'
 import { isAllowedAtsHost } from '../allowed-destinations'
 import { classifyFieldLabel } from '../field-classifier'
@@ -59,7 +93,14 @@ function isGreenhouseHost(hostname: string): boolean {
   return isAllowedAtsHost('greenhouse', hostname) || hostname === GREENHOUSE_API_HOST
 }
 
-type GreenhouseQuestionField = { name: string; type: string; required?: boolean; values?: { label: string; value: string }[] }
+/**
+ * Verified against a live public board on 2026-08-29: `values[].value` is a
+ * NUMBER on real boards (e.g. `{"label":"No","value":239207523002}`), and is
+ * sometimes a small ordinal instead (`{"label":"No","value":0}`) on the same
+ * board for a different question. It is typed loosely here and normalized to
+ * a string exactly once, below.
+ */
+type GreenhouseQuestionField = { name: string; type: string; required?: boolean; values?: { label: string; value: string | number }[] }
 type GreenhouseQuestion = { label: string; required?: boolean; fields: GreenhouseQuestionField[] }
 type GreenhouseJobDetail = { questions?: GreenhouseQuestion[] }
 
@@ -83,12 +124,22 @@ function mapInputType(ghType: string): DiscoveredField['inputType'] {
   }
 }
 
-/** Detects a challenge/anti-bot response even though we expect clean JSON. Never used to bypass anything — only to decide whether to escalate. */
+/**
+ * Detects a challenge/anti-bot response even though we expect clean JSON.
+ * Never used to bypass anything — only to decide whether to escalate.
+ *
+ * The `|| lowerBody.length > 0` clause this originally ended with made the
+ * whole pattern list decorative: ANY non-JSON 403/503 carrying ANY body at
+ * all was reported as a bot challenge. An ordinary 403 (job closed, board
+ * disabled, application window ended) is a normal, meaningful answer from
+ * Greenhouse and must be reported as itself, not dressed up as anti-bot
+ * evasion. Only a real challenge fingerprint counts.
+ */
 function detectChallengeSignal(status: number, contentType: string | null, bodyText: string): 'captcha' | 'anti_bot' | null {
   const lowerBody = bodyText.toLowerCase()
-  if (/captcha/.test(lowerBody)) return 'captcha'
+  if (/captcha|recaptcha|hcaptcha|turnstile/.test(lowerBody)) return 'captcha'
   if ((status === 403 || status === 503) && (!contentType || !contentType.includes('application/json'))) {
-    if (/cloudflare|checking your browser|access denied|are you human|bot detection/.test(lowerBody) || lowerBody.length > 0) {
+    if (/cloudflare|checking your browser|access denied|are you human|bot detection|ddos protection|ray id|challenge-platform/.test(lowerBody)) {
       return 'anti_bot'
     }
   }
@@ -97,6 +148,9 @@ function detectChallengeSignal(status: number, contentType: string | null, bodyT
 
 export const greenhouseAtsProvider: AtsExecutorProvider = {
   providerKey: 'greenhouse',
+
+  /** See the module header. Greenhouse's public API has no applicant-usable submission channel. */
+  canSubmit: false,
 
   async discoverFields(applyUrl: string): Promise<FieldDiscoveryResult> {
     const parsed = parseGreenhouseApplyUrl(applyUrl)
@@ -145,7 +199,7 @@ export const greenhouseAtsProvider: AtsExecutorProvider = {
           semanticKey: classifyFieldLabel(question.label),
           inputType: mapInputType(field.type),
           required: Boolean(question.required ?? field.required),
-          allowedOptions: field.values ? field.values.map((v) => v.label) : null,
+          allowedOptions: field.values && field.values.length > 0 ? field.values.map((v) => ({ label: v.label, value: String(v.value) })) : null,
           confidence: classifyFieldLabel(question.label) ? 0.9 : 0,
         })
       }
@@ -154,99 +208,21 @@ export const greenhouseAtsProvider: AtsExecutorProvider = {
     return { outcome: 'clear', fields, domainValidations }
   },
 
-  async submit(request: SubmissionRequest, fields: DiscoveredField[]): Promise<SubmissionResult> {
-    const parsed = parseGreenhouseApplyUrl(request.applyUrl)
-    if (!parsed) return { outcome: 'failed', reason: 'Apply URL failed re-validation immediately before submission.', retryable: false }
-
-    const submitUrl = `https://${GREENHOUSE_API_HOST}/v1/boards/${encodeURIComponent(parsed.boardToken)}/jobs/${encodeURIComponent(parsed.jobId)}`
-
-    // Safety net: every required field must have a resolved answer before
-    // we ever build a request body. This should be unreachable in practice
-    // (executor.ts already escalates to NEEDS_HUMAN before calling submit),
-    // but submit() never trusts a caller's prior checks for something this
-    // consequential.
-    const requiredFieldIds = new Set(fields.filter((f) => f.required).map((f) => f.providerFieldId))
-    const resolvedFieldIds = new Set(request.answers.filter((a) => a.status === 'resolved').map((a) => a.field.providerFieldId))
-    const missing = [...requiredFieldIds].filter((id) => !resolvedFieldIds.has(id))
-    if (missing.length > 0) {
-      return { outcome: 'failed', reason: `Refusing to submit — required field(s) unresolved at submit time: ${missing.join(', ')}`, retryable: false }
-    }
-
-    const form = new FormData()
-    const [firstName, ...rest] = request.founder.fullName.trim().split(/\s+/)
-    form.set('first_name', firstName ?? '')
-    form.set('last_name', rest.join(' ') || firstName || '')
-    form.set('email', request.founder.email)
-    if (request.founder.phone) form.set('phone', request.founder.phone)
-    form.set('resume', new Blob([request.resume.content], { type: 'text/plain' }), 'resume.txt')
-    if (request.coverLetter) form.set('cover_letter', new Blob([request.coverLetter], { type: 'text/plain' }), 'cover_letter.txt')
-    for (const answer of request.answers) {
-      if (answer.status === 'resolved') form.set(answer.field.providerFieldId, answer.value)
-    }
-
-    let response: Response
-    try {
-      // Phase 1: dispatching the request. Any failure here means the
-      // request never reached (or was never accepted by) the server —
-      // safe to classify as a plain, retryable failure.
-      response = await fetch(submitUrl, { method: 'POST', body: form, redirect: 'manual', signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) })
-    } catch (err) {
-      return { outcome: 'failed', reason: `Network failure before submission was dispatched: ${err instanceof Error ? err.message : String(err)}`, retryable: true }
-    }
-
-    const domainValidations: DomainValidation[] = [{ url: submitUrl, hostname: GREENHOUSE_API_HOST, allowed: true, reason: 'Fixed, validated Greenhouse API host.' }]
-    if (response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400)) {
-      // A redirect on the SUBMIT call itself (as opposed to discovery) is
-      // never followed — an ATS submission endpoint redirecting somewhere
-      // else post-POST is exactly the "employer page redirects elsewhere"
-      // scenario the issue calls out, and by the time we're submitting we
-      // must not silently hand control to wherever that points.
-      return { outcome: 'prohibited_destination', reason: 'Submission response was an unexpected redirect — refusing to follow it.', domainValidations }
-    }
-
-    try {
-      // Phase 2: reading/interpreting the response. A failure here means
-      // the request WAS dispatched and the server responded (or the
-      // connection was live when it started responding) — we cannot tell
-      // whether the application was actually recorded server-side, so this
-      // must never be treated as a plain safe failure.
-      const bodyText = await response.text()
-      const challenge = detectChallengeSignal(response.status, response.headers.get('content-type'), response.ok ? '' : bodyText)
-      if (challenge === 'captcha') return { outcome: 'captcha_detected', reason: 'CAPTCHA/challenge signal detected on submission response.' }
-      if (challenge === 'anti_bot') return { outcome: 'anti_bot_detected', reason: 'Anti-bot/challenge response detected on submission.' }
-
-      if (!response.ok) {
-        const retryable = response.status === 429 || response.status >= 500
-        return { outcome: 'failed', reason: `Greenhouse submission failed: ${response.status} ${bodyText.slice(0, 300)}`, retryable, response: { status: response.status } }
-      }
-
-      let parsedBody: Record<string, unknown>
-      try {
-        parsedBody = JSON.parse(bodyText) as Record<string, unknown>
-      } catch {
-        // 2xx status but unparseable body: we know the server accepted the
-        // connection and returned "success" but we can't extract a
-        // confirmation identifier — positive evidence is required, so this
-        // is uncertain, never a guessed success.
-        return { outcome: 'submission_uncertain', reason: 'Submission response was 2xx but the body was not valid JSON — no confirmation identifier available.', response: { status: response.status } }
-      }
-
-      const confirmationId =
-        (typeof parsedBody.id === 'number' || typeof parsedBody.id === 'string' ? String(parsedBody.id) : null) ??
-        (typeof parsedBody.application_id === 'string' ? parsedBody.application_id : null) ??
-        (typeof parsedBody.confirmation_id === 'string' ? parsedBody.confirmation_id : null)
-
-      if (!confirmationId) {
-        return { outcome: 'submission_uncertain', reason: '2xx response contained no recognizable confirmation identifier — refusing to claim SUBMITTED without positive evidence.', response: { status: response.status, body: parsedBody } }
-      }
-
-      return {
-        outcome: 'submitted',
-        evidence: { confirmationId, method: 'ats_api_response', receivedAt: new Date().toISOString(), raw: { status: response.status } },
-        response: { status: response.status },
-      }
-    } catch (err) {
-      return { outcome: 'submission_uncertain', reason: `Response could not be read after the request was dispatched: ${err instanceof Error ? err.message : String(err)}` }
+  /**
+   * Unconditionally refuses. Performs NO network request of any kind.
+   *
+   * See this module's header: Greenhouse's application-submission endpoint
+   * requires the employer's own Job Board API key as HTTP Basic Auth, which
+   * we cannot lawfully hold for an arbitrary employer. There is deliberately
+   * no flag, setting, or rollout switch that turns this into a real POST —
+   * the request-building code was deleted rather than disabled, so no future
+   * config change can resurrect an unauthenticated submission attempt.
+   */
+  async submit(): Promise<SubmissionResult> {
+    return {
+      outcome: 'not_supported',
+      reason:
+        "Greenhouse's application-submission endpoint requires the employer's own Job Board API key (HTTP Basic Auth); only the read-only job and question endpoints are public. Caye cannot hold that key for an employer, so it never attempts a submission.",
     }
   },
 }

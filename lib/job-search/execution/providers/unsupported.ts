@@ -21,11 +21,12 @@ import type { AtsExecutorProvider } from './types'
 export function unsupportedProvider(providerKey: string): AtsExecutorProvider {
   return {
     providerKey,
+    canSubmit: false,
     async discoverFields() {
       return { outcome: 'unsupported_provider', reason: `No automated executor exists for provider "${providerKey}" yet — human review required.` }
     },
     async submit() {
-      return { outcome: 'failed', reason: `No automated executor exists for provider "${providerKey}" — submit() should never be called for it.`, retryable: false }
+      return { outcome: 'not_supported', reason: `No automated executor exists for provider "${providerKey}" — submit() should never be called for it.` }
     },
   }
 }

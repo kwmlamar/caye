@@ -47,7 +47,12 @@ describe('greenhouseAtsProvider.discoverFields (#194)', () => {
           {
             label: 'Will you now or in the future require sponsorship for employment visa status?',
             required: true,
-            fields: [{ name: 'question_555', type: 'yes_no', values: [{ label: 'Yes', value: '1' }, { label: 'No', value: '0' }] }],
+            // Real shape, captured from a live public Greenhouse board on
+            // 2026-08-29: `value` is the option's numeric identifier, and it
+            // is NOT a stable encoding of the label — the same board returns
+            // value 0 for "No" on one question and 239207523002 for "No" on
+            // another. The label alone is therefore never submittable.
+            fields: [{ name: 'question_555', type: 'multi_value_single_select', values: [{ label: 'Yes', value: 239207524002 }, { label: 'No', value: 239207523002 }] }],
           },
           { label: 'Are you willing to relocate?', required: false, fields: [{ name: 'question_777', type: 'yes_no' }] },
         ],
@@ -62,7 +67,12 @@ describe('greenhouseAtsProvider.discoverFields (#194)', () => {
     const sponsorship = result.fields.find((f) => f.providerFieldId === 'question_555')
     expect(sponsorship?.semanticKey).toBe('sponsorship')
     expect(sponsorship?.required).toBe(true)
-    expect(sponsorship?.allowedOptions).toEqual(['Yes', 'No'])
+    // The provider's own option IDs must survive discovery — losing them is
+    // what made the original submission path unable to answer correctly.
+    expect(sponsorship?.allowedOptions).toEqual([
+      { label: 'Yes', value: '239207524002' },
+      { label: 'No', value: '239207523002' },
+    ])
 
     const relocation = result.fields.find((f) => f.providerFieldId === 'question_777')
     expect(relocation?.semanticKey).toBe('relocation')
@@ -121,10 +131,21 @@ describe('greenhouseAtsProvider.discoverFields (#194)', () => {
   })
 })
 
-describe('greenhouseAtsProvider.submit (#194)', () => {
+describe('greenhouseAtsProvider.submit — refuses, and never touches the network (#194, post-audit)', () => {
   let fetchSpy: ReturnType<typeof vi.spyOn>
 
-  const field: DiscoveredField = { providerFieldId: 'question_555', label: 'Sponsorship?', semanticKey: 'sponsorship', inputType: 'select', required: true, allowedOptions: ['Yes', 'No'], confidence: 0.9 }
+  const field: DiscoveredField = {
+    providerFieldId: 'question_555',
+    label: 'Sponsorship?',
+    semanticKey: 'sponsorship',
+    inputType: 'select',
+    required: true,
+    allowedOptions: [
+      { label: 'Yes', value: '1' },
+      { label: 'No', value: '0' },
+    ],
+    confidence: 0.9,
+  }
 
   function request(overrides: Partial<SubmissionRequest> = {}): SubmissionRequest {
     return {
@@ -133,7 +154,7 @@ describe('greenhouseAtsProvider.submit (#194)', () => {
       applyUrl: APPLY_URL,
       resume: { id: 'artifact-1', applicationId: 'app-1', variantId: 'variant-1', content: 'Tailored resume text.', artifactType: 'resume' },
       coverLetter: null,
-      answers: [{ status: 'resolved', field, value: 'No', source: 'profile_fact', profileFactId: 'fact-1', reusable: true }],
+      answers: [{ status: 'resolved', field, value: '0', source: 'profile_fact', profileFactId: 'fact-1', reusable: true }],
       founder: { fullName: 'Lamar Founder', email: 'lamar@example.com', phone: null },
       ...overrides,
     }
@@ -146,68 +167,40 @@ describe('greenhouseAtsProvider.submit (#194)', () => {
     fetchSpy.mockRestore()
   })
 
-  it('refuses to submit when a required field has no resolved answer (safety net — never guesses)', async () => {
-    const result = await greenhouseAtsProvider.submit(request({ answers: [] }), [field])
-    expect(result.outcome).toBe('failed')
+  // The single most important guarantee in this file. Greenhouse's
+  // application-submission endpoint requires the EMPLOYER's Job Board API key
+  // as HTTP Basic Auth (their docs: GETs are public, "only the POST
+  // submission endpoint requires authentication"). We cannot hold that key
+  // for an arbitrary employer, so there is no lawful automated submission
+  // channel and the provider must never open a connection to attempt one.
+  it('declares canSubmit=false so the executor can never route a real submission here', () => {
+    expect(greenhouseAtsProvider.canSubmit).toBe(false)
+  })
+
+  it('returns not_supported and makes ZERO network calls, whatever it is handed', async () => {
+    const result = await greenhouseAtsProvider.submit(request(), [field])
+    expect(result.outcome).toBe('not_supported')
     expect(fetchSpy).not.toHaveBeenCalled()
   })
 
-  it('a positive provider confirmation (id in body) is required for SUBMITTED (#194 scenario 14)', async () => {
-    fetchSpy.mockResolvedValue(jsonResponse({ id: 987654321, status: 'submitted' }, 200))
+  it('explains the real reason (employer-held API key), not a transient-sounding failure', async () => {
     const result = await greenhouseAtsProvider.submit(request(), [field])
-    expect(result.outcome).toBe('submitted')
-    if (result.outcome === 'submitted') expect(result.evidence.confirmationId).toBe('987654321')
+    if (result.outcome !== 'not_supported') throw new Error('expected not_supported')
+    expect(result.reason).toMatch(/API key/i)
+    // 'not_supported' carries no `retryable` field at all — this outcome must
+    // never be mistaken for something a retry could fix.
+    expect(result).not.toHaveProperty('retryable')
   })
 
-  it('a 2xx response with no confirmation identifier never claims SUBMITTED — button click alone is not evidence (#194 scenario 15)', async () => {
-    fetchSpy.mockResolvedValue(jsonResponse({ status: 'ok' }, 200))
+  it('still refuses when every required field IS resolved — completeness is not authorization', async () => {
     const result = await greenhouseAtsProvider.submit(request(), [field])
-    expect(result.outcome).toBe('submission_uncertain')
+    expect(result.outcome).toBe('not_supported')
+    expect(fetchSpy).not.toHaveBeenCalled()
   })
 
-  it('a 2xx response with an unparseable body is uncertain, never a guessed success', async () => {
-    fetchSpy.mockResolvedValue(textResponse('not json', 200, { 'content-type': 'application/json' }))
+  it('never reports submitted, and never produces confirmation evidence', async () => {
     const result = await greenhouseAtsProvider.submit(request(), [field])
-    expect(result.outcome).toBe('submission_uncertain')
-  })
-
-  it('a network failure BEFORE the request is dispatched is a safe, retryable failure (#194 scenario 16)', async () => {
-    fetchSpy.mockRejectedValue(new TypeError('fetch failed'))
-    const result = await greenhouseAtsProvider.submit(request(), [field])
-    expect(result.outcome).toBe('failed')
-    if (result.outcome === 'failed') expect(result.retryable).toBe(true)
-  })
-
-  it('a failure reading the response AFTER dispatch is SUBMISSION_UNCERTAIN, never a safe failure (#194 scenario 17)', async () => {
-    const brokenResponse = { ok: true, status: 200, type: 'default', headers: new Headers({ 'content-type': 'application/json' }), text: () => Promise.reject(new Error('connection reset mid-response')) } as unknown as Response
-    fetchSpy.mockResolvedValue(brokenResponse)
-    const result = await greenhouseAtsProvider.submit(request(), [field])
-    expect(result.outcome).toBe('submission_uncertain')
-  })
-
-  it('a clean 4xx validation error is a definite, non-retryable failure — not uncertain', async () => {
-    fetchSpy.mockResolvedValue(jsonResponse({ errors: ['email is invalid'] }, 422))
-    const result = await greenhouseAtsProvider.submit(request(), [field])
-    expect(result.outcome).toBe('failed')
-    if (result.outcome === 'failed') expect(result.retryable).toBe(false)
-  })
-
-  it('a clean 5xx error is a retryable failure, not uncertain (a real error response IS positive evidence the request did not succeed)', async () => {
-    fetchSpy.mockResolvedValue(jsonResponse({ error: 'internal error' }, 500))
-    const result = await greenhouseAtsProvider.submit(request(), [field])
-    expect(result.outcome).toBe('failed')
-    if (result.outcome === 'failed') expect(result.retryable).toBe(true)
-  })
-
-  it('a redirect on the submit response itself is never followed — refuses and escalates', async () => {
-    fetchSpy.mockResolvedValue(redirectResponse('https://www.linkedin.com/somewhere'))
-    const result = await greenhouseAtsProvider.submit(request(), [field])
-    expect(result.outcome).toBe('prohibited_destination')
-  })
-
-  it('CAPTCHA on the submission response escalates, never bypassed', async () => {
-    fetchSpy.mockResolvedValue(textResponse('CAPTCHA required', 403))
-    const result = await greenhouseAtsProvider.submit(request(), [field])
-    expect(result.outcome).toBe('captcha_detected')
+    expect(result.outcome).not.toBe('submitted')
+    expect(result).not.toHaveProperty('evidence')
   })
 })

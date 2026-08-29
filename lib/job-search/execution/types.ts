@@ -24,7 +24,19 @@ export type DiscoveredField = {
   semanticKey: string | null
   inputType: 'text' | 'textarea' | 'select' | 'multi_select' | 'boolean' | 'file' | 'unknown'
   required: boolean
-  allowedOptions: string[] | null
+  /**
+   * The provider's own option list for a select/multi-select field, with the
+   * provider's option IDENTIFIER preserved alongside the human label.
+   *
+   * Storing only labels (as this originally did) is not merely lossy, it is
+   * wrong: verified against a real Greenhouse board on 2026-08-29, the same
+   * board returns `{"label":"No","value":0}` for one question and
+   * `{"label":"No","value":239207523002}` for another. Greenhouse's submission
+   * API expects the option's `value`, never the label, so a label-only field
+   * can never be turned into a correct answer — and a label that happens to
+   * match across two questions carries no shared meaning at all.
+   */
+  allowedOptions: { label: string; value: string }[] | null
   /** 0-1. Reflects confidence in the semantic-key mapping, not in any resolved value. */
   confidence: number
 }
@@ -67,6 +79,14 @@ export type SubmissionEvidence = {
 }
 
 export type SubmissionResult =
+  /**
+   * The provider has no safe, authorized way to submit this application at
+   * all — not a transient failure and never retryable. Greenhouse returns
+   * this unconditionally today: its Job Board submission endpoint requires
+   * the EMPLOYER's own Job Board API key as HTTP Basic Auth, which an
+   * outside applicant cannot hold. See providers/greenhouse.ts.
+   */
+  | { outcome: 'not_supported'; reason: string }
   | { outcome: 'submitted'; evidence: SubmissionEvidence; response: Record<string, unknown> }
   | { outcome: 'submission_uncertain'; reason: string; response?: Record<string, unknown> }
   | { outcome: 'failed'; reason: string; retryable: boolean; response?: Record<string, unknown> }
