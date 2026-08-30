@@ -14,7 +14,7 @@
 import type { JobSearchProfile } from './profile'
 
 export type ResumeVariantSource = {
-  variantKey: 'full_stack' | 'backend_platform' | 'ai_llm'
+  variantKey: 'it_support' | 'full_stack' | 'backend_platform' | 'ai_llm'
   title: string
   summary: string | null
   sections: Record<string, unknown>
