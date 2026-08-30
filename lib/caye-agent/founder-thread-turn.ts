@@ -20,6 +20,7 @@ import { engineeringAnalysisRichResult } from '@/lib/engineering/fea/rich-result
 import { resolveWorkspaceAttachments, buildAttachmentContentBlocks, MAX_ATTACHMENTS_PER_TURN } from '@/lib/artifacts/attachments'
 import { businessArtifactRichResult, mergeRichResults } from '@/lib/artifacts/rich-result'
 import { propertyRichResultFromTurns } from '@/lib/property/turn-rich-result'
+import { mark } from '@/lib/caye-voice/latency'
 
 export interface FounderThreadTurnResult {
   replyText: string
@@ -32,16 +33,70 @@ export interface FounderThreadTurnResult {
 /**
  * Selects a subscription/API model via lib/model-router instead of the
  * production cayeAgent()/execute.ts path. Strictly opt-in: `requestedMode`
- * is undefined for every caller that doesn't explicitly pass it, which
- * includes app/api/founder/caye-direct/voice/turn/route.ts — voice keeps
- * calling runFounderThreadTurn with its original 3-arg shape and gets
- * EXACTLY today's behavior, unaffected by this option existing. Only the
- * text route's new model selector (2026-08-17) sends this.
+ * is undefined for every caller that doesn't explicitly pass it, so those
+ * callers get EXACTLY today's behavior, unaffected by this option
+ * existing. The text route's model selector (2026-08-17) and the voice
+ * turn route both send it.
  */
 export interface FounderThreadTurnOptions {
   requestedMode?: RequestedMode
   /** Required (and only meaningful) when requestedMode is set — the verified founder auth.users.id from requireFounder(), never client-supplied. */
   founderUserId?: string
+  /**
+   * How the reply will be delivered. 'voice' means it is about to be spoken
+   * aloud, which changes two things and nothing else:
+   *
+   *   1. the model gets a spoken-form brief and a much smaller output
+   *      budget, because a dashboard-sized answer is unusable out loud and
+   *      every extra token is extra time before the founder hears anything;
+   *   2. thread-title generation stops blocking the reply (see below).
+   *
+   * It does NOT change authority, tools, grounding, persistence or
+   * workspace scope — a spoken turn stays indistinguishable from a typed
+   * one to gateHighRisk and action-claim-guard, which is the whole point of
+   * routing voice through this function in the first place.
+   *
+   * Undefined (every non-voice caller) keeps today's behavior byte for
+   * byte.
+   */
+  responseStyle?: 'voice'
+}
+
+/**
+ * Post-reply thread maintenance: title on the first exchange, rolling
+ * summary once the thread is long enough.
+ *
+ * Neither is something the founder is waiting to hear, but until 2026-08-30
+ * `maybeGenerateThreadTitle` was awaited here — two DB reads plus an LLM
+ * call sitting between "Caye knows the answer" and "the caller gets it",
+ * on every turn of a thread that has no title yet. Its own doc comment
+ * says it is best-effort and shouldn't block "the reply the founder is
+ * waiting on"; awaiting it made that comment false.
+ *
+ * For a spoken turn that cost is dead air, so voice moves it off the
+ * critical path entirely. The typed path keeps awaiting it deliberately:
+ * the composer refetches the thread the moment the turn settles and would
+ * otherwise race the title into view a beat late. Same reasoning, opposite
+ * answer, because only one of the two surfaces is holding the founder in
+ * silence while it runs.
+ */
+async function runThreadMaintenance(
+  workspaceId: string,
+  threadId: string,
+  responseStyle: FounderThreadTurnOptions['responseStyle']
+): Promise<void> {
+  const summary = () => void maybeRefreshThreadSummary(workspaceId, threadId).catch(() => {})
+
+  if (responseStyle === 'voice') {
+    void maybeGenerateThreadTitle(workspaceId, threadId).catch((err) => {
+      console.warn('[caye-direct] deferred thread title failed:', err)
+    })
+    summary()
+    return
+  }
+
+  await maybeGenerateThreadTitle(workspaceId, threadId)
+  summary()
 }
 
 /**
@@ -216,6 +271,7 @@ export async function runFounderThreadTurn(
       requestedMode: options!.requestedMode!,
       engineeringOrigin: { threadId, messageId: inboundRow.id },
       channel: 'dashboard',
+      responseStyle: options!.responseStyle,
     })
     const richResult = mergeRichResults(
       mergeRichResults(
@@ -227,12 +283,13 @@ export async function runFounderThreadTurn(
       ),
       routerResult.richResult
     )
+    mark('persist_start')
     const inserted = await persistAgentTurns(supabase, workspaceId, routerResult.newTurns, operator, undefined, undefined, 'dashboard', 'visible', richResult)
     const insertedIds = inserted.map((r) => r.id)
     await Promise.all([...insertedIds.map((id) => linkMessageToThread(supabase, threadId, id, 'founder')), linkInsertedMessagesToThreads(supabase, insertedIds, routerResult.linkedThreadIds)])
     await touchThread(supabase, threadId)
-    await maybeGenerateThreadTitle(workspaceId, threadId)
-    void maybeRefreshThreadSummary(workspaceId, threadId).catch(() => {})
+    mark('persist_done')
+    await runThreadMaintenance(workspaceId, threadId, options?.responseStyle)
     return { replyText: routerResult.replyText, threadId, backend: routerResult.backend, richResult }
   }
 
@@ -255,8 +312,7 @@ export async function runFounderThreadTurn(
   )
 
   await touchThread(supabase, threadId)
-  await maybeGenerateThreadTitle(workspaceId, threadId)
-  void maybeRefreshThreadSummary(workspaceId, threadId).catch(() => {})
+  await runThreadMaintenance(workspaceId, threadId, options?.responseStyle)
 
   return {
     replyText: agentResult.replyText,

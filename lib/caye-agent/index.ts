@@ -19,6 +19,7 @@ import {
   loadAuthoritativeOwnerOperationalState,
   renderAuthoritativeOwnerOperationalState,
 } from './owner-operational-state'
+import { mark } from '@/lib/caye-voice/latency'
 
 const DEFAULT_WORKSPACE_TIMEZONE = 'America/Nassau'
 const MODEL = 'claude-sonnet-4-6'
@@ -122,6 +123,8 @@ function textFromUserMessage(content: CayeAgentInput['userMessage']): string {
  * between the two callers, never what Caye knows going in.
  */
 export async function buildBackOfficeTurnContext(input: CayeAgentInput): Promise<BackOfficeTurnContext> {
+  // No-op unless a voice turn is in flight above this call — see lib/caye-voice/latency.ts.
+  mark('context_build_start')
   const supabase = createServiceClient()
   const { data: customer } = await supabase
     .from('customers')
@@ -256,6 +259,7 @@ export async function buildBackOfficeTurnContext(input: CayeAgentInput): Promise
       role: 'user',
       content: buildContinuationPrompt(input.investigation.objective, digest),
     }
+    mark('context_build_done', { continuation: true, systemPromptChars: systemPrompt.length, historyMessages: 1 })
     return { systemPrompt, initialMessages: [continuationTurn], workspaceTimezone, activeWork }
   }
 
@@ -268,6 +272,7 @@ export async function buildBackOfficeTurnContext(input: CayeAgentInput): Promise
   }
   const initialMessages: Anthropic.MessageParam[] = [...history, currentUserTurn]
 
+  mark('context_build_done', { systemPromptChars: systemPrompt.length, historyMessages: initialMessages.length })
   return { systemPrompt, initialMessages, workspaceTimezone, activeWork }
 }
 

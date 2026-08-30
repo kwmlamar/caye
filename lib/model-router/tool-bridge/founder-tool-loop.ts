@@ -15,6 +15,7 @@ import { validateAgainstSchema } from './schema-validate'
 import { detectProtocolArtifacts } from './protocol-artifact-guard'
 import { requiresBusinessGrounding } from './business-grounding-classifier'
 import { extractRichResult, type RichResult } from '@/lib/caye-direct-rich-results'
+import { mark } from '@/lib/caye-voice/latency'
 
 /**
  * Option B from the multi-model router brief: a NEW founder-only
@@ -309,6 +310,9 @@ export async function runFounderToolLoop(args: FounderToolLoopArgs): Promise<Fou
   }
 
   for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
+    // All four mark() calls in this function are no-ops unless a voice turn
+    // is in flight above this loop — see lib/caye-voice/latency.ts.
+    mark('model_round_start', { round: i })
     const { result, decision } = await runToolTurnWithFallback(
       args.backends,
       args.requestedMode,
@@ -321,6 +325,13 @@ export async function runFounderToolLoop(args: FounderToolLoopArgs): Promise<Fou
     lastModel = result.model
     lastUsage = result.usage
     lastLatencyMs = result.latencyMs
+    mark('model_round_done', {
+      round: i,
+      backend: decision.selected ?? 'none',
+      ...(result.model ? { model: result.model } : {}),
+      ...(result.usage?.inputTokens != null ? { inputTokens: result.usage.inputTokens } : {}),
+      ...(result.usage?.outputTokens != null ? { outputTokens: result.usage.outputTokens } : {}),
+    })
 
     // Provenance boundary #1: model text is never evidence a tool ran.
     // This is the only place raw backend output is trusted enough to
@@ -371,6 +382,7 @@ export async function runFounderToolLoop(args: FounderToolLoopArgs): Promise<Fou
           lastTurn.content = [{ type: 'text', text: replyText }]
         }
       }
+      mark('reasoning_done', { rounds: i + 1, replyChars: replyText.length })
       return { replyText, ...(extracted.result ? { richResult: extracted.result } : {}), newTurns, linkedThreadIds: dedupeThreadLinks(args.toolCtx), decision, model: lastModel, usage: lastUsage, latencyMs: lastLatencyMs }
     }
 
@@ -436,7 +448,9 @@ export async function runFounderToolLoop(args: FounderToolLoopArgs): Promise<Fou
         pinnedChain = [decision.selected]
       }
 
+      mark('tool_start', { tool: block.name })
       const { result: toolResult } = await runToolWithRecovery(tool, block.input, args.toolCtx, { mode: 'back-office' })
+      mark('tool_done', { tool: block.name, ok: toolResult.ok !== false })
       anyRealToolExecutedThisTurn = true
       const payload = stripForModel(toolResult)
       const guidance = guidanceFor(toolResult.status, toolResult.deferred === true, block.name, toolResult.error_code)

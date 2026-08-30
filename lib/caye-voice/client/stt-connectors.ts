@@ -11,6 +11,14 @@ export interface SttSession {
   onSpeechStart(cb: () => void): void
   onSpeechEnd(cb: () => void): void
   onError(cb: (err: Error) => void): void
+  /**
+   * Fires when the first byte of Caye's own output audio arrives for a
+   * response — the truest available "the founder can now hear something"
+   * signal, and the endpoint of the speech-end -> first-audio metric the
+   * latency targets are stated in. Providers without native voice output
+   * never fire it.
+   */
+  onSpeechAudioStart(cb: () => void): void
   getMicStream(): MediaStream | null
   supportsNativeVoice(): boolean
   speakReply(text: string): Promise<void>
@@ -24,6 +32,7 @@ abstract class BaseSttSession implements SttSession {
   protected speechStartCb: (() => void) | null = null
   protected speechEndCb: (() => void) | null = null
   protected errorCb: ((err: Error) => void) | null = null
+  protected speechAudioStartCb: (() => void) | null = null
   protected muted = false
 
   abstract start(): Promise<void>
@@ -38,6 +47,7 @@ abstract class BaseSttSession implements SttSession {
   onSpeechStart(cb: () => void): void { this.speechStartCb = cb }
   onSpeechEnd(cb: () => void): void { this.speechEndCb = cb }
   onError(cb: (err: Error) => void): void { this.errorCb = cb }
+  onSpeechAudioStart(cb: () => void): void { this.speechAudioStartCb = cb }
   getMicStream(): MediaStream | null { return this.micStream }
   supportsNativeVoice(): boolean { return false }
   async speakReply(_text: string): Promise<void> { throw new Error('Native voice is unavailable for this provider') }
@@ -49,6 +59,8 @@ export class OpenAiRealtimeSttSession extends BaseSttSession {
   private dc: RTCDataChannel | null = null
   private remoteAudio: HTMLAudioElement | null = null
   private pendingSpeech: { resolve: () => void; reject: (err: Error) => void } | null = null
+  /** Reset per response so onSpeechAudioStart fires once per reply, not once per session. */
+  private audioStartedThisResponse = false
 
   constructor(private readonly credential: SttCredential) {
     super()
@@ -106,6 +118,7 @@ export class OpenAiRealtimeSttSession extends BaseSttSession {
     if (!text.trim()) return
 
     this.cancelSpeech()
+    this.audioStartedThisResponse = false
     await new Promise<void>((resolve, reject) => {
       this.pendingSpeech = { resolve, reject }
       dc.send(JSON.stringify({
@@ -151,6 +164,18 @@ export class OpenAiRealtimeSttSession extends BaseSttSession {
   private handleEvent(raw: string): void {
     let msg: { type?: string; delta?: string; transcript?: string; error?: { message?: string } }
     try { msg = JSON.parse(raw) } catch { return }
+
+    // Both spellings are accepted: the realtime API renamed its output
+    // audio delta event, and which one arrives depends on the model
+    // version pinned by CAYE_VOICE_OPENAI_REALTIME_MODEL. Matching only
+    // one would silently drop the first-audio metric on the other.
+    if (msg.type === 'response.output_audio.delta' || msg.type === 'response.audio.delta') {
+      if (!this.audioStartedThisResponse) {
+        this.audioStartedThisResponse = true
+        this.speechAudioStartCb?.()
+      }
+      return
+    }
 
     switch (msg.type) {
       case 'conversation.item.input_audio_transcription.delta':
