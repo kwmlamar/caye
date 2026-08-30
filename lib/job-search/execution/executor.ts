@@ -27,6 +27,7 @@ import { unsupportedProvider } from './providers/unsupported'
 import type { AtsExecutorProvider } from './providers/types'
 import { resolveDiscoveredField, STRUCTURAL_SEMANTIC_KEYS } from './answers'
 import { describeBlockerCategory } from './blockers'
+import { reserveSubmissionSlot } from './reservation'
 import type { DiscoveredField, DomainValidation, ExecutionProvider, FieldResolution, HumanReviewBlocker } from './types'
 
 export type ExecuteApplicationResult =
@@ -286,6 +287,27 @@ async function runClaimedExecution(claim: ApplicationClaim, providerKey: Executi
   const dryRun = revalidated.dryRun || context.dryRun
 
   if (dryRun) {
+    // A dry-run follows the SAME browser route, including the real form and
+    // verified resume upload, but the provider's dryRun contract has no
+    // submit operation. This is intentionally separate from submit() so a
+    // future refactor cannot accidentally turn a dry-run into a click.
+    if (provider.dryRun) {
+      const browserReadiness = await provider.dryRun(
+        {
+          applicationId: claim.applicationId,
+          candidateId: context.candidateId,
+          applyUrl: context.applyUrl,
+          resume: { id: resumeArtifact.id, applicationId: claim.applicationId, variantId: context.resumeVariantId, content: resumeArtifact.content, artifactType: 'resume' },
+          coverLetter: coverLetterArtifact?.content ?? null,
+          answers: allAnswers,
+          founder: { fullName: profile.fullName ?? '', email: profile.contactEmail ?? '', phone: profile.contactPhone },
+        },
+        fields,
+      )
+      if (browserReadiness.outcome !== 'ready') {
+        return finishNeedsHuman(browserReadiness.reason, [{ category: 'browser_dry_run_blocked', label: 'Browser dry-run blocked', reason: browserReadiness.reason }], discovery.domainValidations)
+      }
+    }
     await releaseExecutionClaim(claim, 'NEEDS_HUMAN', { needs_human_reason: 'Dry run completed — destination, field discovery, and canonical answers all checked out. Nothing was submitted.' })
     await recordAttempt({
       applicationId: claim.applicationId,
@@ -324,6 +346,13 @@ async function runClaimedExecution(claim: ApplicationClaim, providerKey: Executi
   }
 
   if (!profile.contactEmail) return finishNeedsHuman('Founder profile has no contact email.', [{ category: 'profile_incomplete', label: 'Founder profile incomplete', reason: 'No contact email.' }])
+
+  // This is the final non-consequential operation before a provider can
+  // click Submit. It is a database transaction, not a read-then-act count.
+  // Once acquired it is deliberately consumed even for an uncertain send.
+  if (!(await reserveSubmissionSlot(claim))) {
+    return finishNeedsHuman('Daily real-submission capacity is unavailable; no submit action was attempted.', [{ category: 'daily_cap_reached', label: 'Daily submission cap reached', reason: 'No atomic daily submission slot could be reserved.' }], discovery.domainValidations)
+  }
 
   const submission = await provider.submit(
     {

@@ -10,6 +10,7 @@ function describeAdminPendingAction(toolName: string, args: Record<string, unkno
   if (toolName === 'enable_application_automation') return 'Enable real ATS application-submission automation'
   if (toolName === 'disable_dry_run_mode') return 'Disable dry-run mode — real submissions can reach an ATS'
   if (toolName === 'set_daily_submission_cap') return `Set daily ATS submission cap to ${args.cap}`
+  if (toolName === 'run_application_execution') return `Run the browser executor for stored application ${args.application_id}`
   return `Run ${toolName}`
 }
 

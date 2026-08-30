@@ -72,7 +72,7 @@ export type FieldDiscoveryResult =
 export type SubmissionEvidence = {
   /** A provider-verifiable confirmation identifier. Never fabricated — absence of this means the outcome cannot be 'submitted'. */
   confirmationId: string
-  method: 'ats_api_response'
+  method: 'ats_api_response' | 'browser_confirmation'
   receivedAt: string
   /** Non-sensitive metadata only (e.g. HTTP status). Never raw form field values. */
   raw?: Record<string, unknown>
