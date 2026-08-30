@@ -20,8 +20,18 @@ alter table public.business_facts
 -- Conservatively preserve explicit human authority for the former and mark
 -- the review-produced rows as derived system knowledge rather than silently
 -- promoting them to human truth merely because the new columns have defaults.
+--
+-- Existing service_id is also authoritative scope evidence. Backfill it into
+-- the typed subject fields so historical service-specific knowledge cannot be
+-- reinterpreted as workspace-wide merely because the columns are new.
+-- Limit the backfill to rows that still have the new-column defaults and no
+-- typed provenance marker so a migration replay cannot rewrite later typed
+-- memory that has already been classified deliberately.
 update public.business_facts
 set
+  memory_type = case when category = 'policy' then 'policy' else 'fact' end,
+  subject_type = case when service_id is not null then 'service' else 'workspace' end,
+  subject_id = case when service_id is not null then service_id::text else null end,
   knowledge_mode = case
     when created_by in ('owner', 'founder') then 'explicit'
     else 'derived'
@@ -35,14 +45,22 @@ set
     when created_by in ('owner', 'founder') then 1.0
     else least(confidence, 0.75)
   end,
-  provenance = case
-    when provenance = '{}'::jsonb then jsonb_build_object(
-      'legacy_backfill', true,
-      'legacy_source', source,
-      'legacy_created_by', created_by
-    )
-    else provenance
-  end;
+  provenance = jsonb_build_object(
+    'legacy_backfill', true,
+    'legacy_source', source,
+    'legacy_created_by', created_by,
+    'legacy_service_id', service_id
+  )
+where provenance = '{}'::jsonb
+  and memory_type = 'fact'
+  and subject_type = 'workspace'
+  and subject_id is null
+  and knowledge_mode = 'explicit'
+  and confidence = 1.0
+  and sensitivity = 'workspace'
+  and authority_kind = 'operator'
+  and contradicts_fact_id is null
+  and correction_of_fact_id is null;
 
 do $$ begin
   alter table public.business_facts add constraint business_facts_memory_type_check
