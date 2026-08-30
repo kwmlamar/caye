@@ -5,15 +5,13 @@
  * path; every turn that could depend on workspace state, memory, tools,
  * permissions, approvals, or side effects still uses the normal Caye founder
  * control plane.
- *
- * Every turn runs inside withVoiceTurnTrace, which emits one
- * `[caye-voice] turn_timeline` line per turn with the server half of the
- * latency breakdown (auth, context build, reasoning, tools, persistence).
- * The browser half arrives separately via POST ../voice/telemetry.
  */
 
 import { after, NextRequest, NextResponse } from 'next/server'
 import { requireFounder } from '@/lib/founder'
+import { createServiceClient } from '@/lib/supabase-server'
+import { getFounderThreadById, setThreadActiveWorkspace } from '@/lib/caye-direct-threads'
+import { resolveAuthoritativeThreadWorkspace } from '@/lib/caye-direct-thread-scope'
 import { runFounderThreadTurn } from '@/lib/caye-agent/founder-thread-turn'
 import { conversationalVoiceReply, persistConversationalVoiceTurn } from '@/lib/caye-voice/conversational-fast-path'
 import { logVoiceEvent } from '@/lib/caye-voice/observability'
@@ -38,23 +36,28 @@ export async function POST(req: NextRequest) {
 
     const startedAt = Date.now()
     try {
+      // A Direct thread can legitimately be displayed while its active workspace
+      // differs from the dashboard's incidental workspace selection. The typed
+      // thread endpoint already resolves that scope before calling the founder
+      // turn runner. Voice must do the same or a perfectly valid visible thread
+      // is misreported as "Thread not found".
+      const supabase = createServiceClient()
+      const thread = await getFounderThreadById(supabase, threadId)
+      if (!thread) return NextResponse.json({ error: 'Thread not found' }, { status: 404 })
+
       const casualReply = conversationalVoiceReply(message)
       if (casualReply) {
         mark('fast_path_hit')
-        // Persistence moves off the critical path via after(), the same
-        // primitive the webhook routes already use for post-response work.
-        // Caye already knows the exact words — every millisecond spent
-        // writing them down is dead air on a turn whose whole point is that
-        // it needed no lookup. after() (not a bare floating promise) is
-        // what keeps the serverless invocation alive long enough for the
-        // write to actually land; the turn is still durable, the write just
-        // no longer sits between Caye deciding and Caye speaking.
+        // Pure conversation needs no business workspace lookup. Persist it in
+        // the thread's actual active workspace rather than the dashboard's
+        // incidental workspace selection.
+        const persistWorkspaceId = thread.active_workspace_id
         after(async () => {
           try {
-            await persistConversationalVoiceTurn(workspaceId, threadId, message, casualReply)
+            await persistConversationalVoiceTurn(persistWorkspaceId, threadId, message, casualReply)
           } catch (err) {
             console.error('[caye-voice] fast_path_persist_failed', {
-              workspaceId,
+              workspaceId: persistWorkspaceId,
               threadId,
               sessionId: sessionId ?? 'unknown',
               error: err instanceof Error ? err.message : String(err),
@@ -62,7 +65,7 @@ export async function POST(req: NextRequest) {
           }
         })
         logVoiceEvent({
-          workspaceId,
+          workspaceId: persistWorkspaceId,
           sessionId: sessionId ?? 'unknown',
           event: 'turn_finalized',
           reasoningBackend: 'voice_fast_path',
@@ -70,22 +73,25 @@ export async function POST(req: NextRequest) {
           characterCount: message.length,
           at: new Date().toISOString(),
         })
-        return NextResponse.json({ replyText: casualReply, threadId, backend: 'voice_fast_path' })
+        return NextResponse.json({ replyText: casualReply, threadId, backend: 'voice_fast_path', activeWorkspaceId: persistWorkspaceId })
       }
 
       mark('fast_path_miss')
+      const authoritativeWorkspaceId = await resolveAuthoritativeThreadWorkspace(supabase, threadId)
+      const turnWorkspaceId = authoritativeWorkspaceId ?? workspaceId
+      if (thread.active_workspace_id !== turnWorkspaceId) {
+        const moved = await setThreadActiveWorkspace(supabase, thread.active_workspace_id, threadId, turnWorkspaceId)
+        if (!moved) return NextResponse.json({ error: 'Workspace context changed; retry the turn.' }, { status: 409 })
+      }
+
       mark('turn_start')
-      const result = await runFounderThreadTurn(workspaceId, threadId, message, {
+      const result = await runFounderThreadTurn(turnWorkspaceId, threadId, message, {
         requestedMode: 'auto',
         founderUserId: user.id,
-        // Restored 2026-08-30: commit 4628b6c3 added this and a later merge
-        // silently dropped it, so voice replies were being generated with
-        // the full 8192-token text budget and no spoken-form guidance, then
-        // read aloud. See FounderThreadTurnOptions.responseStyle.
         responseStyle: 'voice',
       })
       logVoiceEvent({
-        workspaceId,
+        workspaceId: turnWorkspaceId,
         sessionId: sessionId ?? 'unknown',
         event: 'turn_finalized',
         reasoningBackend: result.backend ?? 'auto',
@@ -93,7 +99,11 @@ export async function POST(req: NextRequest) {
         characterCount: message.length,
         at: new Date().toISOString(),
       })
-      return NextResponse.json(result)
+      return NextResponse.json({
+        ...result,
+        activeWorkspaceId: turnWorkspaceId,
+        workspaceContextSource: authoritativeWorkspaceId ? 'linked_subject' : 'dashboard',
+      })
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Agent failed'
       console.error('[caye-voice] turn_failed', {
@@ -103,6 +113,9 @@ export async function POST(req: NextRequest) {
         error: msg,
       })
       if (msg === 'Thread not found') return NextResponse.json({ error: msg }, { status: 404 })
+      if (msg === 'Thread has a stale property link' || msg === 'Thread authoritative subjects span multiple workspaces') {
+        return NextResponse.json({ error: msg }, { status: 409 })
+      }
       return NextResponse.json({ error: msg }, { status: 500 })
     }
   })

@@ -67,13 +67,9 @@ export function CayeComposerSurface({ children, active, maxWidth = 600, style }:
         onClick={() => originalLiveVoice.props.onClick?.()}
         title="Start live voice"
         aria-label="Start live voice"
-        className="caye-direct-send"
-        style={{
-          background: '#2f8df5', borderColor: '#2f8df5',
-          boxShadow: '0 3px 14px -5px rgba(47,141,245,0.9)',
-        }}
+        className="caye-direct-send is-ready"
       >
-        <svg aria-hidden width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round">
+        <svg aria-hidden width="17" height="17" viewBox="0 0 24 24" fill="none" stroke={AQUA} strokeWidth="2.2" strokeLinecap="round">
           <path d="M5 10v4M9 7v10M13 5v14M17 8v8M21 10v4" />
         </svg>
       </button>
