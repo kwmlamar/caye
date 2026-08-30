@@ -20,13 +20,16 @@ export async function writeBusinessFact(args: {
   const supabase = createServiceClient()
   let serviceId: string | null = null
   let serviceName: string | null = null
-  if (args.classification.scope.target === 'service' && args.classification.scope.serviceName) {
+  if (args.classification.scope.target === 'service') {
+    if (!args.classification.scope.serviceName) {
+      return { decision: 'candidate', reason: 'service-scoped knowledge has no service name; refusing to widen it to workspace scope' }
+    }
     const lookup = await resolveGroundedService(supabase, args.workspaceId, args.classification.scope.serviceName, args.operatorText)
     if (lookup.ok && lookup.service) {
       serviceId = lookup.service.id
       serviceName = lookup.service.name
-    } else if (args.classification.risk === 'consequential') {
-      return { decision: 'candidate', reason: `consequential content scoped to a specific service, but "${args.classification.scope.serviceName}" did not resolve: ${lookup.error}` }
+    } else {
+      return { decision: 'candidate', reason: `content is scoped to a specific service, but "${args.classification.scope.serviceName}" did not resolve: ${lookup.error}` }
     }
   }
 
