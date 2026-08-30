@@ -43,14 +43,14 @@ async function writeAudit(input: {
   sourceMessageId: string
   sourceExcerpt: string
   canonicalKey: string
-  decision: 'candidate' | 'validated' | 'rejected' | 'superseded'
+  decision: 'candidate' | 'validated' | 'rejected' | 'superseded' | 'no_op'
   targetTable?: string
   targetRecordId?: string | null
   supersededRecordId?: string | null
   reason: string
 }) {
   const supabase = createServiceClient()
-  await supabase.from('operator_learning_audit').insert({
+  const { error } = await supabase.from('operator_learning_audit').insert({
     workspace_id: input.workspaceId,
     source_message_id: input.sourceMessageId,
     source_excerpt: input.sourceExcerpt.slice(0, 1000),
@@ -66,6 +66,33 @@ async function writeAudit(input: {
     superseded_record_id: input.supersededRecordId ?? null,
     reason: input.reason,
   })
+  if (error) throw new Error('Could not persist operator learning audit history')
+}
+
+async function publishAdaptiveLearningRuntimeEvidence(workspaceId: string, guidanceCount: number) {
+  if (guidanceCount < 1) return
+  const supabase = createServiceClient()
+  const { data: capability, error: capabilityError } = await supabase
+    .from('caye_operating_intelligence_capabilities')
+    .select('id')
+    .eq('capability_key', 'adaptive_learning')
+    .maybeSingle()
+  if (capabilityError || !capability) {
+    console.warn('[engineering-outcome-learning] adaptive_learning Direction capability unavailable:', capabilityError?.message ?? 'missing capability')
+    return
+  }
+  const observedAt = new Date().toISOString()
+  const { error } = await supabase.from('caye_operating_intelligence_capability_evidence').upsert({
+    capability_id: capability.id,
+    evidence_kind: 'runtime',
+    source_ref: `engineering_outcome_learning_guidance:${workspaceId}`,
+    summary: `A validated, outcome-backed engineering lesson was retrieved and surfaced into a later engineering decision context (${guidanceCount} guidance item${guidanceCount === 1 ? '' : 's'}).`,
+    verifies_capability: true,
+    confidence: 1,
+    observed_at: observedAt,
+    verified_at: observedAt,
+  }, { onConflict: 'capability_id,evidence_kind,source_ref' })
+  if (error) console.warn('[engineering-outcome-learning] Direction evidence write failed:', error.message)
 }
 
 export async function processEngineeringOutcomeLearning(input: {
@@ -109,7 +136,13 @@ export async function processEngineeringOutcomeLearning(input: {
       const candidateKey = calibrationCandidateKey(prediction.metric_key, prediction.unit, calibration.direction)
       const evidenceRef = { project_id: input.projectId, verdict_id: input.verdictId, prediction_id: prediction.id, outcome_id: outcome.id, percent_error: calibration.percentError }
 
-      const { data: existingCandidate } = await supabase.from('business_fact_candidates').select('id,status,occurrence_count,evidence_refs').eq('workspace_id', input.workspaceId).eq('normalized_text', candidateKey).maybeSingle()
+      const { data: existingCandidate, error: candidateReadError } = await supabase.from('business_fact_candidates').select('id,status,occurrence_count,evidence_refs').eq('workspace_id', input.workspaceId).eq('normalized_text', candidateKey).maybeSingle()
+      if (candidateReadError) throw new Error('Could not read engineering outcome-learning candidate')
+      if (existingCandidate?.status === 'resolved') {
+        await writeAudit({ workspaceId: input.workspaceId, sourceMessageId: input.sourceMessageId, sourceExcerpt: `Engineering verdict ${input.verdictId}`, canonicalKey, decision: 'no_op', targetTable: 'business_fact_candidates', targetRecordId: existingCandidate.id, reason: 'Matching outcome lesson is already validated; later matching evidence does not reopen the resolved candidate.' })
+        continue
+      }
+
       const refs = Array.isArray(existingCandidate?.evidence_refs) ? existingCandidate.evidence_refs as Array<Record<string, unknown>> : []
       const alreadyCounted = refs.some((ref) => ref.project_id === input.projectId)
       const nextRefs = alreadyCounted ? refs : [...refs, evidenceRef]
@@ -149,12 +182,13 @@ export async function processEngineeringOutcomeLearning(input: {
       }
       candidateCount += 1
 
-      if (distinctProjects < ENGINEERING_OUTCOME_MIN_PROJECTS || existingCandidate?.status === 'resolved') {
+      if (distinctProjects < ENGINEERING_OUTCOME_MIN_PROJECTS) {
         await writeAudit({ workspaceId: input.workspaceId, sourceMessageId: input.sourceMessageId, sourceExcerpt: sampleText, canonicalKey, decision: 'candidate', targetTable: 'business_fact_candidates', targetRecordId: candidateId, reason: `Candidate has ${distinctProjects}/${ENGINEERING_OUTCOME_MIN_PROJECTS} distinct verified projects.` })
         continue
       }
 
-      const { data: activeMemory } = await supabase.from('business_facts').select('id,knowledge_mode,authority_kind,fact').eq('workspace_id', input.workspaceId).eq('canonical_key', canonicalKey).is('superseded_at', null).maybeSingle()
+      const { data: activeMemory, error: memoryReadError } = await supabase.from('business_facts').select('id,knowledge_mode,authority_kind,fact').eq('workspace_id', input.workspaceId).eq('canonical_key', canonicalKey).is('superseded_at', null).maybeSingle()
+      if (memoryReadError) throw new Error('Could not verify higher-authority operating memory')
       if (activeMemory && ['explicit', 'observed'].includes(activeMemory.knowledge_mode)) {
         await writeAudit({ workspaceId: input.workspaceId, sourceMessageId: input.sourceMessageId, sourceExcerpt: sampleText, canonicalKey, decision: 'rejected', targetTable: 'business_fact_candidates', targetRecordId: candidateId, reason: 'Validated inferred lesson was blocked by higher-authority explicit/observed knowledge.' })
         continue
@@ -186,7 +220,8 @@ export async function processEngineeringOutcomeLearning(input: {
       })
       if (memoryError || !memoryId) throw new Error('Could not persist validated engineering outcome lesson')
 
-      await supabase.from('business_fact_candidates').update({ status: 'resolved', outcome: 'confirmed', outcome_at: now.toISOString(), resolved_fact_id: memoryId }).eq('workspace_id', input.workspaceId).eq('id', candidateId)
+      const { error: resolveError } = await supabase.from('business_fact_candidates').update({ status: 'resolved', outcome: 'confirmed', outcome_at: now.toISOString(), resolved_fact_id: memoryId }).eq('workspace_id', input.workspaceId).eq('id', candidateId)
+      if (resolveError) throw new Error('Validated lesson was written but candidate resolution could not be recorded')
       await writeAudit({ workspaceId: input.workspaceId, sourceMessageId: input.sourceMessageId, sourceExcerpt: sampleText, canonicalKey, decision: activeMemory ? 'superseded' : 'validated', targetTable: 'business_facts', targetRecordId: String(memoryId), supersededRecordId: activeMemory?.id ?? null, reason: `Validated after ${distinctProjects} distinct projects with trusted outcome provenance and verified execution evidence.` })
       validatedCount += 1
     }
@@ -202,12 +237,14 @@ export async function getEngineeringOutcomeLearningGuidance(workspaceId: string,
   const guidance: EngineeringLearningGuidance[] = []
   for (const prediction of eligible) {
     const canonicalKey = calibrationCanonicalKey(prediction.metricKey, prediction.unit)
-    const { data, error } = await supabase.from('business_facts').select('id,fact,confidence,provenance,knowledge_mode,authority_kind').eq('workspace_id', workspaceId).eq('canonical_key', canonicalKey).eq('memory_type', 'operating_pattern').is('superseded_at', null).lte('valid_from', new Date().toISOString()).or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`).maybeSingle()
+    const now = new Date().toISOString()
+    const { data, error } = await supabase.from('business_facts').select('id,fact,confidence,provenance,knowledge_mode,authority_kind').eq('workspace_id', workspaceId).eq('canonical_key', canonicalKey).eq('memory_type', 'operating_pattern').is('superseded_at', null).lte('valid_from', now).or(`expires_at.is.null,expires_at.gt.${now}`).maybeSingle()
     if (error || !data || data.knowledge_mode !== 'inferred') continue
     const refs = Array.isArray(data.provenance?.evidence_refs) ? data.provenance.evidence_refs : []
     const text = String(data.fact)
     const direction: CalibrationDirection = text.includes('below actual results') ? 'underpredicted' : 'overpredicted'
     guidance.push({ metricKey: prediction.metricKey, unit: prediction.unit, direction, confidence: Number(data.confidence), evidenceCount: new Set(refs.map((r: Record<string, unknown>) => String(r.project_id))).size, memoryId: data.id, recommendation: text })
   }
+  await publishAdaptiveLearningRuntimeEvidence(workspaceId, guidance.length)
   return guidance
 }
