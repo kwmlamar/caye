@@ -38,10 +38,11 @@ describe('engineering outcome learning migration contracts', () => {
     expect(sql).toContain('p_supersede_id := v_prior_memory_id')
   })
 
-  it('does not silently claim measured or observed authority for a derived verdict lesson', () => {
+  it('does not silently claim human or observed authority for a derived verdict lesson', () => {
     expect(sql).not.toContain("p_knowledge_mode := 'observed'")
     expect(sql).not.toContain("p_authority_kind := 'owner'")
-    expect(sql).toContain("p_source := 'owner-direct'")
+    expect(sql).not.toContain("p_source := 'owner-direct'")
+    expect(sql).toContain("p_source := 'system-derived'")
     expect(sql).toContain("p_created_by := 'engineering_verdict_learning_v1'")
   })
 
