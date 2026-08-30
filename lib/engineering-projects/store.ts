@@ -150,7 +150,7 @@ export async function recordEngineeringVerdict(input: { workspaceId: string; pro
 export async function getEngineeringProjectSnapshot(workspaceId: string, projectId: string) {
   const project = await requireProject(workspaceId, projectId)
   const supabase = createServiceClient()
-  const [projectResult, baselineResult, alternativesResult, predictionsResult, decisionResult, executionResult, outcomesResult, verdictResult] = await Promise.all([
+  const [projectResult, baselineResult, alternativesResult, predictionsResult, decisionResult, executionResult, outcomesResult, verdictResult, learnedOutcomesResult] = await Promise.all([
     supabase.from('engineering_projects').select('*').eq('workspace_id', workspaceId).eq('id', projectId).single(),
     supabase.from('engineering_project_baselines').select('id,revision,status,notes,frozen_at,created_at').eq('workspace_id', workspaceId).eq('project_id', projectId).order('revision', { ascending: false }),
     supabase.from('engineering_project_alternatives').select('*').eq('workspace_id', workspaceId).eq('project_id', projectId).order('created_at'),
@@ -159,6 +159,7 @@ export async function getEngineeringProjectSnapshot(workspaceId: string, project
     supabase.from('engineering_project_execution_evidence').select('*').eq('workspace_id', workspaceId).eq('project_id', projectId).order('occurred_at', { ascending: false }),
     supabase.from('engineering_project_outcomes').select('id,metric_key,property_observation_id,created_at').eq('workspace_id', workspaceId).eq('project_id', projectId).order('created_at'),
     supabase.from('engineering_project_verdicts').select('*').eq('workspace_id', workspaceId).eq('project_id', projectId).order('created_at', { ascending: false }),
+    supabase.rpc('retrieve_engineering_outcome_memory', { p_workspace_id: workspaceId, p_property_id: project.property_id, p_limit: 20 }),
   ])
   if (projectResult.error || baselineResult.error || alternativesResult.error || predictionsResult.error || decisionResult.error || executionResult.error || outcomesResult.error || verdictResult.error) throw new Error('Engineering project snapshot is incomplete')
   const baselineItems: Array<{ baseline_id: string; observation_ids: string[] }> = []
@@ -168,5 +169,19 @@ export async function getEngineeringProjectSnapshot(workspaceId: string, project
     baselineItems.push({ baseline_id: baseline.id, observation_ids: (items ?? []).map((i) => i.property_observation_id) })
   }
   const comparison = await compareEngineeringProjectOutcomes(workspaceId, projectId)
-  return { project: projectResult.data, property_id: project.property_id, baselines: baselineResult.data ?? [], baseline_items: baselineItems, alternatives: alternativesResult.data ?? [], predictions: predictionsResult.data ?? [], decisions: decisionResult.data ?? [], execution_evidence: executionResult.data ?? [], outcomes: outcomesResult.data ?? [], verdicts: verdictResult.data ?? [], comparison }
+  return {
+    project: projectResult.data,
+    property_id: project.property_id,
+    baselines: baselineResult.data ?? [],
+    baseline_items: baselineItems,
+    alternatives: alternativesResult.data ?? [],
+    predictions: predictionsResult.data ?? [],
+    decisions: decisionResult.data ?? [],
+    execution_evidence: executionResult.data ?? [],
+    outcomes: outcomesResult.data ?? [],
+    verdicts: verdictResult.data ?? [],
+    learned_outcomes: learnedOutcomesResult.error ? [] : learnedOutcomesResult.data ?? [],
+    learning_status: learnedOutcomesResult.error ? 'unavailable' : 'available',
+    comparison,
+  }
 }

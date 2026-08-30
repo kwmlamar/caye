@@ -1,0 +1,25 @@
+name: Engineering outcome learning CI
+
+on:
+  pull_request:
+    paths:
+      - 'lib/engineering-projects/store.ts'
+      - 'lib/engineering-projects/engineering-outcome-learning.*.test.ts'
+      - 'supabase/migrations/20260830m_engineering_outcome_learning.sql'
+      - '.github/workflows/engineering-outcome-learning-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  focused-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm test -- lib/engineering-projects/engineering-outcome-learning.migration.test.ts lib/engineering-projects/engineering-outcome-learning.store.test.ts
