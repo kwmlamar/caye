@@ -2,7 +2,11 @@ import 'server-only'
 
 import { cayeCapabilityRegistry } from './catalog'
 import { capabilityManifest, getRegisteredCapability } from './registry'
-import type { CapabilityName, CapabilityResult } from './types'
+import type {
+  CapabilityExecutionContext,
+  CapabilityName,
+  CapabilityResult,
+} from './types'
 
 export type FounderCapabilityInvocationInput = {
   capability: string
@@ -56,6 +60,18 @@ function emptyArgs(args: unknown): args is Record<string, never> {
   return Object.keys(args as Record<string, unknown>).length === 0
 }
 
+async function invokeValidatedCapability<TArgs>(
+  capability: NonNullable<ReturnType<typeof getRegisteredCapability>>,
+  args: TArgs,
+  context: CapabilityExecutionContext,
+): Promise<CapabilityResult> {
+  const execute = capability.execute as unknown as (
+    validatedArgs: TArgs,
+    validatedContext: CapabilityExecutionContext,
+  ) => Promise<CapabilityResult>
+  return execute(args, context)
+}
+
 /**
  * Server-side invocation boundary for the founder gateway.
  *
@@ -104,7 +120,7 @@ export async function invokeFounderReadCapability(
   }
 
   try {
-    return await capability.execute(executeArgs as Record<string, never>, {
+    return await invokeValidatedCapability(capability, executeArgs, {
       actor: { kind: 'founder', userId: authenticatedFounderUserId },
       scope: { workspaceId: input.workspaceId },
       caller: 'external_reasoner',
@@ -134,7 +150,7 @@ export async function invokeFounderResearchStartCapability(
     return failed('invalid_args', 'questionId must be a non-empty string.')
   }
   try {
-    return await capability.execute({ questionId: questionId.trim() }, {
+    return await invokeValidatedCapability(capability, { questionId: questionId.trim() }, {
       actor: { kind: 'founder', userId: authenticatedFounderUserId },
       scope: { workspaceId: null },
       caller: 'external_reasoner',
