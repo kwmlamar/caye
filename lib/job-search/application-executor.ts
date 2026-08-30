@@ -38,10 +38,10 @@ import 'server-only'
 import { createServiceClient } from '@/lib/supabase-server'
 import { isProhibitedApplyDestination } from './policy-gate'
 import { generateCoverNote, tailorResume, type ResumeVariantSource } from './resume-tailoring'
-import { getActiveFacts, getActiveProfile, type JobSearchProfile } from './profile'
+import { getActiveFacts, getActiveProfile } from './profile'
 import { getJobSearchSettings } from './settings'
 import { logJobSearchEvent } from './events'
-import { HIGH_RISK_ANSWER_CATEGORIES, type ExecutionSignal, type ProfileFactRow, type RequiredField } from './types'
+import { HIGH_RISK_ANSWER_CATEGORIES, type ApplicationStatus, type ExecutionSignal, type ProfileFactRow, type RequiredField } from './types'
 
 export type CandidateForApplication = {
   id: string
@@ -57,6 +57,8 @@ export type ApplicationPrepareResult =
   | { outcome: 'skipped_unverified_source'; applicationId: string; reason: string }
   | { outcome: 'prohibited_platform'; applicationId: string }
   | { outcome: 'needs_human'; applicationId: string; reason: string }
+
+const REPREPARE_SAFE_STATUSES: ApplicationStatus[] = ['PREPARED', 'NEEDS_HUMAN', 'FAILED']
 
 /** Resolves a required field against verified profile facts only. Never guesses. */
 function resolveAnswer(field: RequiredField, facts: ProfileFactRow[]): { source: 'profile_fact'; fact: ProfileFactRow } | { source: 'needs_human' } {
@@ -95,6 +97,16 @@ export async function prepareApplication(
   const profile = await getActiveProfile()
   if (!profile) throw new Error('No founder job_search_profiles row found.')
   const facts = await getActiveFacts(profile.id)
+
+  const { data: existingApplication, error: existingApplicationError } = await supabase
+    .from('job_search_applications')
+    .select('id,status')
+    .eq('candidate_id', candidate.id)
+    .maybeSingle()
+  if (existingApplicationError) throw new Error(`Could not inspect existing application: ${existingApplicationError.message}`)
+  if (existingApplication && !REPREPARE_SAFE_STATUSES.includes(existingApplication.status as ApplicationStatus)) {
+    throw new Error(`Refusing to re-prepare application in terminal/in-flight status ${existingApplication.status}.`)
+  }
 
   const idempotencyKey = `apply:${candidate.id}`
 
@@ -150,33 +162,41 @@ export async function prepareApplication(
     summary: profile.summary ?? '',
   })
 
-  await supabase.from('job_search_generated_artifacts').insert([
+  const { error: resumeArtifactError } = await supabase.from('job_search_generated_artifacts').upsert(
     { application_id: applicationId, artifact_type: 'resume', resume_variant_id: resumeVariant.id, content: tailored.content, traced_fact_ids: [] },
+    { onConflict: 'application_id,artifact_type' },
+  )
+  if (resumeArtifactError) throw new Error(`Could not upsert resume artifact: ${resumeArtifactError.message}`)
+  const { error: coverArtifactError } = await supabase.from('job_search_generated_artifacts').upsert(
     { application_id: applicationId, artifact_type: 'cover_letter', resume_variant_id: resumeVariant.id, content: coverNote, traced_fact_ids: [] },
-  ])
+    { onConflict: 'application_id,artifact_type' },
+  )
+  if (coverArtifactError) throw new Error(`Could not upsert cover-letter artifact: ${coverArtifactError.message}`)
   await logJobSearchEvent({ eventType: 'application_artifact_generated', entityType: 'application', entityId: applicationId, payload: { artifactTypes: ['resume', 'cover_letter'] } })
 
   const unresolvedAnswers: RequiredField[] = []
   for (const field of candidate.requiredFields) {
     const resolution = resolveAnswer(field, facts)
     if (resolution.source === 'profile_fact') {
-      await supabase.from('job_search_application_answers').insert({
+      const { error: answerError } = await supabase.from('job_search_application_answers').upsert({
         application_id: applicationId,
         question: field.question,
         answer: resolution.fact.answer,
         answer_source: 'profile_fact',
         profile_fact_id: resolution.fact.id,
-      })
+      }, { onConflict: 'application_id,question' })
+      if (answerError) throw new Error(`Could not upsert resolved application answer: ${answerError.message}`)
       await logJobSearchEvent({ eventType: 'application_answer_resolved', entityType: 'application', entityId: applicationId, payload: { question: field.question } })
     } else {
       unresolvedAnswers.push(field)
-      await supabase.from('job_search_application_answers').insert({
+      const { error: answerError } = await supabase.from('job_search_application_answers').upsert({
         application_id: applicationId,
         question: field.question,
         answer: null,
         answer_source: 'needs_human',
         profile_fact_id: null,
-      })
+      }, { onConflict: 'application_id,question' })
+      if (answerError) throw new Error(`Could not upsert unresolved application answer: ${answerError.message}`)
       await logJobSearchEvent({ eventType: 'application_answer_needs_human', entityType: 'application', entityId: applicationId, payload: { question: field.question, category: field.category } })
     }
   }
