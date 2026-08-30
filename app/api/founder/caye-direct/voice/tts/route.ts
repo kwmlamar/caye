@@ -1,16 +1,13 @@
 /**
  * POST /api/founder/caye-direct/voice/tts
  *
- * Founder-only. Proxies text -> streamed audio from the configured TTS
- * provider so the real provider API key never reaches the browser (spec
- * item 20). Streams the upstream response body straight through — the
- * client plays it progressively via MediaSource, which is what makes
- * "Caye starts speaking before the whole reply is synthesized" possible.
+ * Founder-only. Proxies text -> streamed audio from a configured CLOUD TTS
+ * provider so the real provider API key never reaches the browser. Browser
+ * speech synthesis is deliberately handled client-side and never reaches
+ * this route.
  *
- * Falls back to the other configured TTS provider on failure (spec item
- * 17) and reports which one actually served the audio via the
- * X-Caye-Voice-Provider response header, so the client can log/attribute
- * correctly without parsing audio.
+ * Falls back to the other configured cloud TTS provider on failure and
+ * reports which one actually served the audio via X-Caye-Voice-Provider.
  *
  * Body: { text, provider: 'elevenlabs'|'deepgram', workspaceId, sessionId }
  */
@@ -21,7 +18,8 @@ import { fetchTtsAudioStream, getVoiceCapabilities } from '@/lib/caye-voice/prov
 import { logVoiceEvent } from '@/lib/caye-voice/observability'
 import type { TtsProviderId } from '@/lib/caye-voice/types'
 
-const FALLBACK_ORDER: TtsProviderId[] = ['elevenlabs', 'deepgram']
+type CloudTtsProviderId = Exclude<TtsProviderId, 'browser'>
+const FALLBACK_ORDER: CloudTtsProviderId[] = ['elevenlabs', 'deepgram']
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => null)
@@ -34,16 +32,19 @@ export async function POST(req: NextRequest) {
   if (!text?.trim() || !provider || !workspaceId) {
     return NextResponse.json({ error: 'text, provider, and workspaceId are required' }, { status: 400 })
   }
+  if (provider === 'browser') {
+    return NextResponse.json({ error: 'Browser TTS must be synthesized client-side' }, { status: 400 })
+  }
 
   const user = await requireFounder(req)
   if (!user) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
   const capabilities = getVoiceCapabilities()
-  const availableTts = new Set(capabilities.tts.filter((c) => c.available).map((c) => c.provider))
-  const candidates = [provider, ...FALLBACK_ORDER.filter((p) => p !== provider)].filter((p) => availableTts.has(p))
+  const availableTts = new Set<CloudTtsProviderId>(capabilities.tts.filter((c) => c.available).map((c) => c.provider))
+  const candidates: CloudTtsProviderId[] = [provider, ...FALLBACK_ORDER.filter((p) => p !== provider)].filter((p) => availableTts.has(p))
 
   if (candidates.length === 0) {
-    return NextResponse.json({ error: 'No TTS provider is configured in this environment' }, { status: 503 })
+    return NextResponse.json({ error: 'No cloud TTS provider is configured in this environment' }, { status: 503 })
   }
 
   let lastError: string | null = null
@@ -91,7 +92,7 @@ export async function POST(req: NextRequest) {
     sessionId: sessionId ?? 'unknown',
     event: 'tts_failed',
     ttsProvider: provider,
-    fallbackReason: lastError ?? 'all configured TTS providers failed',
+    fallbackReason: lastError ?? 'all configured cloud TTS providers failed',
     at: new Date().toISOString(),
   })
   return NextResponse.json({ error: lastError ?? 'TTS failed' }, { status: 502 })
