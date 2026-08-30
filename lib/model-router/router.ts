@@ -13,14 +13,14 @@ import type {
 } from './types'
 
 export interface RouterPolicy {
-  /** Founder setting: allow falling back to metered API backends. Default true. */
+  /** Allow a subscription-backed request to spill into metered API usage. Default false for cost safety. */
   allowApiFallback: boolean
-  /** Founder setting: prefer subscription backends over API when both fit. Default true. */
+  /** Prefer subscription backends over API when both fit. Default true. */
   preferSubscriptionOverApi: boolean
 }
 
 export const DEFAULT_ROUTER_POLICY: RouterPolicy = {
-  allowApiFallback: true,
+  allowApiFallback: false,
   preferSubscriptionOverApi: true,
 }
 
@@ -28,13 +28,14 @@ export const DEFAULT_ROUTER_POLICY: RouterPolicy = {
  * Deterministic candidate ordering. No LLM call is spent choosing an LLM.
  *
  * Cost policy:
- *   - subscription backends still lead when available because they do not
- *     add per-token API spend to Caye.
- *   - ordinary metered fallback prefers OpenAI before Anthropic. Caye's
- *     OpenAI API backend defaults to the cost-efficient mini tier.
- *   - tasks explicitly asking for strongest reasoning, long context, or
- *     vision keep Anthropic first in the metered tail.
- *   - manual claude/openai modes continue to honor the founder's choice.
+ *   - subscription backends lead by default because they do not add per-token
+ *     API spend to Caye.
+ *   - API fallback from subscription-backed modes is opt-in, not automatic.
+ *   - explicit `api` mode still works even when fallback is disabled because
+ *     that is an intentional request to use a metered backend, not a fallback.
+ *   - ordinary metered use prefers OpenAI before Anthropic; strongest,
+ *     long-context, or vision shapes preserve Anthropic-first ordering.
+ *   - manual claude/openai modes honor the founder's provider choice first.
  */
 export function planChain(
   requestedMode: RequestedMode,
@@ -42,31 +43,30 @@ export function planChain(
   policy: RouterPolicy = DEFAULT_ROUTER_POLICY
 ): BackendId[] {
   const strongestShape = Boolean(hints?.preferStrongest || hints?.needsLongContext || hints?.needsVision)
-  const apiTail: BackendId[] = !policy.allowApiFallback
-    ? []
-    : strongestShape
-      ? ['anthropic_api', 'openai_api', 'openrouter']
-      : ['openai_api', 'anthropic_api', 'openrouter']
+  const meteredOrder: BackendId[] = strongestShape
+    ? ['anthropic_api', 'openai_api', 'openrouter']
+    : ['openai_api', 'anthropic_api', 'openrouter']
+  const fallbackTail: BackendId[] = policy.allowApiFallback ? meteredOrder : []
 
   if (requestedMode === 'claude') {
-    return dedupe(['claude_subscription', 'anthropic_api', ...apiTail])
+    return dedupe(['claude_subscription', ...(policy.allowApiFallback ? ['anthropic_api' as const, ...meteredOrder] : [])])
   }
   if (requestedMode === 'openai') {
-    return dedupe(['openai_codex_subscription', 'openai_api', ...apiTail])
+    return dedupe(['openai_codex_subscription', ...(policy.allowApiFallback ? ['openai_api' as const, ...meteredOrder] : [])])
   }
   if (requestedMode === 'api') {
-    return apiTail
+    return meteredOrder
   }
 
   // auto
-  if (!policy.preferSubscriptionOverApi) {
-    return dedupe([...apiTail, 'claude_subscription', 'openai_codex_subscription'])
+  if (!policy.preferSubscriptionOverApi && policy.allowApiFallback) {
+    return dedupe([...meteredOrder, 'claude_subscription', 'openai_codex_subscription'])
   }
   const codingLed = hints?.isCodingOrRepoTask
   const subscriptionOrder: BackendId[] = codingLed
     ? ['openai_codex_subscription', 'claude_subscription']
     : ['claude_subscription', 'openai_codex_subscription']
-  return dedupe([...subscriptionOrder, ...apiTail])
+  return dedupe([...subscriptionOrder, ...fallbackTail])
 }
 
 function dedupe(chain: BackendId[]): BackendId[] {
