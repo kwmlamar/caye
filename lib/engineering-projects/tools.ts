@@ -88,8 +88,12 @@ export const recordEngineeringVerdictTool: Tool<{ project_id: string; verdict: '
     if (!ctx.engineeringOrigin?.messageId) return { ok: false, error: 'Project verdict requires the current founder Direct source message.' }
     try {
       const verdict = await recordEngineeringVerdict({ workspaceId: ctx.workspaceId, projectId: args.project_id, verdict: args.verdict, reasonCodes: args.reason_codes, summary: args.summary, sourceMessageId: ctx.engineeringOrigin.messageId })
-      const learning = await processEngineeringOutcomeLearning({ workspaceId: ctx.workspaceId, projectId: args.project_id, verdictId: verdict.id, verdict: args.verdict, sourceMessageId: ctx.engineeringOrigin.messageId })
-      return { ok: true, data: { verdict, learning } }
+      try {
+        const learning = await processEngineeringOutcomeLearning({ workspaceId: ctx.workspaceId, projectId: args.project_id, verdictId: verdict.id, verdict: args.verdict, sourceMessageId: ctx.engineeringOrigin.messageId })
+        return { ok: true, data: { verdict, learning } }
+      } catch (learningError) {
+        return { ok: true, data: { verdict, learning: { error: learningError instanceof Error ? learningError.message : 'Outcome-learning follow-up failed after the verdict was recorded.' } } }
+      }
     } catch (e) { return { ok: false, error: e instanceof Error ? e.message : 'Could not record verdict.' } }
   },
 }
