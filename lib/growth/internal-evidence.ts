@@ -15,21 +15,37 @@ type ObservationInsert = {
   provenance: Record<string, unknown>
 }
 
+const BOOKING_METRIC_KEYS = [
+  'bookings.created',
+  'bookings.confirmed',
+  'bookings.pending',
+  'bookings.cancelled',
+  'bookings.active_guests',
+] as const
+
 /**
  * Normalizes first-party booking evidence already held by Caye.
  * `bookings.user_id` is the canonical workspace/customer id in the current schema.
  * This is observed business evidence, not inferred website conversion.
+ *
+ * Windows use completed UTC days only. A run at any time on the same UTC date
+ * therefore reads the exact same evidence window instead of claiming future hours
+ * in `period_end` or changing the denominator on every retry.
  */
 export async function ingestBookingEvidence(workspaceId: string, days = 28) {
   const supabase = createServiceClient()
   const now = new Date()
-  const snapshotDate = now.toISOString().slice(0, 10)
-  const periodEndDate = new Date(`${snapshotDate}T23:59:59.999Z`)
-  const periodStartDate = new Date(`${snapshotDate}T00:00:00.000Z`)
-  periodStartDate.setUTCDate(periodStartDate.getUTCDate() - (days - 1))
-  const periodStart = periodStartDate.toISOString()
-  const periodEnd = periodEndDate.toISOString()
   const observedAt = now.toISOString()
+  const snapshotDate = observedAt.slice(0, 10)
+
+  const periodEndExclusiveDate = new Date(`${snapshotDate}T00:00:00.000Z`)
+  const periodStartDate = new Date(periodEndExclusiveDate)
+  periodStartDate.setUTCDate(periodStartDate.getUTCDate() - days)
+  const periodEndInclusiveDate = new Date(periodEndExclusiveDate.getTime() - 1)
+
+  const periodStart = periodStartDate.toISOString()
+  const periodEndExclusive = periodEndExclusiveDate.toISOString()
+  const periodEnd = periodEndInclusiveDate.toISOString()
 
   const { data: source, error: sourceError } = await supabase
     .from('growth_sources')
@@ -47,7 +63,7 @@ export async function ingestBookingEvidence(workspaceId: string, days = 28) {
     .select('status,number_of_people')
     .eq('user_id', workspaceId)
     .gte('created_at', periodStart)
-    .lte('created_at', observedAt)
+    .lt('created_at', periodEndExclusive)
 
   if (error) throw new Error('booking_evidence_unavailable')
 
@@ -61,7 +77,14 @@ export async function ingestBookingEvidence(workspaceId: string, days = 28) {
     if (status === 'confirmed' || status === 'pending') counts.activeGuests += row.number_of_people ?? 0
   }
 
-  const provenance = { provider: 'caye_bookings', query_window_days: days, snapshot_date: snapshotDate, captured_at: observedAt }
+  const provenance = {
+    provider: 'caye_bookings',
+    query_window_days: days,
+    window_basis: 'completed_utc_days',
+    snapshot_date: snapshotDate,
+    period_end_exclusive: periodEndExclusive,
+    captured_at: observedAt,
+  }
   const observations: ObservationInsert[] = [
     ['bookings.created', counts.total, 'count'],
     ['bookings.confirmed', counts.confirmed, 'count'],
@@ -81,13 +104,14 @@ export async function ingestBookingEvidence(workspaceId: string, days = 28) {
     provenance,
   }))
 
-  // A cron retry on the same UTC day replaces that day's rolling snapshot instead of
-  // manufacturing duplicate evidence. Historical daily snapshots remain intact.
+  // A same-day retry replaces only this aggregate booking snapshot. Do not erase
+  // future dimensional observations that may share the same source.
   const { error: deleteError } = await supabase
     .from('growth_observations')
     .delete()
     .eq('workspace_id', workspaceId)
     .eq('source_id', source.id)
+    .in('metric_key', [...BOOKING_METRIC_KEYS])
     .gte('observed_at', `${snapshotDate}T00:00:00.000Z`)
     .lte('observed_at', `${snapshotDate}T23:59:59.999Z`)
   if (deleteError) throw new Error('booking_observation_dedupe_failed')
