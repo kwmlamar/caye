@@ -14,17 +14,15 @@ function describeAdminPendingAction(toolName: string, args: Record<string, unkno
 }
 
 /**
- * These founder job-search operations have no external side effect:
- * sourcing reads public boards and writes the internal candidate pool;
- * preparation selects only active VERIFIED resume variants and creates
- * internal preparation/readiness state. Neither operation can submit an
- * application or contact an employer. External ATS execution remains behind
- * the separate execution policy/evidence boundary.
+ * These founder job-search operations cannot submit or contact an employer:
+ * sourcing reads public boards, preparation writes internal readiness state,
+ * and inspection reads public ATS form metadata plus verified founder facts.
+ * Consequential ATS execution remains behind the separate confirmation gate.
  */
 function canExecuteWithoutConfirmation(toolName: string, args: unknown): boolean {
   if (toolName !== 'trigger_cron' || !args || typeof args !== 'object') return false
   const cronName = (args as { cron_name?: unknown }).cron_name
-  return cronName === 'job-search-sourcing' || cronName === 'job-search-prepare'
+  return cronName === 'job-search-sourcing' || cronName === 'job-search-prepare' || cronName === 'job-search-inspect'
 }
 
 export function gateAdminHighRisk<T>(tool: Tool<T>): Tool<T> {

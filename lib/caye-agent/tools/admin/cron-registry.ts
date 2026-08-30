@@ -11,6 +11,7 @@ import { runOutreachAutosendScan } from '@/app/api/caye/outreach-autosend-scan/r
 import { runOutreachSourcingScan } from '@/app/api/caye/outreach-sourcing-scan/route'
 import { runJobSearchSourcing } from '@/app/api/caye/job-search-sourcing/route'
 import { runJobSearchPreparation } from '@/app/api/caye/job-search-prepare/route'
+import { runJobSearchInspection } from '@/app/api/caye/job-search-inspect/route'
 import { runResearchWorker } from '@/app/api/caye/research-worker/route'
 
 /** Fixed allowlist of jobs Admin Shell may inspect/trigger. */
@@ -28,12 +29,8 @@ export const CRON_JOBS: Record<
   'operation-worker': { label: 'External-effects outbox (deferred calendar syncs)', run: runOperationWorker },
   'outreach-autosend-scan': { label: 'Outreach send scan', run: runOutreachAutosendScan },
   'outreach-sourcing-scan': { label: 'Outreach sourcing scan', run: runOutreachSourcingScan },
-  // Founder job-search sourcing is internal-only: public-board reads + internal scoring.
   'job-search-sourcing': { label: 'Job-search sourcing/scoring (founder-only)', run: runJobSearchSourcing },
-  // Founder preparation is also internal-only. The implementation deterministically
-  // chooses from active VERIFIED resume variants, creates preparation/readiness
-  // records, and cannot submit an application. Actual ATS execution remains behind
-  // the separate execution policy/evidence boundary.
   'job-search-prepare': { label: 'Job-search application preparation (founder-only, no submission)', run: runJobSearchPreparation },
+  'job-search-inspect': { label: 'Inspect prepared ATS forms and resolve known answers (founder-only, no submission)', run: runJobSearchInspection },
   'research-worker': { label: 'Founder research queue worker (evidence-backed)', run: runResearchWorker },
 }
