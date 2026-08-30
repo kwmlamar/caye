@@ -1,7 +1,7 @@
 import 'server-only'
 
 export type Authority = 'read' | 'write_low' | 'write_high'
-export type StepState = 'pending' | 'checking' | 'running' | 'verified' | 'blocked' | 'failed' | 'replanned' | 'waiting'
+export type StepState = 'pending' | 'checking' | 'recovered' | 'running' | 'verified' | 'blocked' | 'failed' | 'replanned' | 'waiting'
 export type BudgetReason = 'timeout' | 'transitions' | 'revisions'
 
 export type StateCheck = {
@@ -185,7 +185,13 @@ export async function runBoundedObjective<TContext>(input: {
           return finish('blocked', step.key)
         }
         interruptedSteps.delete(step.key)
-        await emit({ at: new Date().toISOString(), step: step.key, state: 'checking', attempt: 0, evidence: { mode: 'interrupted_retry_declared_safe', recoveryEvidence: recovery.evidence, reason: recovery.reason } })
+        await emit({
+          at: new Date().toISOString(),
+          step: step.key,
+          state: 'recovered',
+          attempt: 0,
+          evidence: { mode: 'interrupted_retry_declared_safe', recoveryEvidence: recovery.evidence, reason: recovery.reason },
+        })
       } catch (error) {
         const resumeAt = new Date(Date.now() + 60_000).toISOString()
         const reason = error instanceof Error ? error.message : String(error)
