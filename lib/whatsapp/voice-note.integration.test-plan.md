@@ -1,0 +1,6 @@
+- inbound customer audio uses workspace WhatsApp token
+- successful transcript flows through existing customer reply/hold path once
+- failed transcript remains human-review media
+- voice reply failure falls back to the same authorized text without rerunning Caye
+- original audio media id/mime remain in message metadata
+- outbound stored type reflects audio vs text fallback
