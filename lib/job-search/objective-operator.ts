@@ -41,6 +41,17 @@ async function readApplicationState(context: JobSearchObjectiveContext) {
     .limit(25)
 }
 
+async function readActivePreparation(context: JobSearchObjectiveContext) {
+  return context.supabase
+    .from('job_search_runs')
+    .select('id,status,started_at')
+    .eq('run_type', 'apply')
+    .eq('status', 'running')
+    .order('started_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+}
+
 export async function runFounderJobSearchObjective() {
   const supabase = createServiceClient()
   const before = await supabase.from('job_search_applications').select('id,status,updated_at').order('updated_at', { ascending: false }).limit(25)
@@ -73,6 +84,7 @@ export async function runFounderJobSearchObjective() {
     allowedAuthority: new Set(['read', 'write_low']),
     completedSteps: durable.completedSteps,
     pendingEffects: durable.pendingEffects,
+    interruptedSteps: durable.interruptedSteps,
     maxTransitions: durable.maxTransitions,
     transitionsAlreadyUsed: durable.transitionsUsed,
     timeoutMs: TIMEOUT_MS,
@@ -98,10 +110,41 @@ export async function runFounderJobSearchObjective() {
     steps: [
       {
         key: 'prepare_applications', authority: 'write_low', maxAttempts: 1,
+        recoverInterrupted: async (ctx) => {
+          const active = await readActivePreparation(ctx)
+          if (active.error) return { status: 'wait' as const, reason: active.error.message, resumeAfterMs: 30_000 }
+          if (active.data) {
+            return {
+              status: 'wait' as const,
+              reason: 'The preparation effect may still be running after the previous objective worker died.',
+              evidence: { activeRun: active.data },
+              resumeAfterMs: 30_000,
+            }
+          }
+          return {
+            status: 'retry_safe' as const,
+            reason: 'No active preparation run remains; preparation is idempotent over existing application rows and may be retried.',
+            evidence: { reconciliation: 'no_active_apply_run' },
+          }
+        },
         execute: async () => runJobSearchPreparation(),
         verify: async (ctx, effect) => {
-          const skipped = effect && typeof effect === 'object' && ('skippedPaused' in effect || 'skippedDailyCap' in effect || 'skippedAlreadyRunning' in effect)
-          if (skipped) return { ok: true, evidence: { effect, verified: 'bounded_skip' } }
+          const skippedPaused = effect && typeof effect === 'object' && 'skippedPaused' in effect
+          const skippedDailyCap = effect && typeof effect === 'object' && 'skippedDailyCap' in effect
+          if (skippedPaused || skippedDailyCap) return { ok: true, evidence: { effect, verified: 'bounded_skip' } }
+
+          const skippedAlreadyRunning = effect && typeof effect === 'object' && 'skippedAlreadyRunning' in effect
+          if (skippedAlreadyRunning) {
+            const active = await readActivePreparation(ctx)
+            if (active.error) return { ok: false, indeterminate: true, retryAfterMs: 30_000, reason: active.error.message, evidence: { effect } }
+            if (active.data) {
+              return { ok: false, indeterminate: true, retryAfterMs: 30_000, reason: 'Concurrent preparation run is still active', evidence: { effect, activeRun: active.data } }
+            }
+            const refreshed = await readApplicationState(ctx)
+            if (refreshed.error) return { ok: false, indeterminate: true, retryAfterMs: 30_000, reason: refreshed.error.message, evidence: { effect } }
+            ctx.inspectionBaseline = (refreshed.data ?? []) as ApplicationState[]
+            return { ok: true, evidence: { effect, verified: 'concurrent_preparation_finished', inspectionBaseline: applicationFingerprint(ctx.inspectionBaseline) } }
+          }
 
           const runId = effect && typeof effect === 'object' && 'runId' in effect && typeof effect.runId === 'string'
             ? effect.runId
@@ -138,6 +181,11 @@ export async function runFounderJobSearchObjective() {
       },
       {
         key: 'inspect_prepared_applications', authority: 'write_low', maxAttempts: 2,
+        recoverInterrupted: async () => ({
+          status: 'retry_safe' as const,
+          reason: 'Inspection writes are idempotent upserts keyed by application/question plus a deterministic application status update; there is no submission effect in this workflow.',
+          evidence: { reconciliation: 'inspection_effects_idempotent', submissionPath: false },
+        }),
         checkState: async (ctx) => {
           const current = await readApplicationState(ctx)
           if (current.error) {
@@ -218,7 +266,7 @@ export async function runFounderJobSearchObjective() {
       runId: durable.runId,
       objectiveKey: OBJECTIVE_KEY,
       result,
-      summary: `Founder job-search objective ended ${result.status} at plan revision ${result.planRevision} with authority checks, changed-reality detection, and verified side effects.`,
+      summary: `Founder job-search objective ended ${result.status} at plan revision ${result.planRevision} with authority checks, changed-reality detection, interrupted-effect reconciliation, and verified side effects.`,
     })
   } catch (error) {
     directionEvidence = {
