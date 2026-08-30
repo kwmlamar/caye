@@ -4,6 +4,7 @@
 create table if not exists public.operator_objective_runs (
   id uuid primary key default gen_random_uuid(),
   objective_key text not null,
+  plan_version text not null default '1',
   scope_kind text not null check (scope_kind in ('workspace','founder')),
   workspace_id uuid references public.customers(id) on delete cascade,
   actor_key text not null,
@@ -11,6 +12,7 @@ create table if not exists public.operator_objective_runs (
   blocked_step text,
   max_transitions integer not null check (max_transitions between 1 and 100),
   timeout_ms integer not null check (timeout_ms between 1000 and 300000),
+  deadline_at timestamptz,
   metadata jsonb not null default '{}'::jsonb,
   lease_token uuid,
   lease_expires_at timestamptz,
@@ -21,12 +23,20 @@ create table if not exists public.operator_objective_runs (
     (scope_kind = 'workspace' and workspace_id is not null)
     or (scope_kind = 'founder' and workspace_id is null)
   ),
-  check ((lease_token is null) = (lease_expires_at is null))
+  check ((lease_token is null) = (lease_expires_at is null)),
+  check (deadline_at is null or deadline_at >= started_at)
 );
 
--- Safe if an earlier draft of this migration was applied before leases existed.
+-- Safe if an earlier draft of this migration was applied before hardening fields existed.
 alter table public.operator_objective_runs add column if not exists lease_token uuid;
 alter table public.operator_objective_runs add column if not exists lease_expires_at timestamptz;
+alter table public.operator_objective_runs add column if not exists plan_version text not null default '1';
+alter table public.operator_objective_runs add column if not exists deadline_at timestamptz;
+
+do $$ begin
+  alter table public.operator_objective_runs add constraint operator_objective_runs_deadline_check
+    check (deadline_at is null or deadline_at >= started_at);
+exception when duplicate_object then null; end $$;
 
 create table if not exists public.operator_objective_events (
   id bigserial primary key,
