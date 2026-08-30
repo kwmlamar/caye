@@ -8,49 +8,62 @@ const sql = readFileSync(
 )
 
 describe('engineering outcome learning migration contracts', () => {
-  it('never promotes inconclusive verdicts into durable learning', () => {
+  it('never learns from inconclusive or unverified execution', () => {
     expect(sql).toMatch(/if new\.verdict = 'inconclusive' then\s+return new;/i)
-  })
-
-  it('requires both execution evidence and linked outcome evidence', () => {
     expect(sql).toContain('engineering_project_execution_evidence')
     expect(sql).toContain('engineering_project_outcomes')
     expect(sql).toMatch(/if not exists[\s\S]*engineering_project_execution_evidence[\s\S]*or not exists[\s\S]*engineering_project_outcomes/i)
   })
 
-  it('writes only derived property-scoped outcome memory with structured provenance', () => {
+  it('records evidence-backed verdicts as candidates before validation', () => {
+    expect(sql).toContain('operator_learning_audit')
+    expect(sql).toContain("'engineering_outcome_learning_v2'")
+    expect(sql).toContain("'inferred_from_action'")
+    expect(sql).toContain("'candidate'")
+    expect(sql).toContain("'engineering_project_verdicts'")
+    expect(sql).toContain('new.id::text')
+  })
+
+  it('requires two independent verified projects before reusable memory is written', () => {
+    expect(sql).toMatch(/count\(distinct v\.project_id\)::integer/i)
+    expect(sql).toContain('if v_evidence_count < 2 then')
+    expect(sql).toContain("'minimum_evidence_threshold', 2")
+    expect(sql).toContain("'evidence_count', v_evidence_count")
+    expect(sql).toContain("'contributing_project_ids', v_contributing_projects")
+  })
+
+  it('writes only validated derived property-scoped outcome memory', () => {
     expect(sql).toContain("p_memory_type := 'outcome'")
     expect(sql).toContain("p_subject_type := 'property'")
     expect(sql).toContain("p_knowledge_mode := 'derived'")
     expect(sql).toContain("p_authority_kind := 'system'")
-    expect(sql).toMatch(/'kind'\s*,\s*'engineering_project_verdict'/)
-    expect(sql).toMatch(/'source_message_id'\s*,\s*new\.source_message_id/)
-    expect(sql).toMatch(/'execution_evidence_required'\s*,\s*true/)
-    expect(sql).toMatch(/'outcome_evidence_required'\s*,\s*true/)
+    expect(sql).toContain("p_source := 'system-derived'")
+    expect(sql).toContain("p_created_by := 'engineering_verdict_learning_v2'")
+    expect(sql).toContain("'kind', 'engineering_project_verdict_pattern'")
   })
 
-  it('supersedes only the prior derived system lesson for the same project and property', () => {
-    expect(sql).toContain("f.canonical_key = 'engineering_outcome:project:' || new.project_id::text")
-    expect(sql).toContain("f.subject_type = 'property'")
-    expect(sql).toContain("f.memory_type = 'outcome'")
+  it('keeps one active derived engineering lesson per property and preserves supersession history', () => {
+    expect(sql).toContain("v_canonical_key := 'engineering_outcome:property:' || v_property_id::text")
     expect(sql).toContain("f.knowledge_mode = 'derived'")
     expect(sql).toContain("f.authority_kind = 'system'")
     expect(sql).toContain('p_supersede_id := v_prior_memory_id')
+    expect(sql).toContain("case when v_prior_memory_id is null then 'written' else 'superseded_and_written' end")
+    expect(sql).toContain('superseded_record_id')
   })
 
-  it('does not silently claim human or observed authority for a derived verdict lesson', () => {
+  it('does not silently claim human or observed authority', () => {
     expect(sql).not.toContain("p_knowledge_mode := 'observed'")
     expect(sql).not.toContain("p_authority_kind := 'owner'")
     expect(sql).not.toContain("p_source := 'owner-direct'")
-    expect(sql).toContain("p_source := 'system-derived'")
-    expect(sql).toContain("p_created_by := 'engineering_verdict_learning_v1'")
   })
 
-  it('exposes a service-role-only, property-scoped read path for later engineering decisions', () => {
+  it('returns only validated lessons to later engineering reasoning', () => {
     expect(sql).toContain('create or replace function public.retrieve_engineering_outcome_memory')
     expect(sql).toContain("array['outcome']::text[]")
-    expect(sql).toContain("'property'")
-    expect(sql).toContain('p_property_id::text')
+    expect(sql).toContain("m.knowledge_mode = 'derived'")
+    expect(sql).toContain("m.authority_kind = 'system'")
+    expect(sql).toMatch(/evidence_count[\s\S]*minimum_evidence_threshold/i)
+    expect(sql).toContain('Use this as evidence when making later engineering recommendations')
     expect(sql).toMatch(/revoke all on function public\.retrieve_engineering_outcome_memory\(uuid, uuid, integer\) from public, anon, authenticated;/i)
     expect(sql).toMatch(/grant execute on function public\.retrieve_engineering_outcome_memory\(uuid, uuid, integer\) to service_role;/i)
   })
