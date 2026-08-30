@@ -84,6 +84,18 @@ describe('perception migration contract', () => {
     expect(sql).toContain("'severity', 'warning'")
   })
 
+  it('refuses already-expired telemetry from briefly reactivating source, evidence, or property-device projections', () => {
+    const sql = migration('20260830k_perception_freshness_monitor.sql')
+    expect(sql).toContain('caye_guard_perception_source_freshness_on_write')
+    expect(sql).toContain("new.status := 'stale'")
+    expect(sql).toContain('caye_guard_perception_evidence_freshness_on_write')
+    expect(sql).toContain("new.status := 'limited'")
+    expect(sql).toContain('new.autonomous_now := false')
+    expect(sql).toContain('caye_guard_property_sensor_freshness_on_write')
+    expect(sql).toContain("ps.source_kind = 'property.telemetry'")
+    expect(sql).toContain('ps.fresh_until <= now()')
+  })
+
   it('records recovery even when telemetry values are unchanged, but only for a genuinely fresh newer observation', () => {
     const sql = migration('20260830k_perception_freshness_monitor.sql')
     expect(sql).toContain("old.status = 'stale'")
@@ -108,6 +120,9 @@ describe('perception migration contract', () => {
     expect(sql).toContain('from anon')
     expect(sql).toContain('from authenticated')
     expect(sql).toContain('to service_role')
+    expect(sql).toContain('revoke execute on function public.caye_guard_perception_source_freshness_on_write()')
+    expect(sql).toContain('revoke execute on function public.caye_guard_perception_evidence_freshness_on_write()')
+    expect(sql).toContain('revoke execute on function public.caye_guard_property_sensor_freshness_on_write()')
     expect(sql).toContain('revoke execute on function public.caye_event_on_perception_source_recovery()')
   })
 })
