@@ -69,10 +69,11 @@ describe('Anthropic research synthesis JSON recovery', () => {
     sources: [{
       id: 'source-1',
       source: {
-        url: 'https://example.com/source',
+        url: 'https://medium.com/example/source',
         title: 'Source',
         content: 'Evidence text.',
         fetchedAt: '2026-08-30T03:30:00Z',
+        quality: 'community' as const,
       },
     }],
   }
@@ -94,7 +95,7 @@ describe('Anthropic research synthesis JSON recovery', () => {
     recommendations: [],
   })
 
-  it('maps compact model-facing aliases back to durable source IDs', async () => {
+  it('maps compact model-facing aliases back to durable source IDs and preserves server-ranked quality', async () => {
     const create = vi.fn().mockResolvedValue({
       stop_reason: 'end_turn',
       content: [{ type: 'text', text: validJson }],
@@ -106,8 +107,10 @@ describe('Anthropic research synthesis JSON recovery', () => {
 
     const payload = create.mock.calls[0][0].messages[0].content as string
     expect(payload).toContain('"sourceId":"S1"')
+    expect(payload).toContain('"quality":"community"')
     expect(payload).not.toContain('"sourceId":"source-1"')
     expect(result.claims[0].sourceIds).toEqual(['source-1'])
+    expect(result.claims[0].sourceQuality).toBe('community')
   })
 
   it('retries from scratch when the first synthesis response is truncated', async () => {
@@ -130,6 +133,7 @@ describe('Anthropic research synthesis JSON recovery', () => {
     expect(result.brief).toBe('Bounded architectures are promising.')
     expect(result.claims).toHaveLength(1)
     expect(result.claims[0].sourceIds).toEqual(['source-1'])
+    expect(result.claims[0].sourceQuality).toBe('community')
   })
 
   it('retries when the first complete response contains malformed JSON', async () => {
@@ -179,6 +183,7 @@ describe('Anthropic research synthesis JSON recovery', () => {
     expect(create).toHaveBeenCalledTimes(2)
     expect(create.mock.calls[1][0].messages[0].content).toContain('Material research claim lacks evidence')
     expect(result.claims[0].sourceIds).toEqual(['source-1'])
+    expect(result.claims[0].sourceQuality).toBe('community')
   })
 
   it('retries when a claim cites an alias outside the supplied run evidence', async () => {
@@ -187,7 +192,7 @@ describe('Anthropic research synthesis JSON recovery', () => {
         statement: 'Claim with invented citation.',
         claimType: 'finding',
         confidence: 0.7,
-        sourceQuality: 'unknown',
+        sourceQuality: 'official',
         sourceIds: ['S99'],
       }],
       brief: 'Attempt one.',
@@ -210,5 +215,6 @@ describe('Anthropic research synthesis JSON recovery', () => {
     expect(create.mock.calls[1][0].messages[0].content).toContain('source IDs not present in this run')
     expect(result.brief).toBe('Bounded architectures are promising.')
     expect(result.claims[0].sourceIds).toEqual(['source-1'])
+    expect(result.claims[0].sourceQuality).toBe('community')
   })
 })
