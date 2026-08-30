@@ -12,6 +12,7 @@ import type { ToolCapableBackend } from './tool-bridge/types'
 import type { BackendId, FounderRouterContext, RequestedMode, RouterDecision } from './types'
 import { buildInvocationLog } from './observability'
 import type { RichResult } from '@/lib/caye-direct-rich-results'
+import { FOUNDER_DIRECT_EVIDENCE_GUIDANCE } from './caye-direct-evidence-guidance'
 
 /**
  * Spoken replies themselves are tiny, but OpenAI reasoning models count hidden
@@ -107,14 +108,13 @@ export async function runCayeDirectRouterTurn(args: CayeDirectRouterTurnArgs): P
   const start = Date.now()
   let decision: RouterDecision | undefined
   try {
+    const sharedGuidance = `${systemPrompt}\n\n${FOUNDER_DIRECT_REASONING_GUIDANCE}\n\n${FOUNDER_DIRECT_EVIDENCE_GUIDANCE}`
     const result = await runFounderToolLoop({
       ctx,
       requestedMode: args.requestedMode,
       backends: backendsFor(),
       toolCtx,
-      system: isVoice
-        ? `${systemPrompt}\n\n${FOUNDER_DIRECT_REASONING_GUIDANCE}\n\n${VOICE_DELIVERY_GUIDANCE}`
-        : `${systemPrompt}\n\n${FOUNDER_DIRECT_REASONING_GUIDANCE}`,
+      system: isVoice ? `${sharedGuidance}\n\n${VOICE_DELIVERY_GUIDANCE}` : sharedGuidance,
       initialMessages,
       signal: AbortSignal.timeout(180_000),
       restrictToToolNames: args.restrictToToolNames,
