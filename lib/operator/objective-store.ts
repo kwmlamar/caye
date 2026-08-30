@@ -27,7 +27,7 @@ export async function openOrResumeObjectiveRun(input: {
 
   let query = supabase
     .from('operator_objective_runs')
-    .select('id,status,blocked_step,lease_token,lease_expires_at')
+    .select('id,status,blocked_step,lease_token,lease_expires_at,metadata')
     .eq('objective_key', input.objectiveKey)
     .eq('scope_kind', input.scopeKind)
     .eq('actor_key', input.actorKey)
@@ -40,7 +40,9 @@ export async function openOrResumeObjectiveRun(input: {
   if (existing.error) throw new Error(`Could not find resumable objective run: ${existing.error.message}`)
 
   let runId = existing.data?.id as string | undefined
+  let metadata = (existing.data?.metadata ?? input.metadata ?? {}) as Record<string, unknown>
   if (!runId) {
+    metadata = input.metadata ?? {}
     const created = await supabase
       .from('operator_objective_runs')
       .insert({
@@ -51,7 +53,7 @@ export async function openOrResumeObjectiveRun(input: {
         status: 'running',
         max_transitions: input.maxTransitions,
         timeout_ms: input.timeoutMs,
-        metadata: input.metadata ?? {},
+        metadata,
         lease_token: runnerToken,
         lease_expires_at: leaseUntil,
       })
@@ -80,17 +82,19 @@ export async function openOrResumeObjectiveRun(input: {
     if (!claimed.data) throw new Error('Objective run is already claimed by another worker')
   }
 
-  const verified = await supabase
+  const progress = await supabase
     .from('operator_objective_events')
-    .select('step_key')
+    .select('step_key,state')
     .eq('run_id', runId)
-    .eq('state', 'verified')
-  if (verified.error) throw new Error(`Could not read objective progress: ${verified.error.message}`)
+  if (progress.error) throw new Error(`Could not read objective progress: ${progress.error.message}`)
 
+  const rows = progress.data ?? []
   return {
     runId,
     runnerToken,
-    completedSteps: new Set((verified.data ?? []).map((row) => row.step_key as string)),
+    metadata,
+    completedSteps: new Set(rows.filter((row) => row.state === 'verified').map((row) => row.step_key as string)),
+    transitionsUsed: rows.filter((row) => row.state === 'running').length,
   }
 }
 
@@ -115,9 +119,6 @@ export async function persistObjectiveEvent(
   timeoutMs: number,
   event: ObjectiveEvent
 ) {
-  // Verify this worker still owns the run before recording any new execution
-  // evidence. A crashed/stale worker must not keep mutating the audit trail
-  // after another worker has reclaimed the objective.
   await refreshLease(supabase, runId, runnerToken, timeoutMs)
 
   const inserted = await supabase.from('operator_objective_events').insert({
@@ -136,7 +137,8 @@ export async function finalizeObjectiveRun(
   supabase: SupabaseClient,
   runId: string,
   runnerToken: string,
-  result: ObjectiveRunResult
+  result: ObjectiveRunResult,
+  existingMetadata: Record<string, unknown> = {}
 ) {
   const terminal = result.status === 'completed' || result.status === 'blocked' || result.status === 'failed'
   const updated = await supabase
@@ -146,7 +148,11 @@ export async function finalizeObjectiveRun(
       blocked_step: result.blockedStep ?? null,
       updated_at: new Date().toISOString(),
       completed_at: terminal ? new Date().toISOString() : null,
-      metadata: { completedSteps: result.completedSteps },
+      metadata: {
+        ...existingMetadata,
+        completedSteps: result.completedSteps,
+        transitionsUsed: result.transitionsUsed,
+      },
       lease_token: null,
       lease_expires_at: null,
     })
