@@ -66,10 +66,30 @@ describe('chooseTtsProvider — Auto ranking', () => {
     ).toBe('deepgram')
   })
 
-  it('throws when no TTS provider is available', () => {
-    expect(() =>
-      chooseTtsProvider('auto', [tts({ provider: 'elevenlabs', available: false }), tts({ provider: 'deepgram', available: false })])
-    ).toThrow(/No TTS provider available/)
+  it('falls back to browser speech when no cloud TTS provider is configured', () => {
+    const result = chooseTtsProvider('auto', [
+      tts({ provider: 'elevenlabs', available: false }),
+      tts({ provider: 'deepgram', available: false }),
+    ])
+    expect(result.provider).toBe('browser')
+    expect(result.fellBack).toBe(false)
+    expect(result.reason).toContain('browser speech synthesis')
+  })
+
+  it('marks browser speech as a fallback when a missing cloud provider was manually requested', () => {
+    const result = chooseTtsProvider('elevenlabs', [
+      tts({ provider: 'elevenlabs', available: false, unavailableReason: 'ELEVENLABS_API_KEY not configured' }),
+      tts({ provider: 'deepgram', available: false }),
+    ])
+    expect(result.provider).toBe('browser')
+    expect(result.fellBack).toBe(true)
+    expect(result.reason).toContain('ELEVENLABS_API_KEY not configured')
+  })
+
+  it('honors an explicit browser selection', () => {
+    const result = chooseTtsProvider('browser', [])
+    expect(result.provider).toBe('browser')
+    expect(result.fellBack).toBe(false)
   })
 })
 
@@ -85,10 +105,17 @@ describe('decideVoiceRouting', () => {
     expect(decision.fellBack).toBe(false) // auto preference, not a manual fallback
   })
 
+  it('keeps voice routing alive with browser TTS when cloud TTS keys are missing', () => {
+    const capabilities: VoiceCapabilities = {
+      stt: [stt({ provider: 'deepgram', available: true })],
+      tts: [tts({ provider: 'elevenlabs', available: false }), tts({ provider: 'deepgram', available: false })],
+    }
+    const decision = decideVoiceRouting('auto', 'auto', capabilities)
+    expect(decision.sttProvider).toBe('deepgram')
+    expect(decision.ttsProvider).toBe('browser')
+  })
+
   it('never uses an LLM call — this is a pure, synchronous decision', () => {
-    // Regression guard for spec item 3 ("Do NOT use an LLM merely to
-    // choose the voice provider"): decideVoiceRouting must be a plain
-    // sync function, not something that returns a Promise.
     const capabilities: VoiceCapabilities = {
       stt: [stt({ provider: 'openai-realtime', available: true })],
       tts: [tts({ provider: 'elevenlabs', available: true })],

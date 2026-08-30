@@ -16,10 +16,10 @@ interface ProviderCapability<Id extends string> {
 }
 
 /**
- * Shared ranking/fallback logic behind chooseSttProvider and
- * chooseTtsProvider below — identical for both (build an availability map,
- * honor a manual pick if available, else fall back down a ranked list,
- * else throw), differing only in the id type and the ranked order.
+ * Shared ranking/fallback logic behind chooseSttProvider and the cloud half
+ * of chooseTtsProvider below — identical for both (build an availability
+ * map, honor a manual pick if available, else fall back down a ranked list,
+ * else throw), differing only in the id type and ranked order.
  */
 function chooseProvider<Id extends string>(
   kind: 'STT' | 'TTS',
@@ -75,21 +75,37 @@ export function chooseSttProvider(
 }
 
 /**
- * Deterministic Auto voice routing (spec item 3) — see chooseSttProvider
- * above for why this isn't an LLM call.
- *
- * ElevenLabs first — voice quality/character fit is a named product
- * requirement (spec item 11: "calm, competent, warm, not theatrical"), and
- * ElevenLabs' Flash tier is documented at ~75ms time-to-first-byte,
- * competitive with Deepgram Aura-2's sub-200ms. Deepgram second —
- * meaningfully cheaper per character and still streaming/low-latency, a
- * reasonable Auto fallback when ElevenLabs is unavailable or over budget.
+ * Deterministic TTS routing. Cloud voices remain preferred for quality and
+ * streaming latency, but browser speech synthesis is an always-keyless last
+ * resort. A missing paid-provider secret should degrade voice quality, not
+ * take the entire founder voice session offline with a 503.
  */
 export function chooseTtsProvider(
   preference: TtsProviderPreference,
   capabilities: TtsCapability[]
 ): { provider: TtsProviderId; reason: string; fellBack: boolean } {
-  return chooseProvider('TTS', preference, capabilities, ['elevenlabs', 'deepgram'])
+  if (preference === 'browser') {
+    return { provider: 'browser', reason: 'manual selection: browser speech synthesis', fellBack: false }
+  }
+
+  const cloudPreference = preference as 'auto' | TtsCapability['provider']
+  try {
+    return chooseProvider('TTS', cloudPreference, capabilities, ['elevenlabs', 'deepgram'])
+  } catch (err) {
+    const cloudFailure = err instanceof Error ? err.message : 'No cloud TTS provider available.'
+    if (preference === 'auto') {
+      return {
+        provider: 'browser',
+        reason: 'auto: browser speech synthesis (no cloud TTS API key configured)',
+        fellBack: false,
+      }
+    }
+    return {
+      provider: 'browser',
+      reason: `${cloudFailure} Fell back to browser speech synthesis.`,
+      fellBack: true,
+    }
+  }
 }
 
 export function decideVoiceRouting(

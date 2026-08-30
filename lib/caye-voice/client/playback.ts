@@ -3,24 +3,17 @@
 /**
  * Streaming TTS playback with genuine barge-in (spec items 5/11).
  *
- * One MediaSource per Caye reply. The reply's text is split into
- * sentences (splitIntoSentences below) and each sentence's audio is
+ * Cloud TTS uses one MediaSource per Caye reply. The reply's text is split
+ * into sentences (splitIntoSentences below) and each sentence's audio is
  * fetched from /api/founder/caye-direct/voice/tts and appended to a single
- * continuous SourceBuffer as its bytes arrive — playback starts as soon as
- * the FIRST sentence's first chunk lands, not after the whole reply is
- * synthesized. `stop()` is immediate: pause the element, abort every
- * in-flight fetch, and tear down the MediaSource, no fade and no waiting
- * for the current sentence to finish (spec item 5: "Do not wait for the
- * full generated audio to finish").
+ * continuous SourceBuffer as its bytes arrive. When no cloud TTS key is
+ * configured, the router selects `browser` and this controller uses the
+ * browser's local SpeechSynthesis API instead, so live voice remains usable
+ * without shipping a provider secret to the client.
  *
- * mp3-over-MSE across independently-fetched chunks is the pragmatic v1
- * choice (both ElevenLabs and Deepgram stream audio/mpeg over plain HTTP,
- * so no provider-specific transport code is needed here) — it is not
- * perfectly gapless the way a single continuous provider stream or fMP4
- * segments would be. If real sessions surface audible seams between
- * sentences, the documented next step is WebCodecs/AudioWorklet PCM
- * playback instead of MSE; noted in the implementation report as a known
- * limitation, not fixed here.
+ * `stop()` is immediate for both paths: cloud fetch/playback is aborted and
+ * browser speech is cancelled synchronously. That keeps barge-in semantics
+ * intact whichever voice backend is active.
  */
 
 export function splitIntoSentences(text: string): string[] {
@@ -67,6 +60,9 @@ export class TtsPlaybackController {
     this.stopped = true
     this.abortController?.abort()
     this.abortController = null
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel()
+    }
     try {
       this.audioEl.pause()
     } catch {
@@ -88,6 +84,13 @@ export class TtsPlaybackController {
 
   async speak(fullText: string, provider: string, workspaceId: string, sessionId: string): Promise<void> {
     this.stopped = false
+    if (!fullText.trim()) return
+
+    if (provider === 'browser') {
+      await this.speakWithBrowser(fullText)
+      return
+    }
+
     const sentences = splitIntoSentences(fullText)
     if (sentences.length === 0) return
 
@@ -111,9 +114,7 @@ export class TtsPlaybackController {
     // Sentence N+1's fetch is kicked off as soon as sentence N's response
     // headers arrive — before N's body is read/appended/played — so its
     // network latency overlaps with N's streaming instead of adding on
-    // top of it. Sentences are still read and appended strictly in order,
-    // so this only closes the network-latency gap; it changes nothing
-    // about append/playback ordering.
+    // top of it. Sentences are still read and appended strictly in order.
     let nextFetch: Promise<Response> | null = startFetch(sentences[0])
     for (let i = 0; i < sentences.length; i++) {
       if (this.stopped) return
@@ -150,6 +151,39 @@ export class TtsPlaybackController {
       },
       { once: true }
     )
+  }
+
+  private async speakWithBrowser(fullText: string): Promise<void> {
+    if (
+      typeof window === 'undefined' ||
+      !('speechSynthesis' in window) ||
+      typeof SpeechSynthesisUtterance === 'undefined'
+    ) {
+      throw new Error('Browser speech synthesis is unavailable')
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      const utterance = new SpeechSynthesisUtterance(fullText.trim())
+      utterance.rate = 1
+      utterance.pitch = 1
+      utterance.volume = 1
+      utterance.onend = () => {
+        if (!this.stopped) this.onDoneCb?.()
+        resolve()
+      }
+      utterance.onerror = (event) => {
+        if (this.stopped || event.error === 'canceled' || event.error === 'interrupted') {
+          resolve()
+          return
+        }
+        reject(new Error(`Browser TTS failed: ${event.error}`))
+      }
+
+      // Clear any stale utterance left behind by an interrupted/abandoned
+      // session before Caye starts the new response.
+      window.speechSynthesis.cancel()
+      window.speechSynthesis.speak(utterance)
+    })
   }
 
   private drainAppendQueue(): void {
