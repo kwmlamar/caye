@@ -1,0 +1,29 @@
+name: Reasoning decision intelligence
+
+on:
+  pull_request:
+    paths:
+      - 'lib/reasoning/decision-intelligence.ts'
+      - 'lib/reasoning/decision-intelligence.test.ts'
+      - 'lib/capabilities/engineering-decision-analysis.ts'
+      - 'lib/capabilities/engineering-decision-analysis.test.ts'
+      - 'lib/capabilities/catalog.ts'
+      - 'lib/capabilities/gateway.ts'
+      - '.github/workflows/reasoning-decision-intelligence.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  decision-intelligence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Run targeted decision intelligence tests
+        run: npx vitest run lib/reasoning/decision-intelligence.test.ts lib/capabilities/engineering-decision-analysis.test.ts
