@@ -34,22 +34,15 @@ export async function runGateAndPush(sandbox: Sandbox, sessionId: string): Promi
     if (step.label === 'npm run build') buildPassed = result.exitCode === 0
 
     if (result.exitCode !== 0) {
-      const closure = evaluateEngineeringClosure({
-        repository: session.repository_full_name,
-        baseBranch: session.base_branch,
-        workBranch: session.work_branch,
-        testPassed,
-        buildPassed,
-        branchPushPassed: false,
-        productionObserved: false,
-      })
+      const closure = evaluateEngineeringClosure({ repository: session.repository_full_name, baseBranch: session.base_branch,
+        workBranch: session.work_branch, testPassed, buildPassed, branchPushPassed: false, productionObserved: false })
       await insertCodingSessionMessage(sessionId, 'error', `${step.label} failed (exit ${result.exitCode}):\n${output}`.slice(0, 4000))
       await updateCodingSession(sessionId, {
         status: 'failed', gate_test_passed: testPassed, gate_build_passed: buildPassed,
         gate_output: output.slice(0, 8000), observed_outcome: closure.summary,
         prediction_comparison: closure.comparison, engineering_verdict: closure.verdict,
         outcome_environment: closure.environment, production_verified: false,
-        execution_evidence: { testPassed, buildPassed, branchPushPassed: false },
+        execution_evidence: { testPassed, buildPassed, branchPushPassed: false, failedStep: step.label },
         finished_at: new Date().toISOString(),
       })
       return
@@ -63,22 +56,24 @@ export async function runGateAndPush(sandbox: Sandbox, sessionId: string): Promi
   const push = await sandbox.runCommand('git', ['push', '--set-upstream', 'origin', `HEAD:refs/heads/${session.work_branch}`])
   const pushOutput = await push.output('both')
   if (push.exitCode !== 0) {
+    const closure = evaluateEngineeringClosure({ repository: session.repository_full_name, baseBranch: session.base_branch,
+      workBranch: session.work_branch, testPassed: true, buildPassed: true, branchPushPassed: false, productionObserved: false })
     await insertCodingSessionMessage(sessionId, 'error', `review branch push failed:\n${pushOutput}`.slice(0, 4000))
-    await updateCodingSession(sessionId, { status: 'failed', gate_output: pushOutput.slice(0, 8000), finished_at: new Date().toISOString() })
+    await updateCodingSession(sessionId, {
+      status: 'failed', gate_test_passed: true, gate_build_passed: true, gate_output: pushOutput.slice(0, 8000),
+      execution_evidence: { testPassed: true, buildPassed: true, branchPushPassed: false },
+      observed_outcome: closure.summary, prediction_comparison: closure.comparison,
+      engineering_verdict: closure.verdict, outcome_environment: closure.environment,
+      production_verified: false, merge_authorized: false, deploy_authorized: false,
+      finished_at: new Date().toISOString(),
+    })
     return
   }
 
   const shaResult = await sandbox.runCommand('git', ['rev-parse', 'HEAD'])
   const finalSha = (await shaResult.stdout()).trim()
-  const closure = evaluateEngineeringClosure({
-    repository: session.repository_full_name,
-    baseBranch: session.base_branch,
-    workBranch: session.work_branch,
-    testPassed: true,
-    buildPassed: true,
-    branchPushPassed: true,
-    productionObserved: false,
-  })
+  const closure = evaluateEngineeringClosure({ repository: session.repository_full_name, baseBranch: session.base_branch,
+    workBranch: session.work_branch, testPassed: true, buildPassed: true, branchPushPassed: true, productionObserved: false })
 
   await insertCodingSessionMessage(sessionId, 'summary', `Review branch pushed: ${session.work_branch} @ ${finalSha}. Main was not modified. ${closure.summary}`)
   await updateCodingSession(sessionId, {
@@ -86,8 +81,7 @@ export async function runGateAndPush(sandbox: Sandbox, sessionId: string): Promi
     execution_evidence: { testPassed: true, buildPassed: true, branchPushPassed: true, branch: session.work_branch, commitSha: finalSha },
     observed_outcome: closure.summary, prediction_comparison: closure.comparison,
     engineering_verdict: closure.verdict, outcome_environment: closure.environment,
-    production_verified: closure.productionVerified,
-    merge_authorized: false, deploy_authorized: false,
+    production_verified: closure.productionVerified, merge_authorized: false, deploy_authorized: false,
     finished_at: new Date().toISOString(),
   })
 }
