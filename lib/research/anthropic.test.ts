@@ -67,7 +67,7 @@ describe('Anthropic research synthesis JSON recovery', () => {
   const input = {
     question: 'Which architecture is safer?',
     sources: [{
-      id: 'source-1',
+      id: '49fbc100-6faa-4dc7-bc1c-fa016b0e64b7',
       source: {
         url: 'https://example.com/source',
         title: 'Source',
@@ -83,7 +83,7 @@ describe('Anthropic research synthesis JSON recovery', () => {
       claimType: 'finding',
       confidence: 0.8,
       sourceQuality: 'primary',
-      sourceIds: ['source-1'],
+      sourceIds: ['S1'],
     }],
     brief: 'Bounded architectures are promising.',
     strongestEvidence: [],
@@ -92,6 +92,22 @@ describe('Anthropic research synthesis JSON recovery', () => {
     materialChanges: [],
     implications: [],
     recommendations: [],
+  })
+
+  it('uses short evidence handles in the model prompt and maps them back to durable source IDs', async () => {
+    const create = vi.fn().mockResolvedValueOnce({
+      stop_reason: 'end_turn',
+      content: [{ type: 'text', text: validJson }],
+    })
+    const client = { messages: { create } } as unknown as Anthropic
+    const synthesize = createAnthropicResearchSynthesizer({ client, model: 'test-model' })
+
+    const result = await synthesize(input)
+
+    const prompt = create.mock.calls[0][0].messages[0].content as string
+    expect(prompt).toContain('"evidenceHandle":"S1"')
+    expect(prompt).not.toContain('49fbc100-6faa-4dc7-bc1c-fa016b0e64b7')
+    expect(result.claims[0].sourceIds).toEqual(['49fbc100-6faa-4dc7-bc1c-fa016b0e64b7'])
   })
 
   it('retries from scratch when the first synthesis response is truncated', async () => {
@@ -161,17 +177,17 @@ describe('Anthropic research synthesis JSON recovery', () => {
 
     expect(create).toHaveBeenCalledTimes(2)
     expect(create.mock.calls[1][0].messages[0].content).toContain('Material research claim lacks evidence')
-    expect(result.claims[0].sourceIds).toEqual(['source-1'])
+    expect(result.claims[0].sourceIds).toEqual(['49fbc100-6faa-4dc7-bc1c-fa016b0e64b7'])
   })
 
-  it('retries when a claim cites a source outside the supplied run evidence', async () => {
+  it('retries when a claim cites an evidence handle outside the supplied run evidence', async () => {
     const inventedSourceJson = JSON.stringify({
       claims: [{
         statement: 'Claim with invented citation.',
         claimType: 'finding',
         confidence: 0.7,
         sourceQuality: 'unknown',
-        sourceIds: ['source-does-not-exist'],
+        sourceIds: ['S99'],
       }],
       brief: 'Attempt one.',
       strongestEvidence: [],
@@ -190,7 +206,7 @@ describe('Anthropic research synthesis JSON recovery', () => {
     const result = await synthesize(input)
 
     expect(create).toHaveBeenCalledTimes(2)
-    expect(create.mock.calls[1][0].messages[0].content).toContain('source IDs not present in this run')
+    expect(create.mock.calls[1][0].messages[0].content).toContain('evidence handles not present in this run')
     expect(result.brief).toBe('Bounded architectures are promising.')
   })
 })
