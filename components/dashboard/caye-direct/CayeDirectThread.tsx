@@ -653,7 +653,17 @@ export default function CayeDirectThread(props: Props) {
     // server-side, so a refetch recovers the thread regardless.
     const key = runKey
     const threadId = props.threadId
-    let replyText: string | null = null
+    // The reply is handed back the moment the POST resolves, NOT when the
+    // whole run settles. The run still finishes — it emits the stale-data
+    // signal and refetches the thread so every other panel catches up —
+    // but a voice caller no longer waits on that refetch (one more HTTP
+    // round trip plus a query) before it can start speaking a reply it
+    // already has in hand. Typed sends ignore the return value, so their
+    // behavior is unchanged.
+    let settleReply: (text: string | null) => void = () => {}
+    const replyReady = new Promise<string | null>((resolve) => {
+      settleReply = resolve
+    })
     const run = (async () => {
       try {
         const { session } = await getSession()
@@ -674,7 +684,7 @@ export default function CayeDirectThread(props: Props) {
         })
         const json = await res.json()
         if (res.ok && json.replyText) {
-          replyText = json.replyText
+          settleReply(json.replyText)
           setMessages((prev) => [...prev, {
             id: `reply-${Date.now()}`,
             direction: 'outbound',
@@ -720,19 +730,26 @@ export default function CayeDirectThread(props: Props) {
         }
       } catch {
         // Nothing to surface here — see above.
+      } finally {
+        // Idempotent: resolves to null only if the POST never produced a
+        // reply, so a failed turn unblocks its caller instead of hanging.
+        settleReply(null)
       }
     })()
     inFlightRuns.set(key, run)
 
-    try {
-      await run
-    } finally {
+    // Cleanup stays tied to the FULL run, not to the early reply — the
+    // composer must stay disabled until the refetch lands, and the
+    // inFlightRuns entry has to outlive an unmount. Detached from the
+    // return path rather than awaited before it.
+    void run.finally(() => {
       // Runs even if this component unmounted mid-turn: the async function
       // isn't tied to the React tree, so the entry is always cleaned up.
       inFlightRuns.delete(key)
       setSending(false)
-    }
-    return replyText
+    })
+
+    return replyReady
   }
 
   function send(text: string): Promise<string | null> {

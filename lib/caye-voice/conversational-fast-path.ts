@@ -5,6 +5,7 @@ import { persistAgentTurns } from '@/lib/caye-operator-messages'
 import { resolveFounderOperator } from '@/lib/operator-identity'
 import { getThread, setThreadStatus, touchThread, linkInsertedMessagesToThreads } from '@/lib/caye-direct-threads'
 import { maybeGenerateThreadTitle, maybeRefreshThreadSummary } from '@/lib/caye-direct-threads-summarize'
+import { normalizeSpokenPunctuation } from './spoken-text'
 
 /**
  * Narrow deterministic lane for voice turns that cannot require business state,
@@ -14,10 +15,13 @@ import { maybeGenerateThreadTitle, maybeRefreshThreadSummary } from '@/lib/caye-
 export function conversationalVoiceReply(input: string): string | null {
   const text = input.trim()
   if (!text) return null
-  const normalized = text
+  // normalizeSpokenPunctuation FIRST: the `[^a-z0-9'\s]` scrub below turns
+  // any character it doesn't recognise into a space, so a typographic
+  // apostrophe used to split "what's" into "what s" and miss every pattern
+  // here. See spoken-text.ts for the measured before/after.
+  const normalized = normalizeSpokenPunctuation(text)
     .toLowerCase()
     .replace(/\b(key|kay)\b/g, 'caye')
-    .replace(/[“”]/g, '"')
     .replace(/[^a-z0-9'\s]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
@@ -33,8 +37,51 @@ export function conversationalVoiceReply(input: string): string | null {
   return null
 }
 
+/**
+ * Serializes fast-lane writes per thread.
+ *
+ * The voice route replies BEFORE this write completes (see its after()
+ * block) so the founder isn't waiting on a database round trip to hear an
+ * answer Caye already knew. That trade is only safe if two quick
+ * back-to-back fast-path turns can't land out of order — "Hey Caye" /
+ * "thanks" spoken a second apart would otherwise race, and the thread
+ * transcript would read backwards. Each thread's writes therefore queue
+ * behind the previous one.
+ *
+ * In-process only, which is exactly the scope of the race it fixes: the
+ * two turns at risk are milliseconds apart on one warm instance. Nothing
+ * here is a distributed lock and it isn't trying to be.
+ */
+const fastPathWriteQueues = new Map<string, Promise<void>>()
+
+function queuePerThread(threadId: string, work: () => Promise<void>): Promise<void> {
+  const previous = fastPathWriteQueues.get(threadId) ?? Promise.resolve()
+  // Runs on both settlement paths: one failed write must not wedge every
+  // later turn on this thread.
+  const next = previous.then(work, work)
+  // The map holds a never-rejecting handle so an unawaited failure here is
+  // never an unhandled rejection; the caller still gets the real `next`.
+  const tail = next.catch(() => {})
+  fastPathWriteQueues.set(threadId, tail)
+  void tail.then(() => {
+    // Drop the entry only when nothing newer queued behind us, so the map
+    // doesn't grow one entry per thread for the life of the instance.
+    if (fastPathWriteQueues.get(threadId) === tail) fastPathWriteQueues.delete(threadId)
+  })
+  return next
+}
+
 /** Persist a fast-lane exchange into the exact durable founder thread history. */
 export async function persistConversationalVoiceTurn(
+  workspaceId: string,
+  threadId: string,
+  message: string,
+  replyText: string
+): Promise<void> {
+  return queuePerThread(threadId, () => writeConversationalVoiceTurn(workspaceId, threadId, message, replyText))
+}
+
+async function writeConversationalVoiceTurn(
   workspaceId: string,
   threadId: string,
   message: string,

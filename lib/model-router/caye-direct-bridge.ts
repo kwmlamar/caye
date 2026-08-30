@@ -13,6 +13,9 @@ import type { BackendId, FounderRouterContext, RequestedMode, RouterDecision } f
 import { buildInvocationLog } from './observability'
 import type { RichResult } from '@/lib/caye-direct-rich-results'
 
+/** Output ceiling for a spoken reply. Roughly a paragraph — far above what the guidance asks for, so it bounds runaway output without truncating a legitimate answer mid-sentence. */
+const VOICE_MAX_OUTPUT_TOKENS = 700
+
 const FOUNDER_DIRECT_REASONING_GUIDANCE = `FOUNDER DIRECT — SYNTHESIZE BEFORE YOU DECLARE SOMETHING UNDEFINED
 - The founder is using Caye Direct as an operating/thinking interface, not merely querying configured database objects.
 - Treat explicit goals, standing rules, and saved memory as authoritative signals when they exist, but do NOT equate "no formal goal row" with "no priorities" or "nothing to focus on".
@@ -21,6 +24,26 @@ const FOUNDER_DIRECT_REASONING_GUIDANCE = `FOUNDER DIRECT — SYNTHESIZE BEFORE 
 - If priorities are inferred rather than owner-defined, say that plainly in one short clause (for example: "No owner-defined priorities are saved, so these are the priorities I infer from current operations.") and then give the inferred priorities. Do not stop at the absence of formal goals and ask the founder to configure them first.
 - Never invent a priority merely to fill a list. Ground each inferred item in current workspace evidence; if evidence is genuinely too thin, state what is known and what is missing.
 - Operator/global Direction and per-workspace business state are different scopes. Do not leak operator-global goals into a customer workspace unless they are explicitly available in the scoped context.`
+
+/**
+ * Appended only for turns that will be spoken aloud.
+ *
+ * Two separate problems, one block. Out loud, a dashboard-sized answer is
+ * unusable — nobody can hold a nine-bullet breakdown in their head while it
+ * is read at them. And every token the model generates is time the founder
+ * spends waiting to hear the first word, because the production backend
+ * returns the completion whole rather than streaming it.
+ *
+ * Deliberately says nothing about what Caye may DO. Authority, grounding,
+ * approvals and tool access are identical to a typed turn; this only
+ * constrains the shape of the prose that comes back.
+ */
+const VOICE_DELIVERY_GUIDANCE = `SPOKEN DELIVERY — this reply will be read aloud, not displayed
+- Answer in at most two or three short sentences. Lead with the answer, not the reasoning.
+- No markdown, no bullet points, no numbered lists, no tables, no headings, no URLs read out character by character.
+- Say numbers the way a person says them out loud ("about twelve hundred", "the third").
+- If the full answer genuinely needs more detail than fits in a breath or two, give the headline out loud and say the rest is in the thread.
+- Never omit a warning, an approval requirement, a failure, or an uncertainty to save words. Brevity applies to detail, never to risk.`
 
 /**
  * The ONE call site where a real Caye Direct thread turn can be answered by
@@ -59,6 +82,8 @@ export interface CayeDirectRouterTurnArgs {
   engineeringOrigin?: { threadId: string; messageId: string }
   /** Which Caye surface originated this turn — see ToolContext.channel's doc comment. Always 'dashboard' on this bridge (it is Caye Direct's own router path), threaded explicitly rather than assumed so toolCtx construction stays honest about where the value comes from. */
   channel?: 'dashboard'
+  /** 'voice' when this reply is about to be spoken aloud — see FounderThreadTurnOptions.responseStyle. */
+  responseStyle?: 'voice'
 }
 
 export interface CayeDirectRouterTurnResult {
@@ -127,6 +152,7 @@ export async function runCayeDirectRouterTurn(args: CayeDirectRouterTurnArgs): P
   // bridging happens structurally inside founder-tool-loop.ts instead).
   // Caye Direct is general business conversation, not a coding/repo task,
   // so isCodingOrRepoTask is correctly left unset too.
+  const isVoice = args.responseStyle === 'voice'
   const start = Date.now()
   let decision: RouterDecision | undefined
   try {
@@ -135,10 +161,16 @@ export async function runCayeDirectRouterTurn(args: CayeDirectRouterTurnArgs): P
       requestedMode: args.requestedMode,
       backends: backendsFor(),
       toolCtx,
-      system: `${systemPrompt}\n\n${FOUNDER_DIRECT_REASONING_GUIDANCE}`,
+      system: isVoice
+        ? `${systemPrompt}\n\n${FOUNDER_DIRECT_REASONING_GUIDANCE}\n\n${VOICE_DELIVERY_GUIDANCE}`
+        : `${systemPrompt}\n\n${FOUNDER_DIRECT_REASONING_GUIDANCE}`,
       initialMessages,
       signal: AbortSignal.timeout(180_000),
       restrictToToolNames: args.restrictToToolNames,
+      // A spoken answer that runs past a few sentences is already wrong for
+      // the medium, so the budget that bounds it can be small. This is a
+      // ceiling, not a target — the model still stops when it's done.
+      ...(isVoice ? { maxOutputTokens: VOICE_MAX_OUTPUT_TOKENS } : {}),
     })
     decision = result.decision
 

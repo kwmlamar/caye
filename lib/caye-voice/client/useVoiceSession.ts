@@ -5,7 +5,29 @@ import { getSession } from '@/lib/supabase'
 import { createSttSession, type SttSession } from './stt-connectors'
 import { TtsPlaybackController } from './playback'
 import { nextVoiceState } from './voice-state-machine'
+import { VoiceTurnTimeline } from './voice-timeline'
 import type { VoiceSessionConfig, VoiceUiState } from '../types'
+
+/**
+ * How long Caye will stay silent after the founder stops speaking before
+ * saying something short to acknowledge the turn.
+ *
+ * A conversational turn resolves well inside this, so the founder never
+ * hears a preamble on "hey" — it exists for the turns that go to the
+ * control plane and run tools, where the alternative is ten to thirty
+ * seconds of nothing and no way to tell a working Caye from a broken one.
+ * Tuned to sit just above a healthy tool-free round trip so it fires when
+ * the turn is genuinely slow, not merely normal.
+ */
+const PREAMBLE_AFTER_MS = Number(process.env.NEXT_PUBLIC_CAYE_VOICE_PREAMBLE_MS ?? '900')
+
+/**
+ * Fixed, factless acknowledgements. Deliberately a hardcoded list rather
+ * than model-generated: this is spoken BEFORE Caye knows anything, so it
+ * must be incapable of asserting a result. Nothing here states an outcome,
+ * a number, or a completed action.
+ */
+const PREAMBLES = ['Checking now.', 'One sec, looking.', 'Let me check.'] as const
 
 export interface UseVoiceSessionArgs {
   workspaceId: string
@@ -37,6 +59,15 @@ export function useVoiceSession({ workspaceId, sendTurn, onError }: UseVoiceSess
   const ttsRef = useRef<TtsPlaybackController | null>(null)
   const epochRef = useRef(0)
   const mutedRef = useRef(false)
+  const timelineRef = useRef<VoiceTurnTimeline>(new VoiceTurnTimeline())
+  const preambleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const clearPreambleTimer = useCallback(() => {
+    if (preambleTimerRef.current) {
+      clearTimeout(preambleTimerRef.current)
+      preambleTimerRef.current = null
+    }
+  }, [])
 
   if (!ttsRef.current) {
     ttsRef.current = new TtsPlaybackController(async ({ text, provider, workspaceId: ws, sessionId }, signal) => {
@@ -56,28 +87,59 @@ export function useVoiceSession({ workspaceId, sendTurn, onError }: UseVoiceSess
 
   const bargeIn = useCallback(() => {
     epochRef.current += 1
+    clearPreambleTimer()
+    timelineRef.current.record('barge_in')
     sttRef.current?.cancelSpeech()
     ttsRef.current?.stop()
     dispatch({ type: 'user_speech_start' })
-  }, [dispatch])
+    // A new utterance starts a new turn's clock. Done after cancelling the
+    // old one so the barge_in mark lands on the turn being interrupted.
+    timelineRef.current.begin()
+  }, [dispatch, clearPreambleTimer])
 
   const handleFinalTranscript = useCallback(
     async (text: string) => {
       const myEpoch = epochRef.current
+      const timeline = timelineRef.current
+      timeline.record('transcript_final')
       setLiveTranscript('')
       dispatch({ type: 'user_speech_end' })
       const config = configRef.current
       if (!config) return
 
       try {
+        // Arm the acknowledgement before the request, not after: the point
+        // is to cover a slow turn, and by the time a slow turn answers it
+        // is far too late to decide to say something. Cancelled the moment
+        // a reply lands, so a fast turn never speaks it.
+        const stt = sttRef.current
+        if (stt?.supportsNativeVoice()) {
+          clearPreambleTimer()
+          preambleTimerRef.current = setTimeout(() => {
+            preambleTimerRef.current = null
+            if (myEpoch !== epochRef.current) return
+            const line = PREAMBLES[Math.floor(Math.random() * PREAMBLES.length)]
+            timeline.record('preamble_spoken')
+            // Not awaited: this is a courtesy noise running alongside the
+            // real turn, and the real reply's speakReply() cancels it.
+            void stt.speakReply(line).catch(() => {})
+          }, PREAMBLE_AFTER_MS)
+        }
+
+        timeline.record('request_start')
         const replyText = await sendTurn(text, {
           endpoint: '/api/founder/caye-direct/voice/turn',
           sessionId: config.sessionId,
         })
-        if (myEpoch !== epochRef.current || !replyText) return
+        timeline.record('request_end')
+        clearPreambleTimer()
+        if (myEpoch !== epochRef.current || !replyText) {
+          timeline.flush({ workspaceId, sessionId: config.sessionId })
+          return
+        }
 
         dispatch({ type: 'reply_ready' })
-        const stt = sttRef.current
+        timeline.record('playback_requested')
 
         // Preferred path: the OpenAI Realtime WebRTC session that heard the
         // founder also renders the already-authorized Caye reply directly as
@@ -86,6 +148,8 @@ export function useVoiceSession({ workspaceId, sendTurn, onError }: UseVoiceSess
         // preserves interruption via response.cancel.
         if (stt?.supportsNativeVoice()) {
           await stt.speakReply(replyText)
+          timeline.record('playback_ended')
+          timeline.flush({ workspaceId, sessionId: config.sessionId })
           if (myEpoch === epochRef.current) dispatch({ type: 'tts_playback_ended' })
           return
         }
@@ -103,6 +167,8 @@ export function useVoiceSession({ workspaceId, sendTurn, onError }: UseVoiceSess
 
         try {
           await ttsRef.current?.speak(replyText, config.routing.ttsProvider, workspaceId, config.sessionId)
+          timeline.record('playback_ended')
+          timeline.flush({ workspaceId, sessionId: config.sessionId })
         } finally {
           if (suppressMicDuringPlayback) {
             await new Promise((resolve) => setTimeout(resolve, 250))
@@ -110,13 +176,15 @@ export function useVoiceSession({ workspaceId, sendTurn, onError }: UseVoiceSess
           }
         }
       } catch (err) {
+        clearPreambleTimer()
+        timeline.flush({ workspaceId, sessionId: config.sessionId })
         if (myEpoch !== epochRef.current) return
         sttRef.current?.setMuted(mutedRef.current)
         onError?.(err instanceof Error ? err.message : 'Voice turn failed')
         dispatch({ type: 'error' })
       }
     },
-    [dispatch, sendTurn, workspaceId, onError]
+    [dispatch, sendTurn, workspaceId, onError, clearPreambleTimer]
   )
 
   const start = useCallback(async () => {
@@ -139,13 +207,20 @@ export function useVoiceSession({ workspaceId, sendTurn, onError }: UseVoiceSess
 
       const stt = createSttSession(json.sttCredential)
       sttRef.current = stt
-      stt.onPartial((text) => setLiveTranscript(text))
+      stt.onPartial((text) => {
+        timelineRef.current.record('transcript_partial_first')
+        setLiveTranscript(text)
+      })
       stt.onFinal((text) => {
         setLiveTranscript(text)
         void handleFinalTranscript(text)
       })
       stt.onSpeechStart(() => bargeIn())
-      stt.onSpeechEnd(() => dispatch({ type: 'user_speech_end' }))
+      stt.onSpeechEnd(() => {
+        timelineRef.current.record('speech_end')
+        dispatch({ type: 'user_speech_end' })
+      })
+      stt.onSpeechAudioStart(() => timelineRef.current.record('first_audible_audio'))
       stt.onError((err) => {
         onError?.(err.message)
         dispatch({ type: 'error' })
@@ -162,6 +237,7 @@ export function useVoiceSession({ workspaceId, sendTurn, onError }: UseVoiceSess
 
   const end = useCallback(() => {
     epochRef.current += 1
+    clearPreambleTimer()
     sttRef.current?.stop()
     sttRef.current = null
     ttsRef.current?.stop()
@@ -169,7 +245,7 @@ export function useVoiceSession({ workspaceId, sendTurn, onError }: UseVoiceSess
     setMicStream(null)
     setLiveTranscript('')
     dispatch({ type: 'ended' })
-  }, [dispatch])
+  }, [dispatch, clearPreambleTimer])
 
   const toggleMute = useCallback(() => {
     setMuted((current) => {
@@ -181,11 +257,13 @@ export function useVoiceSession({ workspaceId, sendTurn, onError }: UseVoiceSess
   }, [])
 
   useEffect(() => {
+    const clearTimer = clearPreambleTimer
     return () => {
+      clearTimer()
       sttRef.current?.stop()
       ttsRef.current?.stop()
     }
-  }, [])
+  }, [clearPreambleTimer])
 
   return {
     state,

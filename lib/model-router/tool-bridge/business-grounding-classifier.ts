@@ -1,4 +1,5 @@
 import 'server-only'
+import { normalizeSpokenPunctuation } from '@/lib/caye-voice/spoken-text'
 
 /**
  * Deterministic, request-side routing decision: does the founder's latest
@@ -29,12 +30,17 @@ const META_ABOUT_CAYE_PATTERNS: readonly RegExp[] = [
 ]
 
 const CAYE_NAME = '(?:caye|key|kay)'
+const PLEASANTRY = '(?:thanks|thank you|appreciate it|cool|okay|ok|got it)'
 const CONVERSATIONAL_PATTERNS: readonly RegExp[] = [
   /^\s*(hi|hey|hello|yo|sup|wassup|what'?s up|good (morning|afternoon|evening))\b[\s,.!?-]*$/i,
   new RegExp(`^\\s*(hi|hey|hello|yo)[,\\s]+${CAYE_NAME}\\b[\\s,.!?-]*(what'?s up|how are you|you there)?[\\s,.!?-]*$`, 'i'),
   new RegExp(`^\\s*${CAYE_NAME}[,\\s]+(what'?s up|how are you|you there)\\b[\\s,.!?-]*$`, 'i'),
   /^\s*(can you hear me|do you hear me|are you there|you there)\b[\s,.!?-]*$/i,
-  /^\s*(thanks|thank you|appreciate it|cool|okay|ok|got it)\b[\s,.!?-]*$/i,
+  // Pleasantries chain in speech far more than in typing — "Okay, thank
+  // you." is one acknowledgement, not a request, but a single-token pattern
+  // read it as business and forced a grounded tool round trip to say
+  // "Anytime."
+  new RegExp(`^\\s*${PLEASANTRY}\\b([\\s,.!?-]+${PLEASANTRY}\\b)*[\\s,.!?-]*$`, 'i'),
 ]
 
 /** Leading imperative verb, not a substring match — "draft" mid-sentence about something else shouldn't count. */
@@ -56,7 +62,12 @@ function isPureTransformOfInlineContent(text: string): boolean {
 }
 
 export function requiresBusinessGrounding(latestUserText: string): boolean {
-  const text = latestUserText.trim()
+  // Every pattern below is written with ASCII punctuation, but a spoken
+  // turn arrives with the typographic apostrophe transcription models emit
+  // — which used to make "Hey Caye, what's up?" require grounding (and so
+  // forbid a plain-text answer until a tool had run) purely because of the
+  // quote character. Fold it first. See lib/caye-voice/spoken-text.ts.
+  const text = normalizeSpokenPunctuation(latestUserText).trim()
   if (!text) return false
   if (isConversational(text)) return false
   if (isMetaAboutCaye(text)) return false
