@@ -9,14 +9,6 @@ import type { VoiceSessionConfig, VoiceUiState } from '../types'
 
 export interface UseVoiceSessionArgs {
   workspaceId: string
-  /**
-   * Sends a finalized voice utterance exactly like a typed message —
-   * callers pass CayeDirectThread's own `send()` (pointed at
-   * /api/founder/caye-direct/voice/turn) so a spoken turn gets the SAME
-   * optimistic bubble / inFlightRuns registration / post-turn refetch a
-   * typed one gets, and lands in the SAME thread state. This hook never
-   * touches messages or persistence directly — see CayeDirectThread.tsx.
-   */
   sendTurn: (text: string, opts: { endpoint: string; sessionId: string }) => Promise<string | null>
   onError?: (message: string) => void
 }
@@ -33,18 +25,6 @@ export interface VoiceSessionHandle {
   toggleMute: () => void
 }
 
-/**
- * Orchestrates one Caye Direct Live Voice session: mints a session via
- * /voice/session, connects the chosen STT provider directly from the
- * browser, drives the pure state machine off its VAD events, sends each
- * finalized utterance through `sendTurn` (which is really "the normal
- * text send, pointed at the voice endpoint" — see UseVoiceSessionArgs),
- * and streams the reply through TtsPlaybackController with real barge-in:
- * a speech-start event mid-`thinking` or mid-`speaking` stops playback
- * immediately and marks the in-flight turn's eventual reply stale (it
- * still persists to the thread server-side — just isn't spoken, since the
- * founder already moved on to a new utterance).
- */
 export function useVoiceSession({ workspaceId, sendTurn, onError }: UseVoiceSessionArgs): VoiceSessionHandle {
   const [state, setState] = useState<VoiceUiState>('idle')
   const [liveTranscript, setLiveTranscript] = useState('')
@@ -56,6 +36,7 @@ export function useVoiceSession({ workspaceId, sendTurn, onError }: UseVoiceSess
   const configRef = useRef<VoiceSessionConfig & { sessionId: string } | null>(null)
   const ttsRef = useRef<TtsPlaybackController | null>(null)
   const epochRef = useRef(0)
+  const mutedRef = useRef(false)
 
   if (!ttsRef.current) {
     ttsRef.current = new TtsPlaybackController(async ({ text, provider, workspaceId: ws, sessionId }, signal) => {
@@ -91,16 +72,34 @@ export function useVoiceSession({ workspaceId, sendTurn, onError }: UseVoiceSess
           endpoint: '/api/founder/caye-direct/voice/turn',
           sessionId: config.sessionId,
         })
-        if (myEpoch !== epochRef.current) return // superseded by a barge-in — already persisted, just not spoken
+        if (myEpoch !== epochRef.current) return
         if (!replyText) return
         dispatch({ type: 'reply_ready' })
+
+        // Browser SpeechSynthesis plays through the same laptop speakers the
+        // microphone is listening to. OpenAI Realtime then happily transcribes
+        // Caye's own voice as a new founder turn. While browser TTS is active,
+        // pause STT input, then restore the founder's explicit mute state after
+        // a short acoustic tail. Cloud TTS keeps normal barge-in behavior.
+        const suppressMicDuringPlayback = config.routing.ttsProvider === 'browser'
+        if (suppressMicDuringPlayback) sttRef.current?.setMuted(true)
+
         ttsRef.current?.onDone(() => {
           if (myEpoch !== epochRef.current) return
           dispatch({ type: 'tts_playback_ended' })
         })
-        await ttsRef.current?.speak(replyText, config.routing.ttsProvider, workspaceId, config.sessionId)
+
+        try {
+          await ttsRef.current?.speak(replyText, config.routing.ttsProvider, workspaceId, config.sessionId)
+        } finally {
+          if (suppressMicDuringPlayback) {
+            await new Promise((resolve) => setTimeout(resolve, 250))
+            if (myEpoch === epochRef.current) sttRef.current?.setMuted(mutedRef.current)
+          }
+        }
       } catch (err) {
         if (myEpoch !== epochRef.current) return
+        sttRef.current?.setMuted(mutedRef.current)
         onError?.(err instanceof Error ? err.message : 'Voice turn failed')
         dispatch({ type: 'error' })
       }
@@ -130,13 +129,7 @@ export function useVoiceSession({ workspaceId, sendTurn, onError }: UseVoiceSess
         void handleFinalTranscript(text)
       })
       stt.onSpeechStart(() => bargeIn())
-      stt.onSpeechEnd(() => {
-        // Only meaningful once we're actually mid-utterance; if the
-        // model already moved on (e.g. this is a stray VAD end with no
-        // final transcript following), the state machine simply ignores
-        // a redundant user_speech_end from a non-user-speaking state.
-        dispatch({ type: 'user_speech_end' })
-      })
+      stt.onSpeechEnd(() => dispatch({ type: 'user_speech_end' }))
       stt.onError((err) => {
         onError?.(err.message)
         dispatch({ type: 'error' })
@@ -165,6 +158,7 @@ export function useVoiceSession({ workspaceId, sendTurn, onError }: UseVoiceSess
   const toggleMute = useCallback(() => {
     setMuted((current) => {
       const next = !current
+      mutedRef.current = next
       sttRef.current?.setMuted(next)
       return next
     })
