@@ -60,11 +60,11 @@ export async function writeBusinessFact(args: {
   const subjectType = serviceId ? 'service' : 'workspace'
   const authorityKind = args.callerRole === 'founder' ? 'founder' : args.callerRole === 'owner' ? 'owner' : 'operator'
 
-  const { data: rpcResult, error } = await supabase.rpc('write_business_fact_atomic', {
+  const { data: rpcResult, error } = await supabase.rpc('write_typed_business_memory_atomic', {
     p_workspace_id: args.workspaceId,
     p_category: payload.category,
     p_fact: payload.text,
-    p_source: 'owner-direct',
+    p_source: 'operator-learning',
     p_created_by: args.callerRole,
     p_service_id: serviceId,
     p_canonical_key: effectiveCanonicalKey,
@@ -83,10 +83,18 @@ export async function writeBusinessFact(args: {
     p_correction_of_fact_id: isCorrection ? supersedeId : null,
   }).single()
 
-  if (error) return { decision: 'error', reason: `write_business_fact_atomic failed: ${error.message}` }
+  if (error) return { decision: 'error', reason: `write_typed_business_memory_atomic failed: ${error.message}` }
   const row = rpcResult as { id: string; created_at: string; superseded_id: string | null }
   return {
     decision: row.superseded_id ? 'superseded_and_written' : 'written', targetTable: 'business_facts', targetRecordId: row.id, supersededRecordId: row.superseded_id,
-    reason: row.superseded_id ? semanticMatchRow && !conflictingRow ? 'superseded a same-topic active fact and persisted typed correction lineage' : 'superseded conflicting/same-topic memory and persisted typed correction lineage' : 'persisted typed operating memory with no active same-topic predecessor',
+    reason: row.superseded_id
+      ? semanticMatchRow && !conflictingRow
+        ? isCorrection
+          ? 'superseded a same-topic active fact and persisted typed correction lineage'
+          : 'superseded a same-topic active fact and persisted typed memory'
+        : isCorrection
+          ? 'superseded conflicting/same-topic memory and persisted typed correction lineage'
+          : 'superseded conflicting/same-topic memory and persisted typed memory'
+      : 'persisted typed operating memory with no active same-topic predecessor',
   }
 }
