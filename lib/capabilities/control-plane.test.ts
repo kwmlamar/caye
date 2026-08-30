@@ -39,7 +39,23 @@ describe('conversational capability control plane', () => {
       risk: 'low',
       approvalRequirement: 'none',
       scopeMode: 'operator',
+      available: true,
+      unavailableReason: null,
     })
+  })
+
+  it('reports executable conversational coverage separately from canonical registration', () => {
+    const coverage = capabilityCoverage()
+    for (const domain of coverage) {
+      expect(domain.registeredCapabilityCount).toBeGreaterThanOrEqual(domain.capabilityCount)
+      expect(domain.registeredCapabilityCount).toBe(
+        domain.capabilityCount + domain.unavailableCapabilityCount,
+      )
+    }
+
+    const research = coverage.find((entry) => entry.domain === 'research')
+    expect(research?.writeCount).toBe(1)
+    expect(research?.capabilities).toContain('research.start')
   })
 
   it('exposes real coverage and explicit future gaps for device domains', () => {
