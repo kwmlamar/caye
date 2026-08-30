@@ -14,6 +14,15 @@ type Config = {
 type Usage = { inputTokens?: number; outputTokens?: number }
 type OpenAiMessage = Record<string, unknown>
 
+/**
+ * OpenAI's newer reasoning models on Chat Completions use
+ * max_completion_tokens. OpenRouter remains broadly OpenAI-compatible but
+ * still accepts max_tokens across the wider model set routed through it.
+ */
+export function outputTokenLimit(provider: Config['provider'], tokens: number): Record<string, number> {
+  return provider === 'openai' ? { max_completion_tokens: tokens } : { max_tokens: tokens }
+}
+
 /** Small native OpenAI-compatible adapter. It owns no routing policy. */
 export class OpenAICompatibleBackend implements ToolCapableBackend {
   readonly id: Config['id']
@@ -42,7 +51,7 @@ export class OpenAICompatibleBackend implements ToolCapableBackend {
           { role: 'system', content: req.system },
           ...req.messages.map((m) => ({ role: m.role, content: m.text })),
         ],
-        max_tokens: req.maxOutputTokens ?? 4096,
+        ...outputTokenLimit(this.config.provider, req.maxOutputTokens ?? 4096),
       },
       signal
     )
@@ -68,7 +77,7 @@ export class OpenAICompatibleBackend implements ToolCapableBackend {
         model: this.config.model,
         messages: [{ role: 'system', content: req.system }, ...toOpenAiMessages(req.messages)],
         tools,
-        max_tokens: req.maxOutputTokens,
+        ...outputTokenLimit(this.config.provider, req.maxOutputTokens),
       },
       signal
     )
@@ -118,7 +127,11 @@ export class OpenAICompatibleBackend implements ToolCapableBackend {
       signal,
     })
     if (!response.ok) {
-      const error = new Error(`Provider request failed (${response.status})`)
+      // Provider bodies contain useful parameter/model diagnostics and no API
+      // key. Keep them bounded so a future regression is diagnosable without
+      // dumping arbitrary response payloads into logs.
+      const detail = (await response.text().catch(() => '')).slice(0, 800)
+      const error = new Error(`Provider request failed (${response.status})${detail ? `: ${detail}` : ''}`)
       ;(error as any).status = response.status
       throw error
     }

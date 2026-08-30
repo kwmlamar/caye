@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { toOpenAiMessages } from './openai-compatible'
+import { outputTokenLimit, toOpenAiMessages } from './openai-compatible'
+
+describe('OpenAI-compatible request adapter', () => {
+  it('uses max_completion_tokens for native OpenAI reasoning models', () => {
+    expect(outputTokenLimit('openai', 8192)).toEqual({ max_completion_tokens: 8192 })
+  })
+
+  it('keeps max_tokens for OpenRouter compatibility', () => {
+    expect(outputTokenLimit('openrouter', 4096)).toEqual({ max_tokens: 4096 })
+  })
+})
 
 describe('OpenAI-compatible history adapter', () => {
   it('preserves assistant tool calls and matching tool results', () => {
