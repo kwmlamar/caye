@@ -25,6 +25,17 @@ describe('persistent operating memory migration contracts', () => {
     expect(sql).toContain('correction reference crosses workspace boundary')
   })
 
+  it('enforces typed subject scope as a database invariant', () => {
+    expect(sql).toContain('business_facts_subject_scope_check')
+    expect(sql).toContain("subject_type = 'workspace' and subject_id is null and service_id is null")
+    expect(sql).toContain("subject_type = 'service' and service_id is not null and subject_id = service_id::text")
+    expect(sql).toContain("subject_type not in ('workspace','service') and service_id is null and nullif(btrim(subject_id),'') is not null")
+    expect(sql).toContain('workspace memory cannot carry subject_id or service_id')
+    expect(sql).toContain('service memory requires matching service_id and subject_id')
+    expect(sql).toContain('non-service subject memory cannot carry service_id')
+    expect(sql).toContain('non-workspace subject memory requires subject_id')
+  })
+
   it('prevents inferred or derived memory from replacing explicit or observed memory', () => {
     expect(sql).toContain("p_knowledge_mode in ('inferred','derived')")
     expect(sql).toContain("v_existing.knowledge_mode in ('explicit','observed')")
