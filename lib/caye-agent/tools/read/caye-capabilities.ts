@@ -10,13 +10,14 @@ type Args = {
   action: 'discover' | 'invoke'
   capability?: string
   propertyId?: string
+  scope?: 'current_workspace' | 'operator'
   args?: Record<string, unknown>
 }
 
 export const cayeCapabilitiesTool: Tool<Args> = {
   name: 'caye_capabilities',
   description:
-    'Founder-only read control-plane bridge for discovering and invoking canonical Caye read capabilities. Use this for goals, attention, engineering, growth, job search, research, perception, or property intelligence reads. Writes use the separate capability-write bridge so read-only continuation passes remain structurally read-only.',
+    'Founder-only read control-plane bridge for discovering and invoking canonical Caye read capabilities. Use this for goals, attention, engineering, growth, job search, research, perception, or property intelligence reads. Write capabilities remain unavailable through this bridge.',
   risk: 'read',
   roles: ['founder'],
   modes: ['back-office'],
@@ -26,6 +27,7 @@ export const cayeCapabilitiesTool: Tool<Args> = {
       action: { type: 'string', enum: ['discover', 'invoke'] },
       capability: { type: 'string' },
       propertyId: { type: 'string' },
+      scope: { type: 'string', enum: ['current_workspace', 'operator'] },
       args: { type: 'object', additionalProperties: true },
     },
     required: ['action'],
@@ -61,8 +63,15 @@ export const cayeCapabilitiesTool: Tool<Args> = {
     if (!descriptor.available) {
       return { ok: false, error: descriptor.unavailableReason ?? 'Capability is unavailable.' }
     }
+    if (args.scope && descriptor.scopeMode !== 'either') {
+      return { ok: false, error: `Capability '${descriptor.name}' has fixed ${descriptor.scopeMode} scope; scope cannot be overridden.` }
+    }
 
-    const workspaceId = descriptor.scopeMode === 'operator' ? null : rawCtx.workspaceId
+    const workspaceId = descriptor.scopeMode === 'operator'
+      ? null
+      : descriptor.scopeMode === 'either' && args.scope === 'operator'
+        ? null
+        : rawCtx.workspaceId
     const result = await invokeFounderReadCapability(ctx.founderUserId, {
       capability: descriptor.name,
       version: descriptor.version,
