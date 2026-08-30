@@ -5,8 +5,14 @@ import type {
   RegisteredCapability,
 } from './types'
 
-/** V0.1 exposes only no-argument read capabilities. */
-type V01RegisteredCapability = RegisteredCapability<Record<string, never>, unknown>
+/**
+ * The registry intentionally erases each capability's concrete argument type.
+ * Invocation boundaries must validate and narrow arguments before calling a
+ * handler. Using `never` here prevents the registry itself from becoming a
+ * generic unvalidated execution surface while still allowing heterogeneous
+ * capability signatures to coexist.
+ */
+type V01RegisteredCapability = RegisteredCapability<never, unknown>
 
 export type CapabilityRegistry = ReadonlyMap<CapabilityName, V01RegisteredCapability>
 
