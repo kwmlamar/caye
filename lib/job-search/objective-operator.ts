@@ -33,12 +33,10 @@ export async function runFounderJobSearchObjective() {
 
   const result = await runBoundedObjective({
     context: { supabase, before: before.data ?? [] },
-    // Preparation and inspection are internal/reversible state changes only.
-    // Submission/contact remains outside this objective and therefore cannot be
-    // smuggled in by a planner without an explicit high-risk authority grant.
     allowedAuthority: new Set(['read', 'write_low']),
     completedSteps: durable.completedSteps,
     maxTransitions: MAX_TRANSITIONS,
+    transitionsAlreadyUsed: durable.transitionsUsed,
     timeoutMs: TIMEOUT_MS,
     onEvent: (event) => persistObjectiveEvent(supabase, durable.runId, durable.runnerToken, TIMEOUT_MS, event),
     steps: [
@@ -111,14 +109,28 @@ export async function runFounderJobSearchObjective() {
     ],
   })
 
-  await finalizeObjectiveRun(supabase, durable.runId, durable.runnerToken, result)
+  await finalizeObjectiveRun(supabase, durable.runId, durable.runnerToken, result, durable.metadata)
 
-  const directionEvidence = await recordObjectiveDirectionEvidence(supabase, {
-    runId: durable.runId,
-    objectiveKey: OBJECTIVE_KEY,
-    result,
-    summary: 'Founder job-search objective completed preparation and inspection with authority checks and verified side effects.',
-  })
+  // Direction is an evidence sink, not part of the operational side effect.
+  // Once the durable objective is terminal, a telemetry/evidence publication
+  // failure must not turn the completed workflow into an HTTP failure that a
+  // scheduler could replay as a brand-new objective.
+  let directionEvidence: Awaited<ReturnType<typeof recordObjectiveDirectionEvidence>> | { recorded: 0; unavailable: true; error: string }
+  try {
+    directionEvidence = await recordObjectiveDirectionEvidence(supabase, {
+      runId: durable.runId,
+      objectiveKey: OBJECTIVE_KEY,
+      result,
+      summary: 'Founder job-search objective completed preparation and inspection with authority checks and verified side effects.',
+    })
+  } catch (error) {
+    directionEvidence = {
+      recorded: 0,
+      unavailable: true,
+      error: error instanceof Error ? error.message : String(error),
+    }
+    console.error('[objective-operator] Direction evidence publication failed after durable finalization', error)
+  }
 
   return { runId: durable.runId, directionEvidence, ...result }
 }
