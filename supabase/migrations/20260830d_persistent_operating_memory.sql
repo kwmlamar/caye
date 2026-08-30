@@ -197,3 +197,9 @@ group by f.workspace_id;
 
 comment on view public.caye_memory_capability_evidence is
   'Aggregate evidence for Direction Memory & Context capability; no memory content is exposed.';
+
+-- Direction evidence is an internal aggregate surface. Do not let the fact
+-- that it contains only counts trick us into making workspace activity data
+-- public through PostgREST.
+revoke all on table public.caye_memory_capability_evidence from public, anon, authenticated;
+grant select on table public.caye_memory_capability_evidence to service_role;
