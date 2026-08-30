@@ -62,7 +62,7 @@ alter table public.caye_operating_intelligence_capabilities
 create or replace function public.enforce_caye_oi_capability_progress_evidence()
 returns trigger
 language plpgsql
-security definer
+security invoker
 set search_path = public
 as $$
 declare
@@ -92,7 +92,7 @@ begin
 end;
 $$;
 
-revoke all on function public.enforce_caye_oi_capability_progress_evidence() from public;
+revoke all on function public.enforce_caye_oi_capability_progress_evidence() from public, anon, authenticated;
 
 drop trigger if exists caye_oi_capabilities_progress_guard on public.caye_operating_intelligence_capabilities;
 create trigger caye_oi_capabilities_progress_guard
