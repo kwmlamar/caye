@@ -166,16 +166,26 @@ export async function openOrResumeObjectiveRun(input: {
   const rows = progress.data ?? []
   const completedSteps = new Set<string>()
   const pendingEffects = new Map<string, unknown>()
+  const interruptedSteps = new Set<string>()
   let observedRevision = planRevision
   for (const row of rows) {
     const stepKey = row.step_key as string
-    if (row.state === 'verified') {
+    if (row.state === 'running') {
+      interruptedSteps.add(stepKey)
+    } else if (row.state === 'verified') {
       completedSteps.add(stepKey)
       pendingEffects.delete(stepKey)
-    } else if (row.state === 'waiting' && row.evidence && typeof row.evidence === 'object' && 'pendingEffect' in row.evidence) {
-      pendingEffects.set(stepKey, (row.evidence as { pendingEffect?: unknown }).pendingEffect)
+      interruptedSteps.delete(stepKey)
+    } else if (row.state === 'failed' || row.state === 'blocked') {
+      interruptedSteps.delete(stepKey)
+    } else if (row.state === 'waiting') {
+      interruptedSteps.delete(stepKey)
+      if (row.evidence && typeof row.evidence === 'object' && 'pendingEffect' in row.evidence) {
+        pendingEffects.set(stepKey, (row.evidence as { pendingEffect?: unknown }).pendingEffect)
+      }
     } else if (row.state === 'replanned') {
       pendingEffects.delete(stepKey)
+      interruptedSteps.delete(stepKey)
       const evidence = row.evidence as { planRevision?: unknown } | null
       const revision = Number(evidence?.planRevision)
       if (Number.isFinite(revision)) observedRevision = Math.max(observedRevision, revision)
@@ -190,6 +200,7 @@ export async function openOrResumeObjectiveRun(input: {
     maxTransitions,
     completedSteps,
     pendingEffects,
+    interruptedSteps,
     transitionsUsed: rows.filter((row) => row.state === 'running' || row.state === 'checking').length,
     planRevision,
     maxPlanRevisions,
