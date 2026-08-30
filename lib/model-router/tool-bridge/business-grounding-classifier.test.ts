@@ -15,7 +15,7 @@ describe('requiresBusinessGrounding — must require grounding (fail closed)', (
     'How much revenue did we make this week?',
     'What happened with Sarah?',
     'Look up the customer named Juli King. If we have a match, also tell me about her recent booking and message history with us.',
-    'Draft a reply to Juli King about her booking.', // starts with a transform verb but references an external lookup, not inline content
+    'Draft a reply to Juli King about her booking.',
   ]
 
   for (const text of mustGround) {
@@ -32,6 +32,12 @@ describe('requiresBusinessGrounding — must be allowed to skip grounding', () =
     'Draft a friendly reply to this customer message: "Do you have availability next week?"',
     'Rewrite this sentence.',
     'Please rewrite this: "we are closed on sundays"',
+    'Hey Caye, what\'s up?',
+    'Hey Key, what\'s up?',
+    'Hey Kay, what\'s up?',
+    'Key, how are you?',
+    'Can you hear me?',
+    'Okay, thank you.',
   ]
 
   for (const text of mustSkip) {
@@ -42,17 +48,16 @@ describe('requiresBusinessGrounding — must be allowed to skip grounding', () =
 })
 
 describe('requiresBusinessGrounding — edge cases', () => {
-  it('defaults to requiring grounding for empty/whitespace-only text is false (nothing to ground)', () => {
+  it('empty/whitespace-only text does not require grounding', () => {
     expect(requiresBusinessGrounding('')).toBe(false)
     expect(requiresBusinessGrounding('   ')).toBe(false)
   })
 
   it('a transform verb with a quoted customer message containing its own question mark is still skip-eligible', () => {
-    // The classifier must not be confused by punctuation inside pasted content.
     expect(requiresBusinessGrounding('Draft a friendly reply to this customer message: "Can I bring my dog?"')).toBe(false)
   })
 
-  it('a bare transform verb with no inline-content reference still requires grounding (ambiguous — fail closed)', () => {
+  it('a bare transform verb with no inline-content reference still requires grounding', () => {
     expect(requiresBusinessGrounding('Draft a reply.')).toBe(true)
   })
 })
