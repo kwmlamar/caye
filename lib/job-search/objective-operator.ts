@@ -2,6 +2,7 @@ import 'server-only'
 import { createServiceClient } from '@/lib/supabase-server'
 import { runJobSearchPreparation } from '@/app/api/caye/job-search-prepare/route'
 import { runJobSearchInspection } from '@/app/api/caye/job-search-inspect/route'
+import { recordObjectiveDirectionEvidence } from '@/lib/operator/direction-evidence'
 import { runBoundedObjective } from '@/lib/operator/objective-run'
 import { finalizeObjectiveRun, openOrResumeObjectiveRun, persistObjectiveEvent } from '@/lib/operator/objective-store'
 
@@ -60,5 +61,13 @@ export async function runFounderJobSearchObjective() {
   })
 
   await finalizeObjectiveRun(supabase, durable.runId, result)
-  return { runId: durable.runId, ...result }
+
+  const directionEvidence = await recordObjectiveDirectionEvidence(supabase, {
+    runId: durable.runId,
+    objectiveKey: OBJECTIVE_KEY,
+    result,
+    summary: 'Founder job-search objective completed preparation and inspection with authority checks and verified side effects.',
+  })
+
+  return { runId: durable.runId, directionEvidence, ...result }
 }
