@@ -7,6 +7,7 @@ on:
       - 'lib/operator/objective-loop-adversarial.test.ts'
       - 'lib/operator/objective-run.ts'
       - 'lib/operator/objective-store.ts'
+      - 'tsconfig.objective-loop.json'
       - '.github/workflows/objective-loop.yml'
 
 permissions:
@@ -26,4 +27,4 @@ jobs:
       - name: Run objective loop adversarial tests
         run: npx vitest run lib/operator/objective-loop-adversarial.test.ts lib/operator/objective-run.test.ts lib/operator/objective-run-interruption.test.ts lib/operator/objective-store-policy.test.ts
       - name: Typecheck objective loop
-        run: npx tsc --noEmit --pretty false
+        run: npx tsc --noEmit --pretty false -p tsconfig.objective-loop.json
