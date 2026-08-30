@@ -29,6 +29,7 @@ import { getOutreachStatus } from './read/get-outreach-operational-status'
 import { getOutreachTargeting } from './read/get-outreach-targeting'
 import { getArtifact } from './read/get-artifact'
 import { searchArtifacts } from './read/search-artifacts'
+import { cayeCapabilitiesTool } from './read/caye-capabilities'
 import { listPropertiesTool } from './read/list-properties'
 import { getPropertySnapshotTool } from './read/get-property-snapshot'
 import { analyzePropertyWaterTool } from './read/analyze-property-water'
@@ -183,6 +184,7 @@ export const TOOL_REGISTRY: AnyTool[] = [
   getOutreachTargeting as AnyTool,
   getArtifact as AnyTool,
   searchArtifacts as AnyTool,
+  cayeCapabilitiesTool as AnyTool,
   listPropertiesTool as AnyTool,
   getPropertySnapshotTool as AnyTool,
   analyzePropertyWaterTool as AnyTool,
@@ -255,24 +257,12 @@ export const TOOL_REGISTRY: AnyTool[] = [
   getWorkspaceAutonomy as AnyTool,
   gateAdminHighRisk(triggerCron) as AnyTool,
   gateAdminHighRisk(setWorkspaceAutonomy) as AnyTool,
-  // CAY-192 — founder-only job-search operator (Phase 7 founder UX).
-  // pause/resume are 'low' risk, not gateAdminHighRisk-wrapped: pausing
-  // is safety-positive/immediate, and resuming only re-enables
-  // application PREPARATION, which always lands at NEEDS_HUMAN in this
-  // build (no automated submission exists yet — see
-  // lib/job-search/application-executor.ts's doc comment).
   getJobSearchSummary as AnyTool,
   listJobSearchQueue as AnyTool,
   listJobSearchCandidates as AnyTool,
   explainJobSearchRejection as AnyTool,
   pauseJobSearch as AnyTool,
   resumeJobSearch as AnyTool,
-  // CAY-194 — real ATS application-submission execution (follow-up to
-  // CAY-192). Read tools + low-risk safety switches are unwrapped;
-  // anything that makes execution MORE capable of a real submission
-  // (enabling automation, disabling dry-run, changing the daily cap) is
-  // gateAdminHighRisk-wrapped, same confirmation mechanism as
-  // set_workspace_autonomy above.
   listApplicationsNeedingReview as AnyTool,
   inspectJobSearchApplications as AnyTool,
   explainApplicationStatus as AnyTool,

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireFounder } from '@/lib/founder'
 import { createServiceClient } from '@/lib/supabase-server'
 import { hasDefensibleCapabilityProgress } from '@/lib/goals/operating-intelligence-capabilities'
+import { capabilityCoverage } from '@/lib/capabilities/control-plane'
 
 export async function GET(req: NextRequest) {
   const user = await requireFounder(req)
@@ -93,5 +94,9 @@ export async function GET(req: NextRequest) {
     }
   })
 
-  return NextResponse.json({ capabilities })
+  // Durable roadmap maturity remains evidence-backed in the Direction tables.
+  // Runtime coverage is derived independently from the actual model-facing
+  // registry, so Direction can distinguish "roadmap capability" from "Caye can
+  // invoke this today" without inventing progress percentages from tool counts.
+  return NextResponse.json({ capabilities, controlPlaneCoverage: capabilityCoverage() })
 }

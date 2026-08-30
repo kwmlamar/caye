@@ -116,6 +116,9 @@ export async function runCayeDirectRouterTurn(args: CayeDirectRouterTurnArgs): P
     engineeringAnalysisIds,
     businessArtifactIds,
   }
+  // Verified auth.users.id from requireFounder(). Keep this identity ambient
+  // and server-owned so the model can never choose or forge the actor scope.
+  Object.assign(toolCtx, { founderUserId: args.founderUserId })
 
   // Deliberately no `hints` — see capabilities.ts: setting needsToolUse
   // would filter claude_subscription/openai_codex_subscription out of an

@@ -2,10 +2,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireFounder } from '@/lib/founder'
 import {
   buildFounderContextSnapshot,
-  founderCapabilityManifest,
   invokeFounderReadCapability,
   invokeFounderResearchStartCapability,
 } from '@/lib/capabilities/gateway'
+import { capabilityCoverage, conversationalCapabilityManifest } from '@/lib/capabilities/control-plane'
 
 function workspaceFromQuery(req: NextRequest): { ok: true; workspaceId: string | null } | { ok: false } {
   if (!req.nextUrl.searchParams.has('workspaceId')) return { ok: true, workspaceId: null }
@@ -20,7 +20,12 @@ export async function GET(req: NextRequest) {
   if (!founder) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   const scope = workspaceFromQuery(req)
   if (!scope.ok) return NextResponse.json({ error: 'workspaceId must be non-empty when provided' }, { status: 400 })
-  return NextResponse.json(await buildFounderContextSnapshot(founder.id, scope.workspaceId))
+  const snapshot = await buildFounderContextSnapshot(founder.id, scope.workspaceId)
+  return NextResponse.json({
+    ...snapshot,
+    conversationalCapabilities: conversationalCapabilityManifest(),
+    directionCoverage: capabilityCoverage(),
+  })
 }
 
 /**
@@ -63,5 +68,9 @@ export async function POST(req: NextRequest) {
     })
   }
 
-  return NextResponse.json({ result, capabilities: founderCapabilityManifest() })
+  return NextResponse.json({
+    result,
+    conversationalCapabilities: conversationalCapabilityManifest(),
+    directionCoverage: capabilityCoverage(),
+  })
 }
