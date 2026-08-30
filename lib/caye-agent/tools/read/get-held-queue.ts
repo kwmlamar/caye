@@ -71,6 +71,8 @@ export const getHeldQueue: Tool<Record<string, never>> = {
       ok: true,
       data: {
         evidence_scope: {
+          source_tool: 'get_held_queue',
+          request_id: ctx.requestId,
           workspace_id: ctx.workspaceId,
           subset: 'held_customer_threads',
           complete_for_subset: true,
