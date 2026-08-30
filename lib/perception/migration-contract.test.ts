@@ -84,11 +84,30 @@ describe('perception migration contract', () => {
     expect(sql).toContain("'severity', 'warning'")
   })
 
+  it('records recovery even when telemetry values are unchanged, but only for a genuinely fresh newer observation', () => {
+    const sql = migration('20260830k_perception_freshness_monitor.sql')
+    expect(sql).toContain("old.status = 'stale'")
+    expect(sql).toContain("new.status = 'active'")
+    expect(sql).toContain('new.last_observed_at > old.last_observed_at')
+    expect(sql).toContain('new.fresh_until > now()')
+    expect(sql).toContain("'monitoring.perception_source_recovered'")
+    expect(sql).toContain("'inference_kind', 'fresh_observation_reactivated_source'")
+    expect(sql).toContain("'source_event_id', new.last_source_event_id")
+  })
+
+  it('keeps monitoring transitions informational rather than bypassing interruption policy as canonical failures', () => {
+    const sql = migration('20260830k_perception_freshness_monitor.sql')
+    expect(sql).toContain("'monitoring.perception_source_stale'")
+    expect(sql).toContain("'monitoring.perception_source_recovered'")
+    expect(sql.match(/'system',\n\s+false,/g)?.length).toBeGreaterThanOrEqual(2)
+  })
+
   it('keeps the freshness sweep service-role only', () => {
     const sql = migration('20260830k_perception_freshness_monitor.sql')
     expect(sql).toContain('revoke all on function public.refresh_perception_freshness(timestamptz) from public')
     expect(sql).toContain('from anon')
     expect(sql).toContain('from authenticated')
     expect(sql).toContain('to service_role')
+    expect(sql).toContain('revoke execute on function public.caye_event_on_perception_source_recovery()')
   })
 })
