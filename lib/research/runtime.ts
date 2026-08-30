@@ -2,12 +2,28 @@ import 'server-only'
 import { createHash } from 'node:crypto'
 import { createServiceClient } from '@/lib/supabase-server'
 
+export type ResearchSourceQuality = 'official' | 'academic-preprint' | 'academic-institution' | 'community' | 'unknown'
 export type ResearchSearchResult = { url: string; title?: string; snippet?: string; publisher?: string }
-export type ResearchFetchedSource = ResearchSearchResult & { content: string; fetchedAt: string; contentHash?: string }
+export type ResearchFetchedSource = ResearchSearchResult & { content: string; fetchedAt: string; contentHash?: string; quality?: ResearchSourceQuality }
 export interface ResearchProvider {
   readonly name: string
   search(query: string, options?: { limit?: number }): Promise<ResearchSearchResult[]>
   fetch(result: ResearchSearchResult): Promise<ResearchFetchedSource>
+}
+
+export function classifyResearchSourceQuality(source: Pick<ResearchSearchResult, 'url'>): ResearchSourceQuality {
+  let hostname: string
+  try {
+    hostname = new URL(source.url).hostname.toLowerCase().replace(/^www\./, '')
+  } catch {
+    return 'unknown'
+  }
+
+  if (hostname === 'arxiv.org' || hostname.endsWith('.arxiv.org')) return 'academic-preprint'
+  if (hostname.endsWith('.gov') || hostname.includes('.gov.')) return 'official'
+  if (hostname.endsWith('.edu') || hostname.includes('.edu.')) return 'academic-institution'
+  if (hostname === 'medium.com' || hostname.endsWith('.medium.com') || hostname === 'substack.com' || hostname.endsWith('.substack.com')) return 'community'
+  return 'unknown'
 }
 
 async function getOperatorResearchQuestionIds(): Promise<string[]> {
@@ -173,6 +189,8 @@ export async function executeResearchRun(args: {
         continue
       }
 
+      const quality = classifyResearchSourceQuality(source)
+      source = { ...source, quality }
       const hash = sourceHash(source)
       const { data:stored, error } = await db.from('research_sources').upsert({
         canonical_url:source.url,
@@ -181,7 +199,7 @@ export async function executeResearchRun(args: {
         fetched_at:source.fetchedAt,
         content_hash:hash,
         snapshot:{content:source.content},
-        quality:'unknown',
+        quality,
       },{onConflict:'canonical_url,content_hash'}).select('id').single()
       if (error) throw error
       const edge = await db.from('research_run_sources').upsert({run_id:args.runId,source_id:stored.id})
