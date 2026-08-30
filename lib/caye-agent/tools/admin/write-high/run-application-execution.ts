@@ -4,13 +4,21 @@ import type { Tool } from '../../types'
 
 type Input = { application_id: string }
 
-/** Explicit founder-triggered, single-application entry point. No URL input. */
+/**
+ * Explicit founder-triggered, single-application entry point. No URL input.
+ *
+ * Caye Direct is the canonical founder control plane, so this capability is
+ * available there as well as in the legacy Admin Shell. The existing admin
+ * high-risk gate still requires a separate founder confirmation before this
+ * executor can run, and executor rollout settings independently decide
+ * whether the attempt is dry-run or may submit.
+ */
 export const runApplicationExecution: Tool<Input> = {
   name: 'run_application_execution',
   description: 'Run the founder job-search executor for one stored application ID. HIGH-RISK because a real submission is possible only after a separate confirmation; never accepts a URL or bulk selector.',
   risk: 'high',
   roles: ['founder'],
-  modes: ['admin-shell'],
+  modes: ['admin-shell', 'back-office'],
   inputSchema: { type: 'object', required: ['application_id'], properties: { application_id: { type: 'string' } } },
   async execute(args) {
     try {
