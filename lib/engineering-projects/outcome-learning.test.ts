@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('server-only', () => ({}))
 
@@ -9,7 +9,6 @@ import {
   ENGINEERING_OUTCOME_MIN_PROJECTS,
   recommendationForCalibration,
 } from './outcome-learning'
-import { vi } from 'vitest'
 
 describe('engineering outcome learning calibration', () => {
   it('does not learn from small prediction error', () => {
