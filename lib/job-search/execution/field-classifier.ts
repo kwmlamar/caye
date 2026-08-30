@@ -55,7 +55,7 @@ const POLARITY_SENSITIVE = new Set<string>([
   'willingness_to_travel',
 ])
 
-const PATTERNS: [HighRiskSemanticKey | 'first_name' | 'last_name' | 'email' | 'phone' | 'resume' | 'cover_letter', RegExp][] = [
+const PATTERNS: [HighRiskSemanticKey | 'first_name' | 'last_name' | 'email' | 'phone' | 'resume' | 'cover_letter' | 'linkedin', RegExp][] = [
   // work_authorization is tested BEFORE sponsorship on purpose. "Are you
   // legally authorized to work in the United States?" is a work-authorization
   // question even when it goes on to mention sponsorship; the original order
@@ -81,6 +81,7 @@ const PATTERNS: [HighRiskSemanticKey | 'first_name' | 'last_name' | 'email' | 'p
   ['availability_start_date', /start\s+date|available\s+(?:to\s+)?start|availability|(?:when|how\s+soon).{0,30}\bstart\b|earliest\s+start|notice\s+period/i],
   ['background_check_acknowledgment', /background\s+check/i],
   ['arbitration_acknowledgment', /arbitrat/i],
+  ['linkedin', /linked\s*in/i],
   ['first_name', /first\s*name/i],
   ['last_name', /last\s*name/i],
   ['email', /e-?mail/i],
