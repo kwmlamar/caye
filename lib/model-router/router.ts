@@ -13,14 +13,14 @@ import type {
 } from './types'
 
 export interface RouterPolicy {
-  /** Allow a subscription-backed request to spill into metered API usage. Default false for cost safety. */
+  /** Allow subscription-backed requests to spill into metered API usage. Cloud Caye Direct needs this by default. */
   allowApiFallback: boolean
   /** Prefer subscription backends over API when both fit. Default true. */
   preferSubscriptionOverApi: boolean
 }
 
 export const DEFAULT_ROUTER_POLICY: RouterPolicy = {
-  allowApiFallback: false,
+  allowApiFallback: true,
   preferSubscriptionOverApi: true,
 }
 
@@ -28,14 +28,13 @@ export const DEFAULT_ROUTER_POLICY: RouterPolicy = {
  * Deterministic candidate ordering. No LLM call is spent choosing an LLM.
  *
  * Cost policy:
- *   - subscription backends lead by default because they do not add per-token
- *     API spend to Caye.
- *   - API fallback from subscription-backed modes is opt-in, not automatic.
- *   - explicit `api` mode still works even when fallback is disabled because
- *     that is an intentional request to use a metered backend, not a fallback.
- *   - ordinary metered use prefers OpenAI before Anthropic; strongest,
- *     long-context, or vision shapes preserve Anthropic-first ordering.
- *   - manual claude/openai modes honor the founder's provider choice first.
+ *   - subscription backends lead when available.
+ *   - cloud deployments may not have subscription CLIs, so metered fallback
+ *     remains enabled by default to keep Caye Direct functional.
+ *   - ordinary metered use prefers the cheaper OpenAI API before Anthropic.
+ *   - strongest, long-context, or vision shapes preserve Anthropic-first ordering.
+ *   - explicit `api` mode always means intentional metered usage.
+ *   - callers may still pass allowApiFallback:false where failing closed is preferred.
  */
 export function planChain(
   requestedMode: RequestedMode,
@@ -58,7 +57,6 @@ export function planChain(
     return meteredOrder
   }
 
-  // auto
   if (!policy.preferSubscriptionOverApi && policy.allowApiFallback) {
     return dedupe([...meteredOrder, 'claude_subscription', 'openai_codex_subscription'])
   }
@@ -73,7 +71,6 @@ function dedupe(chain: BackendId[]): BackendId[] {
   return [...new Set(chain)]
 }
 
-/** Drops candidates that structurally cannot satisfy the task's required capabilities. */
 export function filterByCapability(chain: BackendId[], hints: RouterTaskHints | undefined): BackendId[] {
   const required = requiredCapabilitiesFor(hints)
   return chain.filter((backend) => required.every((cap) => backendSupports(backend, cap)))
@@ -92,7 +89,6 @@ export class NoBackendAvailableError extends Error {
   }
 }
 
-/** Shared chain-walk for plain reasoning and tool turns. */
 export async function runChainWithFallback<R>(
   backends: readonly ModelBackend[],
   requestedMode: RequestedMode,
@@ -113,10 +109,7 @@ export async function runChainWithFallback<R>(
 
     const health = await backend.checkHealth()
     if (health.state !== 'available' && health.state !== 'healthy') {
-      decision.fallbacksTried.push({
-        backend: backendId,
-        reason: mapHealthStateToFallbackReason(health.state),
-      })
+      decision.fallbacksTried.push({ backend: backendId, reason: mapHealthStateToFallbackReason(health.state) })
       continue
     }
 
@@ -128,14 +121,12 @@ export async function runChainWithFallback<R>(
       const classified = classifyBackendError(toRawBackendError(err))
       if (!classified.fallback) throw err
       decision.fallbacksTried.push({ backend: backendId, reason: classified.reason })
-      continue
     }
   }
 
   throw new NoBackendAvailableError(decision)
 }
 
-/** Plain reasoning path. Side-effecting tool execution lives in the tool bridge. */
 export async function runWithFallback(
   backends: readonly ModelBackend[],
   requestedMode: RequestedMode,
@@ -143,26 +134,15 @@ export async function runWithFallback(
   signal: AbortSignal,
   policy: RouterPolicy = DEFAULT_ROUTER_POLICY
 ): Promise<{ result: ModelInvokeResult; decision: RouterDecision }> {
-  return runChainWithFallback(
-    backends,
-    requestedMode,
-    req.hints,
-    (backend, s) => backend.invoke(req, s),
-    signal,
-    policy
-  )
+  return runChainWithFallback(backends, requestedMode, req.hints, (backend, s) => backend.invoke(req, s), signal, policy)
 }
 
 function mapHealthStateToFallbackReason(state: string): FallbackReasonCode {
   switch (state) {
-    case 'rate_limited':
-      return 'rate_limited'
-    case 'quota_exhausted':
-      return 'quota_exhausted'
-    case 'auth_required':
-      return 'auth_required'
-    default:
-      return 'client_unavailable'
+    case 'rate_limited': return 'rate_limited'
+    case 'quota_exhausted': return 'quota_exhausted'
+    case 'auth_required': return 'auth_required'
+    default: return 'client_unavailable'
   }
 }
 
