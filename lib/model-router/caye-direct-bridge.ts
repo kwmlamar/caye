@@ -13,14 +13,8 @@ import type { BackendId, FounderRouterContext, RequestedMode, RouterDecision } f
 import { buildInvocationLog } from './observability'
 import type { RichResult } from '@/lib/caye-direct-rich-results'
 import { FOUNDER_DIRECT_EVIDENCE_GUIDANCE } from './caye-direct-evidence-guidance'
+import { voiceReadToolHints } from '@/lib/caye-voice/read-tool-hints'
 
-/**
- * Spoken replies themselves are tiny, but OpenAI reasoning models count hidden
- * reasoning against the completion budget. 700 tokens was enough for the tool
- * request but, in production, the post-tool round repeatedly consumed the
- * entire budget and returned zero visible text. Leave enough headroom for
- * reasoning plus the short spoken answer while still bounding runaway output.
- */
 const VOICE_MAX_OUTPUT_TOKENS = 1600
 
 const FOUNDER_DIRECT_REASONING_GUIDANCE = `FOUNDER DIRECT — SYNTHESIZE BEFORE YOU DECLARE SOMETHING UNDEFINED
@@ -110,6 +104,8 @@ export async function runCayeDirectRouterTurn(args: CayeDirectRouterTurnArgs): P
   Object.assign(toolCtx, { founderUserId: args.founderUserId })
 
   const isVoice = args.responseStyle === 'voice'
+  const voiceToolHints = isVoice ? voiceReadToolHints(args.message) : undefined
+  const restrictedToolNames = args.restrictToToolNames ?? voiceToolHints
   const start = Date.now()
   let decision: RouterDecision | undefined
   try {
@@ -122,14 +118,15 @@ export async function runCayeDirectRouterTurn(args: CayeDirectRouterTurnArgs): P
       system: isVoice ? `${sharedGuidance}\n\n${VOICE_DELIVERY_GUIDANCE}` : sharedGuidance,
       initialMessages,
       signal: AbortSignal.timeout(180_000),
-      restrictToToolNames: args.restrictToToolNames,
+      restrictToToolNames: restrictedToolNames,
       ...(isVoice ? { maxOutputTokens: VOICE_MAX_OUTPUT_TOKENS } : {}),
     })
     decision = result.decision
 
     console.log(
       `[model-router/caye-direct-bridge] turn served — thread=${args.threadId} requestedMode=${args.requestedMode} ` +
-        `selected=${decision.selected ?? 'none'} fallbacks=${decision.fallbacksTried.map((f) => `${f.backend}:${f.reason}`).join(',') || 'none'}`
+        `selected=${decision.selected ?? 'none'} fallbacks=${decision.fallbacksTried.map((f) => `${f.backend}:${f.reason}`).join(',') || 'none'} ` +
+        `voiceTools=${voiceToolHints?.join(',') || 'full'}`
     )
     console.log('[model-router/caye-direct-bridge] invocation_log', JSON.stringify(buildInvocationLog({
       requestedMode: args.requestedMode,
