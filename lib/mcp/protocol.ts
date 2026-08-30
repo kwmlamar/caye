@@ -3,6 +3,7 @@ import 'server-only'
 import {
   buildFounderContextSnapshot,
   invokeFounderReadCapability,
+  invokeFounderResearchStartCapability,
 } from '@/lib/capabilities/gateway'
 import type { CapabilityResult } from '@/lib/capabilities/types'
 
@@ -26,6 +27,13 @@ type McpTool = {
 
 const READ_ONLY_ANNOTATIONS = {
   readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: false,
+} as const
+
+const STAGED_WRITE_ANNOTATIONS = {
+  readOnlyHint: false,
   destructiveHint: false,
   idempotentHint: true,
   openWorldHint: false,
@@ -90,12 +98,35 @@ export const CAYE_MCP_TOOLS = [
     name: 'caye_property_snapshot',
     description: 'Read a founder-visible physical property snapshot for exactly one property id returned by caye_property_list.',
     annotations: READ_ONLY_ANNOTATIONS,
-    inputSchema: {
-      type: 'object',
-      additionalProperties: false,
-      required: ['propertyId'],
-      properties: { propertyId: { type: 'string', minLength: 1 } },
-    },
+    inputSchema: { type: 'object', additionalProperties: false, required: ['propertyId'], properties: { propertyId: { type: 'string', minLength: 1 } } },
+    outputSchema: { type: 'object', additionalProperties: false, required: ['result'], properties: { result: CAPABILITY_RESULT_SCHEMA } },
+  },
+  {
+    name: 'caye_research_status',
+    description: 'Read Caye research programs, questions, and durable run status.',
+    annotations: READ_ONLY_ANNOTATIONS,
+    inputSchema: { type: 'object', additionalProperties: false, properties: {} },
+    outputSchema: { type: 'object', additionalProperties: false, required: ['result'], properties: { result: CAPABILITY_RESULT_SCHEMA } },
+  },
+  {
+    name: 'caye_research_claims',
+    description: 'Read current and contested Caye research claims with explicit evidence links.',
+    annotations: READ_ONLY_ANNOTATIONS,
+    inputSchema: { type: 'object', additionalProperties: false, properties: {} },
+    outputSchema: { type: 'object', additionalProperties: false, required: ['result'], properties: { result: CAPABILITY_RESULT_SCHEMA } },
+  },
+  {
+    name: 'caye_research_brief',
+    description: 'Read the latest revisioned brief for each Caye research question.',
+    annotations: READ_ONLY_ANNOTATIONS,
+    inputSchema: { type: 'object', additionalProperties: false, properties: {} },
+    outputSchema: { type: 'object', additionalProperties: false, required: ['result'], properties: { result: CAPABILITY_RESULT_SCHEMA } },
+  },
+  {
+    name: 'caye_research_start',
+    description: 'Durably enqueue an existing Caye research question. This stages work only and never executes recommendations.',
+    annotations: STAGED_WRITE_ANNOTATIONS,
+    inputSchema: { type: 'object', additionalProperties: false, required: ['questionId'], properties: { questionId: { type: 'string', minLength: 1 } } },
     outputSchema: { type: 'object', additionalProperties: false, required: ['result'], properties: { result: CAPABILITY_RESULT_SCHEMA } },
   },
 ] as const satisfies readonly McpTool[]
@@ -108,11 +139,12 @@ const CAPABILITY_BY_TOOL = {
 
 const NO_ARG_TOOLS = {
   caye_property_list: 'property.list',
+  caye_research_status: 'research.status',
+  caye_research_claims: 'research.claims',
+  caye_research_brief: 'research.brief',
 } as const
 
-const PROPERTY_ID_SCOPED_TOOLS = {
-  caye_property_snapshot: 'property.snapshot',
-} as const
+const PROPERTY_ID_SCOPED_TOOLS = { caye_property_snapshot: 'property.snapshot' } as const
 
 type ToolName = (typeof CAYE_MCP_TOOLS)[number]['name']
 
@@ -125,19 +157,9 @@ type ToolCallResult = {
 }
 
 function toolResult(structuredContent: Record<string, unknown>, isError: boolean): ToolCallResult {
-  return {
-    content: [{ type: 'text', text: JSON.stringify(structuredContent) }],
-    structuredContent,
-    isError,
-    resultType: 'complete',
-    _meta: { 'io.modelcontextprotocol/serverInfo': CAYE_MCP_SERVER_INFO },
-  }
+  return { content: [{ type: 'text', text: JSON.stringify(structuredContent) }], structuredContent, isError, resultType: 'complete', _meta: { 'io.modelcontextprotocol/serverInfo': CAYE_MCP_SERVER_INFO } }
 }
-
-function invalidToolInput(message: string): ToolCallResult {
-  return toolResult({ error: { code: 'invalid_args', message } }, true)
-}
-
+function invalidToolInput(message: string): ToolCallResult { return toolResult({ error: { code: 'invalid_args', message } }, true) }
 function workspaceFromArguments(args: unknown, required: boolean): { ok: true; workspaceId: string | null } | { ok: false; result: ToolCallResult } {
   if (args === undefined || args === null) return required ? { ok: false, result: invalidToolInput('workspaceId is required.') } : { ok: true, workspaceId: null }
   if (typeof args !== 'object' || Array.isArray(args)) return { ok: false, result: invalidToolInput('Tool arguments must be an object.') }
@@ -148,99 +170,61 @@ function workspaceFromArguments(args: unknown, required: boolean): { ok: true; w
   if (typeof workspaceId !== 'string' || workspaceId.trim().length === 0) return { ok: false, result: invalidToolInput('workspaceId must be a non-empty string.') }
   return { ok: true, workspaceId: workspaceId.trim() }
 }
-
 function noArgumentsProvided(args: unknown): { ok: true } | { ok: false; result: ToolCallResult } {
   if (args === undefined || args === null) return { ok: true }
   if (typeof args !== 'object' || Array.isArray(args)) return { ok: false, result: invalidToolInput('Tool arguments must be an object.') }
   if (Object.keys(args as Record<string, unknown>).length > 0) return { ok: false, result: invalidToolInput('This tool does not accept arguments.') }
   return { ok: true }
 }
-
 function propertyIdFromArguments(args: unknown): { ok: true; propertyId: string } | { ok: false; result: ToolCallResult } {
-  if (typeof args !== 'object' || args === null || Array.isArray(args)) {
-    return { ok: false, result: invalidToolInput('propertyId is required.') }
-  }
+  if (typeof args !== 'object' || args === null || Array.isArray(args)) return { ok: false, result: invalidToolInput('propertyId is required.') }
   const record = args as Record<string, unknown>
-  if (Object.keys(record).some((key) => key !== 'propertyId')) {
-    return { ok: false, result: invalidToolInput('Only propertyId is accepted by this tool version.') }
-  }
+  if (Object.keys(record).some((key) => key !== 'propertyId')) return { ok: false, result: invalidToolInput('Only propertyId is accepted by this tool version.') }
   const propertyId = record.propertyId
-  if (typeof propertyId !== 'string' || propertyId.trim().length === 0) {
-    return { ok: false, result: invalidToolInput('propertyId must be a non-empty string.') }
-  }
+  if (typeof propertyId !== 'string' || propertyId.trim().length === 0) return { ok: false, result: invalidToolInput('propertyId must be a non-empty string.') }
   return { ok: true, propertyId: propertyId.trim() }
+}
+function questionIdFromArguments(args: unknown): { ok: true; questionId: string } | { ok: false; result: ToolCallResult } {
+  if (typeof args !== 'object' || args === null || Array.isArray(args)) return { ok:false, result:invalidToolInput('questionId is required.') }
+  const record = args as Record<string,unknown>
+  if (Object.keys(record).some((key)=>key!=='questionId')) return { ok:false, result:invalidToolInput('Only questionId is accepted by this tool version.') }
+  if (typeof record.questionId !== 'string' || !record.questionId.trim()) return { ok:false, result:invalidToolInput('questionId must be a non-empty string.') }
+  return { ok:true, questionId:record.questionId.trim() }
 }
 
 export async function callCayeMcpTool(founderUserId: string, name: string, args: unknown): Promise<ToolCallResult | null> {
   if (!CAYE_MCP_TOOLS.some((tool) => tool.name === name)) return null
-
   if (name === 'caye_context_snapshot') {
-    const scope = workspaceFromArguments(args, false)
-    if (!scope.ok) return scope.result
-    const snapshot = await buildFounderContextSnapshot(founderUserId, scope.workspaceId)
-    return toolResult({ snapshot }, false)
+    const scope = workspaceFromArguments(args, false); if (!scope.ok) return scope.result
+    return toolResult({ snapshot: await buildFounderContextSnapshot(founderUserId, scope.workspaceId) }, false)
   }
-
+  if (name === 'caye_research_start') {
+    const parsed = questionIdFromArguments(args); if (!parsed.ok) return parsed.result
+    const result = await invokeFounderResearchStartCapability(founderUserId,{capability:'research.start',version:1,workspaceId:null,args:{questionId:parsed.questionId}})
+    return toolResult({result},result.status==='failed')
+  }
   const noArgCapability = NO_ARG_TOOLS[name as keyof typeof NO_ARG_TOOLS]
   if (noArgCapability) {
-    const scope = noArgumentsProvided(args)
-    if (!scope.ok) return scope.result
-
-    const result: CapabilityResult = await invokeFounderReadCapability(founderUserId, {
-      capability: noArgCapability,
-      version: 1,
-      workspaceId: null,
-      args: {},
-    })
+    const scope = noArgumentsProvided(args); if (!scope.ok) return scope.result
+    const result: CapabilityResult = await invokeFounderReadCapability(founderUserId,{capability:noArgCapability,version:1,workspaceId:null,args:{}})
     return toolResult({ result }, result.status === 'failed')
   }
-
   const propertyScopedCapability = PROPERTY_ID_SCOPED_TOOLS[name as keyof typeof PROPERTY_ID_SCOPED_TOOLS]
   if (propertyScopedCapability) {
-    const scope = propertyIdFromArguments(args)
-    if (!scope.ok) return scope.result
-
-    const result: CapabilityResult = await invokeFounderReadCapability(founderUserId, {
-      capability: propertyScopedCapability,
-      version: 1,
-      workspaceId: null,
-      propertyId: scope.propertyId,
-    })
+    const scope = propertyIdFromArguments(args); if (!scope.ok) return scope.result
+    const result: CapabilityResult = await invokeFounderReadCapability(founderUserId,{capability:propertyScopedCapability,version:1,workspaceId:null,propertyId:scope.propertyId})
     return toolResult({ result }, result.status === 'failed')
   }
-
-  const capability = CAPABILITY_BY_TOOL[name as Exclude<ToolName, 'caye_context_snapshot' | 'caye_property_list' | 'caye_property_snapshot'>]
+  const capability = CAPABILITY_BY_TOOL[name as Exclude<ToolName, 'caye_context_snapshot' | 'caye_property_list' | 'caye_property_snapshot' | 'caye_research_status' | 'caye_research_claims' | 'caye_research_brief' | 'caye_research_start'>]
   if (!capability) return null
-  const scope = workspaceFromArguments(args, capability !== 'goals.list')
-  if (!scope.ok) return scope.result
-
-  const result: CapabilityResult = await invokeFounderReadCapability(founderUserId, {
-    capability,
-    version: 1,
-    workspaceId: scope.workspaceId,
-    args: {},
-  })
+  const scope = workspaceFromArguments(args, capability !== 'goals.list'); if (!scope.ok) return scope.result
+  const result: CapabilityResult = await invokeFounderReadCapability(founderUserId,{capability,version:1,workspaceId:scope.workspaceId,args:{}})
   return toolResult({ result }, result.status === 'failed')
 }
 
 export function mcpDiscoveryResult() {
-  return {
-    supportedVersions: [CAYE_MCP_PROTOCOL_VERSION],
-    capabilities: { tools: { listChanged: false } },
-    instructions: 'Use Caye as the durable source of founder and business state. V0.1 tools are read-only.',
-    ttlMs: 60_000,
-    cacheScope: 'private',
-    resultType: 'complete',
-    _meta: { 'io.modelcontextprotocol/serverInfo': CAYE_MCP_SERVER_INFO },
-  }
+  return { supportedVersions:[CAYE_MCP_PROTOCOL_VERSION], capabilities:{tools:{listChanged:false}}, instructions:'Use Caye as the durable source of founder and business state. Research reads are read-only; caye_research_start only stages durable work and never executes recommendations.', ttlMs:60_000, cacheScope:'private', resultType:'complete', _meta:{'io.modelcontextprotocol/serverInfo':CAYE_MCP_SERVER_INFO} }
 }
-
 export function mcpToolsListResult() {
-  return {
-    tools: CAYE_MCP_TOOLS,
-    ttlMs: 60_000,
-    cacheScope: 'private',
-    resultType: 'complete',
-    _meta: { 'io.modelcontextprotocol/serverInfo': CAYE_MCP_SERVER_INFO },
-  }
+  return { tools:CAYE_MCP_TOOLS, ttlMs:60_000, cacheScope:'private', resultType:'complete', _meta:{'io.modelcontextprotocol/serverInfo':CAYE_MCP_SERVER_INFO} }
 }
