@@ -6,6 +6,10 @@
       "schedule": "*/15 * * * *"
     },
     {
+      "path": "/api/caye/perception-freshness",
+      "schedule": "*/15 * * * *"
+    },
+    {
       "path": "/api/caye/job-search-sourcing",
       "schedule": "0 */4 * * *"
     },
