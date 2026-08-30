@@ -7,23 +7,19 @@ import {
   setAttentionStatus,
   type AttentionPriority,
 } from '@/lib/owner-attention'
+import {
+  evaluateInterruption,
+  type AwarenessState,
+  type ChangeKind,
+  type ConfidenceLevel,
+  type InterruptionLevel,
+  type InterruptionPolicyDecision,
+} from '@/lib/interruption-policy'
 import { hasOperatorParticipatedInConversation, type ParticipationEvidenceMode } from './operator-participation'
 
-/**
- * Shared gate every autonomous producer (escalations, opportunity-scan,
- * business-insights, driver questions, ...) calls before sending an
- * operator-facing WhatsApp message. Built entirely on the existing
- * caye_owner_attention ledger (lib/owner-attention.ts) — this is not a
- * parallel dedupe system, it's the policy layer that decides what to DO
- * with what that ledger already knows.
- *
- * THE QUESTION THIS ANSWERS, ALWAYS: does the operator need to know or do
- * something NEW? Never: did some subsystem produce an event? A scan running,
- * a cron firing, an escalation row existing — none of those are reasons to
- * send on their own. Only a genuinely new item, a material change to one
- * already told, or a caller-declared urgency escalation is.
- */
-
+/** Shared operator-facing notification choke point. Durable attention state
+ * remains in caye_owner_attention; this module adds deterministic policy on
+ * top of it instead of creating another notification or dedupe system. */
 export type NotificationOutcome =
   | 'SEND_NEW'
   | 'SEND_REMINDER'
@@ -31,19 +27,13 @@ export type NotificationOutcome =
   | 'RESOLVED_NO_NOTIFICATION'
   | 'SUPPRESS_NO_CHANGE'
   | 'SUPPRESS_RECENTLY_NOTIFIED'
-  /** The operator already demonstrated awareness of this EXACT current
-   *  state themselves (structural evidence, not inference) — Caye never
-   *  said anything and doesn't need to. See operatorParticipationCheck. */
   | 'SUPPRESS_OPERATOR_AWARE'
 
 export interface NotificationDecision {
   outcome: NotificationOutcome
   attentionItemId: string | null
-  /** True on SEND_NEW when this is a re-notification of an item already
-   *  told about before (fingerprint changed) — callers use this to compose
-   *  "what changed" instead of the full original context, per the brief's
-   *  "don't regenerate the incident report" rule. */
   isMaterialChange: boolean
+  interruptionPolicy?: InterruptionPolicyDecision
 }
 
 export interface DecideNotificationInput {
@@ -54,64 +44,33 @@ export interface DecideNotificationInput {
   title: string
   priority: AttentionPriority
   nextAction?: string | null
-  /** Fields whose change should re-earn the operator's attention — the ask,
-   *  the date, the amount, the status. NOT the clock. */
   fingerprintParts: unknown[]
-  /** Is Caye actually waiting on the operator right now. Default true. */
   blockedOnOperator?: boolean
-  /** Could Caye finish this herself given her current tools. Default false.
-   *  true + !blockedOnOperator resolves the item instead of pinging —
-   *  rising autonomy should shrink the operator's queue, not just narrate
-   *  it (brief §9). */
   resolvableAutonomously?: boolean
-  /** Escalations and urgent holds carry their own urgency by construction
-   *  (a customer is already waiting) and must never be throttled by the
-   *  low-priority cooldown below — only proactive, self-initiated findings
-   *  (scans, insights) are subject to it. Default false. */
   bypassCooldown?: boolean
-  /** Opt-in structural awareness check: does live evidence show the
-   *  operator already personally participated in this exact conversation,
-   *  within the evidence window the CURRENT state's own history in the
-   *  ledger supports? When a match is found, the gate suppresses as
-   *  SUPPRESS_OPERATOR_AWARE instead of sending — Caye already has proof
-   *  the operator knows, independent of whether she ever told them.
-   *
-   *  Deliberately just a conversationId, not a caller-supplied timestamp
-   *  (PR #135 review, second finding). The evidence window itself — how
-   *  far back of what moment participation still counts — is derived here
-   *  from caye_owner_attention.first_state_fingerprint vs the live
-   *  state_fingerprint (see participationEvidenceMode below), never from a
-   *  timestamp a caller guesses at. A caller-supplied "since" timestamp
-   *  can't tell "this state is the subject's original one" (a small
-   *  pre-state window is legitimate — the operator's action may have
-   *  CAUSED it) from "this state is a transition from a different prior
-   *  one" (no pre-state window is ever legitimate — the operator cannot
-   *  know a fact that didn't exist yet when they acted) — a fixed-size
-   *  lookback window generous enough to cover the first case structurally
-   *  also covers the second, which is exactly how the original version of
-   *  this check could suppress a genuinely new payment-confirmed
-   *  notification using stale awareness of an earlier pending state.
-   *
-   *  Opt-in, not automatic for every caller with a conversationId — this is
-   *  a real behavior change (a subject can now go straight from "never
-   *  observed" to "suppressed" with zero notifications), and existing
-   *  callers (escalations, opportunity-scan) keep their current behavior
-   *  unchanged unless they explicitly ask for this. Never applied to
-   *  'critical' priority — a customer-blocking item stays conservative even
-   *  against strong participation evidence (design constraint: false
-   *  suppression is worse than one redundant critical ping). */
   operatorParticipationCheck?: { conversationId: string }
+
+  /** Independent policy dimensions. Legacy priority-derived values remain the
+   * compatibility fallback so current producers do not need a flag day. */
+  urgency?: InterruptionLevel
+  importance?: InterruptionLevel
+  confidence?: ConfidenceLevel
+  materialChangeKind?: Extract<ChangeKind, 'improved' | 'worsened' | 'changed'>
+  consequencesOfWaiting?: InterruptionLevel
+  /** Capability is not permission. Existing callers historically treated
+   * resolvableAutonomously as already-authorized, so default true preserves
+   * behavior until a caller passes the separated authority result. */
+  authorityAllowsAutonomousAction?: boolean
 }
 
-// Reminder cadence — a human pace, not a monitoring system's. The goal is
-// never "nag because time passed"; it's "the operator hasn't had a fair
-// chance to see this and it still matters." A material change (checked
-// before any of these thresholds even get consulted) always bypasses them.
-const CRITICAL_REMINDER_MS = 1.5 * 60 * 60 * 1000 // ~1-2h: immediate customer/revenue risk
-const DECISION_BLOCKING_REMINDER_MS = 5 * 60 * 60 * 1000 // ~4-6h: Caye is genuinely stuck on this
-const DECISION_ORDINARY_REMINDER_MS = 8 * 60 * 60 * 1000 // later that day / next working period: real but not blocking
-// awareness/routine: no automatic reminder at all — surfaces once, and any
-// later mention is the next digest's call, not a repeat ping from this gate.
+const CRITICAL_REMINDER_MS = 1.5 * 60 * 60 * 1000
+const DECISION_BLOCKING_REMINDER_MS = 5 * 60 * 60 * 1000
+const DECISION_ORDINARY_REMINDER_MS = 8 * 60 * 60 * 1000
+const LOW_PRIORITY_COOLDOWN_MS = 15 * 60 * 1000
+const DAILY_INTERRUPTION_BUDGET = 3
+const COOLDOWN_PRIORITIES = new Set<AttentionPriority>(['awareness', 'routine'])
+const BUDGET_PRIORITIES = new Set<AttentionPriority>(['awareness', 'routine'])
+const READ_UNANSWERED_PATIENCE_MULTIPLIER = 1.5
 
 function reminderThresholdMs(priority: AttentionPriority, blockedOnOperator: boolean): number | null {
   if (priority === 'critical') return CRITICAL_REMINDER_MS
@@ -119,21 +78,90 @@ function reminderThresholdMs(priority: AttentionPriority, blockedOnOperator: boo
   return null
 }
 
-// "Several low-priority things happen" (brief §5) shouldn't each earn their
-// own ping just because a different job noticed them minutes apart — but
-// this must never touch anything urgent. Scoped to awareness/routine only.
-const LOW_PRIORITY_COOLDOWN_MS = 15 * 60 * 1000
-const COOLDOWN_PRIORITIES = new Set<AttentionPriority>(['awareness', 'routine'])
+function priorityDimensions(priority: AttentionPriority): { urgency: InterruptionLevel; importance: InterruptionLevel } {
+  switch (priority) {
+    case 'critical': return { urgency: 'critical', importance: 'critical' }
+    case 'decision': return { urgency: 'high', importance: 'high' }
+    case 'awareness': return { urgency: 'medium', importance: 'medium' }
+    default: return { urgency: 'low', importance: 'low' }
+  }
+}
 
-// Read receipts inform pacing but must never make a reminder fire FASTER —
-// "I saw you read it" pressure is exactly what this product is not. The
-// only effect allowed here is lengthening: read-but-unanswered-and-not-
-// blocking earns a little more patience, never less.
-const READ_UNANSWERED_PATIENCE_MULTIPLIER = 1.5
+function awarenessFor(item: { status: string; notifyCount: number }): AwarenessState {
+  if (item.status === 'resolved' || item.status === 'dismissed') return 'resolved'
+  if (item.status === 'acknowledged' || item.status === 'decided') return 'acknowledged'
+  return item.notifyCount > 0 ? 'surfaced' : 'unseen'
+}
 
-export async function decideOperatorNotification(
+interface PolicyAuditDimensions {
+  urgency: InterruptionLevel
+  importance: InterruptionLevel
+  confidence: ConfidenceLevel
+  changeKind: ChangeKind
+  awareness: AwarenessState
+  blockedOnOperator: boolean
+  resolvableAutonomously: boolean
+  authorityAllowsAutonomousAction: boolean
+  cooldownActive: boolean
+  interruptionBudgetExhausted: boolean
+  consequencesOfWaiting?: InterruptionLevel
+}
+
+async function recordPolicyDecision(
+  attentionItemId: string,
+  decision: InterruptionPolicyDecision,
+  dimensions: PolicyAuditDimensions
+): Promise<void> {
+  try {
+    const supabase = createServiceClient()
+    const { error } = await supabase
+      .from('caye_owner_attention')
+      .update({
+        last_policy_decision: { ...decision, dimensions },
+        last_policy_decided_at: new Date().toISOString(),
+      })
+      .eq('id', attentionItemId)
+    if (error) console.error('[operator-notification-gate] policy audit failed:', error)
+  } catch (err) {
+    // Audit bookkeeping must never suppress a real operator notification.
+    console.error('[operator-notification-gate] policy audit failed:', err)
+  }
+}
+
+async function policyFor(args: {
   input: DecideNotificationInput
-): Promise<NotificationDecision> {
+  item: { id: string; status: string; notifyCount: number }
+  changeKind: ChangeKind
+  blockedOnOperator: boolean
+  resolvableAutonomously: boolean
+  cooldownActive: boolean
+  budgetExhausted: boolean
+}): Promise<InterruptionPolicyDecision> {
+  const defaults = priorityDimensions(args.input.priority)
+  const dimensions: PolicyAuditDimensions = {
+    urgency: args.input.urgency ?? defaults.urgency,
+    importance: args.input.importance ?? defaults.importance,
+    confidence: args.input.confidence ?? 'high',
+    changeKind: args.changeKind,
+    awareness: awarenessFor(args.item),
+    blockedOnOperator: args.blockedOnOperator,
+    resolvableAutonomously: args.resolvableAutonomously,
+    authorityAllowsAutonomousAction: args.input.authorityAllowsAutonomousAction ?? true,
+    cooldownActive: args.cooldownActive,
+    interruptionBudgetExhausted: args.budgetExhausted,
+    ...(args.input.consequencesOfWaiting ? { consequencesOfWaiting: args.input.consequencesOfWaiting } : {}),
+  }
+  const decision = evaluateInterruption({
+    workspaceId: args.input.workspaceId,
+    subjectType: args.input.subjectType,
+    subjectId: args.input.subjectId,
+    ...dimensions,
+  })
+  await recordPolicyDecision(args.item.id, decision, dimensions)
+  return decision
+}
+
+export async function decideOperatorNotification(input: DecideNotificationInput): Promise<NotificationDecision> {
   const blockedOnOperator = input.blockedOnOperator ?? true
   const resolvableAutonomously = input.resolvableAutonomously ?? false
 
@@ -150,54 +178,25 @@ export async function decideOperatorNotification(
     resolvableAutonomously,
   })
 
-  if (!item) {
-    // Bookkeeping failed. Fail toward telling the operator rather than
-    // silently dropping something they may genuinely need — but this must
-    // never throw or block the caller either way.
-    return { outcome: 'SEND_NEW', attentionItemId: null, isMaterialChange: false }
-  }
-
-  // Rising autonomy resolves the item instead of narrating it (brief §9):
-  // once Caye can actually finish this herself, it stops being the
-  // operator's problem, and the gate reflects that immediately rather than
-  // waiting for one more round of "still open."
-  if (resolvableAutonomously && !blockedOnOperator && item.status !== 'resolved' && item.status !== 'dismissed') {
-    await setAttentionStatus({
-      workspaceId: input.workspaceId,
-      subjectType: input.subjectType,
-      subjectId: input.subjectId,
-      status: 'resolved',
-    })
-    return { outcome: 'RESOLVED_NO_NOTIFICATION', attentionItemId: item.id, isMaterialChange: false }
-  }
+  if (!item) return { outcome: 'SEND_NEW', attentionItemId: null, isMaterialChange: false }
 
   if (item.status === 'resolved' || item.status === 'dismissed') {
-    return { outcome: 'RESOLVED_NO_NOTIFICATION', attentionItemId: item.id, isMaterialChange: false }
+    const policy = await policyFor({ input, item, changeKind: 'resolved', blockedOnOperator, resolvableAutonomously, cooldownActive: false, budgetExhausted: false })
+    return { outcome: 'RESOLVED_NO_NOTIFICATION', attentionItemId: item.id, isMaterialChange: false, interruptionPolicy: policy }
   }
 
-  // Structural operator-awareness check — evaluated fresh every call (not
-  // cached), so a re-check after a material change correctly asks "did the
-  // operator participate around THIS state" rather than trusting a stale
-  // answer. Skipped for 'critical': a customer-blocking item stays on the
-  // conservative path even against strong participation evidence.
+  if (resolvableAutonomously && !blockedOnOperator) {
+    const policy = await policyFor({ input, item, changeKind: 'unchanged', blockedOnOperator, resolvableAutonomously, cooldownActive: false, budgetExhausted: false })
+    if (policy.action === 'HANDLE_AUTONOMOUSLY') {
+      await setAttentionStatus({ workspaceId: input.workspaceId, subjectType: input.subjectType, subjectId: input.subjectId, status: 'resolved' })
+      return { outcome: 'RESOLVED_NO_NOTIFICATION', attentionItemId: item.id, isMaterialChange: false, interruptionPolicy: policy }
+    }
+  }
+
   if (input.operatorParticipationCheck && input.priority !== 'critical') {
-    // 'initial' iff the CURRENT state is still this subject's original one
-    // (first_state_fingerprint hasn't diverged from state_fingerprint) — a
-    // small pre-state evidence window is legitimate. Any divergence means a
-    // real transition has happened since the subject was first observed,
-    // and evidence must be at-or-after THIS observation's own
-    // last_changed_at (the moment the ledger recorded the new state) — see
-    // ParticipationEvidenceMode's doc comment for why this can't be a
-    // caller-supplied timestamp or a fixed window instead.
     const mode: ParticipationEvidenceMode =
-      item.firstStateFingerprint !== null && item.firstStateFingerprint === item.stateFingerprint
-        ? 'initial'
-        : 'post-transition'
-    const participated = await hasOperatorParticipatedInConversation(
-      input.operatorParticipationCheck.conversationId,
-      item.lastChangedAt,
-      mode
-    )
+      item.firstStateFingerprint !== null && item.firstStateFingerprint === item.stateFingerprint ? 'initial' : 'post-transition'
+    const participated = await hasOperatorParticipatedInConversation(input.operatorParticipationCheck.conversationId, item.lastChangedAt, mode)
     if (participated) {
       if (item.operatorAwareFingerprint !== item.stateFingerprint) {
         await recordOperatorAwareness({
@@ -207,72 +206,79 @@ export async function decideOperatorNotification(
           evidence: 'Operator sent a customer-facing reply in this conversation themselves.',
         })
       }
-      return { outcome: 'SUPPRESS_OPERATOR_AWARE', attentionItemId: item.id, isMaterialChange: false }
+      const policy = await policyFor({
+        input,
+        item: { ...item, notifyCount: Math.max(item.notifyCount, 1) },
+        changeKind: 'unchanged',
+        blockedOnOperator,
+        resolvableAutonomously,
+        cooldownActive: false,
+        budgetExhausted: false,
+      })
+      return { outcome: 'SUPPRESS_OPERATOR_AWARE', attentionItemId: item.id, isMaterialChange: false, interruptionPolicy: policy }
     }
   }
 
   const changed = item.stateFingerprint !== item.notifiedFingerprint
   const isNew = item.notifyCount === 0
+  const changeKind: ChangeKind = isNew ? 'new' : changed ? (input.materialChangeKind ?? 'changed') : 'unchanged'
+  const policyCooldownBypass = input.materialChangeKind === 'worsened'
+  const cooldownActive = await underCooldown(input.workspaceId, input.priority, input.bypassCooldown || policyCooldownBypass)
+  const budgetExhausted = BUDGET_PRIORITIES.has(input.priority) ? await interruptionBudgetExhausted(input.workspaceId) : false
+  const policy = await policyFor({ input, item, changeKind, blockedOnOperator, resolvableAutonomously, cooldownActive, budgetExhausted })
+
+  if (policy.action === 'WATCH' || policy.action === 'GATHER_EVIDENCE' || policy.action === 'SUPPRESS_AWARE' || policy.action === 'SUPPRESS_UNCHANGED') {
+    return {
+      outcome: cooldownActive || budgetExhausted ? 'SUPPRESS_RECENTLY_NOTIFIED' : 'SUPPRESS_NO_CHANGE',
+      attentionItemId: item.id,
+      isMaterialChange: changed && !isNew,
+      interruptionPolicy: policy,
+    }
+  }
+
+  if (policy.action === 'SURFACE_GROUPED') {
+    return { outcome: 'SUPPRESS_RECENTLY_NOTIFIED', attentionItemId: item.id, isMaterialChange: changed && !isNew, interruptionPolicy: policy }
+  }
 
   if (isNew) {
-    if (await underCooldown(input.workspaceId, input.priority, input.bypassCooldown)) {
-      return { outcome: 'SUPPRESS_RECENTLY_NOTIFIED', attentionItemId: item.id, isMaterialChange: false }
+    if (cooldownActive && !policy.bypassCooldown) {
+      return { outcome: 'SUPPRESS_RECENTLY_NOTIFIED', attentionItemId: item.id, isMaterialChange: false, interruptionPolicy: policy }
     }
     return {
       outcome: input.priority === 'critical' ? 'SEND_CRITICAL_ESCALATION' : 'SEND_NEW',
       attentionItemId: item.id,
       isMaterialChange: false,
+      interruptionPolicy: policy,
     }
   }
 
-  // A material change bypasses the reminder interval entirely — this is
-  // what lets Karin's second, more frustrated follow-up surface immediately
-  // even 20 minutes after a "stay quiet" verdict, while "still unresolved"
-  // alone never does.
   if (changed) {
-    if (await underCooldown(input.workspaceId, input.priority, input.bypassCooldown)) {
-      return { outcome: 'SUPPRESS_RECENTLY_NOTIFIED', attentionItemId: item.id, isMaterialChange: true }
+    if (cooldownActive && !policy.bypassCooldown) {
+      return { outcome: 'SUPPRESS_RECENTLY_NOTIFIED', attentionItemId: item.id, isMaterialChange: true, interruptionPolicy: policy }
     }
     return {
       outcome: input.priority === 'critical' ? 'SEND_CRITICAL_ESCALATION' : 'SEND_NEW',
       attentionItemId: item.id,
       isMaterialChange: true,
+      interruptionPolicy: policy,
     }
   }
 
-  // Nothing changed. An operator who has already responded (acknowledged)
-  // stays un-reminded regardless of elapsed time — only a material change
-  // or a caller-declared urgency bump reopens it. This is what stops "read
-  // it, replied about something else entirely, still got nagged an hour
-  // later" — see lib/whatsapp/attention-acknowledgement.ts for how an item
-  // gets here.
   if (item.status === 'acknowledged') {
-    return { outcome: 'SUPPRESS_NO_CHANGE', attentionItemId: item.id, isMaterialChange: false }
+    return { outcome: 'SUPPRESS_NO_CHANGE', attentionItemId: item.id, isMaterialChange: false, interruptionPolicy: policy }
   }
 
   const threshold = reminderThresholdMs(input.priority, blockedOnOperator)
-  // threshold === null means the priority tier itself never auto-reminds
-  // (awareness/routine). blockedOnOperator has no separate veto here —
-  // reminderThresholdMs already picked the right (longer) cadence for a
-  // non-blocking decision item; silencing it again on top of that would
-  // mean an "ordinary action needed" item never reminds at all, which is
-  // not what "later today / next working period" means.
-  if (threshold === null) {
-    return { outcome: 'SUPPRESS_NO_CHANGE', attentionItemId: item.id, isMaterialChange: false }
-  }
+  if (threshold === null) return { outcome: 'SUPPRESS_NO_CHANGE', attentionItemId: item.id, isMaterialChange: false, interruptionPolicy: policy }
 
   const elapsed = item.lastNotifiedAt ? Date.now() - new Date(item.lastNotifiedAt).getTime() : Infinity
   const effectiveThreshold = await lengthenIfReadUnanswered(item, threshold)
   if (elapsed < effectiveThreshold) {
-    return { outcome: 'SUPPRESS_RECENTLY_NOTIFIED', attentionItemId: item.id, isMaterialChange: false }
+    return { outcome: 'SUPPRESS_RECENTLY_NOTIFIED', attentionItemId: item.id, isMaterialChange: false, interruptionPolicy: policy }
   }
-
-  return { outcome: 'SEND_REMINDER', attentionItemId: item.id, isMaterialChange: false }
+  return { outcome: 'SEND_REMINDER', attentionItemId: item.id, isMaterialChange: false, interruptionPolicy: policy }
 }
 
-/** Stamp that the operator was just told, for callers that sent a SEND_*
- *  outcome. Thin pass-through to markAttentionNotified — kept here so every
- *  caller goes through one module for the full decide→send→record cycle. */
 export async function recordOperatorNotified(args: {
   workspaceId: string
   subjectType: string
@@ -283,11 +289,7 @@ export async function recordOperatorNotified(args: {
   await markAttentionNotified(args)
 }
 
-async function underCooldown(
-  workspaceId: string,
-  priority: AttentionPriority,
-  bypass: boolean | undefined
-): Promise<boolean> {
+async function underCooldown(workspaceId: string, priority: AttentionPriority, bypass: boolean | undefined): Promise<boolean> {
   if (bypass || !COOLDOWN_PRIORITIES.has(priority)) return false
   try {
     const supabase = createServiceClient()
@@ -306,13 +308,25 @@ async function underCooldown(
   }
 }
 
-/** Read receipts only ever make the gate MORE patient, never less — this is
- *  the one place wa_delivery_status is consulted, and it can only push the
- *  threshold up, never down. A read-but-unanswered non-blocking item earns
- *  extra slack on the theory that the operator saw it and made a call to
- *  come back to it later; a blocking item is left at its normal threshold
- *  either way, since Caye genuinely can't move without them regardless of
- *  what the read receipt implies about their intentions. */
+/** Rolling 24h budget over actual proactive operator interruptions. */
+async function interruptionBudgetExhausted(workspaceId: string): Promise<boolean> {
+  try {
+    const supabase = createServiceClient()
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+    const { data } = await supabase
+      .from('caye_outbound_queue')
+      .select('id')
+      .eq('workspace_id', workspaceId)
+      .eq('status', 'sent')
+      .gte('sent_at', since)
+      .limit(DAILY_INTERRUPTION_BUDGET)
+    return (data?.length ?? 0) >= DAILY_INTERRUPTION_BUDGET
+  } catch (err) {
+    console.error('[operator-notification-gate] interruption budget check failed:', err)
+    return false
+  }
+}
+
 async function lengthenIfReadUnanswered(
   item: { lastNotificationQueueId: string | null; blockedOnOperator: boolean },
   baseThresholdMs: number
@@ -325,9 +339,7 @@ async function lengthenIfReadUnanswered(
       .select('wa_delivery_status')
       .eq('id', item.lastNotificationQueueId)
       .maybeSingle()
-    if (data?.wa_delivery_status === 'read') {
-      return baseThresholdMs * READ_UNANSWERED_PATIENCE_MULTIPLIER
-    }
+    if (data?.wa_delivery_status === 'read') return baseThresholdMs * READ_UNANSWERED_PATIENCE_MULTIPLIER
   } catch (err) {
     console.error('[operator-notification-gate] read-receipt check failed:', err)
   }
