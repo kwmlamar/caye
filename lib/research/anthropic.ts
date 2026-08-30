@@ -13,6 +13,7 @@ const MAX_SOURCE_CHARS = 24_000
 const MAX_SYNTHESIS_SOURCE_CHARS = 80_000
 
 type UnknownRecord = Record<string, unknown>
+type ResearchClaimType = 'finding' | 'hypothesis' | 'implication' | 'unknown'
 
 function record(value: unknown): UnknownRecord | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as UnknownRecord : null
@@ -20,6 +21,10 @@ function record(value: unknown): UnknownRecord | null {
 
 function text(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+function claimType(value: unknown): ResearchClaimType {
+  return value === 'hypothesis' || value === 'implication' || value === 'unknown' ? value : 'finding'
 }
 
 /** Parse only source metadata returned by Anthropic's server-side web search. */
@@ -217,15 +222,13 @@ export function createAnthropicResearchSynthesizer(options: {
       const claim = record(value)
       const statement = text(claim?.statement)
       if (!statement) throw new Error('Research synthesis returned an empty claim')
-      const claimType = claim?.claimType
-      const validClaimType = claimType === 'finding' || claimType === 'hypothesis' || claimType === 'implication' || claimType === 'unknown'
       const confidence = typeof claim?.confidence === 'number' && Number.isFinite(claim.confidence)
         ? Math.max(0, Math.min(1, claim.confidence))
         : undefined
 
       return {
         statement,
-        claimType: validClaimType ? claimType : 'finding' as const,
+        claimType: claimType(claim?.claimType),
         confidence,
         sourceQuality: text(claim?.sourceQuality) ?? undefined,
         sourceIds: stringArray(claim?.sourceIds),
