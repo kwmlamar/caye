@@ -14,6 +14,7 @@ describe('runBoundedObjective', () => {
     })
     expect(result.status).toBe('completed')
     expect(result.completedSteps).toEqual(['inspect'])
+    expect(result.transitionsUsed).toBe(1)
     expect(result.events.at(-1)).toMatchObject({ state: 'verified', evidence: { inspected: 3 } })
   })
 
@@ -55,5 +56,35 @@ describe('runBoundedObjective', () => {
     expect(inspect).toHaveBeenCalledTimes(1)
     expect(result.completedSteps).toEqual(['prepare', 'inspect'])
     expect(onEvent).toHaveBeenCalledWith(expect.objectContaining({ step: 'inspect', state: 'verified' }))
+  })
+
+  it('does not reset the durable transition budget when a run resumes', async () => {
+    const execute = vi.fn(async () => ({ attempted: true }))
+    const result = await runBoundedObjective({
+      context: {},
+      allowedAuthority: new Set(['read'] as const),
+      transitionsAlreadyUsed: 3,
+      maxTransitions: 3,
+      steps: [{ key: 'inspect', authority: 'read', execute, verify: async () => ({ ok: true }) }],
+    })
+    expect(result.status).toBe('budget_exhausted')
+    expect(result.budgetReason).toBe('transitions')
+    expect(result.transitionsUsed).toBe(3)
+    expect(execute).not.toHaveBeenCalled()
+  })
+
+  it('distinguishes a slice timeout from durable transition exhaustion', async () => {
+    const execute = vi.fn()
+    const result = await runBoundedObjective({
+      context: {},
+      allowedAuthority: new Set(['read'] as const),
+      timeoutMs: 0,
+      maxTransitions: 3,
+      steps: [{ key: 'inspect', authority: 'read', execute, verify: async () => ({ ok: true }) }],
+    })
+    expect(result.status).toBe('budget_exhausted')
+    expect(result.budgetReason).toBe('timeout')
+    expect(result.transitionsUsed).toBe(0)
+    expect(execute).not.toHaveBeenCalled()
   })
 })
