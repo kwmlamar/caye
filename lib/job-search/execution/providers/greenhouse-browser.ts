@@ -1,10 +1,10 @@
 /** Greenhouse applicant-page browser adapter. Never accepts a caller URL. */
 import 'server-only'
 import crypto from 'node:crypto'
-import { chromium } from 'playwright'
 import { isAllowedAtsHost } from '../allowed-destinations'
 import { validateDestination } from '../ssrf-guard'
 import type { DiscoveredField, SubmissionRequest } from '../types'
+import { launchServerlessChromium } from './serverless-chromium'
 
 const NAVIGATION_TIMEOUT_MS = 20_000
 const TOTAL_TIMEOUT_MS = 45_000
@@ -52,10 +52,10 @@ function challenge(body: string): 'captcha_detected' | 'anti_bot_detected' | nul
  */
 export async function runGreenhouseBrowserReadiness(request: SubmissionRequest, fields: DiscoveredField[]): Promise<{ outcome: 'ready' | 'needs_human'; reason: string }> {
   if (!allowedGreenhouseNavigation(request.applyUrl)) return { outcome: 'needs_human', reason: 'Greenhouse applicant page failed destination validation.' }
-  let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined
-  let context: Awaited<ReturnType<Awaited<ReturnType<typeof chromium.launch>>['newContext']>> | undefined
+  let browser: Awaited<ReturnType<typeof launchServerlessChromium>> | undefined
+  let context: Awaited<ReturnType<Awaited<ReturnType<typeof launchServerlessChromium>>['newContext']>> | undefined
   try {
-    browser = await chromium.launch({ headless: true })
+    browser = await launchServerlessChromium()
     context = await browser.newContext({ storageState: undefined, acceptDownloads: false })
     const page = await context.newPage()
     page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS)

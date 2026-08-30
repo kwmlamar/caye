@@ -7,7 +7,7 @@ const page = {
 }
 const context = { newPage: vi.fn(async () => page), close: vi.fn(async () => undefined) }
 const browser = { newContext: vi.fn(async () => context), close: vi.fn(async () => undefined) }
-vi.mock('playwright', () => ({ chromium: { launch: vi.fn(async () => browser) } }))
+vi.mock('./serverless-chromium', () => ({ launchServerlessChromium: vi.fn(async () => browser) }))
 
 import { runGreenhouseBrowserReadiness } from './greenhouse-browser'
 import type { DiscoveredField, SubmissionRequest } from '../types'

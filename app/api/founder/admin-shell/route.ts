@@ -34,6 +34,7 @@ import { startCodingSession } from '@/lib/coding-session/start'
 import { getLatestCodingSession } from '@/lib/coding-session/queries'
 
 export const maxDuration = 180
+export const runtime = 'nodejs'
 
 export async function GET(req: NextRequest) {
   const user = await requireFounder(req)
