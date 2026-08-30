@@ -23,6 +23,8 @@ export interface OperatorVoiceSemanticInput {
   voice?: boolean
 }
 
+const MAX_OPERATOR_TRANSCRIPT_CHARS = 12_000
+
 /**
  * Convert a verified operator/founder WhatsApp audio message into the same
  * semantic text input used by the existing operator pipeline.
@@ -42,8 +44,15 @@ export async function resolveVerifiedOperatorVoiceInput(
   if (message.type !== 'audio' || !message.audio?.id) return null
 
   const transcription = await transcribeWhatsAppVoiceNote(message.audio.id, accessToken)
+  const body = transcription.transcript.trim()
+  if (!body) return null
+
+  if (body.length > MAX_OPERATOR_TRANSCRIPT_CHARS) {
+    throw new Error('operator_voice_transcript_too_large')
+  }
+
   return {
-    body: transcription.transcript,
+    body,
     inboundWasVoice: true,
     mediaId: message.audio.id,
     mimeType: transcription.mimeType || message.audio.mime_type,
@@ -62,5 +71,7 @@ export async function sendVerifiedOperatorVoiceReply(args: {
   phoneNumberId: string
   accessToken: string
 }): Promise<void> {
-  await sendWhatsAppVoiceNote(args.to, args.text, args.phoneNumberId, args.accessToken)
+  const text = args.text.trim()
+  if (!text) throw new Error('operator_voice_reply_empty')
+  await sendWhatsAppVoiceNote(args.to, text, args.phoneNumberId, args.accessToken)
 }
