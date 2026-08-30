@@ -6,7 +6,7 @@ import type { Tool } from '../types'
 export const getHeldQueue: Tool<Record<string, never>> = {
   name: 'get_held_queue',
   description:
-    "Get the current held items needing the operator's call. Each item is a customer thread Caye paused because she wasn't confident enough to reply autonomously. Drafted cold outreach awaiting batch approval is NOT included — it appears only as `queued_outreach_drafts`, a count. Those are a work queue the operator processes when it suits them (via get_pending_quotes and send_outreach_batch); nobody is waiting on them, so never describe them as needing attention or fold them into the held count. Use this when the operator asks 'anything need my call?' / 'anyone held?' / 'what's pending?'. Each item carries has_open_escalation — true means it already has its own daily nag cadence via escalation-followup, so briefings/recaps should NOT re-describe it in detail or re-propose an action (that's duplicate noise the operator already saw); just fold escalated items into a one-line count. Only items with has_open_escalation=false are new enough to warrant calling out by name. Each item also carries date_passed — true means the customer referenced a specific calendar date (e.g. a booking date) that has already gone by with no response sent. When narrating these, say so plainly (e.g. 'that date's already passed') instead of repeating the original ask as if it were still live — don't imply the date is still actionable.\n\n`reason` is the full operator brief for escalated items (calendar check, the customer's own words, what they were already told, a suggested question to answer) — relay it in substance, don't re-summarize it down to a fragment. For a plain low-confidence hold (no escalation) it's still just a short internal note, same as before.",
+    "Get the current held items needing the operator's call. Each item is a customer thread Caye paused because she wasn't confident enough to reply autonomously. Drafted cold outreach awaiting batch approval is NOT included — it appears only as `queued_outreach_drafts`, a count. Those are a work queue the operator processes when it suits them (via get_pending_quotes and send_outreach_batch); nobody is waiting on them, so never describe them as needing attention or fold them into the held count. Use this when the operator asks 'anything need my call?' / 'anyone held?' / 'what's pending?'. Each item carries has_open_escalation — true means it already has its own daily nag cadence via escalation-followup, so briefings/recaps should NOT re-describe it in detail or re-propose an action (that's duplicate noise the operator already saw); just fold escalated items into a one-line count. Only items with has_open_escalation=false are new enough to warrant calling out by name. Each item also carries date_passed — true means the customer referenced a specific calendar date (e.g. a booking date) that has already gone by with no response sent. When narrating these, say so plainly (e.g. 'that date's already passed') instead of repeating the original ask as if it were still live — don't imply the date is still actionable.\n\n`reason` is the full operator brief for escalated items (calendar check, the customer's own words, what they were already told, a suggested question to answer) — relay it in substance, don't re-summarize it down to a fragment. For a plain low-confidence hold (no escalation) it's still just a short internal note, same as before.\n\nIMPORTANT EVIDENCE SCOPE: this tool proves the held-customer-thread subset only. It does NOT prove that there are no other unresolved attention items, approvals, assignments, inbox work, bookings, leads, or operational problems. A zero held count must be reported as 'no held customer threads', never 'nothing needs attention' unless other relevant sources were also checked.",
   risk: 'read',
   roles: ['owner', 'founder'],
   modes: ['back-office'],
@@ -70,6 +70,23 @@ export const getHeldQueue: Tool<Record<string, never>> = {
     return {
       ok: true,
       data: {
+        evidence_scope: {
+          source_tool: 'get_held_queue',
+          request_id: ctx.requestId,
+          workspace_id: ctx.workspaceId,
+          subset: 'held_customer_threads',
+          complete_for_subset: true,
+          global_attention_complete: false,
+          excludes: [
+            'queued_outreach_drafts',
+            'other_attention_sources',
+            'approvals',
+            'assignments',
+            'bookings',
+            'leads',
+          ],
+          observed_at: new Date().toISOString(),
+        },
         items: rows.map((r) => ({
           conversation_id: r.id,
           customer: r.customer_name || r.customer_id || 'a customer',
