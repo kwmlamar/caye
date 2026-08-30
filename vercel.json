@@ -19,7 +19,7 @@
     },
     {
       "path": "/api/caye/perception-awareness",
-      "schedule": "*/15 * * * *"
+      "schedule": "*/10 * * * *"
     },
     {
       "path": "/api/caye/growth-ingest",
