@@ -7,6 +7,10 @@ import { jobSearchQueueCapability } from './job-search-queue'
 import { jobSearchSummaryCapability } from './job-search-summary'
 import { propertyListCapability } from './property-list'
 import { propertySnapshotCapability } from './property-snapshot'
+import { researchBriefCapability } from './research-brief'
+import { researchClaimsCapability } from './research-claims'
+import { researchStartCapability } from './research-start'
+import { researchStatusCapability } from './research-status'
 import { createCapabilityRegistry } from './registry'
 
 /**
@@ -21,6 +25,12 @@ export const cayeCapabilityRegistry = createCapabilityRegistry([
   // see each capability's own doc comment.
   jobSearchSummaryCapability,
   jobSearchQueueCapability,
+  // Founder/operator Research Runtime. Reads are exposed through the canonical
+  // read gateway; research.start is a narrow staged-write boundary only.
+  researchStatusCapability,
+  researchClaimsCapability,
+  researchBriefCapability,
+  researchStartCapability,
   // CAY-28 — founder-only physical property intelligence. property.list is
   // discovery (fresh-session safe); property.snapshot resolves workspace
   // scope canonically from the propertyId returned by property.list.
