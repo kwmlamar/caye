@@ -5,6 +5,20 @@ import { CayeMark } from '@/components/brand/CayeMark'
 import CayeVoiceNoteButton from '@/components/dashboard/caye-direct/voice/CayeVoiceNoteButton'
 import { AQUA, TEXT, TEXT_QUIET } from '../surface'
 
+type DirectComposerChildProps = {
+  className?: string
+  'aria-label'?: string
+  type?: string
+  value?: string
+  disabled?: boolean
+  onClick?: () => void
+  onChange?: (event: { target: { value: string }; currentTarget: { value: string } }) => void
+}
+
+function directChildProps(child: ReactNode): DirectComposerChildProps | null {
+  return isValidElement<DirectComposerChildProps>(child) ? child.props : null
+}
+
 /**
  * The actual "Caye icon | input | send" pill — shared by TalkToCaye (the
  * always-expanded bar on Home/Work/People/Memory/Settings. Inbox uses the
@@ -21,37 +35,36 @@ export function CayeComposerSurface({ children, active, maxWidth = 600, style }:
 }) {
   const childList = Children.toArray(children)
   const textareaIndex = childList.findIndex((child) =>
-    isValidElement(child) && child.props?.className === 'caye-direct-textarea'
+    directChildProps(child)?.className === 'caye-direct-textarea'
   )
   const liveVoiceIndex = childList.findIndex((child) =>
-    isValidElement(child) && child.props?.['aria-label'] === 'Start voice conversation with Caye'
+    directChildProps(child)?.['aria-label'] === 'Start voice conversation with Caye'
   )
   const sendIndex = childList.findIndex((child) =>
-    isValidElement(child) && child.props?.type === 'submit'
+    directChildProps(child)?.type === 'submit'
   )
 
   const isDirectComposer = textareaIndex >= 0 && liveVoiceIndex >= 0 && sendIndex >= 0
   let renderedChildren = children
 
   if (isDirectComposer) {
-    const textarea = childList[textareaIndex] as ReactElement<Record<string, any>>
-    const originalLiveVoice = childList[liveVoiceIndex] as ReactElement<Record<string, any>>
-    const originalSend = childList[sendIndex] as ReactElement<Record<string, any>>
+    const textarea = childList[textareaIndex] as ReactElement<DirectComposerChildProps>
+    const originalLiveVoice = childList[liveVoiceIndex] as ReactElement<DirectComposerChildProps>
+    const originalSend = childList[sendIndex] as ReactElement<DirectComposerChildProps>
     const value = typeof textarea.props.value === 'string' ? textarea.props.value : ''
     const busy = Boolean(textarea.props.disabled)
     const canSend = !originalSend.props.disabled
 
     const applyVoiceTranscript = (transcript: string) => {
       const nextValue = value.trim() ? `${value.trimEnd()} ${transcript}` : transcript
-      const onChange = textarea.props.onChange as ((event: { target: { value: string }; currentTarget: { value: string } }) => void) | undefined
-      onChange?.({ target: { value: nextValue }, currentTarget: { value: nextValue } })
+      textarea.props.onChange?.({ target: { value: nextValue }, currentTarget: { value: nextValue } })
     }
 
     const primaryAction = busy ? originalSend : canSend ? originalSend : (
       <button
         key="live-voice-primary"
         type="button"
-        onClick={() => (originalLiveVoice.props.onClick as (() => void) | undefined)?.()}
+        onClick={() => originalLiveVoice.props.onClick?.()}
         title="Start live voice"
         aria-label="Start live voice"
         className="caye-direct-send"
