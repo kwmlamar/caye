@@ -46,7 +46,7 @@ describe('interrupted objective recovery', () => {
     expect(recoverInterrupted).toHaveBeenCalledTimes(1)
     expect(execute).toHaveBeenCalledTimes(1)
     expect(result.events).toContainEqual(expect.objectContaining({
-      state: 'checking',
+      state: 'recovered',
       evidence: expect.objectContaining({ mode: 'interrupted_retry_declared_safe' }),
     }))
   })
@@ -69,5 +69,40 @@ describe('interrupted objective recovery', () => {
     expect(result.status).toBe('waiting')
     expect(result.resumeAt).toBeTruthy()
     expect(execute).not.toHaveBeenCalled()
+  })
+
+  it('can resume the same completed objective twice without replaying its effect', async () => {
+    const execute = vi.fn(async () => ({ effectId: 'once' }))
+    const steps = [{
+      key: 'mutate',
+      authority: 'write_low' as const,
+      execute,
+      verify: async () => ({ ok: true }),
+    }]
+
+    const first = await runBoundedObjective({
+      context: {},
+      allowedAuthority: new Set(['write_low'] as const),
+      steps,
+    })
+    const second = await runBoundedObjective({
+      context: {},
+      allowedAuthority: new Set(['write_low'] as const),
+      completedSteps: new Set(first.completedSteps),
+      transitionsAlreadyUsed: first.transitionsUsed,
+      steps,
+    })
+    const third = await runBoundedObjective({
+      context: {},
+      allowedAuthority: new Set(['write_low'] as const),
+      completedSteps: new Set(second.completedSteps),
+      transitionsAlreadyUsed: second.transitionsUsed,
+      steps,
+    })
+
+    expect(first.status).toBe('completed')
+    expect(second.status).toBe('completed')
+    expect(third.status).toBe('completed')
+    expect(execute).toHaveBeenCalledTimes(1)
   })
 })
