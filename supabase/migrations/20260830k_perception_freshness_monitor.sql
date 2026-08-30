@@ -119,12 +119,91 @@ begin
 end;
 $$;
 
+-- Ingress can receive a packet that is newer than the last retained reading but still so
+-- delayed that its own freshness deadline has already passed. Never let that packet create
+-- a temporary false-active window between ingest and the next scheduled freshness sweep.
+create or replace function public.caye_guard_perception_source_freshness_on_write()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  if new.status = 'active'
+     and new.fresh_until is not null
+     and new.fresh_until <= now() then
+    new.status := 'stale';
+  end if;
+  return new;
+end;
+$$;
+
+create or replace function public.caye_guard_perception_evidence_freshness_on_write()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  if new.status = 'active'
+     and new.fresh_until is not null
+     and new.fresh_until <= now() then
+    new.status := 'limited';
+    new.autonomous_now := false;
+  end if;
+  return new;
+end;
+$$;
+
+-- Keep the property-device projection aligned with the canonical perception projection.
+-- The telemetry RPC updates the device after perception state, so this trigger can inspect
+-- the already-normalized source status and refuse to mark an already-expired source active.
+create or replace function public.caye_guard_property_sensor_freshness_on_write()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  if new.status = 'active'
+     and exists (
+       select 1
+         from public.perception_source_state ps
+        where ps.workspace_id = new.workspace_id
+          and ps.source_kind = 'property.telemetry'
+          and ps.subject_kind = 'property_sensor_device'
+          and ps.subject_id = new.id::text
+          and ps.status = 'stale'
+          and ps.fresh_until is not null
+          and ps.fresh_until <= now()
+     ) then
+    new.status := 'stale';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_caye_perception_source_freshness_write_guard
+  on public.perception_source_state;
+create trigger trg_caye_perception_source_freshness_write_guard
+  before insert or update of status, fresh_until on public.perception_source_state
+  for each row execute function public.caye_guard_perception_source_freshness_on_write();
+
+drop trigger if exists trg_caye_perception_evidence_freshness_write_guard
+  on public.perception_capability_evidence;
+create trigger trg_caye_perception_evidence_freshness_write_guard
+  before insert or update of status, autonomous_now, fresh_until on public.perception_capability_evidence
+  for each row execute function public.caye_guard_perception_evidence_freshness_on_write();
+
+drop trigger if exists trg_caye_property_sensor_freshness_write_guard
+  on public.property_sensor_devices;
+create trigger trg_caye_property_sensor_freshness_write_guard
+  before update of status, last_seen_at on public.property_sensor_devices
+  for each row execute function public.caye_guard_property_sensor_freshness_on_write();
+
 -- Recovery must be visible even when the recovered reading has the same value as the
 -- last pre-stale reading. The telemetry change filter correctly suppresses that unchanged
 -- metric event, so observe the durable source-state transition instead.
---
--- Require a newer source observation and a freshness deadline still in the future. This
--- prevents a delayed already-expired packet from masquerading as a genuine recovery event.
 create or replace function public.caye_event_on_perception_source_recovery()
 returns trigger
 language plpgsql
@@ -195,10 +274,22 @@ revoke all on function public.refresh_perception_freshness(timestamptz) from ano
 revoke all on function public.refresh_perception_freshness(timestamptz) from authenticated;
 grant execute on function public.refresh_perception_freshness(timestamptz) to service_role;
 
+revoke execute on function public.caye_guard_perception_source_freshness_on_write()
+  from public, anon, authenticated;
+revoke execute on function public.caye_guard_perception_evidence_freshness_on_write()
+  from public, anon, authenticated;
+revoke execute on function public.caye_guard_property_sensor_freshness_on_write()
+  from public, anon, authenticated;
 revoke execute on function public.caye_event_on_perception_source_recovery()
   from public, anon, authenticated;
 
 comment on function public.refresh_perception_freshness(timestamptz) is
   'Service-role-only atomic freshness sweep: transitions expired active perception sources to stale, downgrades live evidence, marks linked property sensors stale, and records a monitoring inference event. Does not notify or execute operational actions.';
+comment on function public.caye_guard_perception_source_freshness_on_write() is
+  'Prevents already-expired source observations from creating a transient active perception state.';
+comment on function public.caye_guard_perception_evidence_freshness_on_write() is
+  'Prevents already-expired source observations from creating transient active/autonomous capability evidence.';
+comment on function public.caye_guard_property_sensor_freshness_on_write() is
+  'Keeps property sensor device status from contradicting already-stale perception state during delayed telemetry ingest.';
 comment on function public.caye_event_on_perception_source_recovery() is
   'Records a canonical recovery inference only when stale perception state is reactivated by a newer observation that is still fresh at write time.';
