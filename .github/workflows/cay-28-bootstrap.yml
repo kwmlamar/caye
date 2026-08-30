@@ -1,0 +1,43 @@
+name: CAY-28 authority routing bootstrap
+
+on:
+  push:
+    branches:
+      - cay-28-authority-routing
+
+permissions:
+  contents: write
+
+jobs:
+  implement-and-validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: cay-28-authority-routing
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Apply focused CAY-28 integration patches
+        run: |
+          node scripts/cay-28-bootstrap.mjs
+          node scripts/cay-28-postpatch.mjs
+      - name: Targeted authority tests
+        run: npx vitest run lib/decision-authority.test.ts lib/caye-agent/tools/high-risk-gate.test.ts lib/operator/objective-run.test.ts
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Production build
+        run: npm run build
+      - name: Commit validated implementation
+        run: |
+          rm .github/workflows/cay-28-bootstrap.yml scripts/cay-28-bootstrap.mjs scripts/cay-28-postpatch.mjs
+          git config user.name "caye-wave2-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "CAY-28 enforce authority-aware decision routing"
+          git push origin HEAD:cay-28-authority-routing
