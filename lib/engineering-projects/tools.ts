@@ -12,6 +12,7 @@ import {
   recordEngineeringVerdict,
   selectEngineeringAlternative,
 } from './store'
+import { getEngineeringOutcomeLearningGuidance, processEngineeringOutcomeLearning } from './outcome-learning'
 
 function directOnly(ctx: { channel?: 'dashboard' }) {
   return ctx.channel === 'dashboard' ? null : { ok: false as const, error: 'Engineering project intelligence is available only in founder Caye Direct.' }
@@ -42,9 +43,17 @@ export const establishEngineeringBaselineTool: Tool<{ project_id: string; proper
 }
 
 export const addEngineeringAlternativeTool: Tool<{ project_id: string; alternative_key: string; title: string; description: string; assumptions?: string[]; dependencies?: string[]; estimated_cost?: number; cost_currency?: string; predictions?: Array<{ metric_key: string; numeric_value: number; unit: string; provenance_status: 'operator_confirmed'|'inferred'|'estimated'; confidence?: number; rationale?: string; analysis_ref?: string; artifact_ref?: string }> }> = {
-  name: 'add_engineering_alternative', description: 'Add or revise a candidate engineering intervention with explicit assumptions, dependencies, cost estimate, and predicted metrics. Predictions remain predictions and a candidate is not authorization or a safety proof.', risk: 'low', roles: ['founder'], modes: ['back-office'],
+  name: 'add_engineering_alternative', description: 'Add or revise a candidate engineering intervention with explicit assumptions, dependencies, cost estimate, and predicted metrics. Predictions remain predictions and a candidate is not authorization or a safety proof. Validated outcome-learning may be returned as non-authoritative guidance for inferred/estimated predictions.', risk: 'low', roles: ['founder'], modes: ['back-office'],
   inputSchema: { type: 'object', properties: { project_id: { type: 'string' }, alternative_key: { type: 'string' }, title: { type: 'string' }, description: { type: 'string' }, assumptions: { type: 'array', items: { type: 'string' } }, dependencies: { type: 'array', items: { type: 'string' } }, estimated_cost: { type: 'number' }, cost_currency: { type: 'string' }, predictions: { type: 'array', items: { type: 'object', properties: { metric_key: { type: 'string' }, numeric_value: { type: 'number' }, unit: { type: 'string' }, provenance_status: { type: 'string', enum: ['operator_confirmed','inferred','estimated'] }, confidence: { type: 'number' }, rationale: { type: 'string' }, analysis_ref: { type: 'string' }, artifact_ref: { type: 'string' } }, required: ['metric_key','numeric_value','unit','provenance_status'], additionalProperties: false } } }, required: ['project_id','alternative_key','title','description'], additionalProperties: false },
-  async execute(args, ctx) { const blocked = directOnly(ctx); if (blocked) return blocked; try { return { ok: true, data: await addEngineeringAlternative({ workspaceId: ctx.workspaceId, projectId: args.project_id, alternativeKey: args.alternative_key, title: args.title, description: args.description, assumptions: args.assumptions, dependencies: args.dependencies, estimatedCost: args.estimated_cost, costCurrency: args.cost_currency, predictions: args.predictions?.map((p) => ({ metricKey: p.metric_key, numericValue: p.numeric_value, unit: p.unit, provenanceStatus: p.provenance_status, confidence: p.confidence, rationale: p.rationale, analysisRef: p.analysis_ref, artifactRef: p.artifact_ref })) }) } } catch (e) { return { ok: false, error: e instanceof Error ? e.message : 'Could not add alternative.' } } },
+  async execute(args, ctx) {
+    const blocked = directOnly(ctx); if (blocked) return blocked
+    try {
+      const mappedPredictions = args.predictions?.map((p) => ({ metricKey: p.metric_key, numericValue: p.numeric_value, unit: p.unit, provenanceStatus: p.provenance_status, confidence: p.confidence, rationale: p.rationale, analysisRef: p.analysis_ref, artifactRef: p.artifact_ref }))
+      const learningGuidance = mappedPredictions?.length ? await getEngineeringOutcomeLearningGuidance(ctx.workspaceId, mappedPredictions.map((p) => ({ metricKey: p.metricKey, unit: p.unit, provenanceStatus: p.provenanceStatus }))) : []
+      const alternative = await addEngineeringAlternative({ workspaceId: ctx.workspaceId, projectId: args.project_id, alternativeKey: args.alternative_key, title: args.title, description: args.description, assumptions: args.assumptions, dependencies: args.dependencies, estimatedCost: args.estimated_cost, costCurrency: args.cost_currency, predictions: mappedPredictions })
+      return { ok: true, data: { alternative, learning_guidance: learningGuidance, learning_note: learningGuidance.length ? 'Validated historical outcome learning is advisory and does not override founder-confirmed inputs.' : undefined } }
+    } catch (e) { return { ok: false, error: e instanceof Error ? e.message : 'Could not add alternative.' } }
+  },
 }
 
 export const selectEngineeringAlternativeTool: Tool<{ project_id: string; alternative_id: string; rationale?: string }> = {
@@ -72,7 +81,15 @@ export const compareEngineeringProjectOutcomesTool: Tool<{ project_id: string }>
 }
 
 export const recordEngineeringVerdictTool: Tool<{ project_id: string; verdict: 'succeeded'|'partially_succeeded'|'failed'|'inconclusive'; reason_codes?: string[]; summary: string }> = {
-  name: 'record_engineering_verdict', description: 'Record a founder-grounded project verdict. Succeeded/partial/failed require linked outcome evidence; with insufficient outcome evidence use inconclusive. A verdict records learning and never rewrites the underlying measured/observed property history.', risk: 'low', roles: ['founder'], modes: ['back-office'],
+  name: 'record_engineering_verdict', description: 'Record a founder-grounded project verdict. Succeeded/partial/failed require linked outcome evidence; with insufficient outcome evidence use inconclusive. A conclusive verdict triggers evidence-gated candidate learning; inferred lessons remain quarantined until repeated verified outcomes validate them.', risk: 'low', roles: ['founder'], modes: ['back-office'],
   inputSchema: { type: 'object', properties: { project_id: { type: 'string' }, verdict: { type: 'string', enum: ['succeeded','partially_succeeded','failed','inconclusive'] }, reason_codes: { type: 'array', items: { type: 'string' } }, summary: { type: 'string' } }, required: ['project_id','verdict','summary'], additionalProperties: false },
-  async execute(args, ctx) { const blocked = directOnly(ctx); if (blocked) return blocked; if (!ctx.engineeringOrigin?.messageId) return { ok: false, error: 'Project verdict requires the current founder Direct source message.' }; try { return { ok: true, data: await recordEngineeringVerdict({ workspaceId: ctx.workspaceId, projectId: args.project_id, verdict: args.verdict, reasonCodes: args.reason_codes, summary: args.summary, sourceMessageId: ctx.engineeringOrigin.messageId }) } } catch (e) { return { ok: false, error: e instanceof Error ? e.message : 'Could not record verdict.' } } },
+  async execute(args, ctx) {
+    const blocked = directOnly(ctx); if (blocked) return blocked
+    if (!ctx.engineeringOrigin?.messageId) return { ok: false, error: 'Project verdict requires the current founder Direct source message.' }
+    try {
+      const verdict = await recordEngineeringVerdict({ workspaceId: ctx.workspaceId, projectId: args.project_id, verdict: args.verdict, reasonCodes: args.reason_codes, summary: args.summary, sourceMessageId: ctx.engineeringOrigin.messageId })
+      const learning = await processEngineeringOutcomeLearning({ workspaceId: ctx.workspaceId, projectId: args.project_id, verdictId: verdict.id, verdict: args.verdict, sourceMessageId: ctx.engineeringOrigin.messageId })
+      return { ok: true, data: { verdict, learning } }
+    } catch (e) { return { ok: false, error: e instanceof Error ? e.message : 'Could not record verdict.' } }
+  },
 }
