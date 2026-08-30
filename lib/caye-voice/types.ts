@@ -19,8 +19,13 @@
 /** Speech-to-text providers this abstraction knows how to drive. */
 export type SttProviderId = 'openai-realtime' | 'deepgram'
 
-/** Text-to-speech providers this abstraction knows how to drive. */
-export type TtsProviderId = 'elevenlabs' | 'deepgram'
+/**
+ * Text-to-speech providers this abstraction knows how to drive. `browser`
+ * is the zero-secret safety net: cloud voices stay preferred, but a missing
+ * ElevenLabs/Deepgram key must never make the whole live-voice session
+ * unusable when the browser can already speak text locally.
+ */
+export type TtsProviderId = 'elevenlabs' | 'deepgram' | 'browser'
 
 export type VoiceProviderPreference = 'auto' | SttProviderId
 export type TtsProviderPreference = 'auto' | TtsProviderId
@@ -45,7 +50,7 @@ export interface SttCapability {
 }
 
 export interface TtsCapability {
-  provider: TtsProviderId
+  provider: Exclude<TtsProviderId, 'browser'>
   available: boolean
   /** Streaming/progressive audio (first-chunk-out before full utterance is synthesized). */
   streaming: boolean
@@ -78,7 +83,7 @@ export interface VoiceRoutingDecision {
  * /api/founder/caye-direct/voice/tts instead, since neither provider
  * offers a scoped-token story for TTS as clean as their STT/realtime
  * ephemeral-key support, and proxying keeps that key server-side too at
- * the cost of one extra hop.
+ * the cost of one extra hop. Browser speech is local and needs no key.
  */
 export interface SttCredential {
   provider: SttProviderId
