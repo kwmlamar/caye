@@ -48,7 +48,7 @@ export async function inspectApplicationForHumanAssist(applicationId: string) {
 
   const discovery = await greenhouseAtsProvider.discoverFields(row.candidate.apply_url)
   if (discovery.outcome !== 'clear') {
-    return { applicationId, company: row.candidate.company, title: row.candidate.title, outcome: discovery.outcome, blockers: ['reason' in discovery ? discovery.reason : discovery.outcome] }
+    return { applicationId, company: row.candidate.company, title: row.candidate.title, outcome: discovery.outcome, blockers: [discovery.reason] }
   }
 
   const profile = await getActiveProfile()
