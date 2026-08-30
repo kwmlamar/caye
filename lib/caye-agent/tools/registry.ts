@@ -75,6 +75,7 @@ import { addPropertyStructureTool } from './write-low/add-property-structure'
 import { addPropertySystemTool } from './write-low/add-property-system'
 import { addPropertyAssetTool } from './write-low/add-property-asset'
 import { recordPropertyObservationTool } from './write-low/record-property-observation'
+import { startCanonicalResearchTool } from './write-low/start-canonical-research'
 import { getMyAssignments } from './read/get-my-assignments'
 import { getLogisticsFacts } from './read/get-logistics-facts'
 import { escalateDriverQuestion } from './write-low/escalate-driver-question'
@@ -233,6 +234,7 @@ export const TOOL_REGISTRY: AnyTool[] = [
   addPropertySystemTool as AnyTool,
   addPropertyAssetTool as AnyTool,
   recordPropertyObservationTool as AnyTool,
+  startCanonicalResearchTool as AnyTool,
   createEngineeringProjectTool as AnyTool,
   establishEngineeringBaselineTool as AnyTool,
   addEngineeringAlternativeTool as AnyTool,
