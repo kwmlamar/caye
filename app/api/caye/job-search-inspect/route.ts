@@ -66,23 +66,25 @@ export async function inspectApplicationForHumanAssist(applicationId: string) {
   })
 
   for (const resolution of resolutions) {
-    const payload = resolution.status === 'resolved'
-      ? {
-          application_id: applicationId,
-          question: resolution.field.label,
-          answer: resolution.value,
-          answer_source: resolution.source,
-          profile_fact_id: resolution.source === 'profile_fact' ? resolution.profileFactId : null,
-        }
-      : {
-          application_id: applicationId,
-          question: resolution.field.label,
-          answer: null,
-          answer_source: 'needs_human',
-          profile_fact_id: null,
-        }
-    const { error: answerError } = await supabase.from('job_search_application_answers').upsert(payload, { onConflict: 'application_id,question' })
-    if (answerError) throw new Error(`Could not persist inspection answer: ${answerError.message}`)
+    if (resolution.status === 'resolved') {
+      const { error: answerError } = await supabase.from('job_search_application_answers').upsert({
+        application_id: applicationId,
+        question: resolution.field.label,
+        answer: resolution.value,
+        answer_source: resolution.source,
+        profile_fact_id: resolution.source === 'profile_fact' ? resolution.profileFactId : null,
+      }, { onConflict: 'application_id,question' })
+      if (answerError) throw new Error(`Could not persist inspection answer: ${answerError.message}`)
+    } else {
+      const { error: answerError } = await supabase.from('job_search_application_answers').upsert({
+        application_id: applicationId,
+        question: resolution.field.label,
+        answer: null,
+        answer_source: 'needs_human' as const,
+        profile_fact_id: null,
+      }, { onConflict: 'application_id,question' })
+      if (answerError) throw new Error(`Could not persist inspection blocker: ${answerError.message}`)
+    }
   }
 
   const unresolved = resolutions.filter((resolution) => resolution.status === 'unresolved')
