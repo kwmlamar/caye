@@ -10,9 +10,15 @@ const NAVIGATION_TIMEOUT_MS = 20_000
 const TOTAL_TIMEOUT_MS = 45_000
 const MAX_ACTIONS = 60
 
-function allowed(url: string): boolean {
+function allowedGreenhouseNavigation(url: string): boolean {
   const safe = validateDestination(url)
   return safe.allowed && isAllowedAtsHost('greenhouse', safe.hostname)
+}
+
+function allowedPublicSubresource(url: string): boolean {
+  if (url.startsWith('data:') || url.startsWith('blob:')) return true
+  const safe = validateDestination(url)
+  return safe.allowed
 }
 
 function cssAttributeValue(value: string): string {
@@ -20,7 +26,6 @@ function cssAttributeValue(value: string): string {
 }
 
 function makeResumePdf(text: string): Buffer {
-  // A small deterministic, valid PDF built solely from the verified artifact.
   const escaped = text.replace(/[\\()]/g, '\\$&').replace(/\r?\n/g, ') Tj 0 -14 Td (')
   const stream = `BT /F1 10 Tf 54 760 Td (${escaped}) Tj ET`
   const objects = ['<< /Type /Catalog /Pages 2 0 R >>', '<< /Type /Pages /Kids [3 0 R] /Count 1 >>', '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>', '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>', `<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream`]
@@ -34,29 +39,40 @@ function makeResumePdf(text: string): Buffer {
 
 function challenge(body: string): 'captcha_detected' | 'anti_bot_detected' | null {
   if (/captcha|recaptcha|hcaptcha|turnstile/i.test(body)) return 'captcha_detected'
-  if (/cloudflare|checking your browser|bot detection|are you human/i.test(body)) return 'anti_bot_detected'
+  if (/checking your browser|bot detection|are you human/i.test(body)) return 'anti_bot_detected'
   return null
 }
 
 export async function submitGreenhouseInBrowser(request: SubmissionRequest, fields: DiscoveredField[]): Promise<SubmissionResult> {
-  if (!allowed(request.applyUrl)) return { outcome: 'prohibited_destination', reason: 'Greenhouse applicant page failed destination validation.', domainValidations: [] }
+  if (!allowedGreenhouseNavigation(request.applyUrl)) return { outcome: 'prohibited_destination', reason: 'Greenhouse applicant page failed destination validation.', domainValidations: [] }
   let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined
   let context: Awaited<ReturnType<Awaited<ReturnType<typeof chromium.launch>>['newContext']>> | undefined
+  let submitClicked = false
   try {
     browser = await chromium.launch({ headless: true })
     context = await browser.newContext({ storageState: undefined, acceptDownloads: false })
     const page = await context.newPage()
     page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS)
     page.setDefaultTimeout(NAVIGATION_TIMEOUT_MS)
-    let blocked = false
+    let prohibitedNavigation = false
     await page.route('**/*', async (route) => {
-      const url = route.request().url()
-      if (!allowed(url)) { blocked = true; await route.abort('blockedbyclient'); return }
+      const req = route.request()
+      const url = req.url()
+      if (req.isNavigationRequest()) {
+        if (!allowedGreenhouseNavigation(url)) {
+          prohibitedNavigation = true
+          await route.abort('blockedbyclient')
+          return
+        }
+      } else if (!allowedPublicSubresource(url)) {
+        await route.abort('blockedbyclient')
+        return
+      }
       await route.continue()
     })
     const finish = new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Browser execution exceeded its total time limit.')), TOTAL_TIMEOUT_MS))
     await Promise.race([page.goto(request.applyUrl, { waitUntil: 'domcontentloaded' }), finish])
-    if (blocked || !allowed(page.url())) return { outcome: 'prohibited_destination', reason: 'Greenhouse navigation attempted a prohibited redirect.', domainValidations: [] }
+    if (prohibitedNavigation || !allowedGreenhouseNavigation(page.url())) return { outcome: 'prohibited_destination', reason: 'Greenhouse navigation attempted a prohibited redirect.', domainValidations: [] }
     const body = await page.locator('body').innerText()
     const signal = challenge(body)
     if (signal) return { outcome: signal, reason: 'Greenhouse applicant page displayed a challenge; automation stopped without bypassing it.' }
@@ -72,6 +88,7 @@ export async function submitGreenhouseInBrowser(request: SubmissionRequest, fiel
       if (answer.field.inputType === 'select') await control.selectOption(answer.value)
       else await control.fill(answer.value)
     }
+
     const resumeControl = page.locator('input[type="file"]').first()
     if ((await resumeControl.count()) === 0) return { outcome: 'failed', retryable: false, reason: 'Greenhouse form has no resume upload control.' }
     const pdf = makeResumePdf(request.resume.content)
@@ -79,18 +96,21 @@ export async function submitGreenhouseInBrowser(request: SubmissionRequest, fiel
     await resumeControl.setInputFiles({ name: `caye-resume-${shortHash}.pdf`, mimeType: 'application/pdf', buffer: pdf })
     if (request.dryRun) return { outcome: 'failed', retryable: false, reason: 'Dry run completed browser field fill and resume upload; final submit was intentionally not invoked.' }
 
-    const submit = page.locator('button[type="submit"], input[type="submit"]').filter({ hasText: /submit application|submit/i }).first()
+    const submit = page.locator('button[type="submit"]:has-text("Submit"), input[type="submit"][value*="Submit" i]').first()
     if ((await submit.count()) === 0) return { outcome: 'failed', retryable: false, reason: 'No provider-recognized Greenhouse submit control was found.' }
+    submitClicked = true
     await submit.click()
     try { await page.waitForLoadState('domcontentloaded', { timeout: NAVIGATION_TIMEOUT_MS }) } catch { return { outcome: 'submission_uncertain', reason: 'Submit was clicked but navigation confirmation timed out.' } }
-    if (blocked || !allowed(page.url())) return { outcome: 'submission_uncertain', reason: 'Submit was clicked but the confirmation navigation was prohibited or ambiguous.' }
+    if (prohibitedNavigation || !allowedGreenhouseNavigation(page.url())) return { outcome: 'submission_uncertain', reason: 'Submit was clicked but the confirmation navigation was prohibited or ambiguous.' }
     const confirmation = page.locator('#application_confirmation, [data-testid="application-confirmation"]').first()
     if ((await confirmation.count()) === 0) return { outcome: 'submission_uncertain', reason: 'Submit was clicked but no Greenhouse-specific confirmation element was observed.' }
     const confirmationText = (await confirmation.innerText()).trim().slice(0, 500)
     const confirmationId = crypto.createHash('sha256').update(`${request.applicationId}:${page.url()}:${confirmationText}`).digest('hex').slice(0, 24)
     return { outcome: 'submitted', evidence: { confirmationId, method: 'browser_confirmation', receivedAt: new Date().toISOString(), raw: { finalUrl: page.url(), confirmationSelector: '#application_confirmation' } }, response: { finalUrl: page.url() } }
   } catch (error) {
-    return { outcome: 'submission_uncertain', reason: `Browser failed after it may have reached the submit action: ${error instanceof Error ? error.message : String(error)}` }
+    const message = error instanceof Error ? error.message : String(error)
+    if (submitClicked) return { outcome: 'submission_uncertain', reason: `Browser failed after the submit action: ${message}` }
+    return { outcome: 'failed', retryable: false, reason: `Browser failed before any submit action: ${message}` }
   } finally {
     await context?.close().catch(() => undefined)
     await browser?.close().catch(() => undefined)
