@@ -64,9 +64,13 @@ export function observationDedupeKey(input: {
   sourceIdentity: string
   sourceEventId: string
 }): string {
-  // Include workspace in the identity even when a provider claims globally unique IDs.
-  // Cross-workspace collisions must fail closed rather than correlate tenants together.
-  return [input.workspaceId, input.sourceKind, input.sourceIdentity, input.sourceEventId]
-    .map((part) => part.trim())
-    .join(':')
+  // JSON tuple encoding is unambiguous even when provider/source identifiers contain
+  // separators. A delimiter join can collide (for example ["a:b", "c"] vs ["a", "b:c"]).
+  // Keep workspace in the tuple so identical provider event ids never correlate tenants.
+  return JSON.stringify([
+    input.workspaceId.trim(),
+    input.sourceKind.trim(),
+    input.sourceIdentity.trim(),
+    input.sourceEventId.trim(),
+  ])
 }
