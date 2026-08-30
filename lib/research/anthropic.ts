@@ -121,11 +121,9 @@ export function createAnthropicResearchProvider(options: {
           content: `Search the web for authoritative, diverse sources that directly help answer this research question. Prefer primary sources, official documentation, peer-reviewed work, and high-quality reporting. Do not answer the question yet. Research question: ${query}`,
         }],
         tools: [{
-          type: 'web_search_20260318',
+          type: 'web_search_20250305',
           name: 'web_search',
-          allowed_callers: ['direct'],
           max_uses: 1,
-          response_inclusion: 'full',
         }],
       })
 
@@ -141,12 +139,10 @@ export function createAnthropicResearchProvider(options: {
           content: `Fetch this exact source URL so its underlying document can be stored as research evidence. Do not summarize it: ${result.url}`,
         }],
         tools: [{
-          type: 'web_fetch_20260318',
+          type: 'web_fetch_20250910',
           name: 'web_fetch',
-          allowed_callers: ['direct'],
           max_uses: 1,
           max_content_tokens: 20_000,
-          response_inclusion: 'full',
         }],
       })
 
