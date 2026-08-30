@@ -10,6 +10,29 @@ function leaseExpiry(timeoutMs: number) {
   return new Date(Date.now() + Math.max(MIN_LEASE_MS, timeoutMs + 30_000)).toISOString()
 }
 
+export function evaluateDurableRunCompatibility(input: {
+  storedPlanVersion: string
+  requestedPlanVersion: string
+  deadlineAt: string | null
+  nowMs: number
+}): { status: 'blocked' | 'failed'; blockedStep: string; error: string } | null {
+  if (input.storedPlanVersion !== input.requestedPlanVersion) {
+    return {
+      status: 'blocked',
+      blockedStep: '__plan_version__',
+      error: `Objective plan changed from ${input.storedPlanVersion} to ${input.requestedPlanVersion}; old verified steps were not reused.`,
+    }
+  }
+  if (input.deadlineAt && Date.parse(input.deadlineAt) <= input.nowMs) {
+    return {
+      status: 'failed',
+      blockedStep: '__durable_deadline__',
+      error: 'Objective exceeded its durable wall-clock deadline and was not resumed.',
+    }
+  }
+  return null
+}
+
 async function retireIncompatibleRun(input: {
   supabase: SupabaseClient
   runId: string
@@ -81,22 +104,19 @@ export async function openOrResumeObjectiveRun(input: {
   let existing = await query.maybeSingle()
   if (existing.error) throw new Error(`Could not find resumable objective run: ${existing.error.message}`)
 
-  if (existing.data && existing.data.plan_version !== input.planVersion) {
-    await retireIncompatibleRun({
-      supabase,
-      runId: existing.data.id as string,
-      status: 'blocked',
-      blockedStep: '__plan_version__',
-      error: `Objective plan changed from ${existing.data.plan_version} to ${input.planVersion}; old verified steps were not reused.`,
+  const retirement = existing.data
+    ? evaluateDurableRunCompatibility({
+      storedPlanVersion: existing.data.plan_version as string,
+      requestedPlanVersion: input.planVersion,
+      deadlineAt: (existing.data.deadline_at as string | null) ?? null,
+      nowMs: nowDate.getTime(),
     })
-    existing = { ...existing, data: null }
-  } else if (existing.data?.deadline_at && Date.parse(existing.data.deadline_at as string) <= nowDate.getTime()) {
+    : null
+  if (existing.data && retirement) {
     await retireIncompatibleRun({
       supabase,
       runId: existing.data.id as string,
-      status: 'failed',
-      blockedStep: '__durable_deadline__',
-      error: 'Objective exceeded its durable wall-clock deadline and was not resumed.',
+      ...retirement,
     })
     existing = { ...existing, data: null }
   }
@@ -176,7 +196,7 @@ export async function openOrResumeObjectiveRun(input: {
       completedSteps.add(stepKey)
       pendingEffects.delete(stepKey)
       interruptedSteps.delete(stepKey)
-    } else if (row.state === 'failed' || row.state === 'blocked') {
+    } else if (row.state === 'failed' || row.state === 'blocked' || row.state === 'recovered') {
       interruptedSteps.delete(stepKey)
     } else if (row.state === 'waiting') {
       interruptedSteps.delete(stepKey)
