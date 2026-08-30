@@ -83,7 +83,7 @@ describe('Anthropic research synthesis JSON recovery', () => {
       claimType: 'finding',
       confidence: 0.8,
       sourceQuality: 'primary',
-      sourceIds: ['source-1'],
+      sourceIds: ['S1'],
     }],
     brief: 'Bounded architectures are promising.',
     strongestEvidence: [],
@@ -92,6 +92,22 @@ describe('Anthropic research synthesis JSON recovery', () => {
     materialChanges: [],
     implications: [],
     recommendations: [],
+  })
+
+  it('maps compact model-facing aliases back to durable source IDs', async () => {
+    const create = vi.fn().mockResolvedValue({
+      stop_reason: 'end_turn',
+      content: [{ type: 'text', text: validJson }],
+    })
+    const client = { messages: { create } } as unknown as Anthropic
+    const synthesize = createAnthropicResearchSynthesizer({ client, model: 'test-model' })
+
+    const result = await synthesize(input)
+
+    const payload = create.mock.calls[0][0].messages[0].content as string
+    expect(payload).toContain('"sourceId":"S1"')
+    expect(payload).not.toContain('"sourceId":"source-1"')
+    expect(result.claims[0].sourceIds).toEqual(['source-1'])
   })
 
   it('retries from scratch when the first synthesis response is truncated', async () => {
@@ -113,6 +129,7 @@ describe('Anthropic research synthesis JSON recovery', () => {
     expect(create.mock.calls[0][0].max_tokens).toBe(8_192)
     expect(result.brief).toBe('Bounded architectures are promising.')
     expect(result.claims).toHaveLength(1)
+    expect(result.claims[0].sourceIds).toEqual(['source-1'])
   })
 
   it('retries when the first complete response contains malformed JSON', async () => {
@@ -164,14 +181,14 @@ describe('Anthropic research synthesis JSON recovery', () => {
     expect(result.claims[0].sourceIds).toEqual(['source-1'])
   })
 
-  it('retries when a claim cites a source outside the supplied run evidence', async () => {
+  it('retries when a claim cites an alias outside the supplied run evidence', async () => {
     const inventedSourceJson = JSON.stringify({
       claims: [{
         statement: 'Claim with invented citation.',
         claimType: 'finding',
         confidence: 0.7,
         sourceQuality: 'unknown',
-        sourceIds: ['source-does-not-exist'],
+        sourceIds: ['S99'],
       }],
       brief: 'Attempt one.',
       strongestEvidence: [],
@@ -192,5 +209,6 @@ describe('Anthropic research synthesis JSON recovery', () => {
     expect(create).toHaveBeenCalledTimes(2)
     expect(create.mock.calls[1][0].messages[0].content).toContain('source IDs not present in this run')
     expect(result.brief).toBe('Bounded architectures are promising.')
+    expect(result.claims[0].sourceIds).toEqual(['source-1'])
   })
 })
