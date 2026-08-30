@@ -15,6 +15,7 @@ describe('conversationalVoiceReply', () => {
   it.each([
     ['Hey Caye, what’s up?', "I'm here. What's up?"],
     ['Hey Key, what’s up?', "I'm here. What's up?"],
+    ["Hey, what's up, Key?", "I'm here. What's up?"],
     ['Yo Kay', "Hey. I'm here. What's up?"],
     ['Can you hear me?', 'Yep, I can hear you.'],
     ['thank you', 'Anytime.'],
