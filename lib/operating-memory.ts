@@ -32,6 +32,45 @@ export interface OperatingMemory {
   relevance: number
 }
 
+async function recordMemoryRetrievalDirectionEvidence(
+  supabase: ReturnType<typeof createServiceClient>,
+  workspaceId: string,
+  memories: OperatingMemory[],
+) {
+  if (memories.length === 0) return
+
+  const { data: capability, error: capabilityError } = await supabase
+    .from('caye_operating_intelligence_capabilities')
+    .select('id')
+    .eq('capability_key', 'memory_context')
+    .maybeSingle()
+
+  if (capabilityError || !capability) {
+    console.warn('[operating-memory] canonical Direction capability unavailable:', capabilityError?.message ?? 'memory_context missing')
+    return
+  }
+
+  const observedAt = new Date().toISOString()
+  const { error: evidenceError } = await supabase
+    .from('caye_operating_intelligence_capability_evidence')
+    .upsert({
+      capability_id: capability.id,
+      evidence_kind: 'runtime',
+      source_ref: `operating_memory_retrieval:${workspaceId}`,
+      summary: `Workspace-scoped durable operating memory was successfully retrieved at runtime (${memories.length} record${memories.length === 1 ? '' : 's'}).`,
+      verifies_capability: true,
+      confidence: 1,
+      observed_at: observedAt,
+      verified_at: observedAt,
+    }, { onConflict: 'capability_id,evidence_kind,source_ref' })
+
+  // Evidence reporting must not take down the operator context path. Failure is explicit
+  // in logs and, importantly, never converted into a positive Direction claim.
+  if (evidenceError) {
+    console.warn('[operating-memory] Direction evidence write failed:', evidenceError.message)
+  }
+}
+
 /**
  * Durable operating-memory retrieval. This is deliberately workspace-bound
  * at the database RPC, not filtered in application memory after a broad read.
@@ -64,7 +103,10 @@ export async function loadOperatingMemory(args: {
     console.warn('[operating-memory] retrieval failed:', error.message)
     return []
   }
-  return (data ?? []) as OperatingMemory[]
+
+  const memories = (data ?? []) as OperatingMemory[]
+  await recordMemoryRetrievalDirectionEvidence(supabase, args.workspaceId, memories)
+  return memories
 }
 
 export function renderOperatingMemory(memories: OperatingMemory[]): string | null {
