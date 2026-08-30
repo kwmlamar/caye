@@ -35,7 +35,7 @@ export async function runFounderJobSearchObjective() {
     completedSteps: durable.completedSteps,
     maxTransitions: MAX_TRANSITIONS,
     timeoutMs: TIMEOUT_MS,
-    onEvent: (event) => persistObjectiveEvent(supabase, durable.runId, event),
+    onEvent: (event) => persistObjectiveEvent(supabase, durable.runId, durable.runnerToken, TIMEOUT_MS, event),
     steps: [
       {
         key: 'prepare_applications', authority: 'write_low', maxAttempts: 1,
@@ -60,7 +60,7 @@ export async function runFounderJobSearchObjective() {
     ],
   })
 
-  await finalizeObjectiveRun(supabase, durable.runId, result)
+  await finalizeObjectiveRun(supabase, durable.runId, durable.runnerToken, result)
 
   const directionEvidence = await recordObjectiveDirectionEvidence(supabase, {
     runId: durable.runId,
