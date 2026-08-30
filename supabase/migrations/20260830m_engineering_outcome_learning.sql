@@ -16,35 +16,25 @@ begin
     return new;
   end if;
 
-  -- A reusable lesson requires both evidence that work occurred and a linked
-  -- post-intervention outcome. The verdict row may still exist without the
-  -- former under the legacy contract, but it must not become durable learning.
   if not exists (
-    select 1
-    from public.engineering_project_execution_evidence e
-    where e.workspace_id = new.workspace_id
-      and e.project_id = new.project_id
+    select 1 from public.engineering_project_execution_evidence e
+    where e.workspace_id = new.workspace_id and e.project_id = new.project_id
   ) or not exists (
-    select 1
-    from public.engineering_project_outcomes o
-    where o.workspace_id = new.workspace_id
-      and o.project_id = new.project_id
+    select 1 from public.engineering_project_outcomes o
+    where o.workspace_id = new.workspace_id and o.project_id = new.project_id
   ) then
     return new;
   end if;
 
-  select p.property_id
-    into v_property_id
+  select p.property_id into v_property_id
   from public.engineering_projects p
-  where p.workspace_id = new.workspace_id
-    and p.id = new.project_id;
+  where p.workspace_id = new.workspace_id and p.id = new.project_id;
 
   if v_property_id is null then
     raise exception 'Engineering verdict project scope could not be resolved';
   end if;
 
-  select f.id
-    into v_prior_memory_id
+  select f.id into v_prior_memory_id
   from public.business_facts f
   where f.workspace_id = new.workspace_id
     and f.canonical_key = 'engineering_outcome:project:' || new.project_id::text
@@ -54,8 +44,7 @@ begin
     and f.knowledge_mode = 'derived'
     and f.authority_kind = 'system'
     and f.superseded_at is null
-  order by f.created_at desc
-  limit 1;
+  order by f.created_at desc limit 1;
 
   v_confidence := case new.verdict
     when 'succeeded' then 0.95
@@ -114,13 +103,7 @@ create or replace function public.retrieve_engineering_outcome_memory(
   p_property_id uuid,
   p_limit integer default 20
 )
-returns table (
-  id uuid,
-  fact text,
-  confidence numeric,
-  provenance jsonb,
-  created_at timestamptz
-)
+returns table (id uuid, fact text, confidence numeric, provenance jsonb, created_at timestamptz)
 language sql
 stable
 security definer
