@@ -19,6 +19,10 @@ function extensionForMime(mimeType: string): string {
   return 'audio'
 }
 
+function exactArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
+}
+
 export async function transcribeWhatsAppVoiceNote(
   mediaId: string,
   accessToken: string
@@ -29,7 +33,7 @@ export async function transcribeWhatsAppVoiceNote(
   form.append('model', process.env.OPENAI_WHATSAPP_TRANSCRIBE_MODEL || 'gpt-4o-mini-transcribe')
   form.append(
     'file',
-    new Blob([bytes], { type: media.mimeType }),
+    new Blob([exactArrayBuffer(bytes)], { type: media.mimeType }),
     `whatsapp-voice.${extensionForMime(media.mimeType)}`
   )
   form.append('response_format', 'json')
@@ -73,7 +77,7 @@ export async function uploadWhatsAppAudio(
   const form = new FormData()
   form.append('messaging_product', 'whatsapp')
   form.append('type', 'audio/ogg')
-  form.append('file', new Blob([audio], { type: 'audio/ogg' }), 'caye.ogg')
+  form.append('file', new Blob([exactArrayBuffer(audio)], { type: 'audio/ogg' }), 'caye.ogg')
 
   const res = await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${phoneNumberId}/media`, {
     method: 'POST',
