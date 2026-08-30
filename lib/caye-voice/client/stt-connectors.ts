@@ -46,14 +46,17 @@ abstract class BaseSttSession implements SttSession {
 }
 
 /**
- * OpenAI Realtime *transcription* session over WebRTC (spec item 1/9's
- * "native realtime path", scoped to transcription only — see
- * lib/caye-voice/providers.ts's mintOpenAiRealtimeCredential for why a
- * transcription session can never itself generate a response or call a
- * tool). Event names follow OpenAI's documented Realtime transcription
- * guide as of this build; not exercised against a live session in this
- * environment (no OPENAI_API_KEY configured here) — verify event names
- * against a real connection before relying on this in production.
+ * OpenAI Realtime *transcription* session over WebRTC. The session itself
+ * remains transcription-only: Caye's reasoning and tool authority stay in
+ * the normal founder-thread agent path.
+ *
+ * OpenAI's current /v1/realtime/calls API expects the SDP offer as a
+ * multipart `sdp` form field. The previous implementation posted raw SDP
+ * with `Content-Type: application/sdp` plus a `?model=` query parameter;
+ * that shape now returns HTTP 400 even though the ephemeral client secret
+ * was minted successfully. Because the client secret already carries the
+ * transcription-session configuration, this connector only needs to send
+ * the SDP form field while authenticating with that short-lived secret.
  */
 export class OpenAiRealtimeSttSession extends BaseSttSession {
   private pc: RTCPeerConnection | null = null
@@ -78,16 +81,21 @@ export class OpenAiRealtimeSttSession extends BaseSttSession {
     await pc.setLocalDescription(offer)
 
     const callsUrl = this.credential.connect.callsUrl
-    const model = this.credential.connect.model
-    const res = await fetch(`${callsUrl}?model=${encodeURIComponent(model)}`, {
+    const sdp = offer.sdp ?? ''
+    const form = new FormData()
+    form.append('sdp', new Blob([sdp], { type: 'application/sdp' }), 'offer.sdp')
+
+    const res = await fetch(callsUrl, {
       method: 'POST',
-      body: offer.sdp,
+      body: form,
       headers: {
         Authorization: `Bearer ${this.credential.token}`,
-        'Content-Type': 'application/sdp',
       },
     })
-    if (!res.ok) throw new Error(`OpenAI Realtime connect failed: ${res.status}`)
+    if (!res.ok) {
+      const detail = (await res.text().catch(() => '')).slice(0, 500)
+      throw new Error(`OpenAI Realtime connect failed: ${res.status}${detail ? ` ${detail}` : ''}`)
+    }
     const answerSdp = await res.text()
     await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp })
   }
