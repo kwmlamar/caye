@@ -10,24 +10,11 @@ import 'server-only'
  * all before any real tool has run this turn. See
  * founder-tool-loop.ts's `requiresGrounding` for the enforcement.
  *
- * WHY THIS SHAPE (2026-08-17, after real Claude runs surfaced a second
- * failure mode): asking "Look up the customer named Juli King..." twice in
- * 8 real subscription-CLI runs produced a fully confident, fully invented
- * answer with ZERO tool calls and ZERO protocol artifacts — nothing for a
- * text-scanning guard to catch, because the fabrication wasn't narrating
- * the tool protocol, it was just... answering. The fix has to happen
- * before the model ever gets to answer, not after.
- *
- * DESIGN: fail CLOSED, not fail open. Rather than trying to enumerate every
- * shape of "this needs business data" (open-ended, unbounded, exactly the
- * kind of lexical arms race the router brief explicitly ruled out), this
- * enumerates the NARROW, closed set of requests that provably do NOT need
- * it — meta questions about Caye itself, and pure rewrite/draft/transform
- * instructions operating on content already pasted inline in the same
- * message — and defaults to requiring grounding for everything else. A
- * false positive here costs one extra forced tool round (annoying, safe).
- * A false negative recreates the exact bug this exists to close. The
- * asymmetry is the whole point.
+ * Keep the safe default (ground business/state questions), but explicitly
+ * exempt conversational turns that cannot possibly benefit from a database
+ * lookup. Forcing a tool round for "hi", "what's up", or "can you hear me"
+ * made live voice take tens of seconds and sometimes pulled unrelated thread
+ * state into a greeting.
  */
 
 const META_ABOUT_CAYE_PATTERNS: readonly RegExp[] = [
@@ -42,6 +29,13 @@ const META_ABOUT_CAYE_PATTERNS: readonly RegExp[] = [
   /\bwhat can i ask you\b/i,
 ]
 
+const CONVERSATIONAL_PATTERNS: readonly RegExp[] = [
+  /^\s*(hi|hey|hello|yo|sup|wassup|what'?s up|good (morning|afternoon|evening))\b[\s,.!?-]*$/i,
+  /^\s*(hi|hey|hello|yo)[,\s]+caye\b[\s,.!?-]*(what'?s up|how are you|you there)?[\s,.!?-]*$/i,
+  /^\s*(can you hear me|do you hear me|are you there|you there)\b[\s,.!?-]*$/i,
+  /^\s*(thanks|thank you|appreciate it|cool|okay|ok|got it)\b[\s,.!?-]*$/i,
+]
+
 /** Leading imperative verb, not a substring match — "draft" mid-sentence about something else shouldn't count. */
 const LEADING_TRANSFORM_VERB = /^\s*(please\s+)?(draft|rewrite|reword|edit|polish|proofread|shorten|summarize|summarise|translate|paraphrase|tighten)\b/i
 
@@ -52,6 +46,10 @@ function isMetaAboutCaye(text: string): boolean {
   return META_ABOUT_CAYE_PATTERNS.some((p) => p.test(text))
 }
 
+function isConversational(text: string): boolean {
+  return CONVERSATIONAL_PATTERNS.some((p) => p.test(text))
+}
+
 function isPureTransformOfInlineContent(text: string): boolean {
   return LEADING_TRANSFORM_VERB.test(text) && REFERENCES_INLINE_CONTENT.test(text)
 }
@@ -59,6 +57,7 @@ function isPureTransformOfInlineContent(text: string): boolean {
 export function requiresBusinessGrounding(latestUserText: string): boolean {
   const text = latestUserText.trim()
   if (!text) return false
+  if (isConversational(text)) return false
   if (isMetaAboutCaye(text)) return false
   if (isPureTransformOfInlineContent(text)) return false
   return true
