@@ -44,10 +44,6 @@ create index if not exists business_facts_typed_retrieval_idx
   on public.business_facts (workspace_id, memory_type, subject_type, subject_id, created_at desc)
   where superseded_at is null;
 
--- Typed writer. This deliberately delegates supersession/concurrency to the
--- existing write_business_fact_atomic primitive and only enriches the row in
--- the same transaction. It also prevents low-authority inference from
--- silently replacing explicit human knowledge.
 create or replace function public.write_typed_business_memory_atomic(
   p_workspace_id uuid,
   p_category text,
@@ -73,16 +69,17 @@ create or replace function public.write_typed_business_memory_atomic(
 language plpgsql security definer set search_path = public as $$
 declare
   v_existing public.business_facts%rowtype;
+  v_ref_workspace uuid;
   v_result record;
 begin
-  -- Explicit target and canonical-chain target both receive the authority
-  -- check. An inference may be stored as a candidate elsewhere, but it may
-  -- never permanently erase explicit/observed operating knowledge.
   if p_supersede_id is not null then
     select * into v_existing from public.business_facts
       where business_facts.id = p_supersede_id
         and business_facts.workspace_id = p_workspace_id
       for update;
+    if v_existing.id is null then
+      raise exception 'supersede target is missing or belongs to another workspace' using errcode = '42501';
+    end if;
   elsif p_canonical_key is not null then
     select * into v_existing from public.business_facts
       where business_facts.workspace_id = p_workspace_id
@@ -91,6 +88,20 @@ begin
             = coalesce(p_service_id, '00000000-0000-0000-0000-000000000000'::uuid)
         and business_facts.superseded_at is null
       for update;
+  end if;
+
+  if p_contradicts_fact_id is not null then
+    select workspace_id into v_ref_workspace from public.business_facts where business_facts.id = p_contradicts_fact_id;
+    if v_ref_workspace is distinct from p_workspace_id then
+      raise exception 'contradiction reference crosses workspace boundary' using errcode = '42501';
+    end if;
+  end if;
+
+  if p_correction_of_fact_id is not null then
+    select workspace_id into v_ref_workspace from public.business_facts where business_facts.id = p_correction_of_fact_id;
+    if v_ref_workspace is distinct from p_workspace_id then
+      raise exception 'correction reference crosses workspace boundary' using errcode = '42501';
+    end if;
   end if;
 
   if v_existing.id is not null
@@ -126,9 +137,6 @@ $$;
 revoke all on function public.write_typed_business_memory_atomic(uuid,text,text,text,text,uuid,text,timestamptz,uuid,text,text,text,text,numeric,timestamptz,text,text,jsonb,uuid,uuid) from public, anon, authenticated;
 grant execute on function public.write_typed_business_memory_atomic(uuid,text,text,text,text,uuid,text,timestamptz,uuid,text,text,text,text,numeric,timestamptz,text,text,jsonb,uuid,uuid) to service_role;
 
--- Retrieval is deterministic first, semantic second. Callers must supply the
--- workspace and an allowed sensitivity ceiling. Superseded, expired, and
--- not-yet-valid memories cannot leak back into behavior.
 create or replace function public.retrieve_operating_memory(
   p_workspace_id uuid,
   p_query text default null,
@@ -162,23 +170,23 @@ language sql stable security definer set search_path = public as $$
     and (p_memory_types is null or f.memory_type = any(p_memory_types))
     and (p_subject_type is null or f.subject_type = p_subject_type)
     and (p_subject_id is null or f.subject_id = p_subject_id)
-    and (p_include_restricted or f.sensitivity = 'workspace')
+    and (
+      f.sensitivity = 'workspace'
+      or (p_include_restricted and f.sensitivity = 'restricted')
+    )
   order by relevance desc, f.confidence desc,
            case f.knowledge_mode when 'explicit' then 4 when 'observed' then 3 when 'derived' then 2 else 1 end desc,
            f.created_at desc
-  limit greatest(1, least(coalesce(p_limit,30),100));
+  limit greatest(1, least(coalesce(p_limit,30),150));
 $$;
 
 revoke all on function public.retrieve_operating_memory(uuid,text,text[],text,text,boolean,integer) from public, anon, authenticated;
 grant execute on function public.retrieve_operating_memory(uuid,text,text[],text,text,boolean,integer) to service_role;
 
--- Evidence surface for Direction. It is intentionally aggregate-only: the
--- Direction UI can prove that Memory & Context is operating without exposing
--- sensitive memory content.
 create or replace view public.caye_memory_capability_evidence as
 select
   f.workspace_id,
-  count(*) filter (where f.superseded_at is null and (f.expires_at is null or f.expires_at > now())) as active_memories,
+  count(*) filter (where f.superseded_at is null and f.valid_from <= now() and (f.expires_at is null or f.expires_at > now())) as active_memories,
   count(distinct f.memory_type) filter (where f.superseded_at is null) as active_memory_types,
   count(*) filter (where f.correction_of_fact_id is not null) as correction_chain_links,
   count(*) filter (where f.provenance <> '{}'::jsonb) as memories_with_provenance,
@@ -188,4 +196,4 @@ from public.business_facts f
 group by f.workspace_id;
 
 comment on view public.caye_memory_capability_evidence is
-  'Aggregate evidence for the Direction Memory & Context capability; no memory content is exposed.';
+  'Aggregate evidence for Direction Memory & Context capability; no memory content is exposed.';
