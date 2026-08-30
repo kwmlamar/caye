@@ -1,0 +1,20 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "incremental": false
+  },
+  "include": [
+    "next-env.d.ts",
+    "lib/effect-verification.ts",
+    "lib/effect-verification-store.ts",
+    "lib/calendar-effect-verification.ts",
+    "lib/calendar-sync.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "ui-ux-pro-max-skill",
+    "scripts",
+    "**/*.test.ts",
+    "**/*.test.tsx"
+  ]
+}

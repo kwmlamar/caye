@@ -2,22 +2,10 @@
  * calendar-sync.ts
  *
  * Mirrors a single booking to the workspace's external calendar (Zoho today).
- * Used by /api/calendar/sync (BookingModal), every channel webhook, and the
- * agent's own booking tools — 11 call sites, all fire-and-forget.
- *
- * LOCAL-FIRST (2026-08-11)
- * Supabase is the source of truth; Zoho is a mirror allowed to be late.
- * Previously a Zoho outage meant the event silently never existed: the catch
- * below logged to console, returned { synced: false }, and every caller
- * discarded it via `.catch(() => {})`. Nothing retried. Nothing recorded that
- * the owner's calendar was now wrong.
- *
- * Now a transient failure enqueues the intent in caye_pending_operations and
- * marks bookings.calendar_sync_status = 'pending'. The booking is real either
- * way; /api/caye/operation-worker owns catching Zoho up.
- *
- * The signature and the { synced: false, reason } shape are unchanged, so all
- * 11 call sites keep working untouched.
+ * Supabase is the local source of truth; Zoho is a mirror allowed to be late.
+ * External mutation success is NOT treated as proof that the intended calendar
+ * effect occurred. Every mutating path that has an external event id performs
+ * an independent Zoho read-back before returning synced:true.
  */
 
 import 'server-only'
@@ -30,21 +18,57 @@ import {
   deleteZohoCalendarEvent,
   type BookingEventInput,
 } from './zoho-calendar'
+import { verifyCalendarDelete, verifyCalendarUpsert } from './calendar-effect-verification'
+import type { EffectVerificationStatus, ExecutionReceipt } from './effect-verification'
 
 export type SyncAction = 'upsert' | 'delete'
 export type SyncResult =
-  | { synced: true; action: 'create' | 'update' | 'delete'; event_id?: string }
-  /**
-   * `deferred: true` means the mirror is queued and will be retried — the
-   * booking itself is committed and correct. Distinct from a plain
-   * { synced: false }, which means we deliberately did nothing (sync off, no
-   * Zoho account) and there is nothing to catch up.
-   */
-  | { synced: false; reason: string; deferred?: boolean }
+  | {
+      synced: true
+      action: 'create' | 'update' | 'delete'
+      event_id?: string
+      verification_status?: EffectVerificationStatus
+    }
+  | {
+      synced: false
+      reason: string
+      deferred?: boolean
+      verification_status?: EffectVerificationStatus
+    }
 
 /** Stable per (booking, action) so retries can never double-create an event. */
 export function calendarIdempotencyKey(bookingId: string, action: SyncAction): string {
   return `zoho_calendar:${bookingId}:${action}`
+}
+
+async function enqueueCalendarRetry(args: {
+  workspaceId: string
+  bookingId: string
+  action: SyncAction
+  reason: string
+}): Promise<boolean> {
+  const enqueued = await enqueueOperation({
+    workspaceId: args.workspaceId,
+    operation: args.action === 'delete' ? 'zoho_calendar_delete' : 'zoho_calendar_upsert',
+    payload: { booking_id: args.bookingId },
+    idempotencyKey: calendarIdempotencyKey(args.bookingId, args.action),
+    lastError: args.reason,
+  })
+  return enqueued.queued
+}
+
+function executionReceipt(args: {
+  attemptedAt: string
+  externalId?: string | null
+  details?: Record<string, unknown>
+}): ExecutionReceipt {
+  return {
+    ok: true,
+    attemptedAt: args.attemptedAt,
+    executedAt: new Date().toISOString(),
+    externalId: args.externalId ?? null,
+    details: args.details ?? null,
+  }
 }
 
 export async function syncBookingToCalendar(
@@ -52,6 +76,7 @@ export async function syncBookingToCalendar(
   bookingId: string,
   action: SyncAction
 ): Promise<SyncResult> {
+  const requestedAt = new Date().toISOString()
   const supabase = createServiceClient()
 
   const { data: booking, error: bkErr } = await supabase
@@ -62,9 +87,7 @@ export async function syncBookingToCalendar(
     .eq('id', bookingId)
     .single()
 
-  if (bkErr || !booking) {
-    return { synced: false, reason: 'Booking not found' }
-  }
+  if (bkErr || !booking) return { synced: false, reason: 'Booking not found' }
   if (booking.user_id !== workspaceId) {
     return { synced: false, reason: 'Booking does not belong to workspace' }
   }
@@ -77,9 +100,6 @@ export async function syncBookingToCalendar(
     .eq('is_active', true)
     .maybeSingle()
 
-  // Nothing to mirror to. Record that explicitly rather than leaving the
-  // column NULL — "no calendar connected" and "never tried" look identical
-  // otherwise, and only one of them is worth chasing.
   if (!account) {
     await markSyncState(bookingId, 'not_applicable', null)
     return { synced: false, reason: 'No active Zoho email account' }
@@ -101,77 +121,209 @@ export async function syncBookingToCalendar(
     notes: booking.notes,
   }
 
+  let newlyCreatedEventId: string | null = null
+
   try {
     if (action === 'delete') {
-      if (booking.zoho_event_id) {
-        await deleteZohoCalendarEvent(workspaceId, booking.zoho_event_id)
-        await supabase.from('bookings').update({ zoho_event_id: null }).eq('id', booking.id)
+      if (!booking.zoho_event_id) {
+        await cancelOperationsForKey(calendarIdempotencyKey(bookingId, 'upsert'))
+        await markSyncState(bookingId, 'not_applicable', null)
+        return { synced: true, action: 'delete' }
       }
-      // A pending upsert for a booking we just deleted would recreate the
-      // event on the next worker tick. Retire it.
+
+      const attemptedAt = new Date().toISOString()
+      await deleteZohoCalendarEvent(workspaceId, booking.zoho_event_id)
+      const verification = await verifyCalendarDelete({
+        workspaceId,
+        bookingId,
+        eventId: booking.zoho_event_id,
+        bookingDate: booking.booking_date,
+        requestedAt,
+        execution: executionReceipt({
+          attemptedAt,
+          externalId: booking.zoho_event_id,
+          details: { action: 'delete' },
+        }),
+      })
+
+      if (verification.status !== 'VERIFIED') {
+        const queued = await enqueueCalendarRetry({
+          workspaceId,
+          bookingId,
+          action: 'delete',
+          reason: `Calendar delete ${verification.status}: ${verification.reason}`,
+        })
+        await markSyncState(bookingId, queued ? 'pending' : 'failed', verification.reason)
+        return {
+          synced: false,
+          reason: verification.reason,
+          deferred: queued || undefined,
+          verification_status: verification.status,
+        }
+      }
+
+      const { error: clearErr } = await supabase
+        .from('bookings')
+        .update({ zoho_event_id: null })
+        .eq('id', booking.id)
+      if (clearErr) {
+        await markSyncState(bookingId, 'failed', `Verified delete but could not clear event id: ${clearErr.message}`)
+        return {
+          synced: false,
+          reason: `Zoho delete was verified, but local reconciliation failed: ${clearErr.message}`,
+          verification_status: 'VERIFIED',
+        }
+      }
+
       await cancelOperationsForKey(calendarIdempotencyKey(bookingId, 'upsert'))
       await markSyncState(bookingId, 'not_applicable', null)
-      return { synced: true, action: 'delete' }
+      return { synced: true, action: 'delete', verification_status: 'VERIFIED' }
     }
 
     if (booking.zoho_event_id) {
+      const attemptedAt = new Date().toISOString()
       try {
         await updateZohoCalendarEvent(workspaceId, booking.zoho_event_id, eventInput)
-        await markSyncState(bookingId, 'synced', null)
-        return { synced: true, action: 'update', event_id: booking.zoho_event_id }
       } catch (err) {
-        // The event was deleted in Zoho directly (a732dd6's ETAG lookup 404s
-        // and throws "no longer exists"). Retrying an update against a
-        // deleted event can never succeed, and leaving it means the booking
-        // is simply absent from the owner's calendar forever. Recover by
-        // forgetting the dead id and creating a fresh event below.
         if (classifyError(err, 'ZOHO_CALENDAR_UPDATE_FAILED').status !== 'NOT_FOUND') throw err
         console.warn(
           `[calendar-sync] event ${booking.zoho_event_id} is gone from Zoho; recreating for booking ${booking.id}`
         )
-        await supabase.from('bookings').update({ zoho_event_id: null }).eq('id', booking.id)
+        const { error: clearDeadIdErr } = await supabase
+          .from('bookings')
+          .update({ zoho_event_id: null })
+          .eq('id', booking.id)
+        if (clearDeadIdErr) throw clearDeadIdErr
+      }
+
+      if (booking.zoho_event_id) {
+        const verification = await verifyCalendarUpsert({
+          workspaceId,
+          bookingId,
+          eventId: booking.zoho_event_id,
+          booking: eventInput,
+          requestedAt,
+          execution: executionReceipt({
+            attemptedAt,
+            externalId: booking.zoho_event_id,
+            details: { action: 'update' },
+          }),
+        })
+        if (verification.status === 'VERIFIED') {
+          await markSyncState(bookingId, 'synced', null)
+          return {
+            synced: true,
+            action: 'update',
+            event_id: booking.zoho_event_id,
+            verification_status: 'VERIFIED',
+          }
+        }
+
+        const queued = await enqueueCalendarRetry({
+          workspaceId,
+          bookingId,
+          action: 'upsert',
+          reason: `Calendar update ${verification.status}: ${verification.reason}`,
+        })
+        await markSyncState(bookingId, queued ? 'pending' : 'failed', verification.reason)
+        return {
+          synced: false,
+          reason: verification.reason,
+          deferred: queued || undefined,
+          verification_status: verification.status,
+        }
       }
     }
 
+    const attemptedAt = new Date().toISOString()
     const eventId = await createZohoCalendarEvent(workspaceId, eventInput)
-    // Verification, not assumption: createZohoCalendarEvent already throws
-    // when Zoho returns no uid, so reaching here means we hold a real
-    // external id — and we persist it before claiming success.
-    await supabase.from('bookings').update({ zoho_event_id: eventId }).eq('id', booking.id)
-    await markSyncState(bookingId, 'synced', null)
-    return { synced: true, action: 'create', event_id: eventId }
+    newlyCreatedEventId = eventId
+
+    // Persist the external identity before any retry can be queued. If this
+    // write fails, re-executing would risk creating a second Zoho event.
+    const { error: persistIdErr } = await supabase
+      .from('bookings')
+      .update({ zoho_event_id: eventId })
+      .eq('id', booking.id)
+    if (persistIdErr) {
+      const verification = await verifyCalendarUpsert({
+        workspaceId,
+        bookingId,
+        eventId,
+        booking: eventInput,
+        requestedAt,
+        execution: executionReceipt({ attemptedAt, externalId: eventId, details: { action: 'create' } }),
+      })
+      const reason =
+        `Zoho event creation is ${verification.status}, but its external id could not be persisted locally; ` +
+        `automatic retry is blocked to avoid a duplicate event. ${persistIdErr.message}`
+      await markSyncState(bookingId, 'failed', reason)
+      return { synced: false, reason, verification_status: verification.status }
+    }
+
+    const verification = await verifyCalendarUpsert({
+      workspaceId,
+      bookingId,
+      eventId,
+      booking: eventInput,
+      requestedAt,
+      execution: executionReceipt({ attemptedAt, externalId: eventId, details: { action: 'create' } }),
+    })
+
+    if (verification.status === 'VERIFIED') {
+      await markSyncState(bookingId, 'synced', null)
+      return {
+        synced: true,
+        action: 'create',
+        event_id: eventId,
+        verification_status: 'VERIFIED',
+      }
+    }
+
+    const queued = await enqueueCalendarRetry({
+      workspaceId,
+      bookingId,
+      action: 'upsert',
+      reason: `Calendar create ${verification.status}: ${verification.reason}`,
+    })
+    await markSyncState(bookingId, queued ? 'pending' : 'failed', verification.reason)
+    return {
+      synced: false,
+      reason: verification.reason,
+      deferred: queued || undefined,
+      verification_status: verification.status,
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     const classified = classifyError(err, 'ZOHO_CALENDAR_SYNC_FAILED')
 
-    // Permanent failures (bad request, revoked scope) will not fix themselves
-    // by being retried on a timer. Mark and stop; the health surface can
-    // report it and a human can reconnect.
+    // If create returned an external id, the effect may already exist. Never
+    // queue another create unless that id was durably attached to the booking.
+    if (newlyCreatedEventId) {
+      const reason =
+        `Calendar create may have happened as event ${newlyCreatedEventId}, but post-execution handling failed: ${msg}. ` +
+        `Automatic retry blocked to avoid a duplicate.`
+      console.error(`[calendar-sync] ${reason}`)
+      await markSyncState(bookingId, 'failed', reason)
+      return { synced: false, reason, verification_status: 'INDETERMINATE' }
+    }
+
     if (classified.status !== 'FAILED_RETRYABLE') {
       console.error(`[calendar-sync] ${action} permanently failed for booking ${booking.id}:`, msg)
       await markSyncState(bookingId, 'failed', msg)
-      return { synced: false, reason: msg }
+      return { synced: false, reason: msg, verification_status: 'FAILED' }
     }
 
-    const enqueued = await enqueueOperation({
-      workspaceId,
-      operation: action === 'delete' ? 'zoho_calendar_delete' : 'zoho_calendar_upsert',
-      payload: { booking_id: bookingId },
-      idempotencyKey: calendarIdempotencyKey(bookingId, action),
-      lastError: msg,
-    })
-
-    if (!enqueued.queued) {
-      // Could not even record the promise. Say so honestly rather than
-      // implying a retry that will never come.
+    const queued = await enqueueCalendarRetry({ workspaceId, bookingId, action, reason: msg })
+    if (!queued) {
       console.error(`[calendar-sync] ${action} failed AND could not queue for booking ${booking.id}:`, msg)
       await markSyncState(bookingId, 'failed', msg)
-      return { synced: false, reason: msg }
+      return { synced: false, reason: msg, verification_status: 'FAILED' }
     }
 
     console.warn(`[calendar-sync] ${action} deferred for booking ${booking.id}: ${msg}`)
     await markSyncState(bookingId, 'pending', msg)
-    return { synced: false, reason: msg, deferred: true }
+    return { synced: false, reason: msg, deferred: true, verification_status: 'FAILED' }
   }
 }
 
