@@ -7,7 +7,7 @@ function baseInput(): DecisionAnalysisInput {
     situation: 'Choose a bounded recovery strategy for an engineering service.',
     evidence: [
       { ref: 'analysis:latency', statement: 'Retries recover transient failures.', epistemicKind: 'known', direction: 'supports', confidence: 'high' },
-      { ref: 'analysis:blast-radius', statement: 'Restarting the whole service interrupts healthy traffic.', epistemicKind: 'known', direction: 'supports', confidence: 'high' },
+      { ref: 'analysis:blast-radius', statement: 'Restarting the whole service interrupts healthy traffic.', epistemicKind: 'known', direction: 'context', confidence: 'high' },
     ],
     unknowns: [],
     alternatives: [
