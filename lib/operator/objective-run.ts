@@ -31,22 +31,31 @@ export async function runBoundedObjective<TContext>(input: {
   context: TContext
   steps: ObjectiveStep<TContext>[]
   allowedAuthority: ReadonlySet<Authority>
+  completedSteps?: ReadonlySet<string>
   maxTransitions?: number
   timeoutMs?: number
+  onEvent?: (event: ObjectiveEvent) => Promise<void>
 }): Promise<ObjectiveRunResult> {
   const maxTransitions = input.maxTransitions ?? 12
   const timeoutMs = input.timeoutMs ?? 45_000
   const started = Date.now()
   const events: ObjectiveEvent[] = []
-  const completedSteps: string[] = []
+  const completedSteps = [...(input.completedSteps ?? new Set<string>())]
   let transitions = 0
 
+  const emit = async (event: ObjectiveEvent) => {
+    events.push(event)
+    await input.onEvent?.(event)
+  }
+
   for (const step of input.steps) {
+    if (completedSteps.includes(step.key)) continue
+
     if (Date.now() - started >= timeoutMs || transitions >= maxTransitions) {
       return { status: 'budget_exhausted', events, completedSteps, blockedStep: step.key }
     }
     if (!input.allowedAuthority.has(step.authority)) {
-      events.push({ at: new Date().toISOString(), step: step.key, state: 'blocked', attempt: 0, error: `Authority ${step.authority} not granted` })
+      await emit({ at: new Date().toISOString(), step: step.key, state: 'blocked', attempt: 0, error: `Authority ${step.authority} not granted` })
       return { status: 'blocked', events, completedSteps, blockedStep: step.key }
     }
 
@@ -57,21 +66,21 @@ export async function runBoundedObjective<TContext>(input: {
         return { status: 'budget_exhausted', events, completedSteps, blockedStep: step.key }
       }
       transitions++
-      events.push({ at: new Date().toISOString(), step: step.key, state: 'running', attempt })
+      await emit({ at: new Date().toISOString(), step: step.key, state: 'running', attempt })
       try {
         const effect = await step.execute(input.context)
         const verification = await step.verify(input.context, effect)
         if (verification.ok) {
-          events.push({ at: new Date().toISOString(), step: step.key, state: 'verified', attempt, evidence: verification.evidence })
+          await emit({ at: new Date().toISOString(), step: step.key, state: 'verified', attempt, evidence: verification.evidence })
           completedSteps.push(step.key)
           lastError = ''
           break
         }
         lastError = verification.reason ?? 'Side effect could not be verified'
-        events.push({ at: new Date().toISOString(), step: step.key, state: 'failed', attempt, error: lastError, evidence: verification.evidence })
+        await emit({ at: new Date().toISOString(), step: step.key, state: 'failed', attempt, error: lastError, evidence: verification.evidence })
       } catch (error) {
         lastError = error instanceof Error ? error.message : String(error)
-        events.push({ at: new Date().toISOString(), step: step.key, state: 'failed', attempt, error: lastError })
+        await emit({ at: new Date().toISOString(), step: step.key, state: 'failed', attempt, error: lastError })
       }
     }
     if (lastError) return { status: 'failed', events, completedSteps, blockedStep: step.key }
