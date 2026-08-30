@@ -38,6 +38,7 @@ const SEMANTIC_KEY_TO_CATEGORY: Record<string, ProfileFactCategory> = {
   availability_start_date: 'general',
   background_check_acknowledgment: 'attestation',
   arbitration_acknowledgment: 'attestation',
+  linkedin: 'general',
 }
 
 /**

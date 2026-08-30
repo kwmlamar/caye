@@ -100,7 +100,7 @@ describe('classifyFieldLabel — never guesses on genuinely novel questions', ()
   })
 })
 
-describe('classifyFieldLabel — structural fields', () => {
+describe('classifyFieldLabel — structural/profile fields', () => {
   it.each([
     ['First Name', 'first_name'],
     ['Last Name', 'last_name'],
@@ -108,12 +108,13 @@ describe('classifyFieldLabel — structural fields', () => {
     ['Phone', 'phone'],
     ['Resume/CV', 'resume'],
     ['Cover Letter', 'cover_letter'],
+    ['LinkedIn Profile', 'linkedin'],
+    ['Please share the link to your LinkedIn profile:', 'linkedin'],
   ])('%s -> %s', (label, expected) => {
     expect(classifyFieldLabel(label)).toBe(expected)
   })
 
-  it('a portfolio/profile URL is not mistaken for a structural contact field', () => {
-    expect(classifyFieldLabel('LinkedIn Profile')).toBeNull()
+  it('other portfolio/profile URLs are not mistaken for known profile fields', () => {
     expect(classifyFieldLabel('GitHub URL')).toBeNull()
     expect(classifyFieldLabel('Portfolio Website')).toBeNull()
     expect(classifyFieldLabel('How did you hear about us?')).toBeNull()
