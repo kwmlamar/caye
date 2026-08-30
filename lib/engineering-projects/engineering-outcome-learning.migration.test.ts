@@ -25,6 +25,8 @@ describe('engineering outcome learning migration contracts', () => {
     expect(sql).toContain("p_authority_kind := 'system'")
     expect(sql).toContain("'kind', 'engineering_project_verdict'")
     expect(sql).toContain("'source_message_id', new.source_message_id")
+    expect(sql).toContain("'execution_evidence_required', true")
+    expect(sql).toContain("'outcome_evidence_required', true")
   })
 
   it('supersedes only the prior derived system lesson for the same project and property', () => {
@@ -34,6 +36,13 @@ describe('engineering outcome learning migration contracts', () => {
     expect(sql).toContain("f.knowledge_mode = 'derived'")
     expect(sql).toContain("f.authority_kind = 'system'")
     expect(sql).toContain('p_supersede_id := v_prior_memory_id')
+  })
+
+  it('does not silently claim measured or observed authority for a derived verdict lesson', () => {
+    expect(sql).not.toContain("p_knowledge_mode := 'observed'")
+    expect(sql).not.toContain("p_authority_kind := 'owner'")
+    expect(sql).toContain("p_source := 'owner-direct'")
+    expect(sql).toContain("p_created_by := 'engineering_verdict_learning_v1'")
   })
 
   it('exposes a service-role-only, property-scoped read path for later engineering decisions', () => {
