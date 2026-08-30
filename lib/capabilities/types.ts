@@ -23,6 +23,7 @@ export type CapabilityNamespace =
   | 'property'
   | 'research'
   | 'growth'
+  | 'perception'
   // Founder-only job-search operator (CAY-192). Never workspace-scoped —
   // capabilities in this namespace must not accept or branch on
   // context.scope.workspaceId, since job_search_* tables have no
