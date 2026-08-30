@@ -89,6 +89,7 @@ import { explainJobSearchRejection } from './admin/read/explain-job-search-rejec
 import { pauseJobSearch } from './admin/write-low/pause-job-search'
 import { resumeJobSearch } from './admin/write-low/resume-job-search'
 import { listApplicationsNeedingReview } from './admin/read/list-applications-needing-review'
+import { inspectJobSearchApplications } from './admin/read/inspect-job-search-applications'
 import { explainApplicationStatus } from './admin/read/explain-application-status'
 import { getApplicationSubmissionEvidence } from './admin/read/get-application-submission-evidence'
 import { getExecutionDailySummary } from './admin/read/get-execution-daily-summary'
@@ -273,6 +274,7 @@ export const TOOL_REGISTRY: AnyTool[] = [
   // gateAdminHighRisk-wrapped, same confirmation mechanism as
   // set_workspace_autonomy above.
   listApplicationsNeedingReview as AnyTool,
+  inspectJobSearchApplications as AnyTool,
   explainApplicationStatus as AnyTool,
   getApplicationSubmissionEvidence as AnyTool,
   getExecutionDailySummary as AnyTool,
