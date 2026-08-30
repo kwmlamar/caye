@@ -19,6 +19,7 @@ declare
   v_device_count integer := 0;
   v_event_count integer := 0;
   v_capability_count integer := 0;
+  v_affected integer := 0;
 begin
   for v_source in
     select *
@@ -51,7 +52,8 @@ begin
        and source_kind = v_source.source_kind
        and source_identity = v_source.source_identity
        and status = 'active';
-    get diagnostics v_capability_count = v_capability_count + row_count;
+    get diagnostics v_affected = row_count;
+    v_capability_count := v_capability_count + v_affected;
 
     if v_source.source_kind = 'property.telemetry'
        and v_source.subject_kind = 'property_sensor_device'
@@ -62,9 +64,8 @@ begin
        where id = v_source.subject_id::uuid
          and workspace_id = v_source.workspace_id
          and status = 'active';
-      if found then
-        v_device_count := v_device_count + 1;
-      end if;
+      get diagnostics v_affected = row_count;
+      v_device_count := v_device_count + v_affected;
     end if;
 
     insert into public.workspace_events (
