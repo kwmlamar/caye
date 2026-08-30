@@ -14,43 +14,28 @@ function describeAdminPendingAction(toolName: string, args: Record<string, unkno
 }
 
 /**
- * A sourcing/scoring run only reads public job boards and updates Caye's
- * internal founder-only candidate pool. It cannot submit an application or
- * contact anyone, so requiring a second founder message adds friction without
- * protecting an external side effect. Keep every other trigger_cron invocation
- * behind the normal admin high-risk confirmation gate.
+ * These founder job-search operations have no external side effect:
+ * sourcing reads public boards and writes the internal candidate pool;
+ * preparation selects only active VERIFIED resume variants and creates
+ * internal preparation/readiness state. Neither operation can submit an
+ * application or contact an employer. External ATS execution remains behind
+ * the separate execution policy/evidence boundary.
  */
 function canExecuteWithoutConfirmation(toolName: string, args: unknown): boolean {
   if (toolName !== 'trigger_cron' || !args || typeof args !== 'object') return false
-  return (args as { cron_name?: unknown }).cron_name === 'job-search-sourcing'
+  const cronName = (args as { cron_name?: unknown }).cron_name
+  return cronName === 'job-search-sourcing' || cronName === 'job-search-prepare'
 }
 
-/**
- * Admin-shell analog of gateHighRisk (lib/caye-agent/tools/high-risk-gate.ts)
- * — same code-enforced, requestId-based confirmation mechanism (stage on
- * first call, only execute when the same tool+args is seen again from a
- * DIFFERENT top-level request), but backed by caye_admin_pending_actions
- * instead of caye_pending_actions.
- *
- * Deliberately a separate table/gate rather than reusing gateHighRisk
- * directly: that table's workspace_id/operator_id columns are NOT NULL/FK
- * and scope every lookup, which doesn't fit admin-shell's workspace-less,
- * single-caller (founder-only) surface. Loosening those constraints on the
- * shared safety rail for customer-facing high-risk actions, just to fit an
- * unrelated dev/ops console, is out of scope here.
- */
 export function gateAdminHighRisk<T>(tool: Tool<T>): Tool<T> {
   return {
     ...tool,
     async execute(args, ctx: ToolContext): Promise<ToolResult> {
-      if (canExecuteWithoutConfirmation(tool.name, args)) {
-        return tool.execute(args, ctx)
-      }
+      if (canExecuteWithoutConfirmation(tool.name, args)) return tool.execute(args, ctx)
 
       const supabase = createServiceClient()
       const argsKey = stableArgsKey(args)
       const nowISO = new Date().toISOString()
-
       const { data: existing } = await supabase
         .from('caye_admin_pending_actions')
         .select('id, created_in_request_id')
@@ -64,24 +49,13 @@ export function gateAdminHighRisk<T>(tool: Tool<T>): Tool<T> {
         .maybeSingle()
 
       const summary = describeAdminPendingAction(tool.name, args as Record<string, unknown>)
-
       if (existing) {
         if (existing.created_in_request_id !== ctx.requestId) {
           const result = await tool.execute(args, ctx)
-          await supabase
-            .from('caye_admin_pending_actions')
-            .update({ executed_at: new Date().toISOString(), result })
-            .eq('id', existing.id)
+          await supabase.from('caye_admin_pending_actions').update({ executed_at: new Date().toISOString(), result }).eq('id', existing.id)
           return result
         }
-        return {
-          ok: true,
-          data: {
-            pending: true,
-            summary,
-            note: 'Already staged this turn — relay the summary and stop. Do not call this tool again until the founder replies in a new message.',
-          },
-        }
+        return { ok: true, data: { pending: true, summary, note: 'Already staged this turn — relay the summary and stop. Do not call this tool again until the founder replies in a new message.' } }
       }
 
       const { error } = await supabase.from('caye_admin_pending_actions').insert({
@@ -92,19 +66,8 @@ export function gateAdminHighRisk<T>(tool: Tool<T>): Tool<T> {
         created_in_request_id: ctx.requestId,
         expires_at: new Date(Date.now() + PENDING_TTL_MINUTES * 60 * 1000).toISOString(),
       })
-      if (error) {
-        return { ok: false, error: `Could not stage this action: ${error.message}` }
-      }
-
-      return {
-        ok: true,
-        data: {
-          pending: true,
-          summary,
-          expires_in_minutes: PENDING_TTL_MINUTES,
-          note: 'Staged, not executed yet. Relay the summary and ask the founder to confirm. Once they reply affirmatively in a NEW message, call this same tool with the same arguments again to actually run it.',
-        },
-      }
+      if (error) return { ok: false, error: `Could not stage this action: ${error.message}` }
+      return { ok: true, data: { pending: true, summary, expires_in_minutes: PENDING_TTL_MINUTES, note: 'Staged, not executed yet. Relay the summary and ask the founder to confirm. Once they reply affirmatively in a NEW message, call this same tool with the same arguments again to actually run it.' } }
     },
   } as Tool<T>
 }
