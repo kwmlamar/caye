@@ -10,12 +10,8 @@
       "schedule": "0 */4 * * *"
     },
     {
-      "path": "/api/caye/job-search-prepare",
+      "path": "/api/caye/job-search-objective",
       "schedule": "10 */4 * * *"
-    },
-    {
-      "path": "/api/caye/job-search-inspect",
-      "schedule": "20 */4 * * *"
     },
     {
       "path": "/api/caye/research-worker",
