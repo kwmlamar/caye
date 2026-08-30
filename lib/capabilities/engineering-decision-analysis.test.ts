@@ -81,6 +81,22 @@ describe('engineering decision analysis capability', () => {
     if (result.status === 'failed') expect(result.failure.code).toBe('unavailable')
   })
 
+  it('does not promote caller-supplied outcome refs to trusted capability evidence', async () => {
+    const analyzed = await engineeringDecisionAnalysisCapability.execute(args(), context('workspace-1'))
+    expect(analyzed.status).toBe('inferred')
+    if (analyzed.status === 'failed') return
+    const result = await engineeringDecisionAnalysisCapability.execute({
+      mode: 'compare_outcome',
+      record: analyzed.data as never,
+      outcome: { alternativeId: 'retry', observed: 'Recovered.', evidenceRefs: ['execution-unverified'], verdict: 'matched', notes: [] },
+    }, context('workspace-1'))
+    expect(result.status).toBe('inferred')
+    if (result.status !== 'failed') {
+      expect(result.evidence).toEqual([])
+      expect(result.data).toMatchObject({ comparison: 'supported' })
+    }
+  })
+
   it('refuses cross-workspace outcome comparison', async () => {
     const analyzed = await engineeringDecisionAnalysisCapability.execute(args(), context('workspace-1'))
     expect(analyzed.status).toBe('inferred')
