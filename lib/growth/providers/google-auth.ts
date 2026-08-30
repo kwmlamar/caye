@@ -23,19 +23,32 @@ function base64Url(value: string | Buffer): string {
   return Buffer.from(value).toString('base64url')
 }
 
+function warnAuthFailure(code: string, metadata?: Record<string, string | number>) {
+  // Never log the service-account JSON, client email, private key, JWT, access token,
+  // or Google's free-form error_description. Only bounded diagnostic codes belong here.
+  console.warn('[growth-google-auth]', code, metadata ?? {})
+}
+
 function loadServiceAccount(): ServiceAccount | null {
   const raw = process.env.GOOGLE_GROWTH_SERVICE_ACCOUNT_JSON
-  if (!raw) return null
+  if (!raw) {
+    warnAuthFailure('credentials_missing')
+    return null
+  }
 
   try {
     const parsed = JSON.parse(raw) as Partial<ServiceAccount>
-    if (!parsed.client_email || !parsed.private_key) return null
+    if (!parsed.client_email || !parsed.private_key) {
+      warnAuthFailure('credentials_incomplete')
+      return null
+    }
     return {
       client_email: parsed.client_email,
       private_key: parsed.private_key.replace(/\\n/g, '\n'),
       token_uri: parsed.token_uri,
     }
   } catch {
+    warnAuthFailure('credentials_malformed_json')
     return null
   }
 }
@@ -70,10 +83,17 @@ export async function getGoogleGrowthAccessToken(scopes: string[]): Promise<stri
     exp: issuedAt + 3600,
   }))
   const unsigned = `${header}.${claims}`
-  const signer = createSign('RSA-SHA256')
-  signer.update(unsigned)
-  signer.end()
-  const assertion = `${unsigned}.${signer.sign(account.private_key).toString('base64url')}`
+
+  let assertion: string
+  try {
+    const signer = createSign('RSA-SHA256')
+    signer.update(unsigned)
+    signer.end()
+    assertion = `${unsigned}.${signer.sign(account.private_key).toString('base64url')}`
+  } catch {
+    warnAuthFailure('private_key_invalid')
+    return null
+  }
 
   try {
     const response = await fetch(tokenUri, {
@@ -86,9 +106,23 @@ export async function getGoogleGrowthAccessToken(scopes: string[]): Promise<stri
       signal: AbortSignal.timeout(15_000),
     })
 
-    if (!response.ok) return null
+    if (!response.ok) {
+      let googleError = 'unknown'
+      try {
+        const body = await response.clone().json() as TokenResponse
+        if (body.error && /^[a-z0-9_.-]{1,64}$/i.test(body.error)) googleError = body.error
+      } catch {
+        // Response bodies can be empty/non-JSON. The HTTP status still gives us a safe signal.
+      }
+      warnAuthFailure('token_rejected', { status: response.status, google_error: googleError })
+      return null
+    }
+
     const body = await response.json() as TokenResponse
-    if (!body.access_token) return null
+    if (!body.access_token) {
+      warnAuthFailure('token_missing_access_token')
+      return null
+    }
 
     const cachedToken = {
       accessToken: body.access_token,
@@ -96,7 +130,8 @@ export async function getGoogleGrowthAccessToken(scopes: string[]): Promise<stri
     }
     cachedTokens.set(cacheKey, cachedToken)
     return cachedToken.accessToken
-  } catch {
+  } catch (error) {
+    warnAuthFailure('token_request_failed', { error_name: error instanceof Error ? error.name : 'unknown' })
     return null
   }
 }
