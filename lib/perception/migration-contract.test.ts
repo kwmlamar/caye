@@ -28,7 +28,7 @@ describe('perception migration contract', () => {
   it('suppresses delayed telemetry from the canonical change stream without deleting raw history', () => {
     const sql = migration('20260830h_perception_suppress_out_of_order_events.sql')
     expect(sql).toContain('where workspace_id = new.workspace_id')
-    expect(sql).toContain("source_kind = v_source_kind")
+    expect(sql).toContain('source_kind = v_source_kind')
     expect(sql).toContain('subject_id = v_subject_id')
     expect(sql).toContain('new.occurred_at < v_current_observed_at')
     expect(sql).toContain('return null')
@@ -58,5 +58,37 @@ describe('perception migration contract', () => {
     expect(sql).toContain('greatest(last_seen_at, new.observed_at)')
     expect(sql).not.toContain('workspace_events')
     expect(sql).not.toContain('perception_capability_evidence')
+  })
+
+  it('transitions only expired active sources to stale under a row lock', () => {
+    const sql = migration('20260830k_perception_freshness_monitor.sql')
+    expect(sql).toContain("where status = 'active'")
+    expect(sql).toContain('fresh_until < p_now')
+    expect(sql).toContain('for update skip locked')
+    expect(sql).toContain("set status = 'stale'")
+  })
+
+  it('downgrades live capability evidence without granting any action authority', () => {
+    const sql = migration('20260830k_perception_freshness_monitor.sql')
+    expect(sql).toContain("set status = 'limited'")
+    expect(sql).toContain('autonomous_now = false')
+    expect(sql).not.toContain('execute_tool')
+    expect(sql).not.toContain('send_message')
+  })
+
+  it('labels freshness expiry as inference rather than pretending silence was directly observed', () => {
+    const sql = migration('20260830k_perception_freshness_monitor.sql')
+    expect(sql).toContain("'monitoring.perception_source_stale'")
+    expect(sql).toContain("'epistemic_kind', 'inference'")
+    expect(sql).toContain("'inference_kind', 'freshness_expired'")
+    expect(sql).toContain("'severity', 'warning'")
+  })
+
+  it('keeps the freshness sweep service-role only', () => {
+    const sql = migration('20260830k_perception_freshness_monitor.sql')
+    expect(sql).toContain('revoke all on function public.refresh_perception_freshness(timestamptz) from public')
+    expect(sql).toContain('from anon')
+    expect(sql).toContain('from authenticated')
+    expect(sql).toContain('to service_role')
   })
 })
