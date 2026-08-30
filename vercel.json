@@ -18,6 +18,10 @@
       "schedule": "*/15 * * * *"
     },
     {
+      "path": "/api/caye/perception-awareness",
+      "schedule": "*/15 * * * *"
+    },
+    {
       "path": "/api/caye/growth-ingest",
       "schedule": "0 * * * *"
     }
