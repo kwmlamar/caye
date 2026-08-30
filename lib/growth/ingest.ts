@@ -1,6 +1,7 @@
 import 'server-only'
 
 import { createServiceClient } from '@/lib/supabase-server'
+import { ingestBookingEvidence } from './internal-evidence'
 import { readGa4Snapshot } from './providers/ga4'
 
 type GrowthSourceRow = {
@@ -20,11 +21,7 @@ export type GrowthIngestSummary = {
 
 export async function runAllGrowthIngestion(): Promise<{ workspaces: GrowthIngestSummary[] }> {
   const supabase = createServiceClient()
-  const { data, error } = await supabase
-    .from('growth_sources')
-    .select('workspace_id')
-    .neq('status', 'disconnected')
-
+  const { data, error } = await supabase.from('growth_sources').select('workspace_id')
   if (error) throw new Error('growth_sources_unavailable')
 
   const workspaceIds = Array.from(new Set((data ?? []).map((row) => row.workspace_id as string)))
@@ -34,13 +31,22 @@ export async function runAllGrowthIngestion(): Promise<{ workspaces: GrowthInges
 }
 
 /**
- * Pulls external growth evidence for one workspace and writes only normalized
- * observations/source health. No diagnosis generation and no marketing action
- * occurs here. Provider failure updates source health but NEVER inserts a zero.
+ * Normalizes first-party booking evidence and any configured external providers.
+ * Provider failure updates source health but NEVER inserts a zero for unavailable data.
+ * No marketing action occurs here.
  */
 export async function runGrowthIngestion(workspaceId: string): Promise<GrowthIngestSummary> {
   const supabase = createServiceClient()
   const summary: GrowthIngestSummary = { workspaceId, attempted: [], observed: [], unavailable: [] }
+
+  try {
+    await ingestBookingEvidence(workspaceId)
+    summary.attempted.push('bookings')
+    summary.observed.push('bookings')
+  } catch {
+    summary.attempted.push('bookings')
+    summary.unavailable.push({ provider: 'bookings', reason: 'booking_evidence_unavailable' })
+  }
 
   const { data, error } = await supabase
     .from('growth_sources')
@@ -50,8 +56,11 @@ export async function runGrowthIngestion(workspaceId: string): Promise<GrowthIng
   if (error) throw new Error('growth_sources_unavailable')
 
   for (const source of (data ?? []) as GrowthSourceRow[]) {
-    if (source.status === 'disconnected') continue
     if (source.provider !== 'ga4') continue
+    if (source.status === 'disconnected') {
+      summary.unavailable.push({ provider: 'ga4', reason: 'source_disconnected' })
+      continue
+    }
 
     summary.attempted.push(source.provider)
     const propertyId = source.external_account_ref
@@ -91,13 +100,7 @@ export async function runGrowthIngestion(workspaceId: string): Promise<GrowthIng
 
     await supabase
       .from('growth_sources')
-      .update({
-        status: 'connected',
-        last_success_at: observedAt,
-        last_error_at: null,
-        last_error_code: null,
-        updated_at: observedAt,
-      })
+      .update({ status: 'connected', last_success_at: observedAt, last_error_at: null, last_error_code: null, updated_at: observedAt })
       .eq('id', source.id)
       .eq('workspace_id', workspaceId)
 
