@@ -82,9 +82,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (!thread) return NextResponse.json({ error: 'Thread not found' }, { status: 404 })
 
   try {
-    // Canonical subject ownership outranks incidental dashboard selection.
-    // Example: the pinned Mom's Property thread remains bound to the
-    // TropiTech workspace that owns PROP-001 even while Bimini is open.
     const authoritativeWorkspaceId = await resolveAuthoritativeThreadWorkspace(supabase, threadId)
     const turnWorkspaceId = authoritativeWorkspaceId ?? workspaceId
 
@@ -93,12 +90,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       if (!moved) return NextResponse.json({ error: 'Workspace context changed; retry the turn.' }, { status: 409 })
     }
 
-    const requestedMode = VALID_REQUESTED_MODES.find((m) => m === model)
+    // Plain founder Direct now defaults to the authenticated router path.
+    // This keeps the verified founder identity available to canonical
+    // capabilities without changing the attachment safety invariant:
+    // runFounderThreadTurn still forces attachment turns onto the production
+    // multimodal path because the router cannot see raw attachment blocks.
+    const requestedMode = VALID_REQUESTED_MODES.find((m) => m === model) ?? 'auto'
     const result = await runFounderThreadTurn(
       turnWorkspaceId,
       threadId,
       message ?? '',
-      requestedMode ? { requestedMode, founderUserId: user.id } : undefined,
+      { requestedMode, founderUserId: user.id },
       attachments
     )
     return NextResponse.json({

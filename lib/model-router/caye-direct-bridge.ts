@@ -22,22 +22,6 @@ const FOUNDER_DIRECT_REASONING_GUIDANCE = `FOUNDER DIRECT — SYNTHESIZE BEFORE 
 - Never invent a priority merely to fill a list. Ground each inferred item in current workspace evidence; if evidence is genuinely too thin, state what is known and what is missing.
 - Operator/global Direction and per-workspace business state are different scopes. Do not leak operator-global goals into a customer workspace unless they are explicitly available in the scoped context.`
 
-/**
- * The ONE call site where a real Caye Direct thread turn can be answered by
- * a founder-authenticated subscription/API model instead of Caye's
- * production execute.ts::runToolLoop. Deliberately thin: all it does is
- * (1) build the exact same system prompt + history buildBackOfficeTurnContext
- * gives the production path, (2) hand it to the founder-only tool loop with
- * the three real backends, (3) shape the result identically to
- * CayeAgentResult so lib/caye-agent/founder-thread-turn.ts's persistence
- * code downstream doesn't need to know or care which path produced it.
- *
- * Callers MUST supply a founderUserId sourced from a verified session
- * (requireFounder()) — never from request-body input. assertFounderRouterAccess
- * (inside runFounderToolLoop) re-checks it against the same allowlist
- * lib/founder.ts's requireFounder used, so a caller cannot bypass the gate
- * by constructing this context wrong; it can only fail closed harder.
- */
 export interface CayeDirectRouterTurnArgs {
   workspaceId: string
   threadId: string
@@ -46,18 +30,8 @@ export interface CayeDirectRouterTurnArgs {
   operatorId: number | null
   message: string
   requestedMode: RequestedMode
-  /**
-   * Test-only escape hatch, same purpose and precedent as
-   * FounderToolLoopArgs.restrictToToolNames (see that doc comment) — undefined
-   * on every real call site (app/api/founder/caye-direct's route never reads
-   * or forwards a field like this from the request body, so an HTTP caller
-   * cannot reach it), set only by controlled read-only verification scripts
-   * that need a real, DB-persisted Caye Direct turn without exposing write
-   * tools to a live subscription model.
-   */
   restrictToToolNames?: readonly string[]
   engineeringOrigin?: { threadId: string; messageId: string }
-  /** Which Caye surface originated this turn — see ToolContext.channel's doc comment. Always 'dashboard' on this bridge (it is Caye Direct's own router path), threaded explicitly rather than assumed so toolCtx construction stays honest about where the value comes from. */
   channel?: 'dashboard'
 }
 
@@ -69,17 +43,11 @@ export interface CayeDirectRouterTurnResult {
   model?: string
   richResult?: RichResult
   engineeringArtifactIds?: string[]
-  /** Mirrors engineeringArtifactIds' shape/purpose exactly — see ToolContext.engineeringAnalysisIds. */
   engineeringAnalysisIds?: string[]
-  /** business_artifacts ids retrieve_artifact_for_operator resolved for inline Direct delivery this turn — see ToolContext.businessArtifactIds. */
   businessArtifactIds?: string[]
 }
 
 function backendsFor(): ToolCapableBackend[] {
-  // Real, registered backends only — no openai_api class exists yet (see
-  // capabilities.ts/types.ts's doc comments), so 'openai_api' in a planned
-  // chain is silently skipped by runChainWithFallback's byId lookup rather
-  // than invented here.
   return [new ClaudeSubscriptionBackend(), new OpenAICodexSubscriptionBackend(), new AnthropicApiBackend(), new OpenAIApiBackend(), new OpenRouterBackend()]
 }
 
@@ -116,14 +84,10 @@ export async function runCayeDirectRouterTurn(args: CayeDirectRouterTurnArgs): P
     engineeringAnalysisIds,
     businessArtifactIds,
   }
+  // Verified auth.users.id from requireFounder(). Keep this identity ambient
+  // and server-owned so the model can never choose or forge the actor scope.
+  Object.assign(toolCtx, { founderUserId: args.founderUserId })
 
-  // Deliberately no `hints` — see capabilities.ts: setting needsToolUse
-  // would filter claude_subscription/openai_codex_subscription out of an
-  // Auto chain entirely (their static capability table doesn't claim
-  // tool_use, since that table describes NATIVE tool-calling; the real
-  // bridging happens structurally inside founder-tool-loop.ts instead).
-  // Caye Direct is general business conversation, not a coding/repo task,
-  // so isCodingOrRepoTask is correctly left unset too.
   const start = Date.now()
   let decision: RouterDecision | undefined
   try {
@@ -143,11 +107,6 @@ export async function runCayeDirectRouterTurn(args: CayeDirectRouterTurnArgs): P
       `[model-router/caye-direct-bridge] turn served — thread=${args.threadId} requestedMode=${args.requestedMode} ` +
         `selected=${decision.selected ?? 'none'} fallbacks=${decision.fallbacksTried.map((f) => `${f.backend}:${f.reason}`).join(',') || 'none'}`
     )
-    // Structured line — see observability.ts's doc comment: this shape is
-    // deliberately flat/JSON so it can go straight to a Supabase table
-    // later without redesign. Until that table exists, this is the only
-    // place the redacted, fully-typed log record (cost/usage fields the
-    // line above doesn't carry) actually reaches anywhere.
     console.log('[model-router/caye-direct-bridge] invocation_log', JSON.stringify(buildInvocationLog({
       requestedMode: args.requestedMode,
       selectedBackend: decision.selected,
