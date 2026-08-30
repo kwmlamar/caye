@@ -13,6 +13,13 @@ export type FounderCapabilityInvocationInput = {
   args?: unknown
 }
 
+export type FounderResearchStartInput = {
+  capability: 'research.start'
+  version: 1
+  workspaceId: null
+  args: { questionId: string }
+}
+
 /**
  * Capabilities that resolve their own canonical scope from an explicit, founder-
  * visible id rather than from context.scope.workspaceId. Adding a capability here
@@ -53,9 +60,8 @@ function emptyArgs(args: unknown): args is Record<string, never> {
  * Server-side invocation boundary for the founder gateway.
  *
  * The authenticated user id and workspace scope are supplied by trusted server
- * code, never by the model as part of the capability args. V0.1 deliberately
- * allows only read capabilities. Adding writes later requires a separate gate,
- * not a broadening of this function by accident.
+ * code, never by the model as part of the capability args. This read gateway
+ * remains read-only; staged writes use a separate, explicit boundary below.
  */
 export async function invokeFounderReadCapability(
   authenticatedFounderUserId: string,
@@ -105,6 +111,36 @@ export async function invokeFounderReadCapability(
     })
   } catch {
     return failed('unavailable', 'Capability invocation failed.', true)
+  }
+}
+
+/**
+ * Deliberately narrow staged-write gateway. It can enqueue an existing research
+ * question and nothing else. This is not a generic mutation passthrough.
+ */
+export async function invokeFounderResearchStartCapability(
+  authenticatedFounderUserId: string,
+  input: FounderResearchStartInput,
+): Promise<CapabilityResult> {
+  const capability = getRegisteredCapability(cayeCapabilityRegistry, 'research.start')
+  if (!capability || capability.manifest.access !== 'write' || capability.manifest.risk !== 'low') {
+    return failed('unavailable', 'Research start capability is unavailable.')
+  }
+  if (input.workspaceId !== null || input.capability !== 'research.start' || input.version !== 1) {
+    return failed('invalid_args', 'Research start requires operator scope and version 1.')
+  }
+  const questionId = input.args?.questionId
+  if (typeof questionId !== 'string' || !questionId.trim()) {
+    return failed('invalid_args', 'questionId must be a non-empty string.')
+  }
+  try {
+    return await capability.execute({ questionId: questionId.trim() }, {
+      actor: { kind: 'founder', userId: authenticatedFounderUserId },
+      scope: { workspaceId: null },
+      caller: 'external_reasoner',
+    })
+  } catch {
+    return failed('unavailable', 'Research run could not be queued.', true)
   }
 }
 
