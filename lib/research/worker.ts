@@ -93,7 +93,7 @@ export async function runNextResearchJob(
       synthesize: input.synthesize,
     })
 
-    return { status: 'completed' as const, runId: run.id, ...result }
+    return { ...result, runId: run.id }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
 
