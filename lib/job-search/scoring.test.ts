@@ -29,3 +29,55 @@ describe('scoreCandidate — career-level title calibration', () => {
     expect(entry.score).toBeGreaterThan(senior.score)
   })
 })
+
+describe('scoreCandidate — support-family calibration', () => {
+  const supportBase: ScoringInput = {
+    ...strongFitBase,
+    title:'Technical Support Engineer',
+    targetTitles:['IT Support Technician','Help Desk Technician','Technical Support Specialist'],
+    candidateSkills:['Zendesk','TCP/IP','SaaS troubleshooting'],
+    founderSkills:['TypeScript','SQL','Troubleshooting','Google Workspace'],
+    requiresDegree:'unknown',
+    minYearsExperienceRequired:null,
+    founderYearsExperience:0,
+    salaryMin:null,
+    founderMinAcceptableSalary:null,
+    location:'United States - Remote',
+    remoteType:'remote',
+  }
+
+  it('gives a non-senior technical-support role full target-family title credit', () => {
+    const r=scoreCandidate(supportBase)
+    expect(r.breakdown.titleFit).toBe(20)
+  })
+
+  it('uses an unknown-neutral stack floor for support roles instead of zero', () => {
+    const r=scoreCandidate(supportBase)
+    expect(r.breakdown.stackOverlap).toBe(8)
+    expect(r.score).toBeGreaterThanOrEqual(70)
+    expect(r.bucket).toBe('queue_if_capacity')
+  })
+
+  it('does not penalize <=2 years on an explicit L1/frontline role', () => {
+    const r=scoreCandidate({...supportBase,title:'Technical Support Engineer (L1/Frontline Support)',minYearsExperienceRequired:2})
+    expect(r.breakdown.experienceGapPenalty).toBe(0)
+  })
+
+  it('still penalizes a 3-year requirement even when the title says associate', () => {
+    const r=scoreCandidate({...strongFitBase,title:'Associate Software Engineer',minYearsExperienceRequired:3,founderYearsExperience:0})
+    expect(r.breakdown.experienceGapPenalty).toBe(15)
+  })
+
+  it('does not award full US-remote location credit to a region-locked APAC role', () => {
+    const us=scoreCandidate({...supportBase,location:'Remote / Boston / New York'})
+    const apac=scoreCandidate({...supportBase,location:'Remote / Hong Kong / Singapore / Tokyo'})
+    expect(us.breakdown.locationFit).toBe(12)
+    expect(apac.breakdown.locationFit).toBe(0)
+    expect(us.score).toBeGreaterThan(apac.score)
+  })
+
+  it('keeps senior support titles below the target-family score', () => {
+    const r=scoreCandidate({...supportBase,title:'Senior Technical Support Engineer'})
+    expect(r.breakdown.titleFit).toBe(5)
+  })
+})
