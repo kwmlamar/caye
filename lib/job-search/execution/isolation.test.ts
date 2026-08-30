@@ -84,6 +84,7 @@ describe('New Admin Shell tools are founder-only and never front-desk-reachable 
     'enable-application-automation',
     'disable-dry-run-mode',
     'set-daily-submission-cap',
+    'run-application-execution',
   ])('high-risk write tool %s is admin-shell-only and requires confirmation (risk=high)', async (fileBase) => {
     const mod = await import(`../../caye-agent/tools/admin/write-high/${fileBase}.ts`)
     const tool = Object.values(mod)[0] as { roles: string[]; modes: string[]; risk: string }
@@ -119,7 +120,7 @@ describe('Rollout controls are unreachable from any customer-facing surface (pos
     // deliberate admin surface.
     const backOffice = toolNamesFor('back-office', 'founder')
     const adminShell = toolNamesFor('admin-shell', 'founder')
-    for (const risky of ['enable_application_automation', 'disable_dry_run_mode', 'set_daily_submission_cap']) {
+    for (const risky of ['enable_application_automation', 'disable_dry_run_mode', 'set_daily_submission_cap', 'run_application_execution']) {
       expect(backOffice).not.toContain(risky)
       expect(adminShell).toContain(risky)
     }
@@ -133,13 +134,12 @@ describe('Rollout controls are unreachable from any customer-facing surface (pos
   })
 })
 
-describe('executeApplication is not reachable from any agent tool or HTTP route (post-audit)', () => {
+describe('executeApplication has exactly one founder-only production caller (post-audit)', () => {
   // The submission entry point must not be callable by anything that a
   // customer conversation, a front-desk turn, or an unauthenticated request
-  // could reach. Today it has no production caller at all; this test fails
-  // the moment one is added anywhere outside the execution subtree, so wiring
-  // it up becomes a deliberate, reviewed act rather than an import.
-  it('nothing outside lib/job-search/execution imports the executor', () => {
+  // could reach. The sole exception is the gated Admin Shell tool. This test
+  // makes any second caller a deliberate review event.
+  it('only the gated Admin Shell tool imports the executor', () => {
     const roots = ['app', 'components', 'lib', 'scripts'].map((d) => path.join(REPO_ROOT, d))
     const offenders: string[] = []
     for (const root of roots) {
@@ -156,13 +156,10 @@ describe('executeApplication is not reachable from any agent tool or HTTP route 
         }
       }
     }
-    expect(offenders).toEqual([])
+    expect(offenders).toEqual(['lib/caye-agent/tools/admin/write-high/run-application-execution.ts'])
   })
 
-  it('no ATS provider declares itself able to submit', () => {
-    // The capability gate the executor relies on. If a provider ever flips
-    // this to true, the daily-cap reservation race documented in rollout.ts
-    // must be closed first — this test is the tripwire for that review.
+  it('no provider can submit until a production-validated implementation is separately enabled', () => {
     expect(greenhouseAtsProvider.canSubmit).toBe(false)
     expect(unsupportedProvider('lever').canSubmit).toBe(false)
   })

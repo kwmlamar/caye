@@ -39,6 +39,10 @@ describe('job_search_application_execution migration (PGlite)', () => {
     await db.exec(baseMigration)
     const executionMigration = readFileSync(join(__dirname, '..', '..', '..', 'supabase', 'migrations', '20260829b_job_search_application_execution.sql'), 'utf8')
     await db.exec(executionMigration)
+    const browserMigration = readFileSync(join(__dirname, '..', '..', '..', 'supabase', 'migrations', '20260829c_job_search_browser_execution.sql'), 'utf8')
+    await db.exec(browserMigration)
+    const auditMigration = readFileSync(join(__dirname, '..', '..', '..', 'supabase', 'migrations', '20260830a_cap_job_search_browser_submission_to_three.sql'), 'utf8')
+    await db.exec(auditMigration)
   })
 
   afterAll(async () => {
@@ -77,7 +81,7 @@ describe('job_search_application_execution migration (PGlite)', () => {
     // call it is not enforced. Any writer, including a manual SQL fix-up,
     // hits the same wall.
     await expect(db.query(`update public.job_search_execution_settings set daily_submission_cap = 150 where id = true`)).rejects.toThrow()
-    await expect(db.query(`update public.job_search_execution_settings set daily_submission_cap = 11 where id = true`)).rejects.toThrow()
+    await expect(db.query(`update public.job_search_execution_settings set daily_submission_cap = 4 where id = true`)).rejects.toThrow()
     await expect(db.query(`update public.job_search_execution_settings set daily_submission_cap = -1 where id = true`)).rejects.toThrow()
 
     // ...and the value is unchanged after every rejected write.
@@ -85,7 +89,6 @@ describe('job_search_application_execution migration (PGlite)', () => {
     expect(rows[0].daily_submission_cap).toBe(3)
 
     // The ceiling itself is still reachable.
-    await db.query(`update public.job_search_execution_settings set daily_submission_cap = 10 where id = true`)
     await db.query(`update public.job_search_execution_settings set daily_submission_cap = 3 where id = true`)
   })
 
@@ -167,5 +170,23 @@ describe('job_search_application_execution migration (PGlite)', () => {
       `select column_name from information_schema.columns where table_schema='public' and table_name='job_search_profiles' and column_name in ('contact_email','contact_phone') order by column_name`,
     )
     expect(rows.map((r) => r.column_name)).toEqual(['contact_email', 'contact_phone'])
+  })
+
+  it('creates a service-role-only, per-application daily reservation table', async () => {
+    const { rows } = await db.query<{ table_name: string }>(`select table_name from information_schema.tables where table_schema = 'public' and table_name = 'job_search_submission_reservations'`)
+    expect(rows).toHaveLength(1)
+    const migration = readFileSync(join(__dirname, '..', '..', '..', 'supabase', 'migrations', '20260829c_job_search_browser_execution.sql'), 'utf8')
+    expect(migration).toMatch(/security definer/i)
+    expect(migration).toMatch(/set search_path = pg_catalog, public/i)
+    expect(migration).toMatch(/revoke all on function .* from public, anon, authenticated/i)
+    expect(migration).toMatch(/grant execute .* to service_role/i)
+  })
+
+  it('does not let anon or authenticated invoke the reservation RPC', async () => {
+    for (const role of ['anon', 'authenticated']) {
+      await db.exec(`set role ${role}`)
+      await expect(db.query(`select public.reserve_job_search_submission_slot(gen_random_uuid(), gen_random_uuid())`)).rejects.toThrow()
+      await db.exec('reset role')
+    }
   })
 })

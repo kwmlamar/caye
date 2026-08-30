@@ -21,6 +21,8 @@ export interface AtsExecutorProvider {
    * greenhouse.ts for why Greenhouse's public API cannot.
    */
   readonly canSubmit: boolean
+  /** Optional live browser readiness pass. It may navigate/fill/upload, but must never click Submit. */
+  dryRun?(request: SubmissionRequest, fields: DiscoveredField[]): Promise<{ outcome: 'ready' | 'needs_human'; reason: string }>
   /**
    * Submits the application. Only ever called after discoverFields returned
    * 'clear', every required field resolved, AND `canSubmit` is true.

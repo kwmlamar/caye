@@ -20,6 +20,7 @@ export type ApplicationStatus =
   | 'APPLYING'
   | 'NEEDS_HUMAN'
   | 'SUBMITTED'
+  | 'SUBMISSION_UNCERTAIN'
   | 'FAILED'
   | 'FOLLOWUP_DUE'
   | 'INTERVIEW'

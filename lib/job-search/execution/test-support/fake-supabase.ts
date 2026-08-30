@@ -140,6 +140,17 @@ export function makeFakeSupabase(initial: Record<string, Row[]> = {}) {
         },
       }
     },
+    async rpc(name: string, args: { p_application_id: string; p_claim_token: string }) {
+      if (name !== 'reserve_job_search_submission_slot') return { data: null, error: { message: 'unknown rpc' } }
+      const application = (tables.job_search_applications ?? []).find((row) => row.id === args.p_application_id)
+      if (!application || application.status !== 'APPLYING' || application.execution_claim_token !== args.p_claim_token) return { data: false, error: null }
+      const settings = (tables.job_search_execution_settings ?? [])[0]
+      const cap = typeof settings?.daily_submission_cap === 'number' ? settings.daily_submission_cap : 0
+      const reservations = (tables.job_search_submission_reservations ??= [])
+      if (reservations.some((row) => row.application_id === args.p_application_id) || reservations.length >= cap) return { data: false, error: null }
+      reservations.push({ id: `reservation_${counter++}`, application_id: args.p_application_id, claim_token: args.p_claim_token, reservation_day: 'today' })
+      return { data: true, error: null }
+    },
   }
 
   return { client, tables }

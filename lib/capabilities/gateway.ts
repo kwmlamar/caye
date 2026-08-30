@@ -32,6 +32,13 @@ export type FounderResearchStartInput = {
  */
 const PROPERTY_ID_SCOPED_CAPABILITIES = new Set<CapabilityName>(['property.snapshot'])
 
+/**
+ * Read capabilities that deliberately accept structured reasoning inputs. This is
+ * an explicit allowlist so the founder read gateway does not become an arbitrary
+ * argument passthrough as new capabilities are added.
+ */
+const STRUCTURED_ARG_READ_CAPABILITIES = new Set<CapabilityName>(['engineering.decision.analyze'])
+
 export type FounderContextSnapshot = {
   actor: { kind: 'founder' }
   scope: { workspaceId: string | null }
@@ -100,7 +107,8 @@ export async function invokeFounderReadCapability(
   }
 
   const isPropertyIdScoped = PROPERTY_ID_SCOPED_CAPABILITIES.has(capability.manifest.name)
-  let executeArgs: Record<string, never> | { propertyId: string }
+  const acceptsStructuredArgs = STRUCTURED_ARG_READ_CAPABILITIES.has(capability.manifest.name)
+  let executeArgs: unknown
   if (isPropertyIdScoped) {
     if (typeof input.propertyId !== 'string' || input.propertyId.trim().length === 0) {
       return failed('invalid_args', `${capability.manifest.name} requires a non-empty propertyId.`)
@@ -109,6 +117,14 @@ export async function invokeFounderReadCapability(
       return failed('invalid_args', 'This capability version does not accept additional arguments.')
     }
     executeArgs = { propertyId: input.propertyId.trim() }
+  } else if (acceptsStructuredArgs) {
+    if (input.propertyId !== undefined) {
+      return failed('invalid_args', 'This capability does not accept a propertyId.')
+    }
+    if (!input.args || typeof input.args !== 'object' || Array.isArray(input.args)) {
+      return failed('invalid_args', `${capability.manifest.name} requires structured arguments.`)
+    }
+    executeArgs = input.args
   } else {
     if (input.propertyId !== undefined) {
       return failed('invalid_args', 'This capability does not accept a propertyId.')

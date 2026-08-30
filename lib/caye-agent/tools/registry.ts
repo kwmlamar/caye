@@ -102,6 +102,7 @@ import { disableApplicationAutomation } from './admin/write-low/disable-applicat
 import { enableApplicationAutomation } from './admin/write-high/enable-application-automation'
 import { disableDryRunMode } from './admin/write-high/disable-dry-run-mode'
 import { setDailySubmissionCap } from './admin/write-high/set-daily-submission-cap'
+import { runApplicationExecution } from './admin/write-high/run-application-execution'
 import { checkAvailabilityTool } from './read/front-desk/check-availability'
 import { lookupPriceTool } from './read/front-desk/lookup-price'
 import { findBookingsTool } from './read/front-desk/find-bookings'
@@ -277,6 +278,7 @@ export const TOOL_REGISTRY: AnyTool[] = [
   gateAdminHighRisk(enableApplicationAutomation) as AnyTool,
   gateAdminHighRisk(disableDryRunMode) as AnyTool,
   gateAdminHighRisk(setDailySubmissionCap) as AnyTool,
+  gateAdminHighRisk(runApplicationExecution) as AnyTool,
 ]
 
 export function findTool(name: string): AnyTool | undefined {
