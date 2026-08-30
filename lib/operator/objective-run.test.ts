@@ -36,4 +36,24 @@ describe('runBoundedObjective', () => {
     expect(result.completedSteps).toEqual([])
     expect(result.events.filter((event) => event.state === 'failed')).toHaveLength(2)
   })
+
+  it('resumes after already verified steps without replaying their side effects', async () => {
+    const prepare = vi.fn()
+    const inspect = vi.fn(async () => ({ inspected: 2 }))
+    const onEvent = vi.fn(async () => undefined)
+    const result = await runBoundedObjective({
+      context: {},
+      allowedAuthority: new Set(['read', 'write_low'] as const),
+      completedSteps: new Set(['prepare']),
+      onEvent,
+      steps: [
+        { key: 'prepare', authority: 'write_low', execute: prepare, verify: async () => ({ ok: true }) },
+        { key: 'inspect', authority: 'read', execute: inspect, verify: async (_ctx, effect) => ({ ok: true, evidence: effect }) },
+      ],
+    })
+    expect(prepare).not.toHaveBeenCalled()
+    expect(inspect).toHaveBeenCalledTimes(1)
+    expect(result.completedSteps).toEqual(['prepare', 'inspect'])
+    expect(onEvent).toHaveBeenCalledWith(expect.objectContaining({ step: 'inspect', state: 'verified' }))
+  })
 })
