@@ -32,6 +32,9 @@ export async function runAllGrowthIngestion(): Promise<{ workspaces: GrowthInges
 
 /**
  * Normalizes first-party booking evidence and any configured external providers.
+ * A disconnected external source with no account reference is intentionally skipped.
+ * Once an account reference is configured, Caye probes it without pre-declaring success;
+ * only a successful API read promotes the source to connected.
  * Provider failure updates source health but NEVER inserts a zero for unavailable data.
  * No marketing action occurs here.
  */
@@ -57,19 +60,19 @@ export async function runGrowthIngestion(workspaceId: string): Promise<GrowthIng
 
   for (const source of (data ?? []) as GrowthSourceRow[]) {
     if (source.provider !== 'ga4') continue
-    if (source.status === 'disconnected') {
-      summary.unavailable.push({ provider: 'ga4', reason: 'source_disconnected' })
-      continue
-    }
 
-    summary.attempted.push(source.provider)
     const propertyId = source.external_account_ref
     if (!propertyId) {
+      if (source.status === 'disconnected') {
+        summary.unavailable.push({ provider: source.provider, reason: 'source_disconnected' })
+        continue
+      }
       await markUnavailable(source.id, 'missing_property_id')
       summary.unavailable.push({ provider: source.provider, reason: 'missing_property_id' })
       continue
     }
 
+    summary.attempted.push(source.provider)
     const result = await readGa4Snapshot(propertyId)
     if (result.status === 'unavailable') {
       await markUnavailable(source.id, result.reason)
@@ -78,6 +81,22 @@ export async function runGrowthIngestion(workspaceId: string): Promise<GrowthIng
     }
 
     const observedAt = new Date().toISOString()
+    const snapshotDate = observedAt.slice(0, 10)
+
+    // Replace same-day GA4 topline observations so retries do not manufacture evidence.
+    const { error: deleteError } = await supabase
+      .from('growth_observations')
+      .delete()
+      .eq('workspace_id', workspaceId)
+      .eq('source_id', source.id)
+      .gte('observed_at', `${snapshotDate}T00:00:00.000Z`)
+      .lte('observed_at', `${snapshotDate}T23:59:59.999Z`)
+    if (deleteError) {
+      await markUnavailable(source.id, 'observation_dedupe_failed')
+      summary.unavailable.push({ provider: source.provider, reason: 'observation_dedupe_failed' })
+      continue
+    }
+
     const rows = result.metrics.map((metric) => ({
       workspace_id: workspaceId,
       source_id: source.id,
@@ -88,7 +107,7 @@ export async function runGrowthIngestion(workspaceId: string): Promise<GrowthIng
       period_start: result.periodStart,
       period_end: result.periodEnd,
       dimension: {},
-      provenance: result.provenance,
+      provenance: { ...result.provenance, captured_at: observedAt },
     }))
 
     const { error: insertError } = await supabase.from('growth_observations').insert(rows)
@@ -98,11 +117,15 @@ export async function runGrowthIngestion(workspaceId: string): Promise<GrowthIng
       continue
     }
 
-    await supabase
+    const { error: sourceUpdateError } = await supabase
       .from('growth_sources')
       .update({ status: 'connected', last_success_at: observedAt, last_error_at: null, last_error_code: null, updated_at: observedAt })
       .eq('id', source.id)
       .eq('workspace_id', workspaceId)
+    if (sourceUpdateError) {
+      summary.unavailable.push({ provider: source.provider, reason: 'source_health_update_failed' })
+      continue
+    }
 
     summary.observed.push(source.provider)
   }
