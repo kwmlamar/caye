@@ -68,7 +68,7 @@ begin
     p_workspace_id := new.workspace_id,
     p_category := 'service_detail',
     p_fact := format('Engineering project %s verdict: %s. %s', new.project_id, new.verdict, new.summary),
-    p_source := 'owner-direct',
+    p_source := 'system-derived',
     p_created_by := 'engineering_verdict_learning_v1',
     p_service_id := null,
     p_canonical_key := 'engineering_outcome:project:' || new.project_id::text,
