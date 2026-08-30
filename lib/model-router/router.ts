@@ -15,7 +15,7 @@ import type {
 export interface RouterPolicy {
   /** Founder setting: allow falling back to metered API backends. Default true. */
   allowApiFallback: boolean
-  /** Founder setting: prefer subscription backends over API when both fit. Default true — that's the whole point. */
+  /** Founder setting: prefer subscription backends over API when both fit. Default true. */
   preferSubscriptionOverApi: boolean
 }
 
@@ -25,42 +25,42 @@ export const DEFAULT_ROUTER_POLICY: RouterPolicy = {
 }
 
 /**
- * Deterministic candidate ordering. No LLM call — see brief section 6:
- * "Do NOT use another expensive LLM just to choose an LLM unless there is
- * strong evidence it is necessary."
+ * Deterministic candidate ordering. No LLM call is spent choosing an LLM.
  *
- * Policy (subject to revision once real usage data exists — section 16
- * explicitly defers learning this from outcomes):
- *   - manual claude/openai/api: that backend first, no cross-provider
- *     fallback baked in (api fallback still applies per policy.allowApiFallback
- *     for claude/openai if the founder allows it).
- *   - auto + coding/repo-heavy: openai_codex_subscription first (Codex is
- *     the coding-specialized subscription surface), then claude_subscription.
- *   - auto + everything else: claude_subscription first (long-context /
- *     conversational business reasoning is Caye Direct's default shape),
- *     then openai_codex_subscription.
- *   - api backends are always last in an auto chain, gated by allowApiFallback.
+ * Cost policy:
+ *   - subscription backends still lead when available because they do not
+ *     add per-token API spend to Caye.
+ *   - ordinary metered fallback prefers OpenAI before Anthropic. Caye's
+ *     OpenAI API backend defaults to the cost-efficient mini tier.
+ *   - tasks explicitly asking for strongest reasoning, long context, or
+ *     vision keep Anthropic first in the metered tail.
+ *   - manual claude/openai modes continue to honor the founder's choice.
  */
 export function planChain(
   requestedMode: RequestedMode,
   hints: RouterTaskHints | undefined,
   policy: RouterPolicy = DEFAULT_ROUTER_POLICY
 ): BackendId[] {
-  const apiTail: BackendId[] = policy.allowApiFallback ? ['anthropic_api', 'openai_api', 'openrouter'] : []
+  const strongestShape = Boolean(hints?.preferStrongest || hints?.needsLongContext || hints?.needsVision)
+  const apiTail: BackendId[] = !policy.allowApiFallback
+    ? []
+    : strongestShape
+      ? ['anthropic_api', 'openai_api', 'openrouter']
+      : ['openai_api', 'anthropic_api', 'openrouter']
 
   if (requestedMode === 'claude') {
-    return dedupe(['claude_subscription', ...apiTail.filter((b) => b === 'anthropic_api'), ...apiTail])
+    return dedupe(['claude_subscription', 'anthropic_api', ...apiTail])
   }
   if (requestedMode === 'openai') {
-    return dedupe(['openai_codex_subscription', ...apiTail.filter((b) => b === 'openai_api'), ...apiTail])
+    return dedupe(['openai_codex_subscription', 'openai_api', ...apiTail])
   }
   if (requestedMode === 'api') {
-    return policy.allowApiFallback ? ['anthropic_api', 'openai_api', 'openrouter'] : []
+    return apiTail
   }
 
   // auto
   if (!policy.preferSubscriptionOverApi) {
-    return dedupe(['anthropic_api', 'openai_api', 'openrouter', 'claude_subscription', 'openai_codex_subscription'])
+    return dedupe([...apiTail, 'claude_subscription', 'openai_codex_subscription'])
   }
   const codingLed = hints?.isCodingOrRepoTask
   const subscriptionOrder: BackendId[] = codingLed
@@ -92,21 +92,7 @@ export class NoBackendAvailableError extends Error {
   }
 }
 
-/**
- * Shared chain-walk: health-check, invoke, classify-and-continue-or-throw.
- * Used by both the plain-reasoning router (runWithFallback) and the
- * tool-turn router (tool-bridge/founder-tool-loop.ts's
- * runToolTurnWithFallback) so there is exactly one implementation of
- * "how Auto tries backends in order and falls back" — not two drifting
- * copies with slightly different bugs.
- *
- * `restrictToChain`, when set, replaces the planned chain outright rather
- * than filtering it — this is how the tool loop pins to a single backend
- * once a write tool has been attempted this turn (see
- * founder-tool-loop.ts's `writeAttempted` guard): the point is that NO
- * other candidate is even considered, not that the normal chain is
- * filtered down to one entry by capability.
- */
+/** Shared chain-walk for plain reasoning and tool turns. */
 export async function runChainWithFallback<R>(
   backends: readonly ModelBackend[],
   requestedMode: RequestedMode,
@@ -123,7 +109,7 @@ export async function runChainWithFallback<R>(
 
   for (const backendId of chain) {
     const backend = byId.get(backendId)
-    if (!backend) continue // not registered in this deployment (e.g. openai_api not built yet)
+    if (!backend) continue
 
     const health = await backend.checkHealth()
     if (health.state !== 'available' && health.state !== 'healthy') {
@@ -149,15 +135,7 @@ export async function runChainWithFallback<R>(
   throw new NoBackendAvailableError(decision)
 }
 
-/**
- * Side effects (tool calls with external consequences) are not executed by
- * this plain-reasoning path at all — see capabilities.ts's doc comment.
- * The side-effect guard below is real and tested (a backend can already
- * throw an error tagged `sideEffectOccurred`, checked first in
- * classifyBackendError), it just has no caller that sets that flag on
- * THIS path. The tool-turn path (tool-bridge/founder-tool-loop.ts) is
- * where real tool execution happens and where this actually bites.
- */
+/** Plain reasoning path. Side-effecting tool execution lives in the tool bridge. */
 export async function runWithFallback(
   backends: readonly ModelBackend[],
   requestedMode: RequestedMode,
@@ -191,9 +169,6 @@ function mapHealthStateToFallbackReason(state: string): FallbackReasonCode {
 function toRawBackendError(err: unknown): RawBackendError {
   if (err && typeof err === 'object' && 'message' in err) {
     const e = err as Record<string, unknown>
-    // `.status` is how the Anthropic/OpenAI SDKs' own APIError classes
-    // expose HTTP status; `.httpStatus` is what this module's own CLI
-    // backends attach (see claude-subscription.ts). Accept either.
     const httpStatus = e.httpStatus ?? e.status
     return {
       message: String(e.message ?? 'unknown error'),
