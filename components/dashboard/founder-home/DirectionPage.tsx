@@ -8,16 +8,7 @@ import { AQUA, EMERALD, GOLD, ROSE, TEXT, TEXT_MUTED, TEXT_QUIET, glass } from '
 type GoalKind = 'vision' | 'domain' | 'objective' | 'goal' | 'initiative'
 type GoalStatus = 'active' | 'future' | 'blocked' | 'paused' | 'completed' | 'abandoned'
 type GoalPriority = 'low' | 'medium' | 'high' | 'critical'
-
-type MaturityLabel = 'FOUNDATION' | 'ACTIVE' | 'LIMITED' | 'FUTURE'
-
-interface ActivationCondition {
-  metric_key: string
-  comparator: string
-  threshold: number
-  sustained_days?: number
-  note?: string
-}
+type MaturityStatus = 'unverified' | 'foundation' | 'limited' | 'active' | 'future'
 
 interface Goal {
   id: string
@@ -32,48 +23,38 @@ interface Goal {
   targetValue: number | null
   currentValue: number | null
   unit: string | null
-  targetDate: string | null
   completionCriteria: string | null
-  activationConditions: ActivationCondition[] | null
-  rationale: string | null
-  createdByKind: string
-  createdByLabel: string | null
 }
 
 interface CapabilityEvidence {
   id: number
-  evidence_type: string
-  evidence_ref: string
+  evidence_kind: string
+  source_ref: string
   summary: string
+  verifies_capability: boolean
   confidence: number | null
   observed_at: string
+  verified_at: string | null
 }
 
-interface CapabilityAssessment {
-  id: number
-  maturity_level: number
-  maturity_label: MaturityLabel
-  rationale: string
-  assessed_by: string
-  assessed_at: string
+interface CapabilityGoalLink {
+  relationship: string
+  goal: { id: string; title: string; kind: GoalKind; status: GoalStatus; parent_id: string | null }
 }
 
 interface Capability {
-  goalId: string
+  id: string
   key: string
   title: string
-  description: string | null
-  status: GoalStatus
-  priority: GoalPriority
-  parentId: string | null
-  maturityLevel: number
-  maturityLabel: MaturityLabel
-  currentState: string | null
-  nextState: string | null
-  blockers: string[]
-  lastAssessedAt: string | null
+  description: string
+  maturityStatus: MaturityStatus
+  limitations: string[]
+  progressPercent: number | null
+  lastVerifiedAt: string | null
   evidence: CapabilityEvidence[]
-  assessments: CapabilityAssessment[]
+  dependencies: Array<{ note: string | null; capability: { id: string; title: string } }>
+  relatedObjectives: CapabilityGoalLink[]
+  relatedInitiatives: CapabilityGoalLink[]
 }
 
 const STATUS_COLOR: Record<GoalStatus, string> = {
@@ -88,11 +69,12 @@ const STATUS_LABEL: Record<GoalStatus, string> = {
   active: 'active', future: 'future', blocked: 'blocked', paused: 'paused', completed: 'completed', abandoned: 'superseded',
 }
 const PRIORITY_WEIGHT: Record<GoalPriority, number> = { critical: 4, high: 3, medium: 2, low: 1 }
-const MATURITY_COLOR: Record<MaturityLabel, string> = {
-  FOUNDATION: GOLD,
-  ACTIVE: EMERALD,
-  LIMITED: ROSE,
-  FUTURE: TEXT_QUIET,
+const MATURITY_COLOR: Record<MaturityStatus, string> = {
+  unverified: TEXT_QUIET,
+  foundation: GOLD,
+  limited: ROSE,
+  active: EMERALD,
+  future: TEXT_QUIET,
 }
 
 function StatusDot({ status }: { status: GoalStatus }) {
@@ -128,47 +110,59 @@ function useDirectionData(workspaceId: string) {
 
 function CapabilityCard({ capability }: { capability: Capability }) {
   const [expanded, setExpanded] = useState(false)
-  const evidenceCount = capability.evidence.length
-  const assessment = capability.assessments[0]
-  const maturityColor = MATURITY_COLOR[capability.maturityLabel]
+  const maturityColor = MATURITY_COLOR[capability.maturityStatus]
+  const verifiedEvidence = capability.evidence.filter((item) => item.verifies_capability)
 
   return (
     <div style={{ ...glass(0.035), borderRadius: 12, padding: '12px 14px' }}>
-      <button type="button" onClick={() => setExpanded((v) => !v)} style={{ width: '100%', border: 0, background: 'transparent', padding: 0, textAlign: 'left', cursor: 'pointer', color: TEXT }}>
+      <button type="button" onClick={() => setExpanded((value) => !value)} style={{ width: '100%', border: 0, background: 'transparent', padding: 0, textAlign: 'left', cursor: 'pointer', color: TEXT }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
-          <span aria-hidden style={{ width: 7, height: 7, borderRadius: '50%', background: maturityColor, boxShadow: capability.maturityLabel === 'ACTIVE' ? `0 0 7px ${maturityColor}88` : undefined }} />
+          <span aria-hidden style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0, background: maturityColor, boxShadow: capability.maturityStatus === 'active' ? `0 0 7px ${maturityColor}88` : undefined }} />
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
               <span style={{ fontSize: 13, fontWeight: 650 }}>{capability.title}</span>
-              <span style={{ fontSize: 10.5, color: maturityColor, fontWeight: 700 }}>{capability.maturityLabel}</span>
-              <span style={{ fontSize: 10.5, color: TEXT_QUIET }}>L{capability.maturityLevel}/5</span>
+              <span style={{ fontSize: 10.5, color: maturityColor, fontWeight: 700 }}>{capability.maturityStatus.toUpperCase()}</span>
+              {capability.progressPercent !== null && <span style={{ fontSize: 10.5, color: AQUA }}>{capability.progressPercent}% verified progress</span>}
             </div>
-            {capability.currentState && <div style={{ fontSize: 11.5, color: TEXT_MUTED, marginTop: 3, lineHeight: 1.45 }}>{capability.currentState}</div>}
+            <div style={{ fontSize: 11.5, color: TEXT_MUTED, marginTop: 3, lineHeight: 1.45 }}>{capability.description}</div>
           </div>
           <span aria-hidden style={{ color: TEXT_QUIET, fontSize: 11 }}>{expanded ? '▾' : '▸'}</span>
         </div>
       </button>
 
       {expanded && (
-        <div style={{ marginTop: 11, paddingTop: 10, borderTop: '1px solid rgba(255,255,255,0.055)' }}>
-          {capability.description && <div style={{ fontSize: 11.5, color: TEXT_MUTED, lineHeight: 1.5, marginBottom: 9 }}>{capability.description}</div>}
-          {capability.nextState && (
-            <div style={{ fontSize: 11.5, color: TEXT, lineHeight: 1.5, marginBottom: 9 }}>
-              <span style={{ color: AQUA, fontWeight: 650 }}>Next → </span>{capability.nextState}
+        <div style={{ marginTop: 11, paddingTop: 10, borderTop: '1px solid rgba(255,255,255,0.055)', display: 'grid', gap: 9 }}>
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 10.5, color: TEXT_QUIET }}>
+            <span>{verifiedEvidence.length} verified evidence item{verifiedEvidence.length === 1 ? '' : 's'}</span>
+            {capability.lastVerifiedAt ? <span>last verified {new Date(capability.lastVerifiedAt).toLocaleDateString()}</span> : <span>not yet verified</span>}
+          </div>
+
+          {capability.limitations.length > 0 && <div style={{ fontSize: 11, color: ROSE }}>Gaps: {capability.limitations.join('; ')}</div>}
+
+          {capability.relatedObjectives.length > 0 && (
+            <div style={{ fontSize: 11, color: TEXT_MUTED }}>
+              <span style={{ color: TEXT_QUIET }}>Objectives · </span>{capability.relatedObjectives.map((link) => link.goal.title).join(' · ')}
             </div>
           )}
-          {capability.blockers?.length > 0 && (
-            <div style={{ fontSize: 11, color: ROSE, marginBottom: 9 }}>Blockers: {capability.blockers.join('; ')}</div>
+
+          {capability.relatedInitiatives.length > 0 && (
+            <div style={{ fontSize: 11, color: TEXT_MUTED }}>
+              <span style={{ color: AQUA }}>Initiatives · </span>{capability.relatedInitiatives.map((link) => link.goal.title).join(' · ')}
+            </div>
           )}
-          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 10.5, color: TEXT_QUIET, marginBottom: evidenceCount ? 8 : 0 }}>
-            <span>{evidenceCount} evidence item{evidenceCount === 1 ? '' : 's'}</span>
-            {capability.lastAssessedAt && <span>assessed {new Date(capability.lastAssessedAt).toLocaleDateString()}</span>}
-          </div>
-          {assessment && <div style={{ fontSize: 10.5, color: TEXT_QUIET, fontStyle: 'italic', marginBottom: evidenceCount ? 8 : 0 }}>{assessment.rationale}</div>}
-          {evidenceCount > 0 && capability.evidence.map((e) => (
-            <div key={e.id} style={{ fontSize: 10.5, color: TEXT_MUTED, padding: '4px 0', display: 'grid', gridTemplateColumns: '70px 1fr', gap: 8 }}>
-              <span style={{ color: TEXT_QUIET }}>{e.evidence_type}</span>
-              <span><span style={{ color: TEXT }}>{e.summary}</span> · {e.evidence_ref}</span>
+
+          {capability.dependencies.length > 0 && (
+            <div style={{ fontSize: 11, color: TEXT_MUTED }}>
+              <span style={{ color: TEXT_QUIET }}>Depends on · </span>{capability.dependencies.map((dependency) => dependency.capability.title).join(' · ')}
+            </div>
+          )}
+
+          {capability.evidence.length === 0 ? (
+            <div style={{ fontSize: 10.5, color: TEXT_QUIET, fontStyle: 'italic' }}>No capability evidence recorded. Code existence alone does not advance maturity.</div>
+          ) : capability.evidence.map((item) => (
+            <div key={item.id} style={{ fontSize: 10.5, color: TEXT_MUTED, padding: '3px 0', display: 'grid', gridTemplateColumns: '76px 1fr', gap: 8 }}>
+              <span style={{ color: item.verifies_capability ? EMERALD : TEXT_QUIET }}>{item.verifies_capability ? 'verified' : 'supporting'}</span>
+              <span><span style={{ color: TEXT }}>{item.summary}</span> · {item.evidence_kind} · {item.source_ref}</span>
             </div>
           ))}
         </div>
@@ -179,21 +173,19 @@ function CapabilityCard({ capability }: { capability: Capability }) {
 
 function CapabilitiesSection({ capabilities }: { capabilities: Capability[] }) {
   if (!capabilities.length) return null
-  const ordered = [...capabilities].sort((a, b) => PRIORITY_WEIGHT[b.priority] - PRIORITY_WEIGHT[a.priority] || b.maturityLevel - a.maturityLevel)
-  const avg = ordered.reduce((sum, c) => sum + c.maturityLevel, 0) / ordered.length
-  const evidenced = ordered.filter((c) => c.evidence.length > 0).length
+  const verified = capabilities.filter((capability) => capability.lastVerifiedAt && capability.evidence.some((item) => item.verifies_capability)).length
 
   return (
     <section style={{ marginBottom: 32 }}>
       <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12, marginBottom: 10 }}>
         <div>
           <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.055em', color: TEXT_QUIET }}>OPERATING INTELLIGENCE CAPABILITIES</div>
-          <div style={{ fontSize: 11.5, color: TEXT_MUTED, marginTop: 4 }}>Canonical capability roadmap for becoming a highly autonomous operating intelligence.</div>
+          <div style={{ fontSize: 11.5, color: TEXT_MUTED, marginTop: 4 }}>Cross-domain abilities connecting Direction objectives to real initiatives and verified evidence.</div>
         </div>
-        <div style={{ fontSize: 10.5, color: TEXT_QUIET, whiteSpace: 'nowrap' }}>{avg.toFixed(1)}/5 avg · {evidenced}/{ordered.length} evidenced</div>
+        <div style={{ fontSize: 10.5, color: TEXT_QUIET, whiteSpace: 'nowrap' }}>{verified}/{capabilities.length} verified</div>
       </div>
       <div style={{ display: 'grid', gap: 8 }}>
-        {ordered.map((capability) => <CapabilityCard key={capability.goalId} capability={capability} />)}
+        {capabilities.map((capability) => <CapabilityCard key={capability.id} capability={capability} />)}
       </div>
     </section>
   )
@@ -206,7 +198,7 @@ function GoalNode({ goal, depth, byParent }: { goal: Goal; depth: number; byPare
 
   return (
     <div style={{ marginLeft: depth * 16 }}>
-      <button type="button" onClick={() => children.length > 0 && setExpanded((e) => !e)} style={{ width: '100%', display: 'flex', alignItems: 'flex-start', gap: 8, textAlign: 'left', padding: '7px 8px', border: 0, borderRadius: 8, cursor: children.length > 0 ? 'pointer' : 'default', background: 'transparent', color: TEXT }}>
+      <button type="button" onClick={() => children.length > 0 && setExpanded((value) => !value)} style={{ width: '100%', display: 'flex', alignItems: 'flex-start', gap: 8, textAlign: 'left', padding: '7px 8px', border: 0, borderRadius: 8, cursor: children.length > 0 ? 'pointer' : 'default', background: 'transparent', color: TEXT }}>
         {children.length > 0 ? <span aria-hidden style={{ color: TEXT_QUIET, fontSize: 10, marginTop: 3, width: 10, flexShrink: 0 }}>{expanded ? '▾' : '▸'}</span> : <span style={{ width: 10, flexShrink: 0 }} />}
         <StatusDot status={goal.status} />
         <span style={{ flex: 1, minWidth: 0 }}>
@@ -225,18 +217,18 @@ function GoalNode({ goal, depth, byParent }: { goal: Goal; depth: number; byPare
 function TreeSection({ title, goals }: { title: string; goals: Goal[] }) {
   const byParent = useMemo(() => {
     const map = new Map<string, Goal[]>()
-    for (const g of goals) {
-      if (!g.parentId) continue
-      const list = map.get(g.parentId) ?? []
-      list.push(g)
-      map.set(g.parentId, list)
+    for (const goal of goals) {
+      if (!goal.parentId) continue
+      const list = map.get(goal.parentId) ?? []
+      list.push(goal)
+      map.set(goal.parentId, list)
     }
     for (const list of map.values()) list.sort((a, b) => PRIORITY_WEIGHT[b.priority] - PRIORITY_WEIGHT[a.priority])
     return map
   }, [goals])
-  const roots = goals.filter((g) => !g.parentId).sort((a, b) => PRIORITY_WEIGHT[b.priority] - PRIORITY_WEIGHT[a.priority])
+  const roots = goals.filter((goal) => !goal.parentId).sort((a, b) => PRIORITY_WEIGHT[b.priority] - PRIORITY_WEIGHT[a.priority])
   if (!roots.length) return null
-  return <div style={{ marginBottom: 20 }}><div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.04em', color: TEXT_QUIET, marginBottom: 6 }}>{title.toUpperCase()}</div>{roots.map((g) => <GoalNode key={g.id} goal={g} depth={0} byParent={byParent} />)}</div>
+  return <div style={{ marginBottom: 20 }}><div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.04em', color: TEXT_QUIET, marginBottom: 6 }}>{title.toUpperCase()}</div>{roots.map((goal) => <GoalNode key={goal.id} goal={goal} depth={0} byParent={byParent} />)}</div>
 }
 
 export default function DirectionPage({ workspaceId }: { workspaceId: string }) {
@@ -253,13 +245,15 @@ export default function DirectionPage({ workspaceId }: { workspaceId: string }) 
     } finally { setSeeding(false) }
   }
 
-  const vision = data?.operatorGoals.find((g) => g.kind === 'vision')
-  const domains = data?.operatorGoals.filter((g) => g.kind === 'domain') ?? []
-  const capabilityGoalIds = useMemo(() => new Set((data?.capabilities ?? []).map((c) => c.goalId)), [data?.capabilities])
+  const vision = data?.operatorGoals.find((goal) => goal.kind === 'vision')
+  const domains = data?.operatorGoals.filter((goal) => goal.kind === 'domain') ?? []
   const activeFocus = useMemo(() => {
     const all = [...(data?.operatorGoals ?? []), ...(data?.workspaceGoals ?? [])]
-    return all.filter((g) => !capabilityGoalIds.has(g.id) && g.status === 'active' && (g.kind === 'objective' || g.kind === 'goal' || g.kind === 'initiative')).sort((a, b) => PRIORITY_WEIGHT[b.priority] - PRIORITY_WEIGHT[a.priority]).slice(0, 8)
-  }, [data, capabilityGoalIds])
+    return all
+      .filter((goal) => goal.status === 'active' && (goal.kind === 'objective' || goal.kind === 'goal' || goal.kind === 'initiative'))
+      .sort((a, b) => PRIORITY_WEIGHT[b.priority] - PRIORITY_WEIGHT[a.priority])
+      .slice(0, 8)
+  }, [data])
 
   if (loading) return <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '28px 32px 60px' }}><CayeLoadingPulse label="Loading direction…" /></div>
 
@@ -272,9 +266,9 @@ export default function DirectionPage({ workspaceId }: { workspaceId: string }) 
       <div style={{ maxWidth: 760 }}>
         {vision && <div style={{ marginBottom: 22 }}><div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.06em', color: TEXT_QUIET, marginBottom: 6 }}>DIRECTION</div><div style={{ fontSize: 17, fontWeight: 600, color: TEXT, lineHeight: 1.35 }}>{vision.title}</div>{vision.description && <div style={{ fontSize: 12.5, color: TEXT_MUTED, marginTop: 6, lineHeight: 1.5, maxWidth: 600 }}>{vision.description}</div>}</div>}
 
-        {domains.length > 0 && <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 26 }}>{domains.map((d) => <div key={d.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 10px', borderRadius: 999, ...glass(0.04) }}><StatusDot status={d.status} /><span style={{ fontSize: 11.5, fontWeight: 600, color: TEXT }}>{d.title.toUpperCase()}</span><span style={{ fontSize: 10.5, color: TEXT_QUIET }}>({STATUS_LABEL[d.status]})</span></div>)}</div>}
+        {domains.length > 0 && <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 26 }}>{domains.map((domain) => <div key={domain.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 10px', borderRadius: 999, ...glass(0.04) }}><StatusDot status={domain.status} /><span style={{ fontSize: 11.5, fontWeight: 600, color: TEXT }}>{domain.title.toUpperCase()}</span><span style={{ fontSize: 10.5, color: TEXT_QUIET }}>({STATUS_LABEL[domain.status]})</span></div>)}</div>}
 
-        {activeFocus.length > 0 && <div style={{ marginBottom: 30 }}><div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.04em', color: TEXT_QUIET, marginBottom: 8 }}>CURRENT FOCUS</div>{activeFocus.map((g) => <div key={g.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 2px', fontSize: 13, color: TEXT }}><span aria-hidden style={{ color: AQUA }}>→</span>{g.title}{g.scope === 'workspace' && <span style={{ fontSize: 10, color: TEXT_QUIET, ...glass(0.05), padding: '1px 6px', borderRadius: 999 }}>this workspace</span>}</div>)}</div>}
+        {activeFocus.length > 0 && <div style={{ marginBottom: 30 }}><div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.04em', color: TEXT_QUIET, marginBottom: 8 }}>CURRENT FOCUS</div>{activeFocus.map((goal) => <div key={goal.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 2px', fontSize: 13, color: TEXT }}><span aria-hidden style={{ color: AQUA }}>→</span>{goal.title}{goal.scope === 'workspace' && <span style={{ fontSize: 10, color: TEXT_QUIET, ...glass(0.05), padding: '1px 6px', borderRadius: 999 }}>this workspace</span>}</div>)}</div>}
 
         <CapabilitiesSection capabilities={data.capabilities} />
         <TreeSection title="Operator direction" goals={data.operatorGoals} />
