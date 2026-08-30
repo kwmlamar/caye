@@ -32,6 +32,7 @@ export async function POST(req: NextRequest) {
     const result = await runFounderThreadTurn(workspaceId, threadId, message, {
       requestedMode: 'auto',
       founderUserId: user.id,
+      responseStyle: 'voice',
     })
     logVoiceEvent({
       workspaceId,
