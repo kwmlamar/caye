@@ -7,14 +7,38 @@ import { runBoundedObjective } from '@/lib/operator/objective-run'
 import { finalizeObjectiveRun, openOrResumeObjectiveRun, persistObjectiveEvent } from '@/lib/operator/objective-store'
 
 const OBJECTIVE_KEY = 'founder_job_search_prepare_and_inspect'
-const PLAN_VERSION = '1'
-const MAX_TRANSITIONS = 8
+const PLAN_VERSION = '2'
+const MAX_TRANSITIONS = 12
+const MAX_PLAN_REVISIONS = 2
 const TIMEOUT_MS = 50_000
 const MAX_RUN_AGE_MS = 15 * 60_000
+
+type ApplicationState = {
+  id: string
+  status: string
+  updated_at: string
+}
+
+type JobSearchObjectiveContext = {
+  supabase: ReturnType<typeof createServiceClient>
+  inspectionBaseline: ApplicationState[]
+}
 
 type InspectionEffect = {
   inspected?: number
   results?: Array<{ applicationId?: string; outcome?: string; reason?: string }>
+}
+
+function applicationFingerprint(rows: ApplicationState[]) {
+  return JSON.stringify(rows.map((row) => [row.id, row.status, row.updated_at]))
+}
+
+async function readApplicationState(context: JobSearchObjectiveContext) {
+  return context.supabase
+    .from('job_search_applications')
+    .select('id,status,updated_at')
+    .order('updated_at', { ascending: false })
+    .limit(25)
 }
 
 export async function runFounderJobSearchObjective() {
@@ -30,27 +54,52 @@ export async function runFounderJobSearchObjective() {
     workspaceId: null,
     actorKey: 'founder',
     maxTransitions: MAX_TRANSITIONS,
+    maxPlanRevisions: MAX_PLAN_REVISIONS,
     timeoutMs: TIMEOUT_MS,
     maxRunAgeMs: MAX_RUN_AGE_MS,
     metadata: { workflow: 'job_search', phase: 'prepare_and_inspect', planVersion: PLAN_VERSION },
   })
 
+  const context: JobSearchObjectiveContext = {
+    supabase,
+    inspectionBaseline: (before.data ?? []) as ApplicationState[],
+  }
+
   const result = await runBoundedObjective({
-    context: { supabase, before: before.data ?? [] },
+    context,
     // Preparation and inspection are internal/reversible state changes only.
     // Submission/contact remains outside this objective and therefore cannot be
     // smuggled in by a planner without an explicit high-risk authority grant.
     allowedAuthority: new Set(['read', 'write_low']),
     completedSteps: durable.completedSteps,
+    pendingEffects: durable.pendingEffects,
     maxTransitions: durable.maxTransitions,
     transitionsAlreadyUsed: durable.transitionsUsed,
     timeoutMs: TIMEOUT_MS,
+    planRevision: durable.planRevision,
+    maxPlanRevisions: durable.maxPlanRevisions,
+    onReplan: async ({ context: current, evidence, previousRevision, nextRevision }) => {
+      const changed = evidence && typeof evidence === 'object' && 'currentApplications' in evidence
+        ? (evidence as { currentApplications?: ApplicationState[] }).currentApplications
+        : undefined
+      if (changed) current.inspectionBaseline = changed
+      return {
+        context: current,
+        evidence: {
+          workflow: 'job_search',
+          previousRevision,
+          nextRevision,
+          action: 'accepted_fresh_application_state_and_revalidated_remaining_plan',
+          applicationCount: changed?.length ?? current.inspectionBaseline.length,
+        },
+      }
+    },
     onEvent: (event) => persistObjectiveEvent(supabase, durable.runId, durable.runnerToken, TIMEOUT_MS, event),
     steps: [
       {
         key: 'prepare_applications', authority: 'write_low', maxAttempts: 1,
         execute: async () => runJobSearchPreparation(),
-        verify: async ({ supabase }, effect) => {
+        verify: async (ctx, effect) => {
           const skipped = effect && typeof effect === 'object' && ('skippedPaused' in effect || 'skippedDailyCap' in effect || 'skippedAlreadyRunning' in effect)
           if (skipped) return { ok: true, evidence: { effect, verified: 'bounded_skip' } }
 
@@ -59,24 +108,59 @@ export async function runFounderJobSearchObjective() {
             : null
           if (!runId) return { ok: false, evidence: { effect }, reason: 'Preparation effect did not identify its durable run' }
 
-          const check = await supabase
+          const check = await ctx.supabase
             .from('job_search_runs')
             .select('id,status,completed_at,stats,error')
             .eq('id', runId)
             .eq('run_type', 'apply')
             .maybeSingle()
-          if (check.error) return { ok: false, reason: check.error.message }
-          return {
-            ok: check.data?.status === 'completed',
-            evidence: { effect, run: check.data },
-            reason: check.data?.error ?? 'Exact preparation run was not observed completed',
+          if (check.error) return { ok: false, indeterminate: true, retryAfterMs: 30_000, reason: check.error.message, evidence: { effect } }
+          if (!check.data || check.data.status === 'running') {
+            return {
+              ok: false,
+              indeterminate: true,
+              retryAfterMs: 30_000,
+              reason: 'Exact preparation run has not reached a terminal state yet',
+              evidence: { effect, run: check.data },
+            }
           }
+          if (check.data.status !== 'completed') {
+            return { ok: false, evidence: { effect, run: check.data }, reason: check.data.error ?? 'Exact preparation run failed' }
+          }
+
+          const refreshed = await readApplicationState(ctx)
+          if (refreshed.error) {
+            return { ok: false, indeterminate: true, retryAfterMs: 30_000, reason: refreshed.error.message, evidence: { effect, run: check.data } }
+          }
+          ctx.inspectionBaseline = (refreshed.data ?? []) as ApplicationState[]
+          return { ok: true, evidence: { effect, run: check.data, inspectionBaseline: applicationFingerprint(ctx.inspectionBaseline) } }
         },
       },
       {
         key: 'inspect_prepared_applications', authority: 'write_low', maxAttempts: 2,
+        checkState: async (ctx) => {
+          const current = await readApplicationState(ctx)
+          if (current.error) {
+            return { status: 'wait' as const, reason: `Could not re-evaluate application state: ${current.error.message}`, resumeAfterMs: 30_000 }
+          }
+          const currentApplications = (current.data ?? []) as ApplicationState[]
+          const baselineFingerprint = applicationFingerprint(ctx.inspectionBaseline)
+          const currentFingerprint = applicationFingerprint(currentApplications)
+          if (baselineFingerprint === currentFingerprint) {
+            return { status: 'current' as const, evidence: { fingerprint: currentFingerprint, applicationCount: currentApplications.length } }
+          }
+          return {
+            status: 'changed' as const,
+            reason: 'Prepared application state changed after the plan baseline was captured',
+            evidence: {
+              baselineFingerprint,
+              currentFingerprint,
+              currentApplications,
+            },
+          }
+        },
         execute: async () => runJobSearchInspection(),
-        verify: async ({ supabase }, rawEffect) => {
+        verify: async (ctx, rawEffect) => {
           const effect = rawEffect as InspectionEffect
           const results = Array.isArray(effect?.results) ? effect.results : []
           const failed = results.filter((item) => item?.outcome === 'failed')
@@ -97,20 +181,27 @@ export async function runFounderJobSearchObjective() {
             return { ok: true, evidence: { effect, verified: 'no_mutating_inspection_outcomes' } }
           }
 
-          const check = await supabase
+          const check = await ctx.supabase
             .from('job_search_applications')
             .select('id,status,needs_human_reason,updated_at')
             .in('id', mutatedIds)
-          if (check.error) return { ok: false, reason: check.error.message }
+          if (check.error) {
+            return { ok: false, indeterminate: true, retryAfterMs: 30_000, reason: check.error.message, evidence: { effect } }
+          }
 
           const observed = check.data ?? []
           const observedIds = new Set(observed.filter((row) => row.status === 'NEEDS_HUMAN' && row.needs_human_reason).map((row) => row.id as string))
           const missing = mutatedIds.filter((id) => !observedIds.has(id))
-          return {
-            ok: missing.length === 0,
-            evidence: { effect, observedApplications: observed, missing },
-            reason: missing.length ? `Inspection side effects not observed for ${missing.length} application(s)` : undefined,
+          if (missing.length > 0) {
+            return {
+              ok: false,
+              indeterminate: true,
+              retryAfterMs: 30_000,
+              evidence: { effect, observedApplications: observed, missing },
+              reason: `Inspection side effects are not yet observable for ${missing.length} application(s)`,
+            }
           }
+          return { ok: true, evidence: { effect, observedApplications: observed, missing: [] } }
         },
       },
     ],
@@ -127,7 +218,7 @@ export async function runFounderJobSearchObjective() {
       runId: durable.runId,
       objectiveKey: OBJECTIVE_KEY,
       result,
-      summary: 'Founder job-search objective completed preparation and inspection with authority checks and verified side effects.',
+      summary: `Founder job-search objective ended ${result.status} at plan revision ${result.planRevision} with authority checks, changed-reality detection, and verified side effects.`,
     })
   } catch (error) {
     directionEvidence = {
