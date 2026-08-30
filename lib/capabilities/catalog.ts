@@ -2,6 +2,7 @@ import 'server-only'
 
 import { attentionListCapability } from './attention-list'
 import { engineeringArtifactsListCapability } from './engineering-artifacts-list'
+import { engineeringDecisionAnalysisCapability } from './engineering-decision-analysis'
 import { goalsListCapability } from './goals-list'
 import { growthSnapshotCapability } from './growth-snapshot'
 import { jobSearchQueueCapability } from './job-search-queue'
@@ -22,6 +23,7 @@ import { createCapabilityRegistry } from './registry'
 export const cayeCapabilityRegistry = createCapabilityRegistry([
   attentionListCapability,
   engineeringArtifactsListCapability,
+  engineeringDecisionAnalysisCapability,
   goalsListCapability,
   // Growth Intelligence: workspace-scoped evidence/diagnosis read boundary.
   // Deliberately no execution capability in v1.
