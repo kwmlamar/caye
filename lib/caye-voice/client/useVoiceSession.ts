@@ -56,6 +56,7 @@ export function useVoiceSession({ workspaceId, sendTurn, onError }: UseVoiceSess
 
   const bargeIn = useCallback(() => {
     epochRef.current += 1
+    sttRef.current?.cancelSpeech()
     ttsRef.current?.stop()
     dispatch({ type: 'user_speech_start' })
   }, [dispatch])
@@ -67,22 +68,33 @@ export function useVoiceSession({ workspaceId, sendTurn, onError }: UseVoiceSess
       dispatch({ type: 'user_speech_end' })
       const config = configRef.current
       if (!config) return
+
       try {
         const replyText = await sendTurn(text, {
           endpoint: '/api/founder/caye-direct/voice/turn',
           sessionId: config.sessionId,
         })
-        if (myEpoch !== epochRef.current) return
-        if (!replyText) return
-        dispatch({ type: 'reply_ready' })
+        if (myEpoch !== epochRef.current || !replyText) return
 
-        // Browser SpeechSynthesis plays through the same laptop speakers the
-        // microphone is listening to. OpenAI Realtime then happily transcribes
-        // Caye's own voice as a new founder turn. While browser TTS is active,
-        // pause STT input, then restore the founder's explicit mute state after
-        // a short acoustic tail. Cloud TTS keeps normal barge-in behavior.
+        dispatch({ type: 'reply_ready' })
+        const stt = sttRef.current
+
+        // Preferred path: the OpenAI Realtime WebRTC session that heard the
+        // founder also renders the already-authorized Caye reply directly as
+        // audio. This avoids browser SpeechSynthesis, removes the robotic OS
+        // voice, keeps acoustic echo cancellation in the WebRTC path, and
+        // preserves interruption via response.cancel.
+        if (stt?.supportsNativeVoice()) {
+          await stt.speakReply(replyText)
+          if (myEpoch === epochRef.current) dispatch({ type: 'tts_playback_ended' })
+          return
+        }
+
+        // Degraded/provider fallback: keep the existing cloud/browser TTS
+        // pipeline. Browser speech still needs mic suppression because it is
+        // external to the realtime peer connection and can feed back into STT.
         const suppressMicDuringPlayback = config.routing.ttsProvider === 'browser'
-        if (suppressMicDuringPlayback) sttRef.current?.setMuted(true)
+        if (suppressMicDuringPlayback) stt?.setMuted(true)
 
         ttsRef.current?.onDone(() => {
           if (myEpoch !== epochRef.current) return
@@ -119,7 +131,11 @@ export function useVoiceSession({ workspaceId, sendTurn, onError }: UseVoiceSess
       const json = await res.json()
       if (!res.ok) throw new Error(json.error ?? 'Could not start voice session')
       configRef.current = json
-      setRoutingReason(json.routing?.reason ?? null)
+      setRoutingReason(
+        json.sttCredential?.connect?.mode === 'native-voice'
+          ? `OpenAI native realtime voice · ${json.sttCredential.connect.model} · ${json.sttCredential.connect.voice}`
+          : json.routing?.reason ?? null
+      )
 
       const stt = createSttSession(json.sttCredential)
       sttRef.current = stt

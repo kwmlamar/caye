@@ -12,6 +12,9 @@ export interface SttSession {
   onSpeechEnd(cb: () => void): void
   onError(cb: (err: Error) => void): void
   getMicStream(): MediaStream | null
+  supportsNativeVoice(): boolean
+  speakReply(text: string): Promise<void>
+  cancelSpeech(): void
 }
 
 abstract class BaseSttSession implements SttSession {
@@ -36,21 +39,43 @@ abstract class BaseSttSession implements SttSession {
   onSpeechEnd(cb: () => void): void { this.speechEndCb = cb }
   onError(cb: (err: Error) => void): void { this.errorCb = cb }
   getMicStream(): MediaStream | null { return this.micStream }
+  supportsNativeVoice(): boolean { return false }
+  async speakReply(_text: string): Promise<void> { throw new Error('Native voice is unavailable for this provider') }
+  cancelSpeech(): void {}
 }
 
 export class OpenAiRealtimeSttSession extends BaseSttSession {
   private pc: RTCPeerConnection | null = null
   private dc: RTCDataChannel | null = null
+  private remoteAudio: HTMLAudioElement | null = null
+  private pendingSpeech: { resolve: () => void; reject: (err: Error) => void } | null = null
 
   constructor(private readonly credential: SttCredential) {
     super()
   }
 
+  supportsNativeVoice(): boolean {
+    return this.credential.connect.mode === 'native-voice'
+  }
+
   async start(): Promise<void> {
-    this.micStream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    this.micStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    })
     const pc = new RTCPeerConnection()
     this.pc = pc
     this.micStream.getTracks().forEach((track) => pc.addTrack(track, this.micStream as MediaStream))
+
+    if (this.supportsNativeVoice()) {
+      const audio = new Audio()
+      audio.autoplay = true
+      this.remoteAudio = audio
+      pc.ontrack = (event) => {
+        const stream = event.streams[0] ?? new MediaStream([event.track])
+        audio.srcObject = stream
+        void audio.play().catch(() => {})
+      }
+    }
 
     const dc = pc.createDataChannel('oai-events')
     this.dc = dc
@@ -60,30 +85,57 @@ export class OpenAiRealtimeSttSession extends BaseSttSession {
     const offer = await pc.createOffer()
     await pc.setLocalDescription(offer)
 
-    const callsUrl = this.credential.connect.callsUrl
-    const sdp = offer.sdp ?? ''
     const form = new FormData()
-    // OpenAI expects `sdp` as a normal multipart text field. Appending a
-    // Blob turns it into a file part, which the API does not bind to its
-    // required string parameter and therefore reports `sdp` as missing.
-    form.append('sdp', sdp)
-
-    const res = await fetch(callsUrl, {
+    form.append('sdp', offer.sdp ?? '')
+    const res = await fetch(this.credential.connect.callsUrl, {
       method: 'POST',
       body: form,
-      headers: {
-        Authorization: `Bearer ${this.credential.token}`,
-      },
+      headers: { Authorization: `Bearer ${this.credential.token}` },
     })
     if (!res.ok) {
       const detail = (await res.text().catch(() => '')).slice(0, 500)
       throw new Error(`OpenAI Realtime connect failed: ${res.status}${detail ? ` ${detail}` : ''}`)
     }
-    const answerSdp = await res.text()
-    await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp })
+    await pc.setRemoteDescription({ type: 'answer', sdp: await res.text() })
+  }
+
+  async speakReply(text: string): Promise<void> {
+    if (!this.supportsNativeVoice()) throw new Error('Native OpenAI voice session is not enabled')
+    const dc = this.dc
+    if (!dc || dc.readyState !== 'open') throw new Error('OpenAI Realtime data channel is not ready')
+    if (!text.trim()) return
+
+    this.cancelSpeech()
+    await new Promise<void>((resolve, reject) => {
+      this.pendingSpeech = { resolve, reject }
+      dc.send(JSON.stringify({
+        type: 'response.create',
+        response: {
+          conversation: 'none',
+          output_modalities: ['audio'],
+          max_output_tokens: 900,
+          instructions:
+            'You are voicing an already-authorized reply from Caye. Speak the reply naturally and conversationally. Preserve every factual claim and action status. Do not add facts, promises, tool results, or follow-up work. Prefer a compact spoken delivery when the reply is verbose, but never omit a warning, approval requirement, failure, or uncertainty. Caye backend reply:\n\n' + text,
+        },
+      }))
+    })
+  }
+
+  cancelSpeech(): void {
+    if (this.dc?.readyState === 'open' && this.supportsNativeVoice()) {
+      try { this.dc.send(JSON.stringify({ type: 'response.cancel' })) } catch {}
+    }
+    this.pendingSpeech?.resolve()
+    this.pendingSpeech = null
   }
 
   stop(): void {
+    this.cancelSpeech()
+    if (this.remoteAudio) {
+      this.remoteAudio.pause()
+      this.remoteAudio.srcObject = null
+      this.remoteAudio = null
+    }
     this.dc?.close()
     this.pc?.close()
     this.micStream?.getTracks().forEach((t) => t.stop())
@@ -93,12 +145,9 @@ export class OpenAiRealtimeSttSession extends BaseSttSession {
   }
 
   private handleEvent(raw: string): void {
-    let msg: { type?: string; delta?: string; transcript?: string }
-    try {
-      msg = JSON.parse(raw)
-    } catch {
-      return
-    }
+    let msg: { type?: string; delta?: string; transcript?: string; error?: { message?: string } }
+    try { msg = JSON.parse(raw) } catch { return }
+
     switch (msg.type) {
       case 'conversation.item.input_audio_transcription.delta':
         if (msg.delta) this.partialCb?.(msg.delta)
@@ -112,6 +161,17 @@ export class OpenAiRealtimeSttSession extends BaseSttSession {
       case 'input_audio_buffer.speech_stopped':
         this.speechEndCb?.()
         break
+      case 'response.done':
+        this.pendingSpeech?.resolve()
+        this.pendingSpeech = null
+        break
+      case 'error': {
+        const err = new Error(msg.error?.message || 'OpenAI Realtime session error')
+        this.pendingSpeech?.reject(err)
+        this.pendingSpeech = null
+        this.errorCb?.(err)
+        break
+      }
       default:
         break
     }
@@ -125,26 +185,19 @@ export class DeepgramSttSession extends BaseSttSession {
   private committedSegments = ''
   private interimText = ''
 
-  constructor(private readonly credential: SttCredential) {
-    super()
-  }
+  constructor(private readonly credential: SttCredential) { super() }
 
   async start(): Promise<void> {
     this.micStream = await navigator.mediaDevices.getUserMedia({ audio: true })
-    const wsUrl = this.credential.connect.wsUrl
-    const ws = new WebSocket(wsUrl, ['bearer', this.credential.token])
+    const ws = new WebSocket(this.credential.connect.wsUrl, ['bearer', this.credential.token])
     this.ws = ws
-
     await new Promise<void>((resolve, reject) => {
       ws.onopen = () => resolve()
       ws.onerror = () => reject(new Error('Deepgram WebSocket connect failed'))
     })
-
     ws.onmessage = (event) => this.handleMessage(event.data)
     ws.onerror = () => this.errorCb?.(new Error('Deepgram WebSocket error'))
-    ws.onclose = () => {
-      this.ws = null
-    }
+    ws.onclose = () => { this.ws = null }
 
     const recorder = new MediaRecorder(this.micStream, { mimeType: 'audio/webm;codecs=opus' })
     this.recorder = recorder
@@ -176,11 +229,8 @@ export class DeepgramSttSession extends BaseSttSession {
       speech_final?: boolean
       channel?: { alternatives?: Array<{ transcript?: string }> }
     }
-    try {
-      msg = JSON.parse(raw)
-    } catch {
-      return
-    }
+    try { msg = JSON.parse(raw) } catch { return }
+
     if (msg.type === 'SpeechStarted') {
       this.finalizedThisUtterance = false
       this.speechStartCb?.()
@@ -203,8 +253,7 @@ export class DeepgramSttSession extends BaseSttSession {
       if (msg.speech_final) {
         if (!this.finalizedThisUtterance) {
           this.finalizedThisUtterance = true
-          const text = [this.committedSegments, transcript].filter(Boolean).join(' ').trim()
-          this.finalCb?.(text)
+          this.finalCb?.([this.committedSegments, transcript].filter(Boolean).join(' ').trim())
         }
         this.committedSegments = ''
         this.interimText = ''
