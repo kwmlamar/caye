@@ -1,0 +1,311 @@
+-- Harden canonical workspace-event perception against clock poisoning and invisible first-run failures.
+-- Extends the existing observer/cycle; does not introduce another event bus or expand authority.
+
+create or replace function public.observe_workspace_event_stream(
+  p_workspace_id uuid,
+  p_observed_at timestamptz default now()
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_latest public.workspace_events%rowtype;
+  v_event_count bigint;
+  v_failure_count bigint;
+  v_fingerprint text;
+  v_previous_fingerprint text;
+  v_previous_observed_at timestamptz;
+  v_change_kind text;
+  v_observation_event_id bigint;
+  v_fresh_until timestamptz;
+  v_server_now timestamptz := now();
+begin
+  if p_workspace_id is null then
+    return jsonb_build_object('status','malformed_observation','reason','workspace_id_required');
+  end if;
+
+  if p_observed_at is null then
+    return jsonb_build_object('status','malformed_observation','reason','observed_at_required');
+  end if;
+
+  -- Service-role authority does not imply authority to move the durable perception clock arbitrarily.
+  if p_observed_at > v_server_now + interval '5 minutes' then
+    return jsonb_build_object(
+      'status','future_observation',
+      'reason','observed_at_too_far_in_future',
+      'attempted_observed_at',p_observed_at,
+      'server_now',v_server_now
+    );
+  end if;
+
+  select *
+    into v_latest
+    from public.workspace_events
+   where workspace_id=p_workspace_id
+     and type not like 'observation.%'
+   order by id desc
+   limit 1;
+
+  if not found then
+    return jsonb_build_object('status','missing_source','workspace_id',p_workspace_id);
+  end if;
+
+  select count(*)::bigint,
+         count(*) filter(where is_failure)::bigint
+    into v_event_count,v_failure_count
+    from public.workspace_events
+   where workspace_id=p_workspace_id
+     and type not like 'observation.%';
+
+  select last_fingerprint,last_observed_at
+    into v_previous_fingerprint,v_previous_observed_at
+    from public.perception_source_state
+   where workspace_id=p_workspace_id
+     and source_kind='system.workspace_event_stream'
+     and source_identity='workspace_events'
+     and subject_kind='workspace_event_stream'
+     and subject_id=p_workspace_id::text
+   for update;
+
+  if v_previous_observed_at is not null and p_observed_at < v_previous_observed_at then
+    return jsonb_build_object(
+      'status','stale',
+      'last_observed_at',v_previous_observed_at,
+      'attempted_observed_at',p_observed_at
+    );
+  end if;
+
+  v_fingerprint:=md5(jsonb_build_object(
+    'latest_event_id',v_latest.id,
+    'latest_event_type',v_latest.type,
+    'event_count',v_event_count,
+    'failure_count',v_failure_count
+  )::text);
+
+  v_change_kind:=case
+    when v_previous_fingerprint is null then 'initial'
+    when v_previous_fingerprint=v_fingerprint then 'unchanged'
+    else 'ordinary_change'
+  end;
+
+  v_fresh_until:=p_observed_at+interval '15 minutes';
+
+  if v_change_kind<>'unchanged' then
+    insert into public.workspace_events(
+      workspace_id,occurred_at,type,actor_kind,is_failure,subject_table,subject_id,payload,origin
+    ) values(
+      p_workspace_id,
+      p_observed_at,
+      'observation.workspace_event_stream',
+      'system',
+      false,
+      'workspace_events',
+      v_latest.id::text,
+      jsonb_build_object(
+        'epistemic_kind','observation',
+        'change_kind',v_change_kind,
+        'anomaly',false,
+        'importance','routine',
+        'severity','info',
+        'confidence',1.0,
+        'fresh_until',v_fresh_until,
+        'source',jsonb_build_object(
+          'kind','system.workspace_event_stream',
+          'identity','workspace_events',
+          'latest_source_event_id',v_latest.id,
+          'latest_source_event_type',v_latest.type
+        ),
+        'state',jsonb_build_object(
+          'event_count',v_event_count,
+          'failure_count',v_failure_count,
+          'latest_event_occurred_at',v_latest.occurred_at
+        ),
+        'fingerprint',v_fingerprint
+      ),
+      'app'
+    )
+    on conflict do nothing
+    returning id into v_observation_event_id;
+
+    if v_observation_event_id is null then
+      select id
+        into v_observation_event_id
+        from public.workspace_events
+       where workspace_id=p_workspace_id
+         and type='observation.workspace_event_stream'
+         and subject_table='workspace_events'
+         and subject_id=v_latest.id::text
+       limit 1;
+    end if;
+  end if;
+
+  insert into public.perception_source_state(
+    workspace_id,source_kind,source_identity,subject_kind,subject_id,actor_kind,
+    last_observation_event_id,last_source_event_id,last_fingerprint,last_observed_at,
+    fresh_until,confidence,status,consecutive_failures,metadata
+  ) values(
+    p_workspace_id,'system.workspace_event_stream','workspace_events','workspace_event_stream',
+    p_workspace_id::text,'system',v_observation_event_id,v_latest.id::text,v_fingerprint,
+    p_observed_at,v_fresh_until,1.0,'active',0,
+    jsonb_build_object(
+      'latest_source_event_type',v_latest.type,
+      'latest_source_event_occurred_at',v_latest.occurred_at,
+      'event_count',v_event_count,
+      'failure_count',v_failure_count
+    )
+  )
+  on conflict(workspace_id,source_kind,source_identity,subject_kind,subject_id)
+  do update set
+    last_observation_event_id=coalesce(excluded.last_observation_event_id,perception_source_state.last_observation_event_id),
+    last_source_event_id=excluded.last_source_event_id,
+    last_fingerprint=excluded.last_fingerprint,
+    last_observed_at=excluded.last_observed_at,
+    fresh_until=excluded.fresh_until,
+    confidence=excluded.confidence,
+    status='active',
+    consecutive_failures=0,
+    last_failure_at=null,
+    last_failure_code=null,
+    retry_after=null,
+    metadata=excluded.metadata,
+    updated_at=now();
+
+  insert into public.perception_capability_evidence(
+    workspace_id,capability_key,source_kind,source_identity,status,autonomous_now,
+    evidence_event_id,last_observed_at,fresh_until,confidence,notes,metadata
+  ) values(
+    p_workspace_id,'perception.continuous_awareness','system.workspace_event_stream','workspace_events',
+    'active',true,
+    coalesce(v_observation_event_id,(
+      select last_observation_event_id
+        from public.perception_source_state
+       where workspace_id=p_workspace_id
+         and source_kind='system.workspace_event_stream'
+         and source_identity='workspace_events'
+         and subject_kind='workspace_event_stream'
+         and subject_id=p_workspace_id::text
+    )),
+    p_observed_at,v_fresh_until,1.0,
+    'The canonical workspace event stream was observed directly in production and correlated with prior perception state.',
+    jsonb_build_object(
+      'observes',true,
+      'normalizes',true,
+      'correlates',true,
+      'detects_change',true,
+      'detects_anomaly',false,
+      'acts_without_prompt',false,
+      'authority_expanded',false,
+      'source_event_retained',true,
+      'interruption_budget_compatible',true
+    )
+  )
+  on conflict(workspace_id,capability_key,source_kind,source_identity)
+  do update set
+    status='active',
+    autonomous_now=true,
+    evidence_event_id=coalesce(excluded.evidence_event_id,perception_capability_evidence.evidence_event_id),
+    last_observed_at=excluded.last_observed_at,
+    fresh_until=excluded.fresh_until,
+    confidence=excluded.confidence,
+    notes=excluded.notes,
+    metadata=excluded.metadata,
+    updated_at=now();
+
+  return jsonb_build_object(
+    'status','accepted',
+    'workspace_id',p_workspace_id,
+    'source_kind','system.workspace_event_stream',
+    'source_identity','workspace_events',
+    'source_event_id',v_latest.id,
+    'observation_event_id',v_observation_event_id,
+    'change_kind',v_change_kind,
+    'anomaly',false,
+    'fresh_until',v_fresh_until
+  );
+end;
+$$;
+
+create or replace function public.run_workspace_event_perception_cycle(p_limit integer default 100)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_source record;
+  v_result jsonb;
+  v_processed integer := 0;
+  v_changed integer := 0;
+  v_unchanged integer := 0;
+  v_failed integer := 0;
+  v_limit integer := least(greatest(coalesce(p_limit, 100), 1), 500);
+begin
+  for v_source in
+    select workspace_id, id, occurred_at, type
+      from (
+        select distinct on (workspace_id)
+               workspace_id, id, occurred_at, type
+          from public.workspace_events
+         where type not like 'observation.%'
+         order by workspace_id, id desc
+      ) latest_by_workspace
+     order by occurred_at desc, id desc
+     limit v_limit
+  loop
+    begin
+      v_result := public.observe_workspace_event_stream(v_source.workspace_id, now());
+      v_processed := v_processed + 1;
+      if coalesce(v_result->>'change_kind', '') = 'unchanged' then
+        v_unchanged := v_unchanged + 1;
+      elsif coalesce(v_result->>'status', '') = 'accepted' then
+        v_changed := v_changed + 1;
+      else
+        v_failed := v_failed + 1;
+      end if;
+    exception when others then
+      v_failed := v_failed + 1;
+
+      -- Persist degraded state even if this source has never completed a successful observation.
+      insert into public.perception_source_state(
+        workspace_id,source_kind,source_identity,subject_kind,subject_id,actor_kind,
+        last_source_event_id,last_observed_at,fresh_until,confidence,status,
+        consecutive_failures,last_failure_at,last_failure_code,retry_after,metadata
+      ) values(
+        v_source.workspace_id,'system.workspace_event_stream','workspace_events','workspace_event_stream',
+        v_source.workspace_id::text,'system',v_source.id::text,null,now(),0,'degraded',
+        1,now(),'observer_error',now()+interval '5 minutes',
+        jsonb_build_object(
+          'failed_source_event_type',v_source.type,
+          'failed_source_event_occurred_at',v_source.occurred_at
+        )
+      )
+      on conflict(workspace_id,source_kind,source_identity,subject_kind,subject_id)
+      do update set
+        status='degraded',
+        consecutive_failures=perception_source_state.consecutive_failures+1,
+        last_failure_at=now(),
+        last_failure_code='observer_error',
+        retry_after=now()+interval '5 minutes',
+        last_source_event_id=excluded.last_source_event_id,
+        metadata=perception_source_state.metadata || excluded.metadata,
+        updated_at=now();
+    end;
+  end loop;
+
+  return jsonb_build_object(
+    'status',case when v_failed=0 then 'ok' else 'partial_failure' end,
+    'processed',v_processed,
+    'changed',v_changed,
+    'unchanged',v_unchanged,
+    'failed',v_failed,
+    'limit',v_limit
+  );
+end;
+$$;
+
+revoke all on function public.observe_workspace_event_stream(uuid,timestamptz) from public, anon, authenticated;
+grant execute on function public.observe_workspace_event_stream(uuid,timestamptz) to service_role;
+revoke all on function public.run_workspace_event_perception_cycle(integer) from public, anon, authenticated;
+grant execute on function public.run_workspace_event_perception_cycle(integer) to service_role;
