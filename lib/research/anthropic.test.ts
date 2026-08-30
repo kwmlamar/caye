@@ -133,4 +133,64 @@ describe('Anthropic research synthesis JSON recovery', () => {
     expect(create).toHaveBeenCalledTimes(2)
     expect(result.brief).toBe('Bounded architectures are promising.')
   })
+
+  it('retries when a material claim has no evidence', async () => {
+    const unsupportedJson = JSON.stringify({
+      claims: [{
+        statement: 'Unsupported claim.',
+        claimType: 'finding',
+        confidence: 0.9,
+        sourceQuality: 'primary',
+        sourceIds: [],
+      }],
+      brief: 'Attempt one.',
+      strongestEvidence: [],
+      conflictingEvidence: [],
+      unknowns: [],
+      materialChanges: [],
+      implications: [],
+      recommendations: [],
+    })
+    const create = vi.fn()
+      .mockResolvedValueOnce({ stop_reason: 'end_turn', content: [{ type: 'text', text: unsupportedJson }] })
+      .mockResolvedValueOnce({ stop_reason: 'end_turn', content: [{ type: 'text', text: validJson }] })
+    const client = { messages: { create } } as unknown as Anthropic
+    const synthesize = createAnthropicResearchSynthesizer({ client, model: 'test-model' })
+
+    const result = await synthesize(input)
+
+    expect(create).toHaveBeenCalledTimes(2)
+    expect(create.mock.calls[1][0].messages[0].content).toContain('Material research claim lacks evidence')
+    expect(result.claims[0].sourceIds).toEqual(['source-1'])
+  })
+
+  it('retries when a claim cites a source outside the supplied run evidence', async () => {
+    const inventedSourceJson = JSON.stringify({
+      claims: [{
+        statement: 'Claim with invented citation.',
+        claimType: 'finding',
+        confidence: 0.7,
+        sourceQuality: 'unknown',
+        sourceIds: ['source-does-not-exist'],
+      }],
+      brief: 'Attempt one.',
+      strongestEvidence: [],
+      conflictingEvidence: [],
+      unknowns: [],
+      materialChanges: [],
+      implications: [],
+      recommendations: [],
+    })
+    const create = vi.fn()
+      .mockResolvedValueOnce({ stop_reason: 'end_turn', content: [{ type: 'text', text: inventedSourceJson }] })
+      .mockResolvedValueOnce({ stop_reason: 'end_turn', content: [{ type: 'text', text: validJson }] })
+    const client = { messages: { create } } as unknown as Anthropic
+    const synthesize = createAnthropicResearchSynthesizer({ client, model: 'test-model' })
+
+    const result = await synthesize(input)
+
+    expect(create).toHaveBeenCalledTimes(2)
+    expect(create.mock.calls[1][0].messages[0].content).toContain('source IDs not present in this run')
+    expect(result.brief).toBe('Bounded architectures are promising.')
+  })
 })
