@@ -28,6 +28,7 @@ export type ConversationalCapabilityDescriptor = CapabilityManifestEntry & {
 const OPERATOR_SCOPED_NAMESPACES = new Set(['job_search', 'research'])
 const CANONICAL_ENTITY_SCOPED = new Set<CapabilityName>(['property.snapshot'])
 const EITHER_SCOPED = new Set<CapabilityName>(['goals.list'])
+const CONVERSATIONAL_WRITE_ADAPTERS = new Set<CapabilityName>(['research.start'])
 
 function domainFor(manifest: CapabilityManifestEntry): CapabilityDomain {
   switch (manifest.namespace) {
@@ -63,14 +64,25 @@ function scopeModeFor(manifest: CapabilityManifestEntry): CapabilityScopeMode {
   return 'workspace'
 }
 
+function conversationalAvailability(manifest: CapabilityManifestEntry): {
+  available: boolean
+  unavailableReason: string | null
+} {
+  if (manifest.access === 'read') return { available: true, unavailableReason: null }
+  if (CONVERSATIONAL_WRITE_ADAPTERS.has(manifest.name)) return { available: true, unavailableReason: null }
+  return {
+    available: false,
+    unavailableReason: 'Canonical capability is registered, but no model-facing conversational adapter is exposed yet.',
+  }
+}
+
 export function conversationalCapabilityManifest(): ConversationalCapabilityDescriptor[] {
   return founderCapabilityManifest().map((manifest) => ({
     ...manifest,
     approvalRequirement: approvalFor(manifest),
     scopeMode: scopeModeFor(manifest),
     domain: domainFor(manifest),
-    available: true,
-    unavailableReason: null,
+    ...conversationalAvailability(manifest),
   }))
 }
 
@@ -78,9 +90,12 @@ export type CapabilityCoverage = {
   domain: CapabilityDomain
   status: 'active' | 'limited' | 'future'
   capabilityCount: number
+  registeredCapabilityCount: number
+  unavailableCapabilityCount: number
   readCount: number
   writeCount: number
   capabilities: CapabilityName[]
+  unavailableCapabilities: CapabilityName[]
   gap: string | null
 }
 
@@ -108,19 +123,29 @@ export function capabilityCoverage(): CapabilityCoverage[] {
   ]
 
   return domains.map((domain) => {
-    const entries = descriptors.filter((entry) => entry.domain === domain)
-    const gap = FUTURE_GAPS.find((entry) => entry.domain === domain)?.gap ?? null
+    const registered = descriptors.filter((entry) => entry.domain === domain)
+    const entries = registered.filter((entry) => entry.available)
+    const unavailable = registered.filter((entry) => !entry.available)
+    const declaredGap = FUTURE_GAPS.find((entry) => entry.domain === domain)?.gap ?? null
+    const adapterGap = unavailable.length > 0
+      ? `${unavailable.length} registered canonical capability${unavailable.length === 1 ? '' : 'ies'} still lack${unavailable.length === 1 ? 's' : ''} a conversational adapter.`
+      : null
+    const gap = [declaredGap, adapterGap].filter(Boolean).join(' ') || null
     const capabilityCount = entries.length
     const readCount = entries.filter((entry) => entry.access === 'read').length
     const writeCount = entries.filter((entry) => entry.access === 'write').length
-    const status: CapabilityCoverage['status'] = capabilityCount === 0 ? 'future' : gap ? 'limited' : 'active'
+    const status: CapabilityCoverage['status'] =
+      capabilityCount === 0 && registered.length === 0 ? 'future' : gap ? 'limited' : 'active'
     return {
       domain,
       status,
       capabilityCount,
+      registeredCapabilityCount: registered.length,
+      unavailableCapabilityCount: unavailable.length,
       readCount,
       writeCount,
       capabilities: entries.map((entry) => entry.name),
+      unavailableCapabilities: unavailable.map((entry) => entry.name),
       gap,
     }
   })
