@@ -13,16 +13,32 @@ function makeFakeSupabase() {
     from(table: string) {
       const store = ensure(table)
       return {
+        select(_cols: string) {
+          let filtered = store
+          const query = {
+            eq(col: string, val: unknown) {
+              filtered = filtered.filter((row) => row[col] === val)
+              return query
+            },
+            async maybeSingle() {
+              return { data: filtered[0] ?? null, error: null }
+            },
+          }
+          return query
+        },
         upsert(row: Row, opts?: { onConflict?: string }) {
-          const conflictCol = opts?.onConflict
-          const existing = conflictCol ? store.find((r) => r[conflictCol] === row[conflictCol]) : undefined
+          const conflictCols = opts?.onConflict?.split(',').map((col) => col.trim()).filter(Boolean) ?? []
+          const existing = conflictCols.length > 0
+            ? store.find((candidate) => conflictCols.every((col) => candidate[col] === row[col]))
+            : undefined
           const result = existing ? Object.assign(existing, row) : { id: `id_${counter++}`, ...row }
           if (!existing) store.push(result)
-          return {
+          const promiseResult = Promise.resolve({ data: result, error: null })
+          return Object.assign(promiseResult, {
             select(_cols: string) {
               return { async single() { return { data: result, error: null } } }
             },
-          }
+          })
         },
         insert(rowOrRows: Row | Row[]) {
           const rowsArr = Array.isArray(rowOrRows) ? rowOrRows : [rowOrRows]
@@ -94,6 +110,14 @@ const resumeVariant = {
   summary: 'Recent CS graduate.',
   sections: {},
   status: 'verified' as const,
+}
+
+const supportVariant = {
+  ...resumeVariant,
+  id: 'variant-support',
+  variantKey: 'it_support' as const,
+  title: 'IT Support & Technical Systems',
+  summary: 'Computer Science graduate and hands-on technical builder seeking an IT Support Technician role.',
 }
 
 function candidate(overrides: Partial<Parameters<typeof prepareApplication>[0]> = {}) {
@@ -187,17 +211,57 @@ describe('prepareApplication — safety boundaries (#192)', () => {
     expect(forThisCandidate).toHaveLength(1)
   })
 
+  it('re-preparing replaces generated artifacts instead of duplicating them', async () => {
+    settingsMock.mockResolvedValue({ paused: false })
+    const oneCandidate = candidate({ id: 'artifact-stable-candidate' })
+
+    await prepareApplication(oneCandidate, resumeVariant)
+    await prepareApplication(oneCandidate, resumeVariant)
+
+    const artifacts = fake.tables['job_search_generated_artifacts'] ?? []
+    expect(artifacts).toHaveLength(2)
+    expect(artifacts.map((row) => row.artifact_type).sort()).toEqual(['cover_letter', 'resume'])
+  })
+
+  it('re-preparing with a newly selected support resume updates the same application and both artifacts', async () => {
+    settingsMock.mockResolvedValue({ paused: false })
+    const oneCandidate = candidate({ id: 'support-candidate', title: 'Technical Support Engineer' })
+
+    const first = await prepareApplication(oneCandidate, resumeVariant)
+    const second = await prepareApplication(oneCandidate, supportVariant)
+
+    expect(first.outcome).toBe('needs_human')
+    expect(second.outcome).toBe('needs_human')
+    if (first.outcome === 'needs_human' && second.outcome === 'needs_human') {
+      expect(second.applicationId).toBe(first.applicationId)
+    }
+
+    const applications = fake.tables['job_search_applications'] ?? []
+    expect(applications).toHaveLength(1)
+    expect(applications[0].resume_variant_id).toBe('variant-support')
+
+    const artifacts = fake.tables['job_search_generated_artifacts'] ?? []
+    expect(artifacts).toHaveLength(2)
+    expect(artifacts.every((row) => row.resume_variant_id === 'variant-support')).toBe(true)
+  })
+
+  it('refuses to re-prepare a submitted application and preserves its terminal status', async () => {
+    settingsMock.mockResolvedValue({ paused: false })
+    const oneCandidate = candidate({ id: 'submitted-candidate' })
+
+    await prepareApplication(oneCandidate, resumeVariant)
+    const application = (fake.tables['job_search_applications'] ?? [])[0]
+    application.status = 'SUBMITTED'
+
+    await expect(prepareApplication(oneCandidate, supportVariant)).rejects.toThrow(/Refusing to re-prepare.*SUBMITTED/i)
+    expect(application.status).toBe('SUBMITTED')
+    expect(application.resume_variant_id).toBe('variant-1')
+  })
+
   it('is idempotent under real concurrency: two simultaneous prepare calls for the same candidate never create two application rows', async () => {
     settingsMock.mockResolvedValue({ paused: false })
     const oneCandidate = candidate({ id: 'concurrent-candidate-id' })
 
-    // Genuinely concurrent, not sequential-awaited: both calls start before
-    // either resolves, racing through the upsert. The migration's
-    // unique(candidate_id) constraint is the real backstop in production;
-    // this test proves the upsert-based code path in application-executor.ts
-    // itself doesn't independently race past that into two inserts against
-    // the fake store, which — unlike Postgres — has no unique constraint to
-    // catch a bug here on its own.
     const [resultA, resultB] = await Promise.all([
       prepareApplication(oneCandidate, resumeVariant),
       prepareApplication(oneCandidate, resumeVariant),
@@ -210,8 +274,6 @@ describe('prepareApplication — safety boundaries (#192)', () => {
     const forThisCandidate = applications.filter((row) => row.candidate_id === 'concurrent-candidate-id')
     expect(forThisCandidate).toHaveLength(1)
 
-    // Both calls must have resolved to the SAME application row, not two
-    // different ids that happen to coexist.
     if (resultA.outcome === 'needs_human' && resultB.outcome === 'needs_human') {
       expect(resultA.applicationId).toBe(resultB.applicationId)
     }
