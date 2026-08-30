@@ -1,20 +1,17 @@
 /**
  * POST /api/founder/caye-direct/voice/session
  *
- * Founder-only (spec item 19, enforced server-side via requireFounder —
- * the same gate every other Caye Direct route uses). Starts a Caye Direct
- * Live Voice session: resolves Auto/manual provider routing, mints a
- * short-lived STT credential the browser will connect to the provider
- * with directly, and returns the TTS voice config the client will use
- * when calling /voice/tts per finalized reply.
- *
- * Body: { workspaceId, sttPreference?: 'auto'|'openai-realtime'|'deepgram',
- *         ttsPreference?: 'auto'|'elevenlabs'|'deepgram' }
+ * Founder-only. Starts Caye Direct Live Voice and returns an ephemeral
+ * browser credential. When OpenAI Realtime is available we mint a full
+ * conversational realtime session so the same WebRTC connection can both
+ * transcribe the founder and render Caye's authorized reply as natural audio.
+ * Reasoning/tools/approvals still stay in Caye's founder thread path.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
 import { requireFounder } from '@/lib/founder'
 import { getVoiceCapabilities, mintSttCredential } from '@/lib/caye-voice/providers'
+import { mintNativeRealtimeCredential } from '@/lib/caye-voice/native-realtime'
 import { decideVoiceRouting } from '@/lib/caye-voice/router'
 import { logVoiceEvent, newVoiceSessionId } from '@/lib/caye-voice/observability'
 import type { TtsProviderPreference, VoiceProviderPreference, VoiceSessionConfig } from '@/lib/caye-voice/types'
@@ -55,7 +52,10 @@ export async function POST(req: NextRequest) {
 
   let sttCredential
   try {
-    sttCredential = await mintSttCredential(routing.sttProvider)
+    sttCredential =
+      routing.sttProvider === 'openai-realtime'
+        ? await mintNativeRealtimeCredential()
+        : await mintSttCredential(routing.sttProvider)
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Failed to start speech session'
     logVoiceEvent({ workspaceId, sessionId, event: 'stt_failed', sttProvider: routing.sttProvider, fallbackReason: msg, at: new Date().toISOString() })
@@ -68,7 +68,7 @@ export async function POST(req: NextRequest) {
     sessionId,
     routing,
     sttCredential,
-    ttsVoiceId: routing.ttsProvider,
+    ttsVoiceId: sttCredential.connect.voice ?? routing.ttsProvider,
     capabilities,
   }
   return NextResponse.json(config)

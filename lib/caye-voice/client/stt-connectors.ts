@@ -2,12 +2,6 @@
 
 import type { SttCredential } from '../types'
 
-/**
- * Common interface both STT connectors implement, so useVoiceSession.ts
- * never branches on provider. Mirrors the spec's turn-detection states
- * (item 6): onSpeechStart/onSpeechEnd come from the provider's own server
- * VAD, not a hand-timed heuristic.
- */
 export interface SttSession {
   start(): Promise<void>
   stop(): void
@@ -17,8 +11,10 @@ export interface SttSession {
   onSpeechStart(cb: () => void): void
   onSpeechEnd(cb: () => void): void
   onError(cb: (err: Error) => void): void
-  /** For CayePresence's `listening` visualization. */
   getMicStream(): MediaStream | null
+  supportsNativeVoice(): boolean
+  speakReply(text: string): Promise<void>
+  cancelSpeech(): void
 }
 
 abstract class BaseSttSession implements SttSession {
@@ -43,34 +39,43 @@ abstract class BaseSttSession implements SttSession {
   onSpeechEnd(cb: () => void): void { this.speechEndCb = cb }
   onError(cb: (err: Error) => void): void { this.errorCb = cb }
   getMicStream(): MediaStream | null { return this.micStream }
+  supportsNativeVoice(): boolean { return false }
+  async speakReply(_text: string): Promise<void> { throw new Error('Native voice is unavailable for this provider') }
+  cancelSpeech(): void {}
 }
 
-/**
- * OpenAI Realtime *transcription* session over WebRTC. The session itself
- * remains transcription-only: Caye's reasoning and tool authority stay in
- * the normal founder-thread agent path.
- *
- * OpenAI's current /v1/realtime/calls API expects the SDP offer as a
- * multipart `sdp` form field. The previous implementation posted raw SDP
- * with `Content-Type: application/sdp` plus a `?model=` query parameter;
- * that shape now returns HTTP 400 even though the ephemeral client secret
- * was minted successfully. Because the client secret already carries the
- * transcription-session configuration, this connector only needs to send
- * the SDP form field while authenticating with that short-lived secret.
- */
 export class OpenAiRealtimeSttSession extends BaseSttSession {
   private pc: RTCPeerConnection | null = null
   private dc: RTCDataChannel | null = null
+  private remoteAudio: HTMLAudioElement | null = null
+  private pendingSpeech: { resolve: () => void; reject: (err: Error) => void } | null = null
 
   constructor(private readonly credential: SttCredential) {
     super()
   }
 
+  supportsNativeVoice(): boolean {
+    return this.credential.connect.mode === 'native-voice'
+  }
+
   async start(): Promise<void> {
-    this.micStream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    this.micStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    })
     const pc = new RTCPeerConnection()
     this.pc = pc
     this.micStream.getTracks().forEach((track) => pc.addTrack(track, this.micStream as MediaStream))
+
+    if (this.supportsNativeVoice()) {
+      const audio = new Audio()
+      audio.autoplay = true
+      this.remoteAudio = audio
+      pc.ontrack = (event) => {
+        const stream = event.streams[0] ?? new MediaStream([event.track])
+        audio.srcObject = stream
+        void audio.play().catch(() => {})
+      }
+    }
 
     const dc = pc.createDataChannel('oai-events')
     this.dc = dc
@@ -80,27 +85,57 @@ export class OpenAiRealtimeSttSession extends BaseSttSession {
     const offer = await pc.createOffer()
     await pc.setLocalDescription(offer)
 
-    const callsUrl = this.credential.connect.callsUrl
-    const sdp = offer.sdp ?? ''
     const form = new FormData()
-    form.append('sdp', new Blob([sdp], { type: 'application/sdp' }), 'offer.sdp')
-
-    const res = await fetch(callsUrl, {
+    form.append('sdp', offer.sdp ?? '')
+    const res = await fetch(this.credential.connect.callsUrl, {
       method: 'POST',
       body: form,
-      headers: {
-        Authorization: `Bearer ${this.credential.token}`,
-      },
+      headers: { Authorization: `Bearer ${this.credential.token}` },
     })
     if (!res.ok) {
       const detail = (await res.text().catch(() => '')).slice(0, 500)
       throw new Error(`OpenAI Realtime connect failed: ${res.status}${detail ? ` ${detail}` : ''}`)
     }
-    const answerSdp = await res.text()
-    await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp })
+    await pc.setRemoteDescription({ type: 'answer', sdp: await res.text() })
+  }
+
+  async speakReply(text: string): Promise<void> {
+    if (!this.supportsNativeVoice()) throw new Error('Native OpenAI voice session is not enabled')
+    const dc = this.dc
+    if (!dc || dc.readyState !== 'open') throw new Error('OpenAI Realtime data channel is not ready')
+    if (!text.trim()) return
+
+    this.cancelSpeech()
+    await new Promise<void>((resolve, reject) => {
+      this.pendingSpeech = { resolve, reject }
+      dc.send(JSON.stringify({
+        type: 'response.create',
+        response: {
+          conversation: 'none',
+          output_modalities: ['audio'],
+          max_output_tokens: 900,
+          instructions:
+            'You are voicing an already-authorized reply from Caye. Speak the reply naturally and conversationally. Preserve every factual claim and action status. Do not add facts, promises, tool results, or follow-up work. Prefer a compact spoken delivery when the reply is verbose, but never omit a warning, approval requirement, failure, or uncertainty. Caye backend reply:\n\n' + text,
+        },
+      }))
+    })
+  }
+
+  cancelSpeech(): void {
+    if (this.dc?.readyState === 'open' && this.supportsNativeVoice()) {
+      try { this.dc.send(JSON.stringify({ type: 'response.cancel' })) } catch {}
+    }
+    this.pendingSpeech?.resolve()
+    this.pendingSpeech = null
   }
 
   stop(): void {
+    this.cancelSpeech()
+    if (this.remoteAudio) {
+      this.remoteAudio.pause()
+      this.remoteAudio.srcObject = null
+      this.remoteAudio = null
+    }
     this.dc?.close()
     this.pc?.close()
     this.micStream?.getTracks().forEach((t) => t.stop())
@@ -110,12 +145,9 @@ export class OpenAiRealtimeSttSession extends BaseSttSession {
   }
 
   private handleEvent(raw: string): void {
-    let msg: { type?: string; delta?: string; transcript?: string }
-    try {
-      msg = JSON.parse(raw)
-    } catch {
-      return
-    }
+    let msg: { type?: string; delta?: string; transcript?: string; error?: { message?: string } }
+    try { msg = JSON.parse(raw) } catch { return }
+
     switch (msg.type) {
       case 'conversation.item.input_audio_transcription.delta':
         if (msg.delta) this.partialCb?.(msg.delta)
@@ -129,73 +161,43 @@ export class OpenAiRealtimeSttSession extends BaseSttSession {
       case 'input_audio_buffer.speech_stopped':
         this.speechEndCb?.()
         break
+      case 'response.done':
+        this.pendingSpeech?.resolve()
+        this.pendingSpeech = null
+        break
+      case 'error': {
+        const err = new Error(msg.error?.message || 'OpenAI Realtime session error')
+        this.pendingSpeech?.reject(err)
+        this.pendingSpeech = null
+        this.errorCb?.(err)
+        break
+      }
       default:
         break
     }
   }
 }
 
-/**
- * Deepgram Nova streaming STT over a browser-direct WebSocket, authorized
- * with the short-lived JWT minted server-side via POST /v1/auth/grant
- * (never the account key). Browsers can't set custom WS headers, so the
- * token rides the Sec-WebSocket-Protocol list.
- *
- * IMPORTANT: the subprotocol value is `['bearer', token]`, NOT
- * `['token', token]`. `token` is Deepgram's scheme for a raw, long-lived
- * account API key; `bearer` is required for a short-lived JWT from
- * /auth/grant. Using `token` with a JWT fails the handshake outright
- * (`1002` close, "non-101 status code") — this is exactly what broke the
- * founder's first live test (2026-08-17): minting succeeded, but the
- * connector was still using the raw-key subprotocol from before the
- * /auth/grant migration. Confirmed empirically (not just from docs, which
- * don't clearly state this) by testing both subprotocol values plus a
- * `?access_token=` query-param variant against the real API — only
- * `bearer` opened successfully, and a full audio round trip through it
- * (real interim + final transcripts, real SpeechStarted VAD event)
- * confirmed live the same day.
- *
- * Audio capture uses MediaRecorder (webm/opus) rather than raw PCM to
- * avoid needing an AudioWorklet for this v1; Deepgram's Listen API
- * auto-detects the container, so no explicit encoding/sample_rate query
- * params are needed here (they would be required for raw PCM, which is
- * what the live audio round-trip test above actually sent — a test-only
- * difference from this browser path, not a functional gap). `UtteranceEnd`
- * specifically still wasn't observed in that PCM test — onFinal's own
- * dispatch of user_speech_end in useVoiceSession.ts remains a working
- * fallback either way.
- *
- * SECOND live-test bug, same day: `is_final: true` on a Results message
- * is NOT "the speaker is done" — see handleMessage's doc comment for the
- * full story (one real utterance produced two separate Caye replies
- * because the old code sent a turn on every `is_final` segment instead of
- * once on `speech_final`).
- */
 export class DeepgramSttSession extends BaseSttSession {
   private ws: WebSocket | null = null
   private recorder: MediaRecorder | null = null
   private finalizedThisUtterance = false
+  private committedSegments = ''
+  private interimText = ''
 
-  constructor(private readonly credential: SttCredential) {
-    super()
-  }
+  constructor(private readonly credential: SttCredential) { super() }
 
   async start(): Promise<void> {
     this.micStream = await navigator.mediaDevices.getUserMedia({ audio: true })
-    const wsUrl = this.credential.connect.wsUrl
-    const ws = new WebSocket(wsUrl, ['bearer', this.credential.token])
+    const ws = new WebSocket(this.credential.connect.wsUrl, ['bearer', this.credential.token])
     this.ws = ws
-
     await new Promise<void>((resolve, reject) => {
       ws.onopen = () => resolve()
       ws.onerror = () => reject(new Error('Deepgram WebSocket connect failed'))
     })
-
     ws.onmessage = (event) => this.handleMessage(event.data)
     ws.onerror = () => this.errorCb?.(new Error('Deepgram WebSocket error'))
-    ws.onclose = () => {
-      this.ws = null
-    }
+    ws.onclose = () => { this.ws = null }
 
     const recorder = new MediaRecorder(this.micStream, { mimeType: 'audio/webm;codecs=opus' })
     this.recorder = recorder
@@ -216,50 +218,6 @@ export class DeepgramSttSession extends BaseSttSession {
     this.micStream = null
   }
 
-  /**
-   * 2026-08-17 live-test bug #2: `is_final: true` on a Results message
-   * means "this transcript SEGMENT is locked in," not "the speaker is
-   * done." Deepgram finalizes multiple segments within one continuous
-   * utterance at natural micro-pauses — a founder saying one sentence with
-   * a brief pause mid-sentence produced THREE separate `is_final: true`
-   * events live, and the old code called `finalCb` (which sends a full
-   * turn to cayeAgent) on every one of them: two genuinely different Caye
-   * replies came back for what was really one utterance. `speech_final:
-   * true` is Deepgram's actual "the speaker has stopped talking" signal —
-   * fires once per real utterance, gated by the same endpointing/VAD
-   * logic. `finalizedThisUtterance` guards against firing `finalCb` twice
-   * for one utterance (e.g. if UtteranceEnd arrives shortly after
-   * speech_final already fired).
-   *
-   * THIRD live-test bug, same day, found while verifying the fix for the
-   * second one: even after raising endpointing/utterance_end_ms so a
-   * natural pause no longer triggers a premature `speech_final`, Deepgram
-   * still emits an internal segment-boundary event — `Results` with
-   * `is_final: true` but `speech_final: false` — partway through one
-   * continuous utterance, and resets its OWN `transcript` field to just
-   * that segment's words rather than the words-so-far. The old code
-   * OVERWROTE `pendingTranscript` with every Results message, so once that
-   * boundary event landed, everything spoken before it was gone — this is
-   * exactly why the founder's full sentence arrived as only its last
-   * clause. Reproduced deterministically with a synthesized 900ms
-   * mid-sentence gap and the real event log inspected directly (not
-   * guessed from docs) before landing this fix.
-   *
-   * Fix: `committedSegments` accumulates each locked-in segment's text
-   * (every `is_final: true`, regardless of `speech_final`); `interimText`
-   * holds the still-changing tail. The transcript surfaced to the caller —
-   * for partials, the final callback, and the UtteranceEnd fallback — is
-   * always `committedSegments` + `interimText` joined, never a single
-   * segment in isolation. Only reset on a genuine end of turn
-   * (speech_final or the UtteranceEnd fallback), never on SpeechStarted —
-   * Deepgram's VAD can and does fire SpeechStarted again mid-utterance
-   * (also observed live) well before the actual endpointing-based end, so
-   * treating it as "start of a new utterance, discard everything so far"
-   * was itself part of the bug.
-   */
-  private committedSegments = ''
-  private interimText = ''
-
   private currentText(): string {
     return [this.committedSegments, this.interimText].filter(Boolean).join(' ').trim()
   }
@@ -271,16 +229,9 @@ export class DeepgramSttSession extends BaseSttSession {
       speech_final?: boolean
       channel?: { alternatives?: Array<{ transcript?: string }> }
     }
-    try {
-      msg = JSON.parse(raw)
-    } catch {
-      return
-    }
+    try { msg = JSON.parse(raw) } catch { return }
+
     if (msg.type === 'SpeechStarted') {
-      // Deliberately does NOT reset committedSegments/interimText — see
-      // this method's doc comment. finalizedThisUtterance is reset so the
-      // NEXT genuine end-of-turn (after this one has already fired, if it
-      // has) is still able to finalize.
       this.finalizedThisUtterance = false
       this.speechStartCb?.()
       return
@@ -302,15 +253,11 @@ export class DeepgramSttSession extends BaseSttSession {
       if (msg.speech_final) {
         if (!this.finalizedThisUtterance) {
           this.finalizedThisUtterance = true
-          const text = [this.committedSegments, transcript].filter(Boolean).join(' ').trim()
-          this.finalCb?.(text)
+          this.finalCb?.([this.committedSegments, transcript].filter(Boolean).join(' ').trim())
         }
         this.committedSegments = ''
         this.interimText = ''
       } else if (msg.is_final) {
-        // Segment boundary, not end of turn — lock it into the committed
-        // prefix and clear the interim tail; the next segment starts fresh
-        // but is now appended to, not substituted for, this one.
         this.committedSegments = [this.committedSegments, transcript].filter(Boolean).join(' ').trim()
         this.interimText = ''
         this.partialCb?.(this.currentText())
