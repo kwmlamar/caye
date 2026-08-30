@@ -122,7 +122,11 @@ export class OpenAiRealtimeSttSession extends BaseSttSession {
   }
 
   cancelSpeech(): void {
-    if (this.dc?.readyState === 'open' && this.supportsNativeVoice()) {
+    // OpenAI returns a session error when response.cancel is sent while no
+    // response is active. Speech-start fires for every founder utterance,
+    // including the first one, so cancellation must be conditional on an
+    // actual in-flight native voice response.
+    if (this.pendingSpeech && this.dc?.readyState === 'open' && this.supportsNativeVoice()) {
       try { this.dc.send(JSON.stringify({ type: 'response.cancel' })) } catch {}
     }
     this.pendingSpeech?.resolve()

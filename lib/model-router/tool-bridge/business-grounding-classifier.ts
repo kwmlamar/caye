@@ -12,9 +12,8 @@ import 'server-only'
  *
  * Keep the safe default (ground business/state questions), but explicitly
  * exempt conversational turns that cannot possibly benefit from a database
- * lookup. Forcing a tool round for "hi", "what's up", or "can you hear me"
- * made live voice take tens of seconds and sometimes pulled unrelated thread
- * state into a greeting.
+ * lookup. Voice transcription frequently hears "Caye" as "Key" or "Kay",
+ * so those aliases must stay in the conversational fast path too.
  */
 
 const META_ABOUT_CAYE_PATTERNS: readonly RegExp[] = [
@@ -29,9 +28,11 @@ const META_ABOUT_CAYE_PATTERNS: readonly RegExp[] = [
   /\bwhat can i ask you\b/i,
 ]
 
+const CAYE_NAME = '(?:caye|key|kay)'
 const CONVERSATIONAL_PATTERNS: readonly RegExp[] = [
   /^\s*(hi|hey|hello|yo|sup|wassup|what'?s up|good (morning|afternoon|evening))\b[\s,.!?-]*$/i,
-  /^\s*(hi|hey|hello|yo)[,\s]+caye\b[\s,.!?-]*(what'?s up|how are you|you there)?[\s,.!?-]*$/i,
+  new RegExp(`^\\s*(hi|hey|hello|yo)[,\\s]+${CAYE_NAME}\\b[\\s,.!?-]*(what'?s up|how are you|you there)?[\\s,.!?-]*$`, 'i'),
+  new RegExp(`^\\s*${CAYE_NAME}[,\\s]+(what'?s up|how are you|you there)\\b[\\s,.!?-]*$`, 'i'),
   /^\s*(can you hear me|do you hear me|are you there|you there)\b[\s,.!?-]*$/i,
   /^\s*(thanks|thank you|appreciate it|cool|okay|ok|got it)\b[\s,.!?-]*$/i,
 ]
