@@ -25,6 +25,12 @@ export function classifyCalibration(predicted: number, actual: number): { direct
   return { direction: percentError > 0 ? 'underpredicted' : 'overpredicted', percentError }
 }
 
+export function isOutcomeAfterExecution(executedAt: string, observedAt: string) {
+  const executionMs = Date.parse(executedAt)
+  const observationMs = Date.parse(observedAt)
+  return Number.isFinite(executionMs) && Number.isFinite(observationMs) && observationMs >= executionMs
+}
+
 export function calibrationCanonicalKey(metricKey: string, unit: string) {
   return `engineering_prediction_calibration:${metricKey.trim().toLowerCase()}:${unit.trim().toLowerCase()}`
 }
@@ -105,12 +111,29 @@ export async function processEngineeringOutcomeLearning(input: {
   if (input.verdict === 'inconclusive') return { candidates: 0, validated: 0, skipped: 'inconclusive_verdict' as const }
   const supabase = createServiceClient()
 
-  const [{ data: decision, error: decisionError }, { count: executionCount, error: executionError }] = await Promise.all([
-    supabase.from('engineering_project_decisions').select('alternative_id').eq('workspace_id', input.workspaceId).eq('project_id', input.projectId).is('superseded_at', null).maybeSingle(),
-    supabase.from('engineering_project_execution_evidence').select('id', { count: 'exact', head: true }).eq('workspace_id', input.workspaceId).eq('project_id', input.projectId),
-  ])
-  if (decisionError || executionError || !decision || (executionCount ?? 0) < 1) {
-    await writeAudit({ workspaceId: input.workspaceId, sourceMessageId: input.sourceMessageId, sourceExcerpt: `Engineering verdict ${input.verdictId}`, canonicalKey: `engineering_project:${input.projectId}`, decision: 'rejected', reason: 'Outcome learning requires a selected intervention plus verified execution evidence.' })
+  const { data: decision, error: decisionError } = await supabase
+    .from('engineering_project_decisions')
+    .select('alternative_id')
+    .eq('workspace_id', input.workspaceId)
+    .eq('project_id', input.projectId)
+    .is('superseded_at', null)
+    .maybeSingle()
+  if (decisionError || !decision) {
+    await writeAudit({ workspaceId: input.workspaceId, sourceMessageId: input.sourceMessageId, sourceExcerpt: `Engineering verdict ${input.verdictId}`, canonicalKey: `engineering_project:${input.projectId}`, decision: 'rejected', reason: 'Outcome learning requires a selected intervention.' })
+    return { candidates: 0, validated: 0, skipped: 'missing_selected_intervention' as const }
+  }
+
+  const { data: executionRows, error: executionError } = await supabase
+    .from('engineering_project_execution_evidence')
+    .select('id,occurred_at')
+    .eq('workspace_id', input.workspaceId)
+    .eq('project_id', input.projectId)
+    .eq('alternative_id', decision.alternative_id)
+    .order('occurred_at', { ascending: false })
+    .limit(1)
+  const selectedExecution = executionRows?.[0]
+  if (executionError || !selectedExecution?.occurred_at) {
+    await writeAudit({ workspaceId: input.workspaceId, sourceMessageId: input.sourceMessageId, sourceExcerpt: `Engineering verdict ${input.verdictId}`, canonicalKey: `engineering_project:${input.projectId}`, decision: 'rejected', reason: 'Outcome learning requires verified execution evidence for the selected intervention.' })
     return { candidates: 0, validated: 0, skipped: 'insufficient_execution_evidence' as const }
   }
 
@@ -125,16 +148,17 @@ export async function processEngineeringOutcomeLearning(input: {
   for (const prediction of predictions ?? []) {
     const matchingOutcomes = (outcomes ?? []).filter((o) => o.metric_key === prediction.metric_key)
     for (const outcome of matchingOutcomes) {
-      const { data: observation, error: observationError } = await supabase.from('property_observations').select('numeric_value,unit,provenance_status').eq('workspace_id', input.workspaceId).eq('id', outcome.property_observation_id).maybeSingle()
-      if (observationError || !observation || typeof observation.numeric_value !== 'number' || !observation.unit) continue
+      const { data: observation, error: observationError } = await supabase.from('property_observations').select('numeric_value,unit,provenance_status,observed_at').eq('workspace_id', input.workspaceId).eq('id', outcome.property_observation_id).maybeSingle()
+      if (observationError || !observation || typeof observation.numeric_value !== 'number' || !observation.unit || !observation.observed_at) continue
       if (!['measured', 'observed', 'operator_confirmed'].includes(observation.provenance_status)) continue
+      if (!isOutcomeAfterExecution(selectedExecution.occurred_at, observation.observed_at)) continue
       if (observation.unit.trim().toLowerCase() !== prediction.unit.trim().toLowerCase()) continue
 
       const calibration = classifyCalibration(Number(prediction.numeric_value), Number(observation.numeric_value))
       if (!calibration.direction || calibration.percentError == null) continue
       const canonicalKey = calibrationCanonicalKey(prediction.metric_key, prediction.unit)
       const candidateKey = calibrationCandidateKey(prediction.metric_key, prediction.unit, calibration.direction)
-      const evidenceRef = { project_id: input.projectId, verdict_id: input.verdictId, prediction_id: prediction.id, outcome_id: outcome.id, percent_error: calibration.percentError }
+      const evidenceRef = { project_id: input.projectId, verdict_id: input.verdictId, execution_evidence_id: selectedExecution.id, prediction_id: prediction.id, outcome_id: outcome.id, percent_error: calibration.percentError }
 
       const { data: existingCandidate, error: candidateReadError } = await supabase.from('business_fact_candidates').select('id,status,occurrence_count,evidence_refs').eq('workspace_id', input.workspaceId).eq('normalized_text', candidateKey).maybeSingle()
       if (candidateReadError) throw new Error('Could not read engineering outcome-learning candidate')
@@ -222,7 +246,7 @@ export async function processEngineeringOutcomeLearning(input: {
 
       const { error: resolveError } = await supabase.from('business_fact_candidates').update({ status: 'resolved', outcome: 'confirmed', outcome_at: now.toISOString(), resolved_fact_id: memoryId }).eq('workspace_id', input.workspaceId).eq('id', candidateId)
       if (resolveError) throw new Error('Validated lesson was written but candidate resolution could not be recorded')
-      await writeAudit({ workspaceId: input.workspaceId, sourceMessageId: input.sourceMessageId, sourceExcerpt: sampleText, canonicalKey, decision: activeMemory ? 'superseded' : 'validated', targetTable: 'business_facts', targetRecordId: String(memoryId), supersededRecordId: activeMemory?.id ?? null, reason: `Validated after ${distinctProjects} distinct projects with trusted outcome provenance and verified execution evidence.` })
+      await writeAudit({ workspaceId: input.workspaceId, sourceMessageId: input.sourceMessageId, sourceExcerpt: sampleText, canonicalKey, decision: activeMemory ? 'superseded' : 'validated', targetTable: 'business_facts', targetRecordId: String(memoryId), supersededRecordId: activeMemory?.id ?? null, reason: `Validated after ${distinctProjects} distinct projects with trusted post-execution outcome provenance and selected-intervention execution evidence.` })
       validatedCount += 1
     }
   }
