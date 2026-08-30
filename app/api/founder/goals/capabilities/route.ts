@@ -1,73 +1,97 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireFounder } from '@/lib/founder'
 import { createServiceClient } from '@/lib/supabase-server'
+import { hasDefensibleCapabilityProgress } from '@/lib/goals/operating-intelligence-capabilities'
 
 export async function GET(req: NextRequest) {
   const user = await requireFounder(req)
   if (!user) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
   const supabase = createServiceClient()
-  const [{ data: rows, error }, { data: links }, { data: dependencies }] = await Promise.all([
+  const [capabilityResult, evidenceResult, dependencyResult, linkResult] = await Promise.all([
     supabase
-      .from('caye_goal_capabilities')
-      .select(`
-        goal_id,
-        capability_key,
-        maturity_level,
-        maturity_label,
-        current_state,
-        next_state,
-        blockers,
-        last_assessed_at,
-        caye_goals!inner(id,title,description,status,priority,parent_id),
-        caye_goal_capability_evidence(id,evidence_type,evidence_ref,summary,confidence,observed_at),
-        caye_goal_capability_assessments(id,maturity_level,maturity_label,rationale,evidence_refs,assessed_by,assessed_at)
-      `)
-      .order('maturity_level', { ascending: false }),
-    supabase.from('caye_goal_capability_initiatives').select('capability_goal_id,initiative_goal_id,relationship'),
-    supabase.from('caye_goal_dependencies').select('goal_id,depends_on_goal_id'),
+      .from('caye_operating_intelligence_capabilities')
+      .select('id,capability_key,title,description,maturity_status,limitations,progress_percent,progress_evidence_id,last_verified_at,sort_order')
+      .order('sort_order', { ascending: true }),
+    supabase
+      .from('caye_operating_intelligence_capability_evidence')
+      .select('id,capability_id,evidence_kind,source_ref,summary,verifies_capability,confidence,observed_at,verified_at')
+      .order('observed_at', { ascending: false }),
+    supabase
+      .from('caye_operating_intelligence_capability_dependencies')
+      .select('capability_id,depends_on_capability_id,note'),
+    supabase
+      .from('caye_operating_intelligence_capability_goal_links')
+      .select('capability_id,goal_id,relationship'),
   ])
 
-  if (error) {
-    console.error('[founder/capabilities] read failed:', error.message)
+  if (capabilityResult.error) {
+    console.error('[founder/capabilities] capability read failed:', capabilityResult.error.message)
     return NextResponse.json({ error: 'Failed to load capabilities' }, { status: 500 })
   }
+  if (evidenceResult.error || dependencyResult.error || linkResult.error) {
+    console.error('[founder/capabilities] related data read failed:', {
+      evidence: evidenceResult.error?.message,
+      dependencies: dependencyResult.error?.message,
+      links: linkResult.error?.message,
+    })
+    return NextResponse.json({ error: 'Failed to load capability evidence' }, { status: 500 })
+  }
 
-  const initiativeIds = [...new Set((links ?? []).map((l: any) => l.initiative_goal_id))]
-  const dependencyIds = [...new Set((dependencies ?? []).map((d: any) => d.depends_on_goal_id))]
-  const referencedGoalIds = [...new Set([...initiativeIds, ...dependencyIds])]
-  const { data: referencedGoals } = referencedGoalIds.length
-    ? await supabase.from('caye_goals').select('id,title,status,kind').in('id', referencedGoalIds).is('superseded_at', null)
-    : { data: [] as any[] }
-  const goalById = new Map((referencedGoals ?? []).map((g: any) => [g.id, g]))
+  const rows = capabilityResult.data ?? []
+  const evidence = evidenceResult.data ?? []
+  const dependencies = dependencyResult.data ?? []
+  const links = linkResult.data ?? []
+  const goalIds = [...new Set(links.map((link) => link.goal_id))]
+  const { data: goals, error: goalsError } = goalIds.length
+    ? await supabase
+        .from('caye_goals')
+        .select('id,title,kind,status,parent_id')
+        .in('id', goalIds)
+        .is('superseded_at', null)
+    : { data: [], error: null }
 
-  const capabilities = (rows ?? []).map((row: any) => ({
-    goalId: row.goal_id,
-    key: row.capability_key,
-    title: row.caye_goals?.title ?? row.capability_key,
-    description: row.caye_goals?.description ?? null,
-    status: row.caye_goals?.status ?? 'future',
-    priority: row.caye_goals?.priority ?? 'medium',
-    parentId: row.caye_goals?.parent_id ?? null,
-    maturityLevel: row.maturity_level,
-    maturityLabel: row.maturity_label,
-    currentState: row.current_state,
-    nextState: row.next_state,
-    blockers: row.blockers ?? [],
-    lastAssessedAt: row.last_assessed_at,
-    evidence: row.caye_goal_capability_evidence ?? [],
-    assessments: (row.caye_goal_capability_assessments ?? []).sort(
-      (a: any, b: any) => new Date(b.assessed_at).getTime() - new Date(a.assessed_at).getTime()
-    ),
-    initiatives: (links ?? [])
-      .filter((l: any) => l.capability_goal_id === row.goal_id)
-      .map((l: any) => ({ ...l, goal: goalById.get(l.initiative_goal_id) ?? null }))
-      .filter((l: any) => l.goal),
-    dependencies: (dependencies ?? [])
-      .filter((d: any) => d.goal_id === row.goal_id)
-      .map((d: any) => goalById.get(d.depends_on_goal_id))
-      .filter(Boolean),
-  }))
+  if (goalsError) {
+    console.error('[founder/capabilities] linked goal read failed:', goalsError.message)
+    return NextResponse.json({ error: 'Failed to load capability links' }, { status: 500 })
+  }
+
+  const capabilityById = new Map(rows.map((row) => [row.id, row]))
+  const goalById = new Map((goals ?? []).map((goal) => [goal.id, goal]))
+
+  const capabilities = rows.map((row) => {
+    const progressClaim = {
+      progressPercent: row.progress_percent === null ? null : Number(row.progress_percent),
+      progressEvidenceId: row.progress_evidence_id,
+      lastVerifiedAt: row.last_verified_at,
+    }
+    const rowEvidence = evidence.filter((item) => item.capability_id === row.id)
+    const rowLinks = links
+      .filter((link) => link.capability_id === row.id)
+      .map((link) => ({ relationship: link.relationship, goal: goalById.get(link.goal_id) ?? null }))
+      .filter((link) => link.goal)
+
+    return {
+      id: row.id,
+      key: row.capability_key,
+      title: row.title,
+      description: row.description,
+      maturityStatus: row.maturity_status,
+      limitations: Array.isArray(row.limitations) ? row.limitations : [],
+      progressPercent: hasDefensibleCapabilityProgress(progressClaim) ? progressClaim.progressPercent : null,
+      lastVerifiedAt: row.last_verified_at,
+      evidence: rowEvidence,
+      dependencies: dependencies
+        .filter((dependency) => dependency.capability_id === row.id)
+        .map((dependency) => ({
+          note: dependency.note,
+          capability: capabilityById.get(dependency.depends_on_capability_id) ?? null,
+        }))
+        .filter((dependency) => dependency.capability),
+      relatedObjectives: rowLinks.filter((link) => link.goal?.kind === 'objective'),
+      relatedInitiatives: rowLinks.filter((link) => link.goal?.kind === 'initiative'),
+    }
+  })
 
   return NextResponse.json({ capabilities })
 }
