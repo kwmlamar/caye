@@ -23,14 +23,18 @@ type ObservationInsert = {
 export async function ingestBookingEvidence(workspaceId: string, days = 28) {
   const supabase = createServiceClient()
   const now = new Date()
-  const start = new Date(now.getTime() - days * 24 * 60 * 60 * 1000)
-  const periodStart = start.toISOString()
-  const periodEnd = now.toISOString()
+  const snapshotDate = now.toISOString().slice(0, 10)
+  const periodEndDate = new Date(`${snapshotDate}T23:59:59.999Z`)
+  const periodStartDate = new Date(`${snapshotDate}T00:00:00.000Z`)
+  periodStartDate.setUTCDate(periodStartDate.getUTCDate() - (days - 1))
+  const periodStart = periodStartDate.toISOString()
+  const periodEnd = periodEndDate.toISOString()
+  const observedAt = now.toISOString()
 
   const { data: source, error: sourceError } = await supabase
     .from('growth_sources')
     .upsert(
-      { workspace_id: workspaceId, provider: 'bookings', status: 'connected', updated_at: periodEnd },
+      { workspace_id: workspaceId, provider: 'bookings', status: 'connected', updated_at: observedAt },
       { onConflict: 'workspace_id,provider' },
     )
     .select('id')
@@ -43,7 +47,7 @@ export async function ingestBookingEvidence(workspaceId: string, days = 28) {
     .select('status,number_of_people')
     .eq('user_id', workspaceId)
     .gte('created_at', periodStart)
-    .lte('created_at', periodEnd)
+    .lte('created_at', observedAt)
 
   if (error) throw new Error('booking_evidence_unavailable')
 
@@ -57,7 +61,7 @@ export async function ingestBookingEvidence(workspaceId: string, days = 28) {
     if (status === 'confirmed' || status === 'pending') counts.activeGuests += row.number_of_people ?? 0
   }
 
-  const provenance = { provider: 'caye_bookings', query_window_days: days, captured_at: periodEnd }
+  const provenance = { provider: 'caye_bookings', query_window_days: days, snapshot_date: snapshotDate, captured_at: observedAt }
   const observations: ObservationInsert[] = [
     ['bookings.created', counts.total, 'count'],
     ['bookings.confirmed', counts.confirmed, 'count'],
@@ -70,21 +74,33 @@ export async function ingestBookingEvidence(workspaceId: string, days = 28) {
     metric_key: metricKey as string,
     metric_value: value as number,
     metric_unit: unit as string,
-    observed_at: periodEnd,
+    observed_at: observedAt,
     period_start: periodStart,
     period_end: periodEnd,
     dimension: {},
     provenance,
   }))
 
+  // A cron retry on the same UTC day replaces that day's rolling snapshot instead of
+  // manufacturing duplicate evidence. Historical daily snapshots remain intact.
+  const { error: deleteError } = await supabase
+    .from('growth_observations')
+    .delete()
+    .eq('workspace_id', workspaceId)
+    .eq('source_id', source.id)
+    .gte('observed_at', `${snapshotDate}T00:00:00.000Z`)
+    .lte('observed_at', `${snapshotDate}T23:59:59.999Z`)
+  if (deleteError) throw new Error('booking_observation_dedupe_failed')
+
   const { error: writeError } = await supabase.from('growth_observations').insert(observations)
   if (writeError) throw new Error('booking_observation_write_failed')
 
-  await supabase
+  const { error: sourceUpdateError } = await supabase
     .from('growth_sources')
-    .update({ status: 'connected', last_success_at: periodEnd, last_error_at: null, last_error_code: null, updated_at: periodEnd })
+    .update({ status: 'connected', last_success_at: observedAt, last_error_at: null, last_error_code: null, updated_at: observedAt })
     .eq('id', source.id)
     .eq('workspace_id', workspaceId)
+  if (sourceUpdateError) throw new Error('booking_growth_source_update_failed')
 
   return counts
 }
