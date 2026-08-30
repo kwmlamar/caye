@@ -3,6 +3,7 @@ import 'server-only'
 import { createServiceClient } from '@/lib/supabase-server'
 import { ingestBookingEvidence } from './internal-evidence'
 import { readGa4Snapshot } from './providers/ga4'
+import { readSearchConsoleSnapshot } from './providers/search-console'
 
 type GrowthSourceRow = {
   id: string
@@ -11,6 +12,16 @@ type GrowthSourceRow = {
   status: 'connected' | 'disconnected' | 'error'
   external_account_ref: string | null
 }
+
+type ExternalReadResult =
+  | {
+      status: 'observed'
+      metrics: Array<{ metricKey: string; value: number; unit: string }>
+      periodStart: string
+      periodEnd: string
+      provenance: Record<string, unknown>
+    }
+  | { status: 'unavailable'; reason: string; retryable: boolean }
 
 export type GrowthIngestSummary = {
   workspaceId: string
@@ -31,7 +42,7 @@ export async function runAllGrowthIngestion(): Promise<{ workspaces: GrowthInges
 }
 
 /**
- * Normalizes first-party booking evidence and any configured external providers.
+ * Normalizes first-party booking evidence and configured read-only external providers.
  * A disconnected external source with no account reference is intentionally skipped.
  * Once an account reference is configured, Caye probes it without pre-declaring success;
  * only a successful API read promotes the source to connected.
@@ -59,21 +70,25 @@ export async function runGrowthIngestion(workspaceId: string): Promise<GrowthIng
   if (error) throw new Error('growth_sources_unavailable')
 
   for (const source of (data ?? []) as GrowthSourceRow[]) {
-    if (source.provider !== 'ga4') continue
+    if (source.provider !== 'ga4' && source.provider !== 'search_console') continue
 
-    const propertyId = source.external_account_ref
-    if (!propertyId) {
+    const externalRef = source.external_account_ref?.trim() ?? ''
+    if (!externalRef) {
       if (source.status === 'disconnected') {
         summary.unavailable.push({ provider: source.provider, reason: 'source_disconnected' })
         continue
       }
-      await markUnavailable(source.id, 'missing_property_id')
-      summary.unavailable.push({ provider: source.provider, reason: 'missing_property_id' })
+      const reason = source.provider === 'ga4' ? 'missing_property_id' : 'missing_site_url'
+      await markUnavailable(source.id, reason)
+      summary.unavailable.push({ provider: source.provider, reason })
       continue
     }
 
     summary.attempted.push(source.provider)
-    const result = await readGa4Snapshot(propertyId)
+    const result: ExternalReadResult = source.provider === 'ga4'
+      ? await readGa4Snapshot(externalRef)
+      : await readSearchConsoleSnapshot(externalRef)
+
     if (result.status === 'unavailable') {
       await markUnavailable(source.id, result.reason)
       summary.unavailable.push({ provider: source.provider, reason: result.reason })
@@ -83,7 +98,9 @@ export async function runGrowthIngestion(workspaceId: string): Promise<GrowthIng
     const observedAt = new Date().toISOString()
     const snapshotDate = observedAt.slice(0, 10)
 
-    // Replace same-day GA4 topline observations so retries do not manufacture evidence.
+    // Replace this provider's same-day aggregate snapshot so cron retries do not
+    // manufacture duplicate evidence. Provider-specific source ids keep GA4 and
+    // Search Console evidence isolated from one another.
     const { error: deleteError } = await supabase
       .from('growth_observations')
       .delete()
