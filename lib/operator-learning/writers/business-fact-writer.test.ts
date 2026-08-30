@@ -259,6 +259,23 @@ describe('writeBusinessFact typed operating memory', () => {
     expect(rpcName).toBeNull()
   })
 
+  it('also holds low-risk service-scoped knowledge when grounding fails instead of widening it to workspace scope', async () => {
+    groundedServiceResult = { ok: false, service: null, error: 'ambiguous service' }
+
+    const outcome = await write(
+      classification({
+        risk: 'low',
+        scope: { kind: 'standing', target: 'service', serviceName: 'Heritage Tour', dateISO: null },
+        businessFact: { category: 'logistics', text: 'Guests meet by the pink building.' },
+      }),
+      { operatorText: 'For the Heritage Tour, guests meet by the pink building.' }
+    )
+
+    expect(outcome.decision).toBe('candidate')
+    expect(outcome.reason).toContain('did not resolve')
+    expect(rpcName).toBeNull()
+  })
+
   it('maps founder corrections to founder authority', async () => {
     await write(classification(), { callerRole: 'founder' })
     expect(rpcParams).toMatchObject({ p_authority_kind: 'founder' })
