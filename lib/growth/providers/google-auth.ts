@@ -16,7 +16,8 @@ type TokenResponse = {
   error_description?: string
 }
 
-let cachedToken: { accessToken: string; expiresAtMs: number } | null = null
+type CachedToken = { accessToken: string; expiresAtMs: number }
+const cachedTokens = new Map<string, CachedToken>()
 
 function base64Url(value: string | Buffer): string {
   return Buffer.from(value).toString('base64url')
@@ -41,12 +42,19 @@ function loadServiceAccount(): ServiceAccount | null {
 
 /**
  * Returns a short-lived Google OAuth access token for read-only growth providers.
+ * Cache entries are keyed by normalized scope set so adding Search Console cannot
+ * accidentally reuse a GA4-only token.
  * Missing or malformed credentials are represented as null so callers can mark
  * the provider unavailable rather than converting an auth failure into zero data.
  */
 export async function getGoogleGrowthAccessToken(scopes: string[]): Promise<string | null> {
+  const normalizedScopes = Array.from(new Set(scopes)).sort()
+  if (!normalizedScopes.length) return null
+
+  const cacheKey = normalizedScopes.join(' ')
   const now = Date.now()
-  if (cachedToken && cachedToken.expiresAtMs - 60_000 > now) return cachedToken.accessToken
+  const cached = cachedTokens.get(cacheKey)
+  if (cached && cached.expiresAtMs - 60_000 > now) return cached.accessToken
 
   const account = loadServiceAccount()
   if (!account) return null
@@ -56,7 +64,7 @@ export async function getGoogleGrowthAccessToken(scopes: string[]): Promise<stri
   const header = base64Url(JSON.stringify({ alg: 'RS256', typ: 'JWT' }))
   const claims = base64Url(JSON.stringify({
     iss: account.client_email,
-    scope: scopes.join(' '),
+    scope: cacheKey,
     aud: tokenUri,
     iat: issuedAt,
     exp: issuedAt + 3600,
@@ -82,10 +90,11 @@ export async function getGoogleGrowthAccessToken(scopes: string[]): Promise<stri
     const body = await response.json() as TokenResponse
     if (!body.access_token) return null
 
-    cachedToken = {
+    const cachedToken = {
       accessToken: body.access_token,
       expiresAtMs: now + Math.max(60, body.expires_in ?? 3600) * 1000,
     }
+    cachedTokens.set(cacheKey, cachedToken)
     return cachedToken.accessToken
   } catch {
     return null
@@ -93,5 +102,5 @@ export async function getGoogleGrowthAccessToken(scopes: string[]): Promise<stri
 }
 
 export function resetGoogleGrowthTokenCacheForTests() {
-  cachedToken = null
+  cachedTokens.clear()
 }
