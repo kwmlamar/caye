@@ -1,7 +1,8 @@
 'use client'
 
-import { useState, useRef, useEffect, type KeyboardEvent, type ReactNode, type CSSProperties } from 'react'
+import { Children, isValidElement, useState, useRef, useEffect, type KeyboardEvent, type ReactNode, type CSSProperties, type ReactElement } from 'react'
 import { CayeMark } from '@/components/brand/CayeMark'
+import CayeVoiceNoteButton from '@/components/dashboard/caye-direct/voice/CayeVoiceNoteButton'
 import { AQUA, TEXT, TEXT_QUIET } from '../surface'
 
 /**
@@ -18,6 +19,68 @@ export function CayeComposerSurface({ children, active, maxWidth = 600, style }:
   maxWidth?: number | string
   style?: CSSProperties
 }) {
+  const childList = Children.toArray(children)
+  const textareaIndex = childList.findIndex((child) =>
+    isValidElement(child) && child.props?.className === 'caye-direct-textarea'
+  )
+  const liveVoiceIndex = childList.findIndex((child) =>
+    isValidElement(child) && child.props?.['aria-label'] === 'Start voice conversation with Caye'
+  )
+  const sendIndex = childList.findIndex((child) =>
+    isValidElement(child) && child.props?.type === 'submit'
+  )
+
+  const isDirectComposer = textareaIndex >= 0 && liveVoiceIndex >= 0 && sendIndex >= 0
+  let renderedChildren = children
+
+  if (isDirectComposer) {
+    const textarea = childList[textareaIndex] as ReactElement<Record<string, any>>
+    const originalLiveVoice = childList[liveVoiceIndex] as ReactElement<Record<string, any>>
+    const originalSend = childList[sendIndex] as ReactElement<Record<string, any>>
+    const value = typeof textarea.props.value === 'string' ? textarea.props.value : ''
+    const busy = Boolean(textarea.props.disabled)
+    const canSend = !originalSend.props.disabled
+
+    const applyVoiceTranscript = (transcript: string) => {
+      const nextValue = value.trim() ? `${value.trimEnd()} ${transcript}` : transcript
+      const onChange = textarea.props.onChange as ((event: { target: { value: string }; currentTarget: { value: string } }) => void) | undefined
+      onChange?.({ target: { value: nextValue }, currentTarget: { value: nextValue } })
+    }
+
+    const primaryAction = busy ? originalSend : canSend ? originalSend : (
+      <button
+        key="live-voice-primary"
+        type="button"
+        onClick={() => (originalLiveVoice.props.onClick as (() => void) | undefined)?.()}
+        title="Start live voice"
+        aria-label="Start live voice"
+        className="caye-direct-send"
+        style={{
+          background: '#2f8df5', borderColor: '#2f8df5',
+          boxShadow: '0 3px 14px -5px rgba(47,141,245,0.9)',
+        }}
+      >
+        <svg aria-hidden width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round">
+          <path d="M5 10v4M9 7v10M13 5v14M17 8v8M21 10v4" />
+        </svg>
+      </button>
+    )
+
+    renderedChildren = childList.map((child, index) => {
+      if (index === liveVoiceIndex) {
+        return (
+          <CayeVoiceNoteButton
+            key="voice-note"
+            disabled={busy}
+            onTranscript={applyVoiceTranscript}
+          />
+        )
+      }
+      if (index === sendIndex) return primaryAction
+      return child
+    })
+  }
+
   return (
     <div
       style={{
@@ -31,7 +94,7 @@ export function CayeComposerSurface({ children, active, maxWidth = 600, style }:
         transition: 'background 0.2s ease, box-shadow 0.25s ease', ...style,
       }}
     >
-      {children}
+      {renderedChildren}
     </div>
   )
 }
