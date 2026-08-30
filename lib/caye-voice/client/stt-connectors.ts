@@ -195,7 +195,14 @@ export class OpenAiRealtimeSttSession extends BaseSttSession {
         this.pendingSpeech = null
         break
       case 'error': {
-        const err = new Error(msg.error?.message || 'OpenAI Realtime session error')
+        const message = msg.error?.message || 'OpenAI Realtime session error'
+        // Barge-in and preamble replacement can race with the provider's
+        // response.done event. In that window response.cancel is semantically
+        // correct but OpenAI may report that there is no longer an active
+        // response. That is a harmless stale-cancel acknowledgement, not a
+        // failed voice session, and must never poison the next pending reply.
+        if (/cancellation failed:\s*no active response found/i.test(message)) break
+        const err = new Error(message)
         this.pendingSpeech?.reject(err)
         this.pendingSpeech = null
         this.errorCb?.(err)
