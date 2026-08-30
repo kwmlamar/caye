@@ -41,11 +41,26 @@ export async function runFounderJobSearchObjective() {
         key: 'prepare_applications', authority: 'write_low', maxAttempts: 1,
         execute: async () => runJobSearchPreparation(),
         verify: async ({ supabase }, effect) => {
-          const check = await supabase.from('job_search_runs').select('id,status,completed_at,stats,error').eq('run_type', 'apply').order('created_at', { ascending: false }).limit(1).maybeSingle()
-          if (check.error) return { ok: false, reason: check.error.message }
           const skipped = effect && typeof effect === 'object' && ('skippedPaused' in effect || 'skippedDailyCap' in effect || 'skippedAlreadyRunning' in effect)
           if (skipped) return { ok: true, evidence: { effect, verified: 'bounded_skip' } }
-          return { ok: check.data?.status === 'completed', evidence: { effect, run: check.data }, reason: check.data?.error ?? 'Preparation run not observed completed' }
+
+          const runId = effect && typeof effect === 'object' && 'runId' in effect && typeof effect.runId === 'string'
+            ? effect.runId
+            : null
+          if (!runId) return { ok: false, evidence: { effect }, reason: 'Preparation effect did not identify its durable run' }
+
+          const check = await supabase
+            .from('job_search_runs')
+            .select('id,status,completed_at,stats,error')
+            .eq('id', runId)
+            .eq('run_type', 'apply')
+            .maybeSingle()
+          if (check.error) return { ok: false, reason: check.error.message }
+          return {
+            ok: check.data?.status === 'completed',
+            evidence: { effect, run: check.data },
+            reason: check.data?.error ?? 'Exact preparation run was not observed completed',
+          }
         },
       },
       {
