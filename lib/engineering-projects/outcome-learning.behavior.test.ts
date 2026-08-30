@@ -3,7 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('server-only', () => ({}))
 
 const addEngineeringAlternative = vi.fn()
+const recordEngineeringVerdict = vi.fn()
 const getEngineeringOutcomeLearningGuidance = vi.fn()
+const processEngineeringOutcomeLearning = vi.fn()
 
 vi.mock('./store', () => ({
   addEngineeringAlternative,
@@ -14,22 +16,23 @@ vi.mock('./store', () => ({
   linkEngineeringOutcome: vi.fn(),
   listEngineeringProjects: vi.fn(),
   recordEngineeringExecutionEvidence: vi.fn(),
-  recordEngineeringVerdict: vi.fn(),
+  recordEngineeringVerdict,
   selectEngineeringAlternative: vi.fn(),
 }))
 
 vi.mock('./outcome-learning', () => ({
   getEngineeringOutcomeLearningGuidance,
-  processEngineeringOutcomeLearning: vi.fn(),
+  processEngineeringOutcomeLearning,
 }))
 
-const { addEngineeringAlternativeTool } = await import('./tools')
+const { addEngineeringAlternativeTool, recordEngineeringVerdictTool } = await import('./tools')
 
 const ctx = {
   workspaceId: 'workspace-a',
   channel: 'dashboard' as const,
   mode: 'back-office' as const,
   role: 'founder' as const,
+  engineeringOrigin: { messageId: 'message-founder-1' },
 }
 
 const args = {
@@ -44,6 +47,7 @@ describe('outcome learning changes later engineering guidance', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     addEngineeringAlternative.mockResolvedValue({ id: 'alt-1' })
+    recordEngineeringVerdict.mockResolvedValue({ id: 'verdict-1', verdict: 'succeeded' })
   })
 
   it('has no learned guidance before a lesson is validated', async () => {
@@ -81,5 +85,13 @@ describe('outcome learning changes later engineering guidance', () => {
     expect(result.ok).toBe(true)
     expect(getEngineeringOutcomeLearningGuidance).toHaveBeenCalledWith('workspace-a', [expect.objectContaining({ provenanceStatus: 'operator_confirmed' })])
     expect((result as { data: { learning_guidance: unknown[] } }).data.learning_guidance).toEqual([])
+  })
+
+  it('does not misreport a persisted verdict as failed when the learning follow-up fails', async () => {
+    processEngineeringOutcomeLearning.mockRejectedValue(new Error('audit unavailable'))
+    const result = await recordEngineeringVerdictTool.execute({ project_id: 'project-1', verdict: 'succeeded', summary: 'Outcome verified.' }, ctx as never)
+    expect(result.ok).toBe(true)
+    expect((result as { data: { verdict: { id: string }; learning: { error: string } } }).data.verdict.id).toBe('verdict-1')
+    expect((result as { data: { learning: { error: string } } }).data.learning.error).toBe('audit unavailable')
   })
 })
