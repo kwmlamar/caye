@@ -10,11 +10,45 @@ export interface ResearchProvider {
   fetch(result: ResearchSearchResult): Promise<ResearchFetchedSource>
 }
 
-export async function queueResearchRun(questionId: string, triggerSource = 'founder') {
+async function getOperatorResearchQuestionIds(): Promise<string[]> {
   const db = createServiceClient()
-  const question = await db.from('research_questions').select('id,status').eq('id', questionId).maybeSingle()
+  const { data, error } = await db
+    .from('research_programs')
+    .select('research_questions(id)')
+    .eq('scope', 'operator')
+  if (error) throw error
+
+  return (data ?? []).flatMap((program) =>
+    (program.research_questions ?? []).map((question: { id: string }) => question.id),
+  )
+}
+
+async function assertOperatorResearchQuestion(questionId: string) {
+  const db = createServiceClient()
+  const question = await db
+    .from('research_questions')
+    .select('id,status,program_id')
+    .eq('id', questionId)
+    .maybeSingle()
   if (question.error) throw question.error
   if (!question.data || question.data.status === 'archived') throw new Error('Research question is unavailable')
+
+  const program = await db
+    .from('research_programs')
+    .select('id,scope,status')
+    .eq('id', question.data.program_id)
+    .maybeSingle()
+  if (program.error) throw program.error
+  if (!program.data || program.data.scope !== 'operator' || program.data.status === 'archived') {
+    throw new Error('Research question is outside founder operator scope')
+  }
+
+  return question.data
+}
+
+export async function queueResearchRun(questionId: string, triggerSource = 'founder') {
+  const db = createServiceClient()
+  await assertOperatorResearchQuestion(questionId)
 
   const { data, error } = await db.from('research_runs').insert({ question_id: questionId, status: 'queued', trigger_source: triggerSource }).select('id,status,question_id,created_at').single()
   if (error) {
@@ -36,7 +70,10 @@ export async function claimResearchRun(workerId: string) {
 
 export async function getResearchStatus(goalId?: string) {
   const db = createServiceClient()
-  let programs = db.from('research_programs').select('id,goal_id,title,status,updated_at,research_questions(id,question,status,updated_at,research_runs(id,status,created_at,started_at,completed_at,provider))')
+  let programs = db
+    .from('research_programs')
+    .select('id,goal_id,title,status,updated_at,research_questions(id,question,status,updated_at,research_runs(id,status,created_at,started_at,completed_at,provider))')
+    .eq('scope', 'operator')
   if (goalId) programs = programs.eq('goal_id', goalId)
   const { data, error } = await programs.order('updated_at',{ascending:false})
   if (error) throw error
@@ -45,17 +82,38 @@ export async function getResearchStatus(goalId?: string) {
 
 export async function getAllCurrentClaims() {
   const db = createServiceClient()
-  const { data, error } = await db.from('research_claims').select('id,question_id,statement,claim_type,confidence,source_quality,status,valid_from,valid_until,superseded_by,research_claim_evidence(source_id,stance)').in('status',['current','contested']).order('created_at',{ascending:false})
+  const questionIds = await getOperatorResearchQuestionIds()
+  if (!questionIds.length) return []
+
+  const { data, error } = await db
+    .from('research_claims')
+    .select('id,question_id,statement,claim_type,confidence,source_quality,status,valid_from,valid_until,superseded_by,research_claim_evidence(source_id,stance)')
+    .in('question_id', questionIds)
+    .in('status',['current','contested'])
+    .order('created_at',{ascending:false})
   if (error) throw error
   return data ?? []
 }
 
 export async function getCurrentClaims(questionId: string) {
-  const claims = await getAllCurrentClaims()
-  return claims.filter((claim) => claim.question_id === questionId)
+  const questionIds = await getOperatorResearchQuestionIds()
+  if (!questionIds.includes(questionId)) throw new Error('Research question is outside founder operator scope')
+
+  const db = createServiceClient()
+  const { data, error } = await db
+    .from('research_claims')
+    .select('id,question_id,statement,claim_type,confidence,source_quality,status,valid_from,valid_until,superseded_by,research_claim_evidence(source_id,stance)')
+    .eq('question_id', questionId)
+    .in('status',['current','contested'])
+    .order('created_at',{ascending:false})
+  if (error) throw error
+  return data ?? []
 }
 
 export async function getLatestBrief(questionId: string) {
+  const questionIds = await getOperatorResearchQuestionIds()
+  if (!questionIds.includes(questionId)) throw new Error('Research question is outside founder operator scope')
+
   const db = createServiceClient()
   const { data, error } = await db.from('research_briefs').select('*').eq('question_id',questionId).order('revision',{ascending:false}).limit(1).maybeSingle()
   if (error) throw error
@@ -64,7 +122,14 @@ export async function getLatestBrief(questionId: string) {
 
 export async function getLatestBriefs() {
   const db = createServiceClient()
-  const { data, error } = await db.from('research_briefs').select('*').order('created_at',{ascending:false})
+  const questionIds = await getOperatorResearchQuestionIds()
+  if (!questionIds.length) return []
+
+  const { data, error } = await db
+    .from('research_briefs')
+    .select('*')
+    .in('question_id', questionIds)
+    .order('created_at',{ascending:false})
   if (error) throw error
   const latest = new Map<string, (typeof data)[number]>()
   for (const brief of data ?? []) if (!latest.has(brief.question_id)) latest.set(brief.question_id, brief)
