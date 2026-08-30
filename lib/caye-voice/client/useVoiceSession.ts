@@ -8,25 +8,7 @@ import { nextVoiceState } from './voice-state-machine'
 import { VoiceTurnTimeline } from './voice-timeline'
 import type { VoiceSessionConfig, VoiceUiState } from '../types'
 
-/**
- * How long Caye will stay silent after the founder stops speaking before
- * saying something short to acknowledge the turn.
- *
- * A conversational turn resolves well inside this, so the founder never
- * hears a preamble on "hey" — it exists for the turns that go to the
- * control plane and run tools, where the alternative is ten to thirty
- * seconds of nothing and no way to tell a working Caye from a broken one.
- * Tuned to sit just above a healthy tool-free round trip so it fires when
- * the turn is genuinely slow, not merely normal.
- */
 const PREAMBLE_AFTER_MS = Number(process.env.NEXT_PUBLIC_CAYE_VOICE_PREAMBLE_MS ?? '900')
-
-/**
- * Fixed, factless acknowledgements. Deliberately a hardcoded list rather
- * than model-generated: this is spoken BEFORE Caye knows anything, so it
- * must be incapable of asserting a result. Nothing here states an outcome,
- * a number, or a completed action.
- */
 const PREAMBLES = ['Checking now.', 'One sec, looking.', 'Let me check.'] as const
 
 export interface UseVoiceSessionArgs {
@@ -92,8 +74,6 @@ export function useVoiceSession({ workspaceId, sendTurn, onError }: UseVoiceSess
     sttRef.current?.cancelSpeech()
     ttsRef.current?.stop()
     dispatch({ type: 'user_speech_start' })
-    // A new utterance starts a new turn's clock. Done after cancelling the
-    // old one so the barge_in mark lands on the turn being interrupted.
     timelineRef.current.begin()
   }, [dispatch, clearPreambleTimer])
 
@@ -108,10 +88,6 @@ export function useVoiceSession({ workspaceId, sendTurn, onError }: UseVoiceSess
       if (!config) return
 
       try {
-        // Arm the acknowledgement before the request, not after: the point
-        // is to cover a slow turn, and by the time a slow turn answers it
-        // is far too late to decide to say something. Cancelled the moment
-        // a reply lands, so a fast turn never speaks it.
         const stt = sttRef.current
         if (stt?.supportsNativeVoice()) {
           clearPreambleTimer()
@@ -120,8 +96,6 @@ export function useVoiceSession({ workspaceId, sendTurn, onError }: UseVoiceSess
             if (myEpoch !== epochRef.current) return
             const line = PREAMBLES[Math.floor(Math.random() * PREAMBLES.length)]
             timeline.record('preamble_spoken')
-            // Not awaited: this is a courtesy noise running alongside the
-            // real turn, and the real reply's speakReply() cancels it.
             void stt.speakReply(line).catch(() => {})
           }, PREAMBLE_AFTER_MS)
         }
@@ -133,19 +107,27 @@ export function useVoiceSession({ workspaceId, sendTurn, onError }: UseVoiceSess
         })
         timeline.record('request_end')
         clearPreambleTimer()
-        if (myEpoch !== epochRef.current || !replyText) {
+
+        if (myEpoch !== epochRef.current) {
           timeline.flush({ workspaceId, sessionId: config.sessionId })
+          return
+        }
+        if (!replyText) {
+          // Previously a failed /voice/turn resolved to null and simply
+          // returned here while the state machine remained in `thinking`.
+          // The panel then looked like Caye was thinking forever. A failed
+          // authoritative turn is a terminal state for this utterance and
+          // must be visible as one.
+          timeline.flush({ workspaceId, sessionId: config.sessionId })
+          sttRef.current?.setMuted(mutedRef.current)
+          onError?.('Caye could not complete that voice turn. Try again.')
+          dispatch({ type: 'error' })
           return
         }
 
         dispatch({ type: 'reply_ready' })
         timeline.record('playback_requested')
 
-        // Preferred path: the OpenAI Realtime WebRTC session that heard the
-        // founder also renders the already-authorized Caye reply directly as
-        // audio. This avoids browser SpeechSynthesis, removes the robotic OS
-        // voice, keeps acoustic echo cancellation in the WebRTC path, and
-        // preserves interruption via response.cancel.
         if (stt?.supportsNativeVoice()) {
           await stt.speakReply(replyText)
           timeline.record('playback_ended')
@@ -154,9 +136,6 @@ export function useVoiceSession({ workspaceId, sendTurn, onError }: UseVoiceSess
           return
         }
 
-        // Degraded/provider fallback: keep the existing cloud/browser TTS
-        // pipeline. Browser speech still needs mic suppression because it is
-        // external to the realtime peer connection and can feed back into STT.
         const suppressMicDuringPlayback = config.routing.ttsProvider === 'browser'
         if (suppressMicDuringPlayback) stt?.setMuted(true)
 
