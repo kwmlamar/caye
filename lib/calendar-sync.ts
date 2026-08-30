@@ -19,7 +19,8 @@ import {
   type BookingEventInput,
 } from './zoho-calendar'
 import { verifyCalendarDelete, verifyCalendarUpsert } from './calendar-effect-verification'
-import type { EffectVerificationStatus, ExecutionReceipt } from './effect-verification'
+import { deriveEffectRetryDecision, type EffectVerificationStatus, type ExecutionReceipt } from './effect-verification'
+import { verifyAndPersistEffect } from './effect-verification-store'
 
 export type SyncAction = 'upsert' | 'delete'
 export type SyncResult =
@@ -122,6 +123,7 @@ export async function syncBookingToCalendar(
   }
 
   let newlyCreatedEventId: string | null = null
+  let createAttemptedAt: string | null = null
 
   try {
     if (action === 'delete') {
@@ -235,7 +237,7 @@ export async function syncBookingToCalendar(
       }
     }
 
-    const attemptedAt = new Date().toISOString()
+    createAttemptedAt = new Date().toISOString()
     const eventId = await createZohoCalendarEvent(workspaceId, eventInput)
     newlyCreatedEventId = eventId
 
@@ -252,7 +254,7 @@ export async function syncBookingToCalendar(
         eventId,
         booking: eventInput,
         requestedAt,
-        execution: executionReceipt({ attemptedAt, externalId: eventId, details: { action: 'create' } }),
+        execution: executionReceipt({ attemptedAt: createAttemptedAt, externalId: eventId, details: { action: 'create' } }),
       })
       const reason =
         `Zoho event creation is ${verification.status}, but its external id could not be persisted locally; ` +
@@ -267,7 +269,7 @@ export async function syncBookingToCalendar(
       eventId,
       booking: eventInput,
       requestedAt,
-      execution: executionReceipt({ attemptedAt, externalId: eventId, details: { action: 'create' } }),
+      execution: executionReceipt({ attemptedAt: createAttemptedAt, externalId: eventId, details: { action: 'create' } }),
     })
 
     if (verification.status === 'VERIFIED') {
@@ -278,6 +280,12 @@ export async function syncBookingToCalendar(
         event_id: eventId,
         verification_status: 'VERIFIED',
       }
+    }
+
+    const retryDecision = deriveEffectRetryDecision({ status: verification.status, actionKind: 'create' })
+    if (!retryDecision.retryMutation) {
+      await markSyncState(bookingId, 'failed', retryDecision.reason)
+      return { synced: false, reason: retryDecision.reason, verification_status: verification.status }
     }
 
     const queued = await enqueueCalendarRetry({
@@ -297,13 +305,42 @@ export async function syncBookingToCalendar(
     const msg = err instanceof Error ? err.message : String(err)
     const classified = classifyError(err, 'ZOHO_CALENDAR_SYNC_FAILED')
 
-    // If create returned an external id, the effect may already exist. Never
-    // queue another create unless that id was durably attached to the booking.
-    if (newlyCreatedEventId) {
-      const reason =
-        `Calendar create may have happened as event ${newlyCreatedEventId}, but post-execution handling failed: ${msg}. ` +
-        `Automatic retry blocked to avoid a duplicate.`
-      console.error(`[calendar-sync] ${reason}`)
+    // A create exception can happen after the provider accepted the request.
+    // Persist the ambiguity and block mutation retry until read-back/reconciliation.
+    if (createAttemptedAt) {
+      const ambiguousExecution: ExecutionReceipt = {
+        ok: true,
+        attemptedAt: createAttemptedAt,
+        executedAt: null,
+        externalId: newlyCreatedEventId,
+        error: `Ambiguous create outcome: ${msg}`,
+        details: { action: 'create', provider_status: classified.status },
+      }
+      const verification = await verifyAndPersistEffect({
+        workspaceId,
+        effectId: `${bookingId}:calendar:upsert`,
+        effect: 'zoho_calendar_upsert',
+        actionKind: 'create',
+        idempotencyKey: calendarIdempotencyKey(bookingId, 'upsert'),
+        intendedEffect: eventInput as unknown as Record<string, unknown>,
+        expectedState: eventInput as unknown as Record<string, unknown>,
+        authorityRef: `booking_workspace:${bookingId}`,
+        providerIdentity: 'zoho_calendar',
+        observationProviderIdentity: 'zoho_calendar',
+        requestedAt,
+        execution: ambiguousExecution,
+        observation: null,
+        retrySafe: false,
+        recoveryState: 'observe_only',
+        ambiguityReason: 'Provider call failed after create was attempted; the event may already exist.',
+      })
+      const retryDecision = deriveEffectRetryDecision({
+        status: verification.status,
+        actionKind: 'create',
+        providerFailureRetryable: classified.status === 'FAILED_RETRYABLE',
+      })
+      const reason = `${retryDecision.reason}. ${msg}`
+      console.error(`[calendar-sync] ambiguous create for booking ${booking.id}: ${reason}`)
       await markSyncState(bookingId, 'failed', reason)
       return { synced: false, reason, verification_status: 'INDETERMINATE' }
     }
