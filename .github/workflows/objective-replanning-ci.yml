@@ -5,6 +5,7 @@ on:
     paths:
       - 'lib/operator/objective-run.ts'
       - 'lib/operator/objective-run.test.ts'
+      - 'lib/operator/objective-run-interruption.test.ts'
       - 'lib/operator/objective-store.ts'
       - 'lib/job-search/objective-operator.ts'
       - 'supabase/migrations/*objective*'
@@ -27,4 +28,4 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
-      - run: npm test -- lib/operator/objective-run.test.ts
+      - run: npm test -- lib/operator/objective-run.test.ts lib/operator/objective-run-interruption.test.ts
