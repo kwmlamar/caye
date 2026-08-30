@@ -10,6 +10,11 @@ const OBJECTIVE_KEY = 'founder_job_search_prepare_and_inspect'
 const MAX_TRANSITIONS = 8
 const TIMEOUT_MS = 50_000
 
+type InspectionEffect = {
+  inspected?: number
+  results?: Array<{ applicationId?: string; outcome?: string; reason?: string }>
+}
+
 export async function runFounderJobSearchObjective() {
   const supabase = createServiceClient()
   const before = await supabase.from('job_search_applications').select('id,status,updated_at').order('updated_at', { ascending: false }).limit(25)
@@ -66,10 +71,41 @@ export async function runFounderJobSearchObjective() {
       {
         key: 'inspect_prepared_applications', authority: 'write_low', maxAttempts: 2,
         execute: async () => runJobSearchInspection(),
-        verify: async ({ supabase }, effect) => {
-          const check = await supabase.from('job_search_applications').select('id,status,needs_human_reason,updated_at').eq('status', 'NEEDS_HUMAN').order('updated_at', { ascending: false }).limit(10)
+        verify: async ({ supabase }, rawEffect) => {
+          const effect = rawEffect as InspectionEffect
+          const results = Array.isArray(effect?.results) ? effect.results : []
+          const failed = results.filter((item) => item?.outcome === 'failed')
+          if (failed.length > 0) {
+            return {
+              ok: false,
+              evidence: { effect, failed },
+              reason: `${failed.length} application inspection(s) failed`,
+            }
+          }
+
+          const mutatedIds = results
+            .filter((item) => item?.outcome === 'needs_human' || item?.outcome === 'ready_for_browser')
+            .map((item) => item.applicationId)
+            .filter((id): id is string => typeof id === 'string')
+
+          if (mutatedIds.length === 0) {
+            return { ok: true, evidence: { effect, verified: 'no_mutating_inspection_outcomes' } }
+          }
+
+          const check = await supabase
+            .from('job_search_applications')
+            .select('id,status,needs_human_reason,updated_at')
+            .in('id', mutatedIds)
           if (check.error) return { ok: false, reason: check.error.message }
-          return { ok: true, evidence: { effect, observedApplications: check.data ?? [] } }
+
+          const observed = check.data ?? []
+          const observedIds = new Set(observed.filter((row) => row.status === 'NEEDS_HUMAN' && row.needs_human_reason).map((row) => row.id as string))
+          const missing = mutatedIds.filter((id) => !observedIds.has(id))
+          return {
+            ok: missing.length === 0,
+            evidence: { effect, observedApplications: observed, missing },
+            reason: missing.length ? `Inspection side effects not observed for ${missing.length} application(s)` : undefined,
+          }
         },
       },
     ],
