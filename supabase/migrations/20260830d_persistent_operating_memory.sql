@@ -71,6 +71,14 @@ do $$ begin
     check (subject_type in ('workspace','person','organization','property','project','system_asset','service','customer'));
 exception when duplicate_object then null; end $$;
 do $$ begin
+  alter table public.business_facts add constraint business_facts_subject_scope_check
+    check (
+      (subject_type = 'workspace' and subject_id is null and service_id is null)
+      or (subject_type = 'service' and service_id is not null and subject_id = service_id::text)
+      or (subject_type not in ('workspace','service') and service_id is null and nullif(btrim(subject_id),'') is not null)
+    );
+exception when duplicate_object then null; end $$;
+do $$ begin
   alter table public.business_facts add constraint business_facts_knowledge_mode_check
     check (knowledge_mode in ('explicit','observed','inferred','derived'));
 exception when duplicate_object then null; end $$;
@@ -119,6 +127,26 @@ declare
   v_ref_workspace uuid;
   v_result record;
 begin
+  -- Subject scope is an authority boundary, not decorative metadata. Reject
+  -- inconsistent combinations before the legacy writer creates a row so a
+  -- service-specific fact can never be relabeled as workspace-wide memory.
+  if p_subject_type = 'workspace' then
+    if p_subject_id is not null or p_service_id is not null then
+      raise exception 'workspace memory cannot carry subject_id or service_id' using errcode = '22023';
+    end if;
+  elsif p_subject_type = 'service' then
+    if p_service_id is null or p_subject_id is distinct from p_service_id::text then
+      raise exception 'service memory requires matching service_id and subject_id' using errcode = '22023';
+    end if;
+  else
+    if p_service_id is not null then
+      raise exception 'non-service subject memory cannot carry service_id' using errcode = '22023';
+    end if;
+    if nullif(btrim(p_subject_id), '') is null then
+      raise exception 'non-workspace subject memory requires subject_id' using errcode = '22023';
+    end if;
+  end if;
+
   if p_supersede_id is not null then
     select * into v_existing from public.business_facts
       where business_facts.id = p_supersede_id
