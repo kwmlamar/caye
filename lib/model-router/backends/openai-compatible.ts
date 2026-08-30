@@ -14,16 +14,22 @@ type Config = {
 type Usage = { inputTokens?: number; outputTokens?: number }
 type OpenAiMessage = Record<string, unknown>
 
-/**
- * OpenAI's newer reasoning models on Chat Completions use
- * max_completion_tokens. OpenRouter remains broadly OpenAI-compatible but
- * still accepts max_tokens across the wider model set routed through it.
- */
 export function outputTokenLimit(provider: Config['provider'], tokens: number): Record<string, number> {
   return provider === 'openai' ? { max_completion_tokens: tokens } : { max_tokens: tokens }
 }
 
-/** Small native OpenAI-compatible adapter. It owns no routing policy. */
+function reasoningControls(config: Config, maxOutputTokens: number): Record<string, string> {
+  // Voice turns intentionally use a small completion budget. On GPT-5-class
+  // Chat Completions, hidden reasoning consumes that same budget; the default
+  // reasoning level can therefore spend every token before emitting visible
+  // speech. Minimal effort is appropriate for these short, already-scoped
+  // tool-backed voice answers and materially lowers dead air.
+  if (config.provider === 'openai' && config.model.startsWith('gpt-5') && maxOutputTokens <= 2000) {
+    return { reasoning_effort: 'minimal' }
+  }
+  return {}
+}
+
 export class OpenAICompatibleBackend implements ToolCapableBackend {
   readonly id: Config['id']
   readonly provider: Config['provider']
@@ -44,6 +50,7 @@ export class OpenAICompatibleBackend implements ToolCapableBackend {
 
   async invoke(req: ModelInvokeRequest, signal: AbortSignal): Promise<ModelInvokeResult> {
     const start = Date.now()
+    const maxOutputTokens = req.maxOutputTokens ?? 4096
     const json = await this.call(
       {
         model: this.config.model,
@@ -51,7 +58,8 @@ export class OpenAICompatibleBackend implements ToolCapableBackend {
           { role: 'system', content: req.system },
           ...req.messages.map((m) => ({ role: m.role, content: m.text })),
         ],
-        ...outputTokenLimit(this.config.provider, req.maxOutputTokens ?? 4096),
+        ...outputTokenLimit(this.config.provider, maxOutputTokens),
+        ...reasoningControls(this.config, maxOutputTokens),
       },
       signal
     )
@@ -78,6 +86,7 @@ export class OpenAICompatibleBackend implements ToolCapableBackend {
         messages: [{ role: 'system', content: req.system }, ...toOpenAiMessages(req.messages)],
         tools,
         ...outputTokenLimit(this.config.provider, req.maxOutputTokens),
+        ...reasoningControls(this.config, req.maxOutputTokens),
       },
       signal
     )
@@ -127,9 +136,6 @@ export class OpenAICompatibleBackend implements ToolCapableBackend {
       signal,
     })
     if (!response.ok) {
-      // Provider bodies contain useful parameter/model diagnostics and no API
-      // key. Keep them bounded so a future regression is diagnosable without
-      // dumping arbitrary response payloads into logs.
       const detail = (await response.text().catch(() => '')).slice(0, 800)
       const error = new Error(`Provider request failed (${response.status})${detail ? `: ${detail}` : ''}`)
       ;(error as any).status = response.status
@@ -149,7 +155,6 @@ export class OpenAICompatibleBackend implements ToolCapableBackend {
   }
 }
 
-/** Convert Caye's canonical Anthropic-style history into native OpenAI tool history. */
 export function toOpenAiMessages(messages: ToolTurnRequest['messages']): OpenAiMessage[] {
   const out: OpenAiMessage[] = []
   for (const message of messages) {
