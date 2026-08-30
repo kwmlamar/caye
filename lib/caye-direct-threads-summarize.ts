@@ -3,7 +3,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { createServiceClient } from '@/lib/supabase-server'
 import { loggedMessagesCreate } from '@/lib/llm-telemetry'
 import { createRoutineInferenceLogger, runInference, type RoutineParseResult } from '@/lib/routine-inference'
-import { getThread, getThreadMessages } from '@/lib/caye-direct-threads'
+import { getThread, getThreadMessages, type ThreadMessageRow } from '@/lib/caye-direct-threads'
 import { isInternalTurnBody, visibleBody } from '@/lib/caye-operator-messages'
 
 // Same cheap tier used by lib/whatsapp/intent.ts's classifier — a title or
@@ -25,6 +25,30 @@ const ROUTINE_TITLE_SYSTEM =
   'Classify a founder-only conversation snippet into a sidebar title. Return ONLY JSON matching exactly {"kind":"title","title":"2-6 word subject"} or {"kind":"escalate"}. Use escalate when the subject is ambiguous. A title must be 2-6 plain words, at most 80 characters, without quotes or ending punctuation. It is display-only and must describe the subject, not that this is a conversation.'
 
 /**
+ * Build title input from the first actually completed founder -> Caye exchange.
+ *
+ * Voice title generation is deliberately deferred off the reply critical path.
+ * That means another turn can arrive before the title job runs. Using "the
+ * first N visible messages" made the title workload race with later turns and
+ * occasionally describe the wrong subject. This helper pins title evidence to
+ * one completed turn: first visible inbound founder message plus the first
+ * visible outbound Caye message after it. If the reply has not persisted yet,
+ * return null and leave the thread honestly untitled rather than guessing.
+ */
+export function completedTitleTranscript(rows: readonly ThreadMessageRow[]): string | null {
+  const visible = rows.filter((row) => !isInternalTurnBody(row.body))
+  const founderIndex = visible.findIndex((row) => row.direction === 'inbound')
+  if (founderIndex < 0) return null
+  const reply = visible.slice(founderIndex + 1).find((row) => row.direction === 'outbound')
+  if (!reply) return null
+
+  const founder = visibleBody(visible[founderIndex].body).trim()
+  const caye = visibleBody(reply.body).trim()
+  if (!founder || !caye) return null
+  return `Founder: ${founder}\n\nCaye: ${caye}`.slice(0, 2000)
+}
+
+/**
  * One-shot title generation for a founder-created Direct thread, fired
  * exactly once after the first assistant reply (never re-run per message
  * — see caye-direct-threads plan). Caye-initiated threads skip this
@@ -39,12 +63,14 @@ export async function maybeGenerateThreadTitle(workspaceId: string, threadId: st
   const thread = await getThread(supabase, workspaceId, threadId)
   if (!thread || thread.title) return
 
-  const rows = await getThreadMessages(supabase, threadId, 6)
-  const visible = rows.filter((r) => !isInternalTurnBody(r.body)).map((r) => visibleBody(r.body))
-  if (visible.length === 0) return
+  // Read enough history to tolerate tool/internal rows between the first
+  // founder message and the first persisted final reply. The helper below
+  // still uses exactly one completed visible exchange.
+  const rows = await getThreadMessages(supabase, threadId, 40)
+  const transcript = completedTitleTranscript(rows)
+  if (!transcript) return
 
   try {
-    const transcript = visible.join('\n\n').slice(0, 2000)
     const title = await runInference({
       tier: 'routine',
       frontierModel: CHEAP_MODEL,
