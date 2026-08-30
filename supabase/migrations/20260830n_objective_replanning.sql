@@ -22,7 +22,7 @@ alter table public.operator_objective_events
   drop constraint if exists operator_objective_events_state_check;
 alter table public.operator_objective_events
   add constraint operator_objective_events_state_check
-  check (state in ('checking','running','verified','blocked','failed','replanned','waiting'));
+  check (state in ('checking','recovered','running','verified','blocked','failed','replanned','waiting'));
 
 -- A waiting or slice-budget-exhausted run is still live only while incomplete.
 -- Terminal budget-exhausted rows retain their evidence but must not prevent a
