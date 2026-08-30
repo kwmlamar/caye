@@ -44,6 +44,9 @@ describe('conversational capability control plane', () => {
     const coverage = capabilityCoverage()
     expect(coverage.find((entry) => entry.domain === 'research')?.capabilityCount).toBeGreaterThan(0)
     expect(coverage.find((entry) => entry.domain === 'properties')?.capabilityCount).toBeGreaterThan(0)
+    expect(coverage.find((entry) => entry.domain === 'perception')).toMatchObject({ status: 'active' })
+    expect(coverage.find((entry) => entry.domain === 'perception')?.capabilities).toContain('perception.status')
+    expect(coverage.find((entry) => entry.domain === 'business_operations')?.capabilities).not.toContain('perception.status')
     expect(coverage.find((entry) => entry.domain === 'computers')).toMatchObject({ status: 'future', capabilityCount: 0 })
     expect(coverage.find((entry) => entry.domain === 'iot')).toMatchObject({ status: 'future', capabilityCount: 0 })
     expect(coverage.find((entry) => entry.domain === 'robots_machines')).toMatchObject({ status: 'future', capabilityCount: 0 })
@@ -66,6 +69,7 @@ describe('conversational capability control plane', () => {
     const data = result.data as { capabilities: ReturnType<typeof conversationalCapabilityManifest> }
     expect(data.capabilities.some((entry) => entry.name === 'property.list')).toBe(true)
     expect(data.capabilities.some((entry) => entry.name === 'job_search.summary')).toBe(true)
+    expect(data.capabilities.some((entry) => entry.name === 'perception.status')).toBe(true)
     expect(data.capabilities.every((entry) => entry.access === 'read')).toBe(true)
     expect(data.capabilities.some((entry) => entry.name === 'research.start')).toBe(false)
   })

@@ -11,6 +11,7 @@ export type CapabilityDomain =
   | 'research'
   | 'engineering'
   | 'properties'
+  | 'perception'
   | 'computers'
   | 'iot'
   | 'sensors'
@@ -36,6 +37,8 @@ function domainFor(manifest: CapabilityManifestEntry): CapabilityDomain {
       return 'engineering'
     case 'property':
       return 'properties'
+    case 'perception':
+      return 'perception'
     case 'attention':
     case 'goals':
     case 'growth':
@@ -97,6 +100,7 @@ export function capabilityCoverage(): CapabilityCoverage[] {
     'research',
     'engineering',
     'properties',
+    'perception',
     'computers',
     'iot',
     'sensors',
