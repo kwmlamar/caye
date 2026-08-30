@@ -8,7 +8,7 @@ const POSTGRES_UNIQUE_VIOLATION = '23505'
 
 type ResumeVariantRow = {
   id: string
-  variant_key: 'full_stack' | 'backend_platform' | 'ai_llm'
+  variant_key: 'it_support' | 'full_stack' | 'backend_platform' | 'ai_llm'
   title: string
   summary: string | null
   sections: Record<string, unknown>
@@ -26,11 +26,13 @@ type CandidateRow = {
 
 function chooseVariant(candidate: CandidateRow, variants: ResumeVariantRow[]): ResumeVariantRow | null {
   const haystack = `${candidate.title} ${(candidate.skills ?? []).join(' ')}`.toLowerCase()
-  const preferredKey = /\b(ai|llm|machine learning|ml|artificial intelligence)\b/.test(haystack)
-    ? 'ai_llm'
-    : /\b(backend|platform|api|database|infrastructure|server)\b/.test(haystack)
-      ? 'backend_platform'
-      : 'full_stack'
+  const preferredKey = /\b(technical support|it support|help ?desk|service desk|support engineer|support specialist|support technician|support representative|frontline support|l1 support|tier 1 support)\b/.test(haystack)
+    ? 'it_support'
+    : /\b(ai|llm|machine learning|ml|artificial intelligence)\b/.test(haystack)
+      ? 'ai_llm'
+      : /\b(backend|platform|api|database|infrastructure|server)\b/.test(haystack)
+        ? 'backend_platform'
+        : 'full_stack'
   return variants.find((variant) => variant.variant_key === preferredKey)
     ?? variants.find((variant) => variant.variant_key === 'full_stack')
     ?? variants[0]
