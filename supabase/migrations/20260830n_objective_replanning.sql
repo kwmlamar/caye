@@ -24,8 +24,9 @@ alter table public.operator_objective_events
   add constraint operator_objective_events_state_check
   check (state in ('checking','running','verified','blocked','failed','replanned','waiting'));
 
--- A waiting or slice-budget-exhausted run is still live. Prevent another row for
--- the same scoped objective from being inserted while that durable run exists.
+-- A waiting or slice-budget-exhausted run is still live only while incomplete.
+-- Terminal budget-exhausted rows retain their evidence but must not prevent a
+-- future fresh objective from starting.
 drop index if exists public.operator_objective_runs_one_live_idx;
 create unique index operator_objective_runs_one_live_idx
   on public.operator_objective_runs (
@@ -34,11 +35,11 @@ create unique index operator_objective_runs_one_live_idx
     actor_key,
     coalesce(workspace_id, '00000000-0000-0000-0000-000000000000'::uuid)
   )
-  where status in ('running','waiting','budget_exhausted');
+  where completed_at is null and status in ('running','waiting','budget_exhausted');
 
 create index if not exists operator_objective_runs_resume_at_idx
   on public.operator_objective_runs (status, resume_at)
-  where status = 'waiting';
+  where status = 'waiting' and completed_at is null;
 
 comment on column public.operator_objective_runs.plan_revision is
   'Bounded runtime revision number when observed reality invalidates assumptions without changing the deployed plan contract.';
