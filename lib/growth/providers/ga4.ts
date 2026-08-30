@@ -3,7 +3,7 @@ import 'server-only'
 import { getGoogleGrowthAccessToken } from './google-auth'
 
 export type Ga4Metric = {
-  metricKey: 'sessions' | 'active_users' | 'event_count'
+  metricKey: 'ga4.sessions' | 'ga4.active_users' | 'ga4.event_count'
   value: number
   unit: 'count'
 }
@@ -70,9 +70,9 @@ export async function readGa4Snapshot(propertyId: string): Promise<Ga4ReadResult
     return {
       status: 'observed',
       metrics: [
-        { metricKey: 'sessions', value: parsed[0], unit: 'count' },
-        { metricKey: 'active_users', value: parsed[1], unit: 'count' },
-        { metricKey: 'event_count', value: parsed[2], unit: 'count' },
+        { metricKey: 'ga4.sessions', value: parsed[0], unit: 'count' },
+        { metricKey: 'ga4.active_users', value: parsed[1], unit: 'count' },
+        { metricKey: 'ga4.event_count', value: parsed[2], unit: 'count' },
       ],
       periodStart: `${startDate}T00:00:00.000Z`,
       periodEnd: `${endDate}T23:59:59.999Z`,
