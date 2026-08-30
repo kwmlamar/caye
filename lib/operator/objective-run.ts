@@ -19,11 +19,19 @@ export type Verification = {
   retryAfterMs?: number
 }
 
+export type InterruptedRecovery = {
+  status: 'verified' | 'retry_safe' | 'wait' | 'blocked'
+  reason?: string
+  evidence?: unknown
+  resumeAfterMs?: number
+}
+
 export type ObjectiveStep<TContext> = {
   key: string
   authority: Authority
   maxAttempts?: number
   checkState?: (context: TContext) => Promise<StateCheck>
+  recoverInterrupted?: (context: TContext) => Promise<InterruptedRecovery>
   execute: (context: TContext) => Promise<unknown>
   verify: (context: TContext, effect: unknown) => Promise<Verification>
 }
@@ -78,6 +86,7 @@ export async function runBoundedObjective<TContext>(input: {
   allowedAuthority: ReadonlySet<Authority>
   completedSteps?: ReadonlySet<string>
   pendingEffects?: ReadonlyMap<string, unknown>
+  interruptedSteps?: ReadonlySet<string>
   maxTransitions?: number
   transitionsAlreadyUsed?: number
   timeoutMs?: number
@@ -93,6 +102,7 @@ export async function runBoundedObjective<TContext>(input: {
   const events: ObjectiveEvent[] = []
   const completedSteps = [...(input.completedSteps ?? new Set<string>())]
   const pendingEffects = new Map(input.pendingEffects ?? [])
+  const interruptedSteps = new Set(input.interruptedSteps ?? [])
   let transitions = Math.max(0, input.transitionsAlreadyUsed ?? 0)
   let planRevision = Math.max(0, input.planRevision ?? 0)
   let context = input.context
@@ -141,6 +151,49 @@ export async function runBoundedObjective<TContext>(input: {
       return finish('blocked', step.key)
     }
 
+    if (interruptedSteps.has(step.key)) {
+      const beforeRecovery = exhausted(step.key)
+      if (beforeRecovery) return beforeRecovery
+      transitions++
+      await emit({ at: new Date().toISOString(), step: step.key, state: 'checking', attempt: 0, evidence: { mode: 'recover_interrupted_attempt', planRevision } })
+      if (!step.recoverInterrupted) {
+        await emit({
+          at: new Date().toISOString(),
+          step: step.key,
+          state: 'blocked',
+          attempt: 0,
+          error: 'A prior process died after this effect started; replay is forbidden until the workflow provides explicit reconciliation.',
+        })
+        return finish('blocked', step.key)
+      }
+      try {
+        const recovery = await step.recoverInterrupted(context)
+        if (recovery.status === 'verified') {
+          await emit({ at: new Date().toISOString(), step: step.key, state: 'verified', attempt: 0, evidence: { recovery: recovery.evidence, reason: recovery.reason } })
+          completedSteps.push(step.key)
+          interruptedSteps.delete(step.key)
+          index++
+          continue
+        }
+        if (recovery.status === 'wait') {
+          const resumeAt = new Date(Date.now() + Math.max(1_000, recovery.resumeAfterMs ?? 60_000)).toISOString()
+          await emit({ at: new Date().toISOString(), step: step.key, state: 'waiting', attempt: 0, error: recovery.reason, evidence: { reason: recovery.reason, recoveryEvidence: recovery.evidence, interrupted: true, resumeAt } })
+          return finish('waiting', step.key, undefined, resumeAt)
+        }
+        if (recovery.status === 'blocked') {
+          await emit({ at: new Date().toISOString(), step: step.key, state: 'blocked', attempt: 0, error: recovery.reason ?? 'Interrupted effect could not be reconciled safely', evidence: recovery.evidence })
+          return finish('blocked', step.key)
+        }
+        interruptedSteps.delete(step.key)
+        await emit({ at: new Date().toISOString(), step: step.key, state: 'checking', attempt: 0, evidence: { mode: 'interrupted_retry_declared_safe', recoveryEvidence: recovery.evidence, reason: recovery.reason } })
+      } catch (error) {
+        const resumeAt = new Date(Date.now() + 60_000).toISOString()
+        const reason = error instanceof Error ? error.message : String(error)
+        await emit({ at: new Date().toISOString(), step: step.key, state: 'waiting', attempt: 0, error: reason, evidence: { reason, interrupted: true, resumeAt } })
+        return finish('waiting', step.key, undefined, resumeAt)
+      }
+    }
+
     if (step.checkState) {
       transitions++
       await emit({ at: new Date().toISOString(), step: step.key, state: 'checking', attempt: 0, evidence: { planRevision } })
@@ -171,14 +224,21 @@ export async function runBoundedObjective<TContext>(input: {
 
         const previousRevision = planRevision
         const nextRevision = previousRevision + 1
-        const replanned = await input.onReplan({
-          context,
-          step,
-          reason: state.reason ?? 'Changed reality detected',
-          evidence: state.evidence,
-          previousRevision,
-          nextRevision,
-        })
+        let replanned: ReplanResult<TContext>
+        try {
+          replanned = await input.onReplan({
+            context,
+            step,
+            reason: state.reason ?? 'Changed reality detected',
+            evidence: state.evidence,
+            previousRevision,
+            nextRevision,
+          })
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : String(error)
+          await emit({ at: new Date().toISOString(), step: step.key, state: 'failed', attempt: 0, error: `Replanning failed: ${reason}`, evidence: state.evidence })
+          return finish('failed', step.key)
+        }
         planRevision = nextRevision
         context = replanned.context ?? context
         steps = replanned.steps ?? steps
