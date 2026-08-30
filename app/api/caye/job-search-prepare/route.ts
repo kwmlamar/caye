@@ -86,6 +86,7 @@ export async function runJobSearchPreparation(): Promise<Record<string, unknown>
 
   const runId = runRow.id as string
   const stats = {
+    runId,
     prepared: 0,
     reprepared: 0,
     needsHuman: 0,
