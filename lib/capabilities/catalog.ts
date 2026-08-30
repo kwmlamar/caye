@@ -6,6 +6,7 @@ import { goalsListCapability } from './goals-list'
 import { growthSnapshotCapability } from './growth-snapshot'
 import { jobSearchQueueCapability } from './job-search-queue'
 import { jobSearchSummaryCapability } from './job-search-summary'
+import { perceptionStatusCapability } from './perception-status'
 import { propertyListCapability } from './property-list'
 import { propertySnapshotCapability } from './property-snapshot'
 import { researchBriefCapability } from './research-brief'
@@ -25,6 +26,10 @@ export const cayeCapabilityRegistry = createCapabilityRegistry([
   // Growth Intelligence: workspace-scoped evidence/diagnosis read boundary.
   // Deliberately no execution capability in v1.
   growthSnapshotCapability,
+  // Perception & Continuous Awareness: evidence only. Observation does not
+  // grant execution authority; Direction can now distinguish active evidence
+  // from planned architecture without inventing capability from code presence.
+  perceptionStatusCapability,
   // CAY-192 — founder-only job-search operator. Never workspace-scoped;
   // see each capability's own doc comment.
   jobSearchSummaryCapability,
