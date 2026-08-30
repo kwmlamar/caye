@@ -31,7 +31,7 @@ describe('readGa4Snapshot', () => {
     expect(JSON.stringify(result)).not.toContain('"value":0')
   })
 
-  it('normalizes a successful GA4 report into observed evidence', async () => {
+  it('normalizes a successful GA4 report into namespaced observed evidence', async () => {
     mocks.getGoogleGrowthAccessToken.mockResolvedValue('token')
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
       rows: [{ metricValues: [{ value: '42' }, { value: '31' }, { value: '117' }] }],
@@ -41,9 +41,9 @@ describe('readGa4Snapshot', () => {
     expect(result.status).toBe('observed')
     if (result.status !== 'observed') throw new Error('unexpected')
     expect(result.metrics).toEqual([
-      { metricKey: 'sessions', value: 42, unit: 'count' },
-      { metricKey: 'active_users', value: 31, unit: 'count' },
-      { metricKey: 'event_count', value: 117, unit: 'count' },
+      { metricKey: 'ga4.sessions', value: 42, unit: 'count' },
+      { metricKey: 'ga4.active_users', value: 31, unit: 'count' },
+      { metricKey: 'ga4.event_count', value: 117, unit: 'count' },
     ])
   })
 })
