@@ -7,6 +7,7 @@ import {
   calibrationCandidateKey,
   classifyCalibration,
   ENGINEERING_OUTCOME_MIN_PROJECTS,
+  isOutcomeAfterExecution,
   recommendationForCalibration,
 } from './outcome-learning'
 
@@ -22,6 +23,12 @@ describe('engineering outcome learning calibration', () => {
 
   it('refuses a zero prediction because percentage calibration is undefined', () => {
     expect(classifyCalibration(0, 10)).toEqual({ direction: null, percentError: null })
+  })
+
+  it('requires an outcome observation at or after selected-intervention execution', () => {
+    expect(isOutcomeAfterExecution('2026-08-30T12:00:00.000Z', '2026-08-30T12:01:00.000Z')).toBe(true)
+    expect(isOutcomeAfterExecution('2026-08-30T12:00:00.000Z', '2026-08-30T11:59:59.000Z')).toBe(false)
+    expect(isOutcomeAfterExecution('not-a-date', '2026-08-30T12:01:00.000Z')).toBe(false)
   })
 
   it('uses one canonical memory key while keeping opposite candidate directions separate', () => {
