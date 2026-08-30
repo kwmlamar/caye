@@ -3,20 +3,38 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { runJobSearchPreparation } from '@/app/api/caye/job-search-prepare/route'
 import { runJobSearchInspection } from '@/app/api/caye/job-search-inspect/route'
 import { runBoundedObjective } from '@/lib/operator/objective-run'
+import { finalizeObjectiveRun, openOrResumeObjectiveRun, persistObjectiveEvent } from '@/lib/operator/objective-store'
+
+const OBJECTIVE_KEY = 'founder_job_search_prepare_and_inspect'
+const MAX_TRANSITIONS = 8
+const TIMEOUT_MS = 50_000
 
 export async function runFounderJobSearchObjective() {
   const supabase = createServiceClient()
   const before = await supabase.from('job_search_applications').select('id,status,updated_at').order('updated_at', { ascending: false }).limit(25)
   if (before.error) throw new Error(before.error.message)
 
-  return runBoundedObjective({
+  const durable = await openOrResumeObjectiveRun({
+    supabase,
+    objectiveKey: OBJECTIVE_KEY,
+    scopeKind: 'founder',
+    workspaceId: null,
+    actorKey: 'founder',
+    maxTransitions: MAX_TRANSITIONS,
+    timeoutMs: TIMEOUT_MS,
+    metadata: { workflow: 'job_search', phase: 'prepare_and_inspect' },
+  })
+
+  const result = await runBoundedObjective({
     context: { supabase, before: before.data ?? [] },
     // Preparation and inspection are internal/reversible state changes only.
     // Submission/contact remains outside this objective and therefore cannot be
     // smuggled in by a planner without an explicit high-risk authority grant.
     allowedAuthority: new Set(['read', 'write_low']),
-    maxTransitions: 8,
-    timeoutMs: 50_000,
+    completedSteps: durable.completedSteps,
+    maxTransitions: MAX_TRANSITIONS,
+    timeoutMs: TIMEOUT_MS,
+    onEvent: (event) => persistObjectiveEvent(supabase, durable.runId, event),
     steps: [
       {
         key: 'prepare_applications', authority: 'write_low', maxAttempts: 1,
@@ -25,7 +43,7 @@ export async function runFounderJobSearchObjective() {
           const check = await supabase.from('job_search_runs').select('id,status,completed_at,stats,error').eq('run_type', 'apply').order('created_at', { ascending: false }).limit(1).maybeSingle()
           if (check.error) return { ok: false, reason: check.error.message }
           const skipped = effect && typeof effect === 'object' && ('skippedPaused' in effect || 'skippedDailyCap' in effect || 'skippedAlreadyRunning' in effect)
-          if (skipped) return { ok: true, evidence: { effect, verified: 'bounded skip' } }
+          if (skipped) return { ok: true, evidence: { effect, verified: 'bounded_skip' } }
           return { ok: check.data?.status === 'completed', evidence: { effect, run: check.data }, reason: check.data?.error ?? 'Preparation run not observed completed' }
         },
       },
@@ -40,4 +58,7 @@ export async function runFounderJobSearchObjective() {
       },
     ],
   })
+
+  await finalizeObjectiveRun(supabase, durable.runId, result)
+  return { runId: durable.runId, ...result }
 }
