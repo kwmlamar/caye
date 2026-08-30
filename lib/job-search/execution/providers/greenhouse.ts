@@ -69,7 +69,7 @@ import type { DiscoveredField, FieldDiscoveryResult, SubmissionResult } from '..
 import { safeFetch } from '../safe-fetch'
 import { isAllowedAtsHost } from '../allowed-destinations'
 import { classifyFieldLabel } from '../field-classifier'
-import { submitGreenhouseInBrowser } from './greenhouse-browser'
+import { runGreenhouseBrowserReadiness } from './greenhouse-browser'
 
 const GREENHOUSE_API_HOST = 'boards-api.greenhouse.io'
 const REQUEST_TIMEOUT_MS = 15_000
@@ -150,13 +150,16 @@ function detectChallengeSignal(status: number, contentType: string | null, bodyT
 export const greenhouseAtsProvider: AtsExecutorProvider = {
   providerKey: 'greenhouse',
 
-  /** See the module header. Greenhouse's public API has no applicant-usable submission channel. */
-  canSubmit: true,
+  /**
+   * Deliberately false. The prior browser prototype was not validated against
+   * Greenhouse's live DOM nor packaged with a production Chromium runtime.
+   * It may perform a non-consequential readiness pass only; it cannot click
+   * Submit until a separately audited implementation proves both properties.
+   */
+  canSubmit: false,
 
   async dryRun(request, fields) {
-    const result = await submitGreenhouseInBrowser({ ...request, dryRun: true }, fields)
-    if (result.outcome === 'failed' && /Dry run completed/.test(result.reason)) return { outcome: 'ready' as const, reason: result.reason }
-    return { outcome: 'needs_human' as const, reason: result.outcome === 'submitted' ? 'Dry-run browser attempted an impossible submitted state.' : result.reason }
+    return runGreenhouseBrowserReadiness(request, fields)
   },
 
   async discoverFields(applyUrl: string): Promise<FieldDiscoveryResult> {
@@ -225,7 +228,10 @@ export const greenhouseAtsProvider: AtsExecutorProvider = {
    * the request-building code was deleted rather than disabled, so no future
    * config change can resurrect an unauthenticated submission attempt.
    */
-  async submit(request, fields): Promise<SubmissionResult> {
-    return submitGreenhouseInBrowser(request, fields)
+  async submit(): Promise<SubmissionResult> {
+    return {
+      outcome: 'not_supported',
+      reason: 'Greenhouse browser submission remains disabled pending provider-DOM and production-runtime validation. This executor can perform dry-run readiness checks only.',
+    }
   },
 }

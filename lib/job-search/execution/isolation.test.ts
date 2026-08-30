@@ -159,8 +159,8 @@ describe('executeApplication has exactly one founder-only production caller (pos
     expect(offenders).toEqual(['lib/caye-agent/tools/admin/write-high/run-application-execution.ts'])
   })
 
-  it('only the audited Greenhouse browser provider can submit', () => {
-    expect(greenhouseAtsProvider.canSubmit).toBe(true)
+  it('no provider can submit until a production-validated implementation is separately enabled', () => {
+    expect(greenhouseAtsProvider.canSubmit).toBe(false)
     expect(unsupportedProvider('lever').canSubmit).toBe(false)
   })
 })

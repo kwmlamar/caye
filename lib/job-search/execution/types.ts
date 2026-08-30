@@ -124,8 +124,6 @@ export type SubmissionRequest = {
   coverLetter: string | null
   answers: FieldResolution[]
   founder: FounderContactInfo
-  /** Only the browser adapter sees this. It may fill/upload but never clicks Submit. */
-  dryRun?: boolean
 }
 
 export const HIGH_RISK_FIELD_SEMANTIC_KEYS = [

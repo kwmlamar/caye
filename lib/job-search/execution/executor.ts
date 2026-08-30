@@ -301,7 +301,6 @@ async function runClaimedExecution(claim: ApplicationClaim, providerKey: Executi
           coverLetter: coverLetterArtifact?.content ?? null,
           answers: allAnswers,
           founder: { fullName: profile.fullName ?? '', email: profile.contactEmail ?? '', phone: profile.contactPhone },
-          dryRun: true,
         },
         fields,
       )

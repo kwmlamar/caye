@@ -160,13 +160,11 @@ describe('greenhouseAtsProvider browser capability (#216)', () => {
     }
   }
 
-  it('declares the applicant-controlled browser implementation explicitly capable', () => {
-    expect(greenhouseAtsProvider.canSubmit).toBe(true)
+  it('keeps live applicant submission disabled until the browser implementation is independently validated', () => {
+    expect(greenhouseAtsProvider.canSubmit).toBe(false)
   })
 
-  it('does not reintroduce the employer API POST path', () => {
-    // Browser submission is deliberately implemented in greenhouse-browser;
-    // the public API adapter remains read-only field discovery.
-    expect(greenhouseAtsProvider.submit.toString()).toMatch(/submitGreenhouseInBrowser/)
+  it('refuses submit without touching the browser or employer API', async () => {
+    await expect(greenhouseAtsProvider.submit(request(), [field])).resolves.toMatchObject({ outcome: 'not_supported' })
   })
 })

@@ -41,6 +41,8 @@ describe('job_search_application_execution migration (PGlite)', () => {
     await db.exec(executionMigration)
     const browserMigration = readFileSync(join(__dirname, '..', '..', '..', 'supabase', 'migrations', '20260829c_job_search_browser_execution.sql'), 'utf8')
     await db.exec(browserMigration)
+    const auditMigration = readFileSync(join(__dirname, '..', '..', '..', 'supabase', 'migrations', '20260830a_cap_job_search_browser_submission_to_three.sql'), 'utf8')
+    await db.exec(auditMigration)
   })
 
   afterAll(async () => {
@@ -79,7 +81,7 @@ describe('job_search_application_execution migration (PGlite)', () => {
     // call it is not enforced. Any writer, including a manual SQL fix-up,
     // hits the same wall.
     await expect(db.query(`update public.job_search_execution_settings set daily_submission_cap = 150 where id = true`)).rejects.toThrow()
-    await expect(db.query(`update public.job_search_execution_settings set daily_submission_cap = 11 where id = true`)).rejects.toThrow()
+    await expect(db.query(`update public.job_search_execution_settings set daily_submission_cap = 4 where id = true`)).rejects.toThrow()
     await expect(db.query(`update public.job_search_execution_settings set daily_submission_cap = -1 where id = true`)).rejects.toThrow()
 
     // ...and the value is unchanged after every rejected write.
@@ -87,7 +89,6 @@ describe('job_search_application_execution migration (PGlite)', () => {
     expect(rows[0].daily_submission_cap).toBe(3)
 
     // The ceiling itself is still reachable.
-    await db.query(`update public.job_search_execution_settings set daily_submission_cap = 10 where id = true`)
     await db.query(`update public.job_search_execution_settings set daily_submission_cap = 3 where id = true`)
   })
 
