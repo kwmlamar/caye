@@ -108,7 +108,9 @@ export const perceptionStatusCapability: RegisteredCapability<Record<string, nev
         .sort((a, b) => Date.parse(b) - Date.parse(a))[0] ?? null
 
       return {
-        status: sources.length > 0 ? 'observed' : 'empty',
+        // An empty evidence set is still a successful observation: it truthfully means
+        // no source has produced capability evidence for this workspace yet.
+        status: 'observed',
         data: {
           sources,
           capabilities,
