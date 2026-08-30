@@ -71,7 +71,10 @@ export const engineeringDecisionAnalysisCapability: RegisteredCapability<Enginee
         return {
           status: 'inferred' as const,
           data: comparison,
-          evidence: args.outcome.evidenceRefs.map((id) => ({ kind: 'execution' as const, id })),
+          // Outcome refs remain part of the comparison record for later canonical
+          // resolution, but are not promoted to trusted CapabilityEvidenceRef values
+          // until a real execution/outcome evidence resolver verifies them.
+          evidence: [],
           executionRef: null,
           auditRef: null,
           failure: null,
