@@ -58,7 +58,7 @@ describe('conversational capability control plane', () => {
     expect(result.error).toContain('Verified founder identity')
   })
 
-  it('discovers capabilities only on founder Direct with verified identity', async () => {
+  it('discovers only read capabilities on founder Direct with verified identity', async () => {
     const context = dashboardContext()
     Object.assign(context, { founderUserId: 'founder-user-1' })
     const result = await cayeCapabilitiesTool.execute({ action: 'discover' }, context)
@@ -66,7 +66,20 @@ describe('conversational capability control plane', () => {
     const data = result.data as { capabilities: ReturnType<typeof conversationalCapabilityManifest> }
     expect(data.capabilities.some((entry) => entry.name === 'property.list')).toBe(true)
     expect(data.capabilities.some((entry) => entry.name === 'job_search.summary')).toBe(true)
-    expect(data.capabilities.some((entry) => entry.name === 'research.start')).toBe(true)
+    expect(data.capabilities.every((entry) => entry.access === 'read')).toBe(true)
+    expect(data.capabilities.some((entry) => entry.name === 'research.start')).toBe(false)
+  })
+
+  it('refuses write capabilities through the read bridge', async () => {
+    const context = dashboardContext()
+    Object.assign(context, { founderUserId: 'founder-user-1' })
+    const result = await cayeCapabilitiesTool.execute({
+      action: 'invoke',
+      capability: 'research.start',
+      args: { questionId: 'question-1' },
+    }, context)
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain('write capability')
   })
 
   it('does not expose the bridge on ordinary back-office channels', async () => {
