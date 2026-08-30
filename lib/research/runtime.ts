@@ -162,8 +162,17 @@ export async function executeResearchRun(args: {
   const observed:Array<{id:string;source:ResearchFetchedSource}>=[]
   try {
     const results = await args.provider.search(args.question,{limit:8})
+    const fetchFailures: string[] = []
+
     for (const result of results) {
-      const source = await args.provider.fetch(result)
+      let source: ResearchFetchedSource
+      try {
+        source = await args.provider.fetch(result)
+      } catch (error) {
+        fetchFailures.push(`${result.url}: ${error instanceof Error ? error.message : String(error)}`)
+        continue
+      }
+
       const hash = sourceHash(source)
       const { data:stored, error } = await db.from('research_sources').upsert({
         canonical_url:source.url,
@@ -178,6 +187,11 @@ export async function executeResearchRun(args: {
       const edge = await db.from('research_run_sources').upsert({run_id:args.runId,source_id:stored.id})
       if (edge.error) throw edge.error
       observed.push({id:stored.id,source:{...source,contentHash:hash}})
+    }
+
+    if (!observed.length) {
+      const detail = fetchFailures.length ? ` First fetch failure: ${fetchFailures[0]}` : ''
+      throw new Error(`Research run produced no durable source evidence.${detail}`)
     }
 
     const synthesis = await args.synthesize({question:args.question,sources:observed})
@@ -211,7 +225,7 @@ export async function executeResearchRun(args: {
       },
     })
     if (error) throw error
-    return {status:'completed' as const,sourceCount:observed.length,revision:Number(revision)}
+    return {status:'completed' as const,sourceCount:observed.length,skippedSourceCount:fetchFailures.length,revision:Number(revision)}
   } catch (error) {
     await db.from('research_runs').update({status:observed.length?'partial':'failed',completed_at:new Date().toISOString(),provider:args.provider.name,error:error instanceof Error?error.message:String(error)}).eq('id',args.runId).neq('status','completed')
     throw error
