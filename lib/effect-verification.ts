@@ -37,6 +37,12 @@ export type EffectVerificationResult = {
   reason: string
 }
 
+export type EffectRetryDecision = {
+  retryMutation: boolean
+  recovery: 'none' | 'observe_only' | 'retry_allowed' | 'manual_review'
+  reason: string
+}
+
 function comparable(value: unknown): string {
   if (value === undefined) return '__undefined__'
   if (value === null) return '__null__'
@@ -86,7 +92,7 @@ export function deriveEffectVerification(args: {
       execution,
       observation,
       comparisons: [],
-      reason: 'Execution reported success without an execution timestamp',
+      reason: execution.error || 'Execution outcome is ambiguous; no execution timestamp is available',
     }
   }
 
@@ -181,4 +187,34 @@ export function deriveEffectVerification(args: {
     comparisons,
     reason: 'Independent observation does not match the expected state',
   }
+}
+
+export function deriveEffectRetryDecision(args: {
+  status: EffectVerificationStatus
+  actionKind: 'create' | 'update' | 'delete' | string
+  providerFailureRetryable?: boolean
+}): EffectRetryDecision {
+  if (args.status === 'VERIFIED') {
+    return { retryMutation: false, recovery: 'none', reason: 'Effect is independently verified' }
+  }
+  if (args.status === 'INDETERMINATE') {
+    return {
+      retryMutation: false,
+      recovery: 'observe_only',
+      reason: args.actionKind === 'create'
+        ? 'Create may already have succeeded; observe/reconcile before any mutation retry'
+        : 'Outcome is ambiguous; observe/reconcile before retrying the mutation',
+    }
+  }
+  if (args.status === 'PARTIAL') {
+    return {
+      retryMutation: false,
+      recovery: 'manual_review',
+      reason: 'A partial external effect exists; blind retry could compound the mutation',
+    }
+  }
+  if (args.providerFailureRetryable) {
+    return { retryMutation: true, recovery: 'retry_allowed', reason: 'Execution failed definitively before the intended effect and provider classifies retry as safe' }
+  }
+  return { retryMutation: false, recovery: 'manual_review', reason: 'Failure is not proven safe to retry automatically' }
 }
