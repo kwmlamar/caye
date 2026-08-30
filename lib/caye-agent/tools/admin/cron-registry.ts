@@ -11,6 +11,7 @@ import { runOutreachAutosendScan } from '@/app/api/caye/outreach-autosend-scan/r
 import { runOutreachSourcingScan } from '@/app/api/caye/outreach-sourcing-scan/route'
 import { runJobSearchSourcing } from '@/app/api/caye/job-search-sourcing/route'
 import { runJobSearchPreparation } from '@/app/api/caye/job-search-prepare/route'
+import { runResearchWorker } from '@/app/api/caye/research-worker/route'
 
 /** Fixed allowlist of jobs Admin Shell may inspect/trigger. */
 export const CRON_JOBS: Record<
@@ -34,4 +35,5 @@ export const CRON_JOBS: Record<
   // records, and cannot submit an application. Actual ATS execution remains behind
   // the separate execution policy/evidence boundary.
   'job-search-prepare': { label: 'Job-search application preparation (founder-only, no submission)', run: runJobSearchPreparation },
+  'research-worker': { label: 'Founder research queue worker (evidence-backed)', run: runResearchWorker },
 }
