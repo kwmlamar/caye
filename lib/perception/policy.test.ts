@@ -18,6 +18,12 @@ describe('perception identity and change semantics', () => {
     expect(observationDedupeKey(input)).toBe(observationDedupeKey({ ...input }))
   })
 
+  it('does not collide when identity components contain separators', () => {
+    const left = observationDedupeKey({ workspaceId: 'workspace-a:b', sourceKind: 'c', sourceIdentity: 'd', sourceEventId: 'e' })
+    const right = observationDedupeKey({ workspaceId: 'workspace-a', sourceKind: 'b:c', sourceIdentity: 'd', sourceEventId: 'e' })
+    expect(left).not.toBe(right)
+  })
+
   it('distinguishes initial, ordinary change, unchanged, and anomaly', () => {
     expect(classifyChange(null, 'a')).toBe('initial')
     expect(classifyChange('a', 'a')).toBe('unchanged')
