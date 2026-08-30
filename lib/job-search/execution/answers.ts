@@ -13,10 +13,9 @@
  * high-risk rule: these categories are never answerable by inference, only
  * by a verified founder-direct or resume-derived-and-verified fact).
  *
- * Structural fields (name/email/phone/resume/cover letter) are NOT
- * resolved here — the executor fills those directly from the founder
- * profile/contact info and the generated artifacts, since they are not
- * "canonical Q&A answers" in the profile_facts sense at all.
+ * Structural fields (name/email/phone/resume/cover letter/LinkedIn) are NOT
+ * resolved here — the executor fills those directly from the verified founder
+ * profile/contact info and generated artifacts.
  */
 import type { ProfileFactCategory, ProfileFactRow } from '../types'
 import type { DiscoveredField, FieldResolution } from './types'
@@ -40,17 +39,6 @@ const SEMANTIC_KEY_TO_CATEGORY: Record<string, ProfileFactCategory> = {
   arbitration_acknowledgment: 'attestation',
 }
 
-/**
- * How old a canonical fact may be and still auto-fill a consequential field.
- *
- * These are answers about visa status, clearance, criminal history,
- * compensation expectations, availability — every one of which can change
- * without anyone remembering to update a row. Silence is not confirmation, so
- * a fact that has not been re-verified within this window stops auto-filling
- * and asks the founder instead. `getActiveFacts` already excludes superseded
- * rows; this covers the different failure of a fact that was never corrected
- * because nobody revisited it.
- */
 export const FACT_MAX_AGE_MS = 180 * 24 * 60 * 60 * 1000 // 180 days
 
 export function resolveDiscoveredField(field: DiscoveredField, facts: ProfileFactRow[], now: number = Date.now()): FieldResolution {
@@ -78,12 +66,6 @@ export function resolveDiscoveredField(field: DiscoveredField, facts: ProfileFac
     }
   }
 
-  // A select field's answer is not free text. The provider defines a closed
-  // option list, and (verified against a live Greenhouse board) the wire value
-  // is the option's own identifier, not its label — the same label "No" maps
-  // to `0` on one question and `239207523002` on another, so a label can never
-  // be sent as-is. If the stored answer does not correspond to exactly one
-  // offered option, we do not have an answer to this question.
   if (field.allowedOptions && field.allowedOptions.length > 0) {
     const normalized = match.answer.trim().toLowerCase()
     const hits = field.allowedOptions.filter((o) => o.label.trim().toLowerCase() === normalized || o.value.trim().toLowerCase() === normalized)
@@ -101,4 +83,4 @@ export function resolveDiscoveredField(field: DiscoveredField, facts: ProfileFac
 }
 
 /** Structural fields the executor fills directly rather than through canonical-fact resolution. */
-export const STRUCTURAL_SEMANTIC_KEYS = ['first_name', 'last_name', 'email', 'phone', 'resume', 'cover_letter'] as const
+export const STRUCTURAL_SEMANTIC_KEYS = ['first_name', 'last_name', 'email', 'phone', 'resume', 'cover_letter', 'linkedin'] as const
