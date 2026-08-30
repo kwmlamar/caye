@@ -8,6 +8,8 @@ export interface BusinessFactRow {
   memoryType?: string
   knowledgeMode?: string
   confidence?: number
+  subjectType?: string
+  subjectId?: string | null
 }
 
 /**
@@ -41,6 +43,8 @@ export async function fetchBusinessFacts(workspaceId: string): Promise<BusinessF
       memory_type: string
       knowledge_mode: string
       confidence: number
+      subject_type: string
+      subject_id: string | null
     }>).map((f) => ({
       id: f.id,
       category: f.category,
@@ -48,6 +52,8 @@ export async function fetchBusinessFacts(workspaceId: string): Promise<BusinessF
       memoryType: f.memory_type,
       knowledgeMode: f.knowledge_mode,
       confidence: f.confidence,
+      subjectType: f.subject_type,
+      subjectId: f.subject_id,
     }))
   }
 
@@ -66,13 +72,16 @@ export async function fetchBusinessFacts(workspaceId: string): Promise<BusinessF
   const now = Date.now()
   return ((legacy ?? []) as Array<BusinessFactRow & { expires_at: string | null }>)
     .filter((f) => !f.expires_at || new Date(f.expires_at).getTime() > now)
-    .map(({ id, category, fact }) => ({ id, category, fact }))
+    .map(({ id, category, fact }) => ({ id, category, fact, subjectType: 'workspace', subjectId: null }))
 }
 
 /**
  * Render the BUSINESS FACTS block for the system prompt. Human-authored facts
  * remain authoritative; inferred material is explicitly marked as context so
- * one model judgment cannot silently become permanent policy.
+ * one model judgment cannot silently become permanent policy. Typed subject
+ * scope is rendered too: retaining scope in storage and then discarding it at
+ * prompt assembly would simply recreate cross-scope memory leakage one layer
+ * later.
  */
 export function formatBusinessFactsBlock(facts: BusinessFactRow[]): string {
   if (facts.length === 0) return ''
@@ -80,8 +89,12 @@ export function formatBusinessFactsBlock(facts: BusinessFactRow[]): string {
   for (const f of facts) {
     if (!byCat.has(f.category)) byCat.set(f.category, [])
     const inferred = f.knowledgeMode === 'inferred' || f.knowledgeMode === 'derived'
-    const prefix = inferred ? '[observed pattern, not policy] ' : ''
-    byCat.get(f.category)!.push(`${prefix}${f.fact}`)
+    const inferencePrefix = inferred ? '[observed pattern, not policy] ' : ''
+    const scoped = f.subjectType && f.subjectType !== 'workspace'
+    const scopePrefix = scoped
+      ? `[scope: ${f.subjectType}${f.subjectId ? ` ${f.subjectId}` : ''}; do not generalize] `
+      : ''
+    byCat.get(f.category)!.push(`${inferencePrefix}${scopePrefix}${f.fact}`)
   }
   const sections: string[] = []
   const order: BusinessFactRow['category'][] = ['policy', 'service_detail', 'special_handling', 'logistics']
@@ -100,7 +113,7 @@ export function formatBusinessFactsBlock(facts: BusinessFactRow[]): string {
     'BUSINESS FACTS — durable knowledge retrieved for this workspace. ' +
     'Explicit owner/operator corrections and policies are authoritative unless current system-of-record evidence contradicts them. ' +
     'Observed/inferred patterns are context only and never permission to invent or change policy. ' +
-    'Never generalize a service/customer/person-scoped fact beyond its stated scope.\n\n' +
+    'A scope label is a hard boundary: do not apply service/person/customer/project/property-scoped memory outside that subject.\n\n' +
     sections.join('\n\n')
   )
 }
