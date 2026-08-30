@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { capabilityCoverage, conversationalCapabilityManifest } from './control-plane'
 import { cayeCapabilitiesTool } from '@/lib/caye-agent/tools/read/caye-capabilities'
+import { startCanonicalResearchTool } from '@/lib/caye-agent/tools/write-low/start-canonical-research'
+import { selectToolSurface } from '@/lib/caye-agent/execute'
 import type { ToolContext } from '@/lib/caye-agent/tools/types'
 
 function dashboardContext(extra: Record<string, unknown> = {}): ToolContext {
@@ -52,6 +54,24 @@ describe('conversational capability control plane', () => {
     expect(coverage.find((entry) => entry.domain === 'robots_machines')).toMatchObject({ status: 'future', capabilityCount: 0 })
   })
 
+  it('keeps canonical read and write authority structurally separate', () => {
+    expect(cayeCapabilitiesTool.risk).toBe('read')
+    expect(startCanonicalResearchTool.risk).toBe('low')
+    expect(cayeCapabilitiesTool.name).not.toBe(startCanonicalResearchTool.name)
+  })
+
+  it('excludes the low-risk canonical write from read-only continuation surfaces', () => {
+    const surface = selectToolSurface({
+      tools: [cayeCapabilitiesTool, startCanonicalResearchTool] as never[],
+      mode: 'back-office',
+      readOnly: true,
+      ctx: dashboardContext(),
+    })
+
+    expect(surface.tools.map((tool) => tool.name)).toEqual(['caye_capabilities'])
+    expect(surface.metrics.excludedByReadOnlyCount).toBe(1)
+  })
+
   it('fails closed when verified founder identity is absent', async () => {
     const result = await cayeCapabilitiesTool.execute(
       { action: 'invoke', capability: 'goals.list' },
@@ -86,12 +106,26 @@ describe('conversational capability control plane', () => {
     expect(result.error).toContain('write capability')
   })
 
-  it('does not expose the bridge on ordinary back-office channels', async () => {
+  it('fails closed for the low-risk write when verified founder identity is absent', async () => {
+    const result = await startCanonicalResearchTool.execute(
+      { questionId: 'question-1' },
+      dashboardContext(),
+    )
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain('Verified founder identity')
+  })
+
+  it('does not expose canonical bridges on ordinary back-office channels', async () => {
     const context = dashboardContext()
     delete (context as { channel?: 'dashboard' }).channel
     Object.assign(context, { founderUserId: 'founder-user-1' })
-    const result = await cayeCapabilitiesTool.execute({ action: 'discover' }, context)
-    expect(result.ok).toBe(false)
-    expect(result.error).toContain('founder Caye Direct')
+
+    const readResult = await cayeCapabilitiesTool.execute({ action: 'discover' }, context)
+    expect(readResult.ok).toBe(false)
+    expect(readResult.error).toContain('founder Caye Direct')
+
+    const writeResult = await startCanonicalResearchTool.execute({ questionId: 'question-1' }, context)
+    expect(writeResult.ok).toBe(false)
+    expect(writeResult.error).toContain('founder Caye Direct')
   })
 })
