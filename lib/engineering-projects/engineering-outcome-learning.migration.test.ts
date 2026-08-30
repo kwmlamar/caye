@@ -23,10 +23,10 @@ describe('engineering outcome learning migration contracts', () => {
     expect(sql).toContain("p_subject_type := 'property'")
     expect(sql).toContain("p_knowledge_mode := 'derived'")
     expect(sql).toContain("p_authority_kind := 'system'")
-    expect(sql).toContain("'kind', 'engineering_project_verdict'")
-    expect(sql).toContain("'source_message_id', new.source_message_id")
-    expect(sql).toContain("'execution_evidence_required', true")
-    expect(sql).toContain("'outcome_evidence_required', true")
+    expect(sql).toMatch(/'kind'\s*,\s*'engineering_project_verdict'/)
+    expect(sql).toMatch(/'source_message_id'\s*,\s*new\.source_message_id/)
+    expect(sql).toMatch(/'execution_evidence_required'\s*,\s*true/)
+    expect(sql).toMatch(/'outcome_evidence_required'\s*,\s*true/)
   })
 
   it('supersedes only the prior derived system lesson for the same project and property', () => {
