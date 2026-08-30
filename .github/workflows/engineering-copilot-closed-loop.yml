@@ -1,0 +1,25 @@
+name: Engineering copilot closed loop
+
+on:
+  pull_request:
+    paths:
+      - 'lib/coding-session/**'
+      - 'supabase/migrations/*engineering_copilot_closed_loop.sql'
+      - '.github/workflows/engineering-copilot-closed-loop.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  closure-policy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Run closed-loop verdict tests
+        run: npx vitest run lib/coding-session/closure-policy.test.ts
