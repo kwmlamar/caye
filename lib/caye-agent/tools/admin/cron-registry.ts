@@ -13,6 +13,7 @@ import { runJobSearchSourcing } from '@/app/api/caye/job-search-sourcing/route'
 import { runJobSearchPreparation } from '@/app/api/caye/job-search-prepare/route'
 import { runJobSearchInspection } from '@/app/api/caye/job-search-inspect/route'
 import { runResearchWorker } from '@/app/api/caye/research-worker/route'
+import { runGrowthIngest } from '@/app/api/caye/growth-ingest/route'
 
 /** Fixed allowlist of jobs Admin Shell may inspect/trigger. */
 export const CRON_JOBS: Record<
@@ -33,4 +34,5 @@ export const CRON_JOBS: Record<
   'job-search-prepare': { label: 'Job-search application preparation (founder-only, no submission)', run: runJobSearchPreparation },
   'job-search-inspect': { label: 'Inspect prepared ATS forms and resolve known answers (founder-only, no submission)', run: runJobSearchInspection },
   'research-worker': { label: 'Founder research queue worker (evidence-backed)', run: runResearchWorker },
+  'growth-ingest': { label: 'Growth Intelligence provider ingestion (read-only external data)', run: runGrowthIngest },
 }

@@ -5,7 +5,7 @@
 
 create table if not exists public.growth_sources (
   id uuid primary key default gen_random_uuid(),
-  workspace_id uuid not null references public.workspaces(id) on delete cascade,
+  workspace_id uuid not null references public.customers(id) on delete cascade,
   provider text not null check (provider in ('ga4','search_console','bookings','inquiries','manual')),
   status text not null default 'disconnected' check (status in ('connected','disconnected','error')),
   external_account_ref text,
@@ -19,7 +19,7 @@ create table if not exists public.growth_sources (
 
 create table if not exists public.growth_observations (
   id uuid primary key default gen_random_uuid(),
-  workspace_id uuid not null references public.workspaces(id) on delete cascade,
+  workspace_id uuid not null references public.customers(id) on delete cascade,
   source_id uuid references public.growth_sources(id) on delete set null,
   metric_key text not null,
   metric_value numeric,
@@ -38,7 +38,7 @@ create index if not exists growth_observations_workspace_metric_time_idx
 
 create table if not exists public.growth_diagnoses (
   id uuid primary key default gen_random_uuid(),
-  workspace_id uuid not null references public.workspaces(id) on delete cascade,
+  workspace_id uuid not null references public.customers(id) on delete cascade,
   diagnosis_key text not null,
   headline text not null,
   explanation text not null,
@@ -52,7 +52,7 @@ create table if not exists public.growth_diagnoses (
 
 create table if not exists public.growth_recommendations (
   id uuid primary key default gen_random_uuid(),
-  workspace_id uuid not null references public.workspaces(id) on delete cascade,
+  workspace_id uuid not null references public.customers(id) on delete cascade,
   diagnosis_id uuid not null references public.growth_diagnoses(id) on delete cascade,
   title text not null,
   rationale text not null,
