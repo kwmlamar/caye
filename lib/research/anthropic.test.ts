@@ -1,5 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import type Anthropic from '@anthropic-ai/sdk'
+import { describe, expect, it, vi } from 'vitest'
 import {
+  createAnthropicResearchSynthesizer,
   extractAnthropicFetchedDocument,
   extractAnthropicSearchResults,
 } from './anthropic'
@@ -58,5 +60,77 @@ describe('Anthropic research evidence parsing', () => {
 
     expect(extractAnthropicFetchedDocument(blocks, 'https://example.com/other')).toBeNull()
     expect(extractAnthropicFetchedDocument(blocks, 'https://example.com/source')).toBeNull()
+  })
+})
+
+describe('Anthropic research synthesis JSON recovery', () => {
+  const input = {
+    question: 'Which architecture is safer?',
+    sources: [{
+      id: 'source-1',
+      source: {
+        url: 'https://example.com/source',
+        title: 'Source',
+        content: 'Evidence text.',
+        fetchedAt: '2026-08-30T03:30:00Z',
+      },
+    }],
+  }
+
+  const validJson = JSON.stringify({
+    claims: [{
+      statement: 'Bounded architectures can improve reliability.',
+      claimType: 'finding',
+      confidence: 0.8,
+      sourceQuality: 'primary',
+      sourceIds: ['source-1'],
+    }],
+    brief: 'Bounded architectures are promising.',
+    strongestEvidence: [],
+    conflictingEvidence: [],
+    unknowns: [],
+    materialChanges: [],
+    implications: [],
+    recommendations: [],
+  })
+
+  it('retries from scratch when the first synthesis response is truncated', async () => {
+    const create = vi.fn()
+      .mockResolvedValueOnce({
+        stop_reason: 'max_tokens',
+        content: [{ type: 'text', text: '{"claims":[{"statement":"cut off' }],
+      })
+      .mockResolvedValueOnce({
+        stop_reason: 'end_turn',
+        content: [{ type: 'text', text: validJson }],
+      })
+    const client = { messages: { create } } as unknown as Anthropic
+    const synthesize = createAnthropicResearchSynthesizer({ client, model: 'test-model' })
+
+    const result = await synthesize(input)
+
+    expect(create).toHaveBeenCalledTimes(2)
+    expect(create.mock.calls[0][0].max_tokens).toBe(8_192)
+    expect(result.brief).toBe('Bounded architectures are promising.')
+    expect(result.claims).toHaveLength(1)
+  })
+
+  it('retries when the first complete response contains malformed JSON', async () => {
+    const create = vi.fn()
+      .mockResolvedValueOnce({
+        stop_reason: 'end_turn',
+        content: [{ type: 'text', text: '{"claims": [}' }],
+      })
+      .mockResolvedValueOnce({
+        stop_reason: 'end_turn',
+        content: [{ type: 'text', text: validJson }],
+      })
+    const client = { messages: { create } } as unknown as Anthropic
+    const synthesize = createAnthropicResearchSynthesizer({ client, model: 'test-model' })
+
+    const result = await synthesize(input)
+
+    expect(create).toHaveBeenCalledTimes(2)
+    expect(result.brief).toBe('Bounded architectures are promising.')
   })
 })
