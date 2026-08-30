@@ -109,7 +109,6 @@ export class OpenAICompatibleBackend implements ToolCapableBackend {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${key}`,
     }
-    // OpenRouter privacy default: do not allow provider data collection. Model choice remains explicit/configured.
     if (this.id === 'openrouter') Object.assign(body, { provider: { data_collection: 'deny' } })
 
     const response = await fetch(`${this.config.baseUrl}/chat/completions`, {
@@ -202,7 +201,7 @@ export const OpenAIApiBackend = class extends OpenAICompatibleBackend {
       id: 'openai_api',
       keyName: 'OPENAI_API_KEY',
       baseUrl: 'https://api.openai.com/v1',
-      model: process.env.OPENAI_API_MODEL || 'gpt-4.1',
+      model: process.env.OPENAI_API_MODEL || 'gpt-5-mini',
       provider: 'openai',
     })
   }

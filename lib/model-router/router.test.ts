@@ -21,46 +21,47 @@ function fakeBackend(overrides: Partial<ModelBackend> & Pick<ModelBackend, 'id' 
 describe('planChain', () => {
   it('auto + coding hint leads with the Codex subscription backend', () => {
     const chain = planChain('auto', { isCodingOrRepoTask: true })
-    expect(chain[0]).toBe('openai_codex_subscription')
-    expect(chain[1]).toBe('claude_subscription')
+    expect(chain).toEqual(['openai_codex_subscription', 'claude_subscription'])
   })
 
-  it('auto + no hints leads with the Claude subscription backend (default business-reasoning shape)', () => {
-    const chain = planChain('auto', undefined)
-    expect(chain[0]).toBe('claude_subscription')
-    expect(chain[1]).toBe('openai_codex_subscription')
+  it('auto defaults to subscription-only so an outage cannot silently spend API money', () => {
+    expect(planChain('auto', undefined)).toEqual(['claude_subscription', 'openai_codex_subscription'])
   })
 
-  it('auto appends API backends last when allowApiFallback is true', () => {
-    const chain = planChain('auto', undefined)
-    expect(chain.slice(-3)).toEqual(['anthropic_api', 'openai_api', 'openrouter'])
+  it('auto adds lower-cost OpenAI first only when metered fallback is explicitly enabled', () => {
+    const chain = planChain('auto', undefined, { ...DEFAULT_ROUTER_POLICY, allowApiFallback: true })
+    expect(chain).toEqual([
+      'claude_subscription',
+      'openai_codex_subscription',
+      'openai_api',
+      'anthropic_api',
+      'openrouter',
+    ])
   })
 
-  it('auto omits API backends entirely when allowApiFallback is false', () => {
-    const chain = planChain('auto', undefined, { ...DEFAULT_ROUTER_POLICY, allowApiFallback: false })
-    expect(chain).not.toContain('anthropic_api')
-    expect(chain).not.toContain('openai_api')
+  it('strongest/long-context shapes preserve Anthropic-first metered ordering when fallback is enabled', () => {
+    const policy = { ...DEFAULT_ROUTER_POLICY, allowApiFallback: true }
+    expect(planChain('auto', { preferStrongest: true }, policy).slice(-3)).toEqual([
+      'anthropic_api',
+      'openai_api',
+      'openrouter',
+    ])
+    expect(planChain('api', { needsLongContext: true })).toEqual(['anthropic_api', 'openai_api', 'openrouter'])
   })
 
-  it('manual claude mode leads with claude_subscription, api fallback still available if allowed', () => {
-    const chain = planChain('claude', undefined)
-    expect(chain[0]).toBe('claude_subscription')
-    expect(chain).toContain('anthropic_api')
+  it('manual claude/openai modes do not spill to API by default', () => {
+    expect(planChain('claude', undefined)).toEqual(['claude_subscription'])
+    expect(planChain('openai', undefined)).toEqual(['openai_codex_subscription'])
   })
 
-  it('manual openai mode leads with openai_codex_subscription', () => {
-    const chain = planChain('openai', undefined)
-    expect(chain[0]).toBe('openai_codex_subscription')
+  it('manual provider modes may use same-provider API when fallback is explicitly enabled', () => {
+    const policy = { ...DEFAULT_ROUTER_POLICY, allowApiFallback: true }
+    expect(planChain('claude', undefined, policy)[1]).toBe('anthropic_api')
+    expect(planChain('openai', undefined, policy)[1]).toBe('openai_api')
   })
 
-  it('manual api mode never includes a subscription backend', () => {
-    const chain = planChain('api', undefined)
-    expect(chain).toEqual(['anthropic_api', 'openai_api', 'openrouter'])
-  })
-
-  it('manual api mode with allowApiFallback disabled yields an empty chain', () => {
-    const chain = planChain('api', undefined, { ...DEFAULT_ROUTER_POLICY, allowApiFallback: false })
-    expect(chain).toEqual([])
+  it('explicit api mode remains available even when fallback is disabled', () => {
+    expect(planChain('api', undefined)).toEqual(['openai_api', 'anthropic_api', 'openrouter'])
   })
 })
 
@@ -90,7 +91,7 @@ describe('runWithFallback', () => {
     expect(decision.fallbacksTried).toEqual([])
   })
 
-  it('falls back past an unhealthy backend to the next one in the chain (Claude exhausted -> OpenAI)', async () => {
+  it('falls back between subscription backends without enabling metered fallback', async () => {
     const claude = fakeBackend({
       id: 'claude_subscription',
       provider: 'anthropic',
@@ -104,17 +105,12 @@ describe('runWithFallback', () => {
       authMode: 'subscription_cli',
       capabilities: ['general_reasoning'],
     })
-    const { result, decision } = await runWithFallback(
-      [claude, openai],
-      'auto',
-      BASE_REQ,
-      new AbortController().signal
-    )
+    const { result, decision } = await runWithFallback([claude, openai], 'auto', BASE_REQ, new AbortController().signal)
     expect(result.backend).toBe('openai_codex_subscription')
     expect(decision.fallbacksTried).toEqual([{ backend: 'claude_subscription', reason: 'quota_exhausted' }])
   })
 
-  it('falls back to the API backend when both subscription backends are unavailable and API fallback is allowed', async () => {
+  it('does not silently spill into a healthy API backend when subscriptions are unavailable', async () => {
     const claude = fakeBackend({
       id: 'claude_subscription',
       provider: 'anthropic',
@@ -122,7 +118,37 @@ describe('runWithFallback', () => {
       capabilities: ['general_reasoning'],
       checkHealth: async () => ({ state: 'unavailable', checkedAt: new Date().toISOString() }),
     })
-    const openai = fakeBackend({
+    const codex = fakeBackend({
+      id: 'openai_codex_subscription',
+      provider: 'openai',
+      authMode: 'subscription_cli',
+      capabilities: ['general_reasoning'],
+      checkHealth: async () => ({ state: 'unavailable', checkedAt: new Date().toISOString() }),
+    })
+    const apiInvoke = vi.fn(async (): Promise<ModelInvokeResult> => ({ backend: 'openai_api', text: 'paid', latencyMs: 1 }))
+    const api = fakeBackend({
+      id: 'openai_api',
+      provider: 'openai',
+      authMode: 'api_key',
+      capabilities: ['general_reasoning'],
+      invoke: apiInvoke,
+    })
+
+    await expect(runWithFallback([claude, codex, api], 'auto', BASE_REQ, new AbortController().signal)).rejects.toThrow(
+      NoBackendAvailableError
+    )
+    expect(apiInvoke).not.toHaveBeenCalled()
+  })
+
+  it('can use a metered backend when fallback is explicitly enabled', async () => {
+    const claude = fakeBackend({
+      id: 'claude_subscription',
+      provider: 'anthropic',
+      authMode: 'subscription_cli',
+      capabilities: ['general_reasoning'],
+      checkHealth: async () => ({ state: 'unavailable', checkedAt: new Date().toISOString() }),
+    })
+    const codex = fakeBackend({
       id: 'openai_codex_subscription',
       provider: 'openai',
       authMode: 'subscription_cli',
@@ -130,38 +156,29 @@ describe('runWithFallback', () => {
       checkHealth: async () => ({ state: 'unavailable', checkedAt: new Date().toISOString() }),
     })
     const api = fakeBackend({
-      id: 'anthropic_api',
-      provider: 'anthropic',
+      id: 'openai_api',
+      provider: 'openai',
       authMode: 'api_key',
       capabilities: ['general_reasoning'],
     })
-    const { result } = await runWithFallback([claude, openai, api], 'auto', BASE_REQ, new AbortController().signal)
-    expect(result.backend).toBe('anthropic_api')
+    const { result } = await runWithFallback(
+      [claude, codex, api],
+      'auto',
+      BASE_REQ,
+      new AbortController().signal,
+      { ...DEFAULT_ROUTER_POLICY, allowApiFallback: true }
+    )
+    expect(result.backend).toBe('openai_api')
   })
 
-  it('throws NoBackendAvailableError truthfully when every backend is unavailable', async () => {
-    const claude = fakeBackend({
-      id: 'claude_subscription',
-      provider: 'anthropic',
-      authMode: 'subscription_cli',
-      capabilities: ['general_reasoning'],
-      checkHealth: async () => ({ state: 'unavailable', checkedAt: new Date().toISOString() }),
-    })
-    await expect(
-      runWithFallback([claude], 'claude', BASE_REQ, new AbortController().signal, { ...DEFAULT_ROUTER_POLICY, allowApiFallback: false })
-    ).rejects.toThrow(NoBackendAvailableError)
-  })
-
-  it('does NOT fall back after a side-effect-tagged error — stops and surfaces it instead of retrying', async () => {
+  it('does NOT fall back after a side-effect-tagged error', async () => {
     const claude = fakeBackend({
       id: 'claude_subscription',
       provider: 'anthropic',
       authMode: 'subscription_cli',
       capabilities: ['general_reasoning'],
       invoke: async () => {
-        throw Object.assign(new Error('ambiguous — a tool call may have already sent this'), {
-          sideEffectOccurred: true,
-        })
+        throw Object.assign(new Error('ambiguous — a tool call may have already sent this'), { sideEffectOccurred: true })
       },
     })
     const openaiInvoke = vi.fn()
@@ -178,7 +195,7 @@ describe('runWithFallback', () => {
     expect(openaiInvoke).not.toHaveBeenCalled()
   })
 
-  it('does NOT fall back after a malformed-request error — surfaces it instead of trying another backend', async () => {
+  it('does NOT fall back after a malformed-request error', async () => {
     const claude = fakeBackend({
       id: 'claude_subscription',
       provider: 'anthropic',
@@ -200,7 +217,7 @@ describe('runWithFallback', () => {
     expect(openaiInvoke).not.toHaveBeenCalled()
   })
 
-  it('falls back on a retryable invoke() throw (rate limited) to the next backend', async () => {
+  it('falls back on a retryable invoke() throw to the next subscription backend', async () => {
     const claude = fakeBackend({
       id: 'claude_subscription',
       provider: 'anthropic',

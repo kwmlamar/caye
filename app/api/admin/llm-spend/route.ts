@@ -1,15 +1,9 @@
 /**
  * GET /api/admin/llm-spend?days=1
  *
- * Per-source LLM spend aggregation (#49). Dev-only — gated behind the
- * same CRON_SECRET as the poll routes. Answers "which file is 60% of
- * today's bill" without grepping logs.
- *
- * Returns rows ordered by total token spend, with cost computed on
- * read so model price changes don't require backfill.
- *
- * Pricing table is intentionally inline + commented — when new models
- * land or prices shift, update here without touching the writers.
+ * Founder/dev spend observability. Returns both per-call-site and
+ * per-workspace rollups so customer automation spend is not blended into
+ * founder testing. Gated behind CRON_SECRET.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -34,7 +28,7 @@ export async function GET(req: NextRequest) {
   const supabase = createServiceClient()
   const { data, error } = await supabase
     .from('llm_call_log')
-    .select('source, model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens')
+    .select('source, model, workspace_id, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens')
     .gte('called_at', since)
     .limit(50000)
 
@@ -45,6 +39,7 @@ export async function GET(req: NextRequest) {
   type Row = {
     source: string
     model: string
+    workspace_id: string | null
     input_tokens: number
     output_tokens: number
     cache_read_tokens: number
@@ -54,6 +49,7 @@ export async function GET(req: NextRequest) {
   type Agg = {
     source: string
     model: string
+    workspace_id: string | null
     calls: number
     input_tokens: number
     output_tokens: number
@@ -62,14 +58,28 @@ export async function GET(req: NextRequest) {
     cost_usd: number
   }
 
-  const aggBySourceModel = new Map<string, Agg>()
-  for (const r of (data ?? []) as Row[]) {
-    const k = `${r.source}|${r.model}`
-    let cur = aggBySourceModel.get(k)
+  const rowsIn = (data ?? []) as Row[]
+  const workspaceIds = [...new Set(rowsIn.map((r) => r.workspace_id).filter((id): id is string => Boolean(id)))]
+  const workspaceNames = new Map<string, string>()
+  if (workspaceIds.length > 0) {
+    const { data: customers } = await supabase
+      .from('customers')
+      .select('id, business_name')
+      .in('id', workspaceIds)
+    for (const customer of customers ?? []) {
+      workspaceNames.set(customer.id as string, (customer.business_name as string | null) || 'Unnamed workspace')
+    }
+  }
+
+  const aggBySourceModelWorkspace = new Map<string, Agg>()
+  for (const r of rowsIn) {
+    const k = `${r.workspace_id ?? 'unattributed'}|${r.source}|${r.model}`
+    let cur = aggBySourceModelWorkspace.get(k)
     if (!cur) {
       cur = {
         source: r.source,
         model: r.model,
+        workspace_id: r.workspace_id,
         calls: 0,
         input_tokens: 0,
         output_tokens: 0,
@@ -77,7 +87,7 @@ export async function GET(req: NextRequest) {
         cache_creation_tokens: 0,
         cost_usd: 0,
       }
-      aggBySourceModel.set(k, cur)
+      aggBySourceModelWorkspace.set(k, cur)
     }
     cur.calls += 1
     cur.input_tokens += r.input_tokens
@@ -86,21 +96,58 @@ export async function GET(req: NextRequest) {
     cur.cache_creation_tokens += r.cache_creation_tokens
   }
 
-  const rows = Array.from(aggBySourceModel.values())
+  const rows = Array.from(aggBySourceModelWorkspace.values())
     .map((a) => ({
       ...a,
+      workspace_name: a.workspace_id ? workspaceNames.get(a.workspace_id) ?? 'Unknown workspace' : 'Unattributed',
       cost_usd: Number(
         costForModel(a.model, a.input_tokens, a.output_tokens, a.cache_read_tokens, a.cache_creation_tokens).toFixed(4)
       ),
     }))
     .sort((a, b) => b.cost_usd - a.cost_usd)
 
+  const byWorkspace = new Map<string, {
+    workspace_id: string | null
+    workspace_name: string
+    calls: number
+    cost_usd: number
+    input_tokens: number
+    output_tokens: number
+    cache_read_tokens: number
+    cache_creation_tokens: number
+  }>()
+
+  for (const row of rows) {
+    const key = row.workspace_id ?? 'unattributed'
+    const current = byWorkspace.get(key) ?? {
+      workspace_id: row.workspace_id,
+      workspace_name: row.workspace_name,
+      calls: 0,
+      cost_usd: 0,
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_read_tokens: 0,
+      cache_creation_tokens: 0,
+    }
+    current.calls += row.calls
+    current.cost_usd += row.cost_usd
+    current.input_tokens += row.input_tokens
+    current.output_tokens += row.output_tokens
+    current.cache_read_tokens += row.cache_read_tokens
+    current.cache_creation_tokens += row.cache_creation_tokens
+    byWorkspace.set(key, current)
+  }
+
+  const workspaces = Array.from(byWorkspace.values())
+    .map((w) => ({ ...w, cost_usd: Number(w.cost_usd.toFixed(4)) }))
+    .sort((a, b) => b.cost_usd - a.cost_usd)
   const totalCost = rows.reduce((acc, r) => acc + r.cost_usd, 0)
 
   return NextResponse.json({
     window_days: days,
     since,
     total_cost_usd: Number(totalCost.toFixed(4)),
+    workspaces,
     rows,
   })
 }
