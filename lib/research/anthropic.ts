@@ -11,6 +11,7 @@ import type { ResearchSynthesizer } from './worker'
 const DEFAULT_RESEARCH_MODEL = process.env.ANTHROPIC_RESEARCH_MODEL || 'claude-sonnet-5'
 const MAX_SOURCE_CHARS = 24_000
 const MAX_SYNTHESIS_SOURCE_CHARS = 80_000
+const MAX_SERVER_TOOL_CONTINUATIONS = 2
 
 type UnknownRecord = Record<string, unknown>
 type ResearchClaimType = 'finding' | 'hypothesis' | 'implication' | 'unknown'
@@ -118,38 +119,44 @@ export function createAnthropicResearchProvider(options: {
     name: `anthropic:${model}`,
 
     async search(query, searchOptions) {
-      const response = await client.messages.create({
-        model,
-        max_tokens: 1_024,
-        messages: [{
-          role: 'user',
-          content: `Search the web for authoritative, diverse sources that directly help answer this research question. Prefer primary sources, official documentation, peer-reviewed work, and high-quality reporting. Do not answer the question yet. Research question: ${query}`,
-        }],
-        tools: [{
-          type: 'web_search_20250305',
-          name: 'web_search',
-          max_uses: 1,
-        }],
-      })
+      const messages: Anthropic.MessageParam[] = [{
+        role: 'user',
+        content: `Search the web for authoritative, diverse sources that directly help answer this research question. Prefer primary sources, official documentation, peer-reviewed work, and high-quality reporting. Do not answer the question yet. Research question: ${query}`,
+      }]
+      const tools: Anthropic.WebSearchTool20250305[] = [{
+        type: 'web_search_20250305',
+        name: 'web_search',
+        max_uses: 1,
+      }]
+
+      let response = await client.messages.create({ model, max_tokens: 1_024, messages, tools })
+      for (let attempt = 0; response.stop_reason === 'pause_turn' && attempt < MAX_SERVER_TOOL_CONTINUATIONS; attempt += 1) {
+        messages.push({ role: 'assistant', content: response.content })
+        response = await client.messages.create({ model, max_tokens: 1_024, messages, tools })
+      }
+      if (response.stop_reason === 'pause_turn') throw new Error('Anthropic web search remained paused after continuation limit')
 
       return extractAnthropicSearchResults(response.content).slice(0, searchOptions?.limit ?? 8)
     },
 
     async fetch(result) {
-      const response = await client.messages.create({
-        model,
-        max_tokens: 512,
-        messages: [{
-          role: 'user',
-          content: `Fetch this exact source URL so its underlying document can be stored as research evidence. Do not summarize it: ${result.url}`,
-        }],
-        tools: [{
-          type: 'web_fetch_20250910',
-          name: 'web_fetch',
-          max_uses: 1,
-          max_content_tokens: 20_000,
-        }],
-      })
+      const messages: Anthropic.MessageParam[] = [{
+        role: 'user',
+        content: `Fetch this exact source URL so its underlying document can be stored as research evidence. Do not summarize it: ${result.url}`,
+      }]
+      const tools: Anthropic.WebFetchTool20250910[] = [{
+        type: 'web_fetch_20250910',
+        name: 'web_fetch',
+        max_uses: 1,
+        max_content_tokens: 20_000,
+      }]
+
+      let response = await client.messages.create({ model, max_tokens: 512, messages, tools })
+      for (let attempt = 0; response.stop_reason === 'pause_turn' && attempt < MAX_SERVER_TOOL_CONTINUATIONS; attempt += 1) {
+        messages.push({ role: 'assistant', content: response.content })
+        response = await client.messages.create({ model, max_tokens: 512, messages, tools })
+      }
+      if (response.stop_reason === 'pause_turn') throw new Error(`Anthropic web fetch remained paused for ${result.url}`)
 
       const fetched = extractAnthropicFetchedDocument(response.content, result.url)
       if (!fetched) throw new Error(`Anthropic web fetch returned no durable text for ${result.url}`)
