@@ -119,10 +119,86 @@ begin
 end;
 $$;
 
+-- Recovery must be visible even when the recovered reading has the same value as the
+-- last pre-stale reading. The telemetry change filter correctly suppresses that unchanged
+-- metric event, so observe the durable source-state transition instead.
+--
+-- Require a newer source observation and a freshness deadline still in the future. This
+-- prevents a delayed already-expired packet from masquerading as a genuine recovery event.
+create or replace function public.caye_event_on_perception_source_recovery()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  if old.status = 'stale'
+     and new.status = 'active'
+     and new.last_observed_at is not null
+     and (old.last_observed_at is null or new.last_observed_at > old.last_observed_at)
+     and new.fresh_until is not null
+     and new.fresh_until > now() then
+    insert into public.workspace_events (
+      workspace_id,
+      occurred_at,
+      type,
+      actor_kind,
+      is_failure,
+      subject_table,
+      subject_id,
+      payload,
+      origin
+    ) values (
+      new.workspace_id,
+      new.last_observed_at,
+      'monitoring.perception_source_recovered',
+      'system',
+      false,
+      'perception_source_state',
+      new.id::text,
+      jsonb_build_object(
+        'epistemic_kind', 'inference',
+        'inference_kind', 'fresh_observation_reactivated_source',
+        'anomaly', false,
+        'importance', 'routine',
+        'severity', 'info',
+        'confidence', new.confidence,
+        'source', jsonb_build_object(
+          'kind', new.source_kind,
+          'identity', new.source_identity,
+          'subject_kind', new.subject_kind,
+          'subject_id', new.subject_id,
+          'source_event_id', new.last_source_event_id
+        ),
+        'last_observed_at', new.last_observed_at,
+        'fresh_until', new.fresh_until,
+        'recovered_at', now()
+      ),
+      'app'
+    );
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_caye_perception_source_recovery
+  on public.perception_source_state;
+create trigger trg_caye_perception_source_recovery
+  after update of status, last_observed_at, fresh_until on public.perception_source_state
+  for each row
+  when (old.status = 'stale' and new.status = 'active')
+  execute function public.caye_event_on_perception_source_recovery();
+
 revoke all on function public.refresh_perception_freshness(timestamptz) from public;
 revoke all on function public.refresh_perception_freshness(timestamptz) from anon;
 revoke all on function public.refresh_perception_freshness(timestamptz) from authenticated;
 grant execute on function public.refresh_perception_freshness(timestamptz) to service_role;
 
+revoke execute on function public.caye_event_on_perception_source_recovery()
+  from public, anon, authenticated;
+
 comment on function public.refresh_perception_freshness(timestamptz) is
   'Service-role-only atomic freshness sweep: transitions expired active perception sources to stale, downgrades live evidence, marks linked property sensors stale, and records a monitoring inference event. Does not notify or execute operational actions.';
+comment on function public.caye_event_on_perception_source_recovery() is
+  'Records a canonical recovery inference only when stale perception state is reactivated by a newer observation that is still fresh at write time.';
