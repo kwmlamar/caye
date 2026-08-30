@@ -34,6 +34,11 @@ const FOUNDER_DIRECT_REASONING_GUIDANCE = `FOUNDER DIRECT — SYNTHESIZE BEFORE 
 
 const VOICE_DELIVERY_GUIDANCE = `SPOKEN DELIVERY — this reply will be read aloud, not displayed
 - Answer in at most two or three short sentences. Lead with the answer, not the reasoning.
+- Speak like a capable human operator summarizing what matters, not like a database export being read aloud.
+- Never read raw rows one by one when a tool returns a list. Compress the result into a natural summary: give the total, group or characterize the items, mention only the most useful examples, and surface any standout exception or risk.
+- If there are more than five list items, do not enumerate them all unless the founder explicitly asks for the full list. Mention at most three or four representative items, then say the full list is in the thread.
+- Do not repeat the same date, visibility label, guest count, status, or other field on every item. State shared facts once, then call out only differences that matter.
+- Prefer phrasing such as "You have fifteen tours listed for tomorrow; most are public, with one private option" over fifteen separate lines that each repeat the date and status.
 - No markdown, no bullet points, no numbered lists, no tables, no headings, no URLs read out character by character.
 - Say numbers the way a person says them out loud ("about twelve hundred", "the third").
 - If the full answer genuinely needs more detail than fits in a breath or two, give the headline out loud and say the rest is in the thread.
