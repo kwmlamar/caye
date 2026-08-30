@@ -15,6 +15,35 @@ alter table public.business_facts
   add column if not exists contradicts_fact_id uuid references public.business_facts(id) on delete set null,
   add column if not exists correction_of_fact_id uuid references public.business_facts(id) on delete set null;
 
+-- Legacy rows are not all equivalent. Production currently contains direct
+-- owner/founder facts plus a small set created by an automated Caye review.
+-- Conservatively preserve explicit human authority for the former and mark
+-- the review-produced rows as derived system knowledge rather than silently
+-- promoting them to human truth merely because the new columns have defaults.
+update public.business_facts
+set
+  knowledge_mode = case
+    when created_by in ('owner', 'founder') then 'explicit'
+    else 'derived'
+  end,
+  authority_kind = case
+    when created_by = 'owner' then 'owner'
+    when created_by = 'founder' then 'founder'
+    else 'system'
+  end,
+  confidence = case
+    when created_by in ('owner', 'founder') then 1.0
+    else least(confidence, 0.75)
+  end,
+  provenance = case
+    when provenance = '{}'::jsonb then jsonb_build_object(
+      'legacy_backfill', true,
+      'legacy_source', source,
+      'legacy_created_by', created_by
+    )
+    else provenance
+  end;
+
 do $$ begin
   alter table public.business_facts add constraint business_facts_memory_type_check
     check (memory_type in ('fact','preference','procedure','policy','decision','correction','operating_pattern','outcome','assumption','prior_work'));
@@ -127,7 +156,7 @@ begin
     authority_kind = p_authority_kind,
     provenance = coalesce(p_provenance, '{}'::jsonb),
     contradicts_fact_id = p_contradicts_fact_id,
-    correction_of_fact_id = coalesce(p_correction_of_fact_id, v_result.superseded_id)
+    correction_of_fact_id = p_correction_of_fact_id
   where business_facts.id = v_result.id;
 
   return query select v_result.id, v_result.created_at, v_result.superseded_id;
