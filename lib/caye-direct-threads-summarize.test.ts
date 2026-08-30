@@ -37,7 +37,7 @@ vi.mock('@/lib/caye-direct-threads', () => ({
   getThreadMessages: vi.fn(),
 }))
 
-import { maybeGenerateThreadTitle, maybeRefreshThreadSummary, parseRoutineThreadTitle } from './caye-direct-threads-summarize'
+import { completedTitleTranscript, maybeGenerateThreadTitle, maybeRefreshThreadSummary, parseRoutineThreadTitle } from './caye-direct-threads-summarize'
 import { getThreadMessages } from './caye-direct-threads'
 
 function textResponse(text: string) {
@@ -47,6 +47,7 @@ function textResponse(text: string) {
 function messageRow(i: number, body: string, hoursAgo = 0) {
   return {
     id: `m${i}`,
+    workspace_id: 'ws-1',
     direction: i % 2 === 0 ? 'inbound' : 'outbound',
     body,
     created_at: new Date(Date.now() - hoursAgo * 3600_000).toISOString(),
@@ -55,7 +56,12 @@ function messageRow(i: number, body: string, hoursAgo = 0) {
     operator_role: 'founder',
     wa_delivery_status: null,
     wa_delivery_error: null,
+    rich_result: null,
   }
+}
+
+function completedPair(founderBody: string, cayeBody = 'I checked that and here is the result.') {
+  return [messageRow(0, founderBody), messageRow(1, cayeBody)] as any
 }
 
 beforeEach(() => {
@@ -71,19 +77,55 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-describe('maybeGenerateThreadTitle', () => {
-  it('titles a fresh thread from its first exchange, once', async () => {
-    threadsDb.set('t1', { id: 't1', title: null, summary: null, summary_updated_at: null })
-    vi.mocked(getThreadMessages).mockResolvedValue([
-      messageRow(0, 'Emily wants a 3-person golf cart tour, can we do the private rate?'),
-      messageRow(1, 'Yes, approved — go ahead and offer the private rate.'),
+describe('completedTitleTranscript', () => {
+  it('pins title evidence to the first completed turn even when a later turn already exists', () => {
+    const transcript = completedTitleTranscript([
+      messageRow(0, 'Check Bimini traffic and tell me what is wrong'),
+      messageRow(1, 'Traffic is down and the booking funnel needs attention.'),
+      messageRow(2, 'Also explain our job search'),
+      messageRow(3, 'The job-search operator is active.'),
     ] as any)
+
+    expect(transcript).toContain('Check Bimini traffic')
+    expect(transcript).toContain('booking funnel')
+    expect(transcript).not.toContain('job search')
+    expect(transcript).not.toContain('job-search operator')
+  })
+
+  it('refuses to generate title input until the first founder turn has a persisted Caye reply', () => {
+    expect(completedTitleTranscript([messageRow(0, 'Check Bimini traffic')] as any)).toBeNull()
+  })
+
+  it('ignores stale outbound rows that predate the first founder turn', () => {
+    const staleOutbound = { ...messageRow(1, 'Old proactive note'), created_at: '2026-08-30T19:00:00Z' }
+    const founder = { ...messageRow(0, 'What should I focus on?'), created_at: '2026-08-30T20:00:00Z' }
+    expect(completedTitleTranscript([staleOutbound, founder] as any)).toBeNull()
+  })
+})
+
+describe('maybeGenerateThreadTitle', () => {
+  it('titles a fresh thread from its first completed exchange, once', async () => {
+    threadsDb.set('t1', { id: 't1', title: null, summary: null, summary_updated_at: null })
+    vi.mocked(getThreadMessages).mockResolvedValue(completedPair(
+      'Emily wants a 3-person golf cart tour, can we do the private rate?',
+      'Yes, approved — go ahead and offer the private rate.'
+    ))
     loggedMessagesCreate.mockResolvedValue(textResponse('Emily pricing exception'))
 
     await maybeGenerateThreadTitle('ws-1', 't1')
 
     expect(loggedMessagesCreate).toHaveBeenCalledTimes(1)
     expect(updates[0].patch.title).toBe('Emily pricing exception')
+  })
+
+  it('leaves an incomplete turn untitled instead of guessing from a partial transcript', async () => {
+    threadsDb.set('t1', { id: 't1', title: null, summary: null, summary_updated_at: null })
+    vi.mocked(getThreadMessages).mockResolvedValue([messageRow(0, 'Emily wants a tour.')] as any)
+
+    await maybeGenerateThreadTitle('ws-1', 't1')
+
+    expect(loggedMessagesCreate).not.toHaveBeenCalled()
+    expect(updates).toHaveLength(0)
   })
 
   it('never re-titles a thread that already has one', async () => {
@@ -97,7 +139,7 @@ describe('maybeGenerateThreadTitle', () => {
 
   it('uses the validated routine title without calling the frontier model', async () => {
     threadsDb.set('t1', { id: 't1', title: null, summary: null, summary_updated_at: null })
-    vi.mocked(getThreadMessages).mockResolvedValue([messageRow(0, 'Emily wants a 3-person golf cart tour.')] as any)
+    vi.mocked(getThreadMessages).mockResolvedValue(completedPair('Emily wants a 3-person golf cart tour.'))
     vi.stubEnv('CAYE_ROUTINE_MODEL_ENABLED', 'true')
     vi.stubEnv('CAYE_ROUTINE_MODEL_BASE_URL', 'https://routine.example/v1')
     vi.stubEnv('CAYE_ROUTINE_MODEL_API_KEY', 'routine-test-secret')
@@ -112,7 +154,7 @@ describe('maybeGenerateThreadTitle', () => {
 
   it('preserves the existing frontier title call when routine routing is disabled', async () => {
     threadsDb.set('t1', { id: 't1', title: null, summary: null, summary_updated_at: null })
-    vi.mocked(getThreadMessages).mockResolvedValue([messageRow(0, 'Emily wants a tour.')] as any)
+    vi.mocked(getThreadMessages).mockResolvedValue(completedPair('Emily wants a tour.'))
     loggedMessagesCreate.mockResolvedValue(textResponse('Emily tour request'))
     vi.stubEnv('CAYE_ROUTINE_MODEL_ENABLED', 'false')
     const fetch = vi.fn()
@@ -130,7 +172,7 @@ describe('maybeGenerateThreadTitle', () => {
     ['explicit routine escalation', '{"kind":"escalate"}'],
   ])('falls back to the existing frontier title call for %s', async (_name, content) => {
     threadsDb.set('t1', { id: 't1', title: null, summary: null, summary_updated_at: null })
-    vi.mocked(getThreadMessages).mockResolvedValue([messageRow(0, 'Emily wants a tour.')] as any)
+    vi.mocked(getThreadMessages).mockResolvedValue(completedPair('Emily wants a tour.'))
     loggedMessagesCreate.mockResolvedValue(textResponse('Emily tour request'))
     vi.stubEnv('CAYE_ROUTINE_MODEL_ENABLED', 'true')
     vi.stubEnv('CAYE_ROUTINE_MODEL_BASE_URL', 'https://routine.example/v1')
@@ -146,7 +188,7 @@ describe('maybeGenerateThreadTitle', () => {
 
   it('falls back to frontier when routine inference fails and logs only safe metadata', async () => {
     threadsDb.set('t1', { id: 't1', title: null, summary: null, summary_updated_at: null })
-    vi.mocked(getThreadMessages).mockResolvedValue([messageRow(0, 'Emily wants a tour.')] as any)
+    vi.mocked(getThreadMessages).mockResolvedValue(completedPair('Emily wants a tour.'))
     loggedMessagesCreate.mockResolvedValue(textResponse('Emily tour request'))
     vi.stubEnv('CAYE_ROUTINE_MODEL_ENABLED', 'true')
     vi.stubEnv('CAYE_ROUTINE_MODEL_BASE_URL', 'https://routine.example/v1')
@@ -165,7 +207,7 @@ describe('maybeGenerateThreadTitle', () => {
 
   it('falls back to frontier when the routine title request times out', async () => {
     threadsDb.set('t1', { id: 't1', title: null, summary: null, summary_updated_at: null })
-    vi.mocked(getThreadMessages).mockResolvedValue([messageRow(0, 'Emily wants a tour.')] as any)
+    vi.mocked(getThreadMessages).mockResolvedValue(completedPair('Emily wants a tour.'))
     loggedMessagesCreate.mockResolvedValue(textResponse('Emily tour request'))
     vi.stubEnv('CAYE_ROUTINE_MODEL_ENABLED', 'true')
     vi.stubEnv('CAYE_ROUTINE_MODEL_BASE_URL', 'https://routine.example/v1')
