@@ -3,7 +3,11 @@ import 'server-only'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { ObjectiveRunResult } from './objective-run'
 
-const CAPABILITY_KEYS = ['planning_anticipation', 'execution_autonomy', 'monitoring_control'] as const
+// This workflow executes and verifies a predeclared bounded plan. That is real
+// evidence for execution/control, but it does not demonstrate that Caye can
+// generate or anticipate a plan. Planning & Anticipation stays unverified until
+// a runtime actually performs and verifies that behavior.
+const CAPABILITY_KEYS = ['execution_autonomy', 'monitoring_control'] as const
 
 /**
  * Feed only verified runtime execution into the canonical Operating Intelligence
@@ -30,12 +34,14 @@ export async function recordObjectiveDirectionEvidence(
     .select('id,capability_key')
     .in('capability_key', [...CAPABILITY_KEYS])
 
-  // PR #252 owns this schema. Objective execution remains deployable if that
-  // schema is temporarily unavailable, while the missing evidence sink stays
-  // explicit instead of being reported as success.
   if (capabilityError) {
     if (capabilityError.code === '42P01') return { recorded: 0, unavailable: true }
     throw new Error(`Direction capability lookup failed: ${capabilityError.message}`)
+  }
+
+  const found = new Set((capabilities ?? []).map((capability) => capability.capability_key as string))
+  if (CAPABILITY_KEYS.some((key) => !found.has(key))) {
+    return { recorded: 0, unavailable: true }
   }
 
   const observedAt = new Date().toISOString()
@@ -49,7 +55,6 @@ export async function recordObjectiveDirectionEvidence(
     observed_at: observedAt,
     verified_at: observedAt,
   }))
-  if (rows.length === 0) return { recorded: 0, unavailable: true }
 
   const { error: evidenceError } = await supabase
     .from('caye_operating_intelligence_capability_evidence')
