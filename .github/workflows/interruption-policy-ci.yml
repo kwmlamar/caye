@@ -1,0 +1,31 @@
+name: Interruption policy CI
+
+on:
+  pull_request:
+    paths:
+      - 'lib/interruption-policy.ts'
+      - 'lib/interruption-policy.test.ts'
+      - 'lib/interruption-policy-integration.test.ts'
+      - 'lib/whatsapp/operator-notification-gate.ts'
+      - 'lib/whatsapp/operator-notification-policy.behavior.test.ts'
+      - 'supabase/migrations/*interruption*'
+      - '.github/workflows/interruption-policy-ci.yml'
+  push:
+    branches:
+      - 'feat/proactive-interruption-policy'
+
+permissions:
+  contents: read
+
+jobs:
+  focused-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm test -- lib/interruption-policy.test.ts lib/interruption-policy-integration.test.ts lib/whatsapp/operator-notification-policy.behavior.test.ts lib/whatsapp/operator-notification-gate.test.ts
