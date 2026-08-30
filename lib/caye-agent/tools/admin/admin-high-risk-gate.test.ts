@@ -7,9 +7,6 @@ import { gateAdminHighRisk } from './admin-high-risk-gate'
 
 vi.mock('server-only', () => ({}))
 
-// Same minimal in-memory fake as high-risk-gate.test.ts, trimmed to the
-// chain admin-high-risk-gate.ts actually uses: no operator_id filtering
-// (admin-shell has a single caller, no operator scoping concept).
 type Row = Record<string, unknown>
 
 function makeFakeSupabase() {
@@ -32,12 +29,8 @@ function makeFakeSupabase() {
               filters.push((row) => (row[col] as string) > val)
               return builder
             },
-            order() {
-              return builder
-            },
-            limit() {
-              return builder
-            },
+            order() { return builder },
+            limit() { return builder },
             async maybeSingle() {
               const matches = rows.filter((r) => filters.every((f) => f(r)))
               return { data: matches[matches.length - 1] ?? null, error: null }
@@ -73,9 +66,7 @@ vi.mock('@/lib/supabase-server', () => ({
   createServiceClient: () => fakeSupabase,
 }))
 
-interface FakeArgs {
-  cron_name: string
-}
+interface FakeArgs { cron_name: string }
 
 function makeRealTool(mutate: Tool<FakeArgs>['execute']): Tool<FakeArgs> {
   return {
@@ -103,18 +94,11 @@ function ctx(overrides: Partial<ToolContext>): ToolContext {
   }
 }
 
-// admin_pending_actions has no workspace_id column (admin-shell is
-// workspace-less, single-caller) — unlike high-risk-gate.test.ts, there's
-// no natural per-test isolation dimension to key the fake rows by. Each
-// test below uses a distinct cron_name value purely to avoid cross-test
-// row collisions against the one shared fakeSupabase instance.
 describe('gateAdminHighRisk (Admin Shell — 2026-07-21)', () => {
   it('stages the first call and does not run the real mutation', async () => {
     const mutate = vi.fn<Tool<FakeArgs>['execute']>(async () => ({ ok: true, data: { ran: true } }))
     const gated = gateAdminHighRisk(makeRealTool(mutate))
-
     const result = await gated.execute({ cron_name: 'test-alpha' }, ctx({ requestId: 'req-1' }))
-
     expect(mutate).not.toHaveBeenCalled()
     expect(result.ok).toBe(true)
     expect((result.data as { pending?: boolean }).pending).toBe(true)
@@ -124,10 +108,8 @@ describe('gateAdminHighRisk (Admin Shell — 2026-07-21)', () => {
     const mutate = vi.fn<Tool<FakeArgs>['execute']>(async () => ({ ok: true, data: { ran: true } }))
     const gated = gateAdminHighRisk(makeRealTool(mutate))
     const sameCtx = ctx({ requestId: 'req-2' })
-
     await gated.execute({ cron_name: 'test-beta' }, sameCtx)
     const second = await gated.execute({ cron_name: 'test-beta' }, sameCtx)
-
     expect(mutate).not.toHaveBeenCalled()
     expect((second.data as { pending?: boolean }).pending).toBe(true)
   })
@@ -135,10 +117,8 @@ describe('gateAdminHighRisk (Admin Shell — 2026-07-21)', () => {
   it('executes for real once the same args are confirmed from a different request', async () => {
     const mutate = vi.fn<Tool<FakeArgs>['execute']>(async () => ({ ok: true, data: { ran: true } }))
     const gated = gateAdminHighRisk(makeRealTool(mutate))
-
     await gated.execute({ cron_name: 'test-gamma' }, ctx({ requestId: 'req-3' }))
     const confirmed = await gated.execute({ cron_name: 'test-gamma' }, ctx({ requestId: 'req-4' }))
-
     expect(mutate).toHaveBeenCalledTimes(1)
     expect(confirmed).toEqual({ ok: true, data: { ran: true } })
   })
@@ -146,13 +126,17 @@ describe('gateAdminHighRisk (Admin Shell — 2026-07-21)', () => {
   it('stages a fresh action when the confirming call has different args', async () => {
     const mutate = vi.fn<Tool<FakeArgs>['execute']>(async () => ({ ok: true, data: { ran: true } }))
     const gated = gateAdminHighRisk(makeRealTool(mutate))
-
     await gated.execute({ cron_name: 'test-delta' }, ctx({ requestId: 'req-5' }))
-    // Confirming call uses a DIFFERENT cron_name — should stage fresh,
-    // not execute the originally-staged action.
     const result = await gated.execute({ cron_name: 'test-epsilon' }, ctx({ requestId: 'req-6' }))
-
     expect(mutate).not.toHaveBeenCalled()
     expect((result.data as { pending?: boolean }).pending).toBe(true)
+  })
+
+  it('runs founder job-search sourcing immediately without staging', async () => {
+    const mutate = vi.fn<Tool<FakeArgs>['execute']>(async () => ({ ok: true, data: { ran: true } }))
+    const gated = gateAdminHighRisk(makeRealTool(mutate))
+    const result = await gated.execute({ cron_name: 'job-search-sourcing' }, ctx({ requestId: 'req-source-now' }))
+    expect(mutate).toHaveBeenCalledTimes(1)
+    expect(result).toEqual({ ok: true, data: { ran: true } })
   })
 })
