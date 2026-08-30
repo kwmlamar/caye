@@ -3,11 +3,34 @@ import { randomUUID } from 'node:crypto'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { ObjectiveEvent, ObjectiveRunResult } from './objective-run'
 
-const RESUMABLE = ['running', 'budget_exhausted'] as const
+const RESUMABLE = ['running', 'waiting', 'budget_exhausted'] as const
 const MIN_LEASE_MS = 90_000
 
 function leaseExpiry(timeoutMs: number) {
   return new Date(Date.now() + Math.max(MIN_LEASE_MS, timeoutMs + 30_000)).toISOString()
+}
+
+export function evaluateDurableRunCompatibility(input: {
+  storedPlanVersion: string
+  requestedPlanVersion: string
+  deadlineAt: string | null
+  nowMs: number
+}): { status: 'blocked' | 'failed'; blockedStep: string; error: string } | null {
+  if (input.storedPlanVersion !== input.requestedPlanVersion) {
+    return {
+      status: 'blocked',
+      blockedStep: '__plan_version__',
+      error: `Objective plan changed from ${input.storedPlanVersion} to ${input.requestedPlanVersion}; old verified steps were not reused.`,
+    }
+  }
+  if (input.deadlineAt && Date.parse(input.deadlineAt) <= input.nowMs) {
+    return {
+      status: 'failed',
+      blockedStep: '__durable_deadline__',
+      error: 'Objective exceeded its durable wall-clock deadline and was not resumed.',
+    }
+  }
+  return null
 }
 
 async function retireIncompatibleRun(input: {
@@ -25,6 +48,7 @@ async function retireIncompatibleRun(input: {
       blocked_step: input.blockedStep,
       completed_at: now,
       updated_at: now,
+      resume_at: null,
       lease_token: null,
       lease_expires_at: null,
     })
@@ -56,6 +80,7 @@ export async function openOrResumeObjectiveRun(input: {
   maxTransitions: number
   timeoutMs: number
   maxRunAgeMs: number
+  maxPlanRevisions?: number
   metadata?: Record<string, unknown>
 }) {
   const { supabase } = input
@@ -66,7 +91,7 @@ export async function openOrResumeObjectiveRun(input: {
 
   let query = supabase
     .from('operator_objective_runs')
-    .select('id,status,blocked_step,lease_token,lease_expires_at,metadata,plan_version,deadline_at,max_transitions')
+    .select('id,status,blocked_step,lease_token,lease_expires_at,metadata,plan_version,plan_revision,max_plan_revisions,resume_at,deadline_at,max_transitions')
     .eq('objective_key', input.objectiveKey)
     .eq('scope_kind', input.scopeKind)
     .eq('actor_key', input.actorKey)
@@ -79,22 +104,19 @@ export async function openOrResumeObjectiveRun(input: {
   let existing = await query.maybeSingle()
   if (existing.error) throw new Error(`Could not find resumable objective run: ${existing.error.message}`)
 
-  if (existing.data && existing.data.plan_version !== input.planVersion) {
-    await retireIncompatibleRun({
-      supabase,
-      runId: existing.data.id as string,
-      status: 'blocked',
-      blockedStep: '__plan_version__',
-      error: `Objective plan changed from ${existing.data.plan_version} to ${input.planVersion}; old verified steps were not reused.`,
+  const retirement = existing.data
+    ? evaluateDurableRunCompatibility({
+      storedPlanVersion: existing.data.plan_version as string,
+      requestedPlanVersion: input.planVersion,
+      deadlineAt: (existing.data.deadline_at as string | null) ?? null,
+      nowMs: nowDate.getTime(),
     })
-    existing = { ...existing, data: null }
-  } else if (existing.data?.deadline_at && Date.parse(existing.data.deadline_at as string) <= nowDate.getTime()) {
+    : null
+  if (existing.data && retirement) {
     await retireIncompatibleRun({
       supabase,
       runId: existing.data.id as string,
-      status: 'failed',
-      blockedStep: '__durable_deadline__',
-      error: 'Objective exceeded its durable wall-clock deadline and was not resumed.',
+      ...retirement,
     })
     existing = { ...existing, data: null }
   }
@@ -102,15 +124,21 @@ export async function openOrResumeObjectiveRun(input: {
   let runId = existing.data?.id as string | undefined
   let metadata = (existing.data?.metadata ?? input.metadata ?? {}) as Record<string, unknown>
   let maxTransitions = Number(existing.data?.max_transitions ?? input.maxTransitions)
+  let planRevision = Number(existing.data?.plan_revision ?? 0)
+  let maxPlanRevisions = Number(existing.data?.max_plan_revisions ?? input.maxPlanRevisions ?? 2)
   if (!runId) {
     metadata = input.metadata ?? {}
     maxTransitions = input.maxTransitions
+    planRevision = 0
+    maxPlanRevisions = input.maxPlanRevisions ?? 2
     const deadlineAt = new Date(nowDate.getTime() + Math.max(input.maxRunAgeMs, input.timeoutMs)).toISOString()
     const created = await supabase
       .from('operator_objective_runs')
       .insert({
         objective_key: input.objectiveKey,
         plan_version: input.planVersion,
+        plan_revision: 0,
+        max_plan_revisions: maxPlanRevisions,
         scope_kind: input.scopeKind,
         workspace_id: input.workspaceId,
         actor_key: input.actorKey,
@@ -135,6 +163,7 @@ export async function openOrResumeObjectiveRun(input: {
       .update({
         status: 'running',
         blocked_step: null,
+        resume_at: null,
         lease_token: runnerToken,
         lease_expires_at: leaseUntil,
         updated_at: now,
@@ -149,18 +178,52 @@ export async function openOrResumeObjectiveRun(input: {
 
   const progress = await supabase
     .from('operator_objective_events')
-    .select('step_key,state')
+    .select('id,step_key,state,evidence')
     .eq('run_id', runId)
+    .order('id', { ascending: true })
   if (progress.error) throw new Error(`Could not read objective progress: ${progress.error.message}`)
 
   const rows = progress.data ?? []
+  const completedSteps = new Set<string>()
+  const pendingEffects = new Map<string, unknown>()
+  const interruptedSteps = new Set<string>()
+  let observedRevision = planRevision
+  for (const row of rows) {
+    const stepKey = row.step_key as string
+    if (row.state === 'running') {
+      interruptedSteps.add(stepKey)
+    } else if (row.state === 'verified') {
+      completedSteps.add(stepKey)
+      pendingEffects.delete(stepKey)
+      interruptedSteps.delete(stepKey)
+    } else if (row.state === 'failed' || row.state === 'blocked' || row.state === 'recovered') {
+      interruptedSteps.delete(stepKey)
+    } else if (row.state === 'waiting') {
+      interruptedSteps.delete(stepKey)
+      if (row.evidence && typeof row.evidence === 'object' && 'pendingEffect' in row.evidence) {
+        pendingEffects.set(stepKey, (row.evidence as { pendingEffect?: unknown }).pendingEffect)
+      }
+    } else if (row.state === 'replanned') {
+      pendingEffects.delete(stepKey)
+      interruptedSteps.delete(stepKey)
+      const evidence = row.evidence as { planRevision?: unknown } | null
+      const revision = Number(evidence?.planRevision)
+      if (Number.isFinite(revision)) observedRevision = Math.max(observedRevision, revision)
+    }
+  }
+  planRevision = observedRevision
+
   return {
     runId,
     runnerToken,
     metadata,
     maxTransitions,
-    completedSteps: new Set(rows.filter((row) => row.state === 'verified').map((row) => row.step_key as string)),
-    transitionsUsed: rows.filter((row) => row.state === 'running').length,
+    completedSteps,
+    pendingEffects,
+    interruptedSteps,
+    transitionsUsed: rows.filter((row) => row.state === 'running' || row.state === 'checking').length,
+    planRevision,
+    maxPlanRevisions,
   }
 }
 
@@ -206,13 +269,15 @@ export async function finalizeObjectiveRun(
   result: ObjectiveRunResult,
   existingMetadata: Record<string, unknown> = {}
 ) {
-  const transitionBudgetTerminal = result.status === 'budget_exhausted' && result.budgetReason === 'transitions'
-  const terminal = result.status === 'completed' || result.status === 'blocked' || result.status === 'failed' || transitionBudgetTerminal
+  const budgetTerminal = result.status === 'budget_exhausted' && result.budgetReason !== 'timeout'
+  const terminal = result.status === 'completed' || result.status === 'blocked' || result.status === 'failed' || budgetTerminal
   const updated = await supabase
     .from('operator_objective_runs')
     .update({
       status: result.status,
       blocked_step: result.blockedStep ?? null,
+      plan_revision: result.planRevision,
+      resume_at: result.status === 'waiting' ? result.resumeAt ?? null : null,
       updated_at: new Date().toISOString(),
       completed_at: terminal ? new Date().toISOString() : null,
       metadata: {
@@ -220,6 +285,8 @@ export async function finalizeObjectiveRun(
         completedSteps: result.completedSteps,
         transitionsUsed: result.transitionsUsed,
         budgetReason: result.budgetReason ?? null,
+        planRevision: result.planRevision,
+        resumeAt: result.resumeAt ?? null,
       },
       lease_token: null,
       lease_expires_at: null,
