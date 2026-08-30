@@ -18,6 +18,21 @@ export type GrowthIngestSummary = {
   unavailable: Array<{ provider: string; reason: string }>
 }
 
+export async function runAllGrowthIngestion(): Promise<{ workspaces: GrowthIngestSummary[] }> {
+  const supabase = createServiceClient()
+  const { data, error } = await supabase
+    .from('growth_sources')
+    .select('workspace_id')
+    .neq('status', 'disconnected')
+
+  if (error) throw new Error('growth_sources_unavailable')
+
+  const workspaceIds = Array.from(new Set((data ?? []).map((row) => row.workspace_id as string)))
+  const workspaces: GrowthIngestSummary[] = []
+  for (const workspaceId of workspaceIds) workspaces.push(await runGrowthIngestion(workspaceId))
+  return { workspaces }
+}
+
 /**
  * Pulls external growth evidence for one workspace and writes only normalized
  * observations/source health. No diagnosis generation and no marketing action
