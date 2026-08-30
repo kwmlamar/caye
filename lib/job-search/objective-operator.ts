@@ -7,8 +7,10 @@ import { runBoundedObjective } from '@/lib/operator/objective-run'
 import { finalizeObjectiveRun, openOrResumeObjectiveRun, persistObjectiveEvent } from '@/lib/operator/objective-store'
 
 const OBJECTIVE_KEY = 'founder_job_search_prepare_and_inspect'
+const PLAN_VERSION = '1'
 const MAX_TRANSITIONS = 8
 const TIMEOUT_MS = 50_000
+const MAX_RUN_AGE_MS = 15 * 60_000
 
 type InspectionEffect = {
   inspected?: number
@@ -23,12 +25,14 @@ export async function runFounderJobSearchObjective() {
   const durable = await openOrResumeObjectiveRun({
     supabase,
     objectiveKey: OBJECTIVE_KEY,
+    planVersion: PLAN_VERSION,
     scopeKind: 'founder',
     workspaceId: null,
     actorKey: 'founder',
     maxTransitions: MAX_TRANSITIONS,
     timeoutMs: TIMEOUT_MS,
-    metadata: { workflow: 'job_search', phase: 'prepare_and_inspect' },
+    maxRunAgeMs: MAX_RUN_AGE_MS,
+    metadata: { workflow: 'job_search', phase: 'prepare_and_inspect', planVersion: PLAN_VERSION },
   })
 
   const result = await runBoundedObjective({
@@ -38,7 +42,8 @@ export async function runFounderJobSearchObjective() {
     // smuggled in by a planner without an explicit high-risk authority grant.
     allowedAuthority: new Set(['read', 'write_low']),
     completedSteps: durable.completedSteps,
-    maxTransitions: MAX_TRANSITIONS,
+    maxTransitions: durable.maxTransitions,
+    transitionsAlreadyUsed: durable.transitionsUsed,
     timeoutMs: TIMEOUT_MS,
     onEvent: (event) => persistObjectiveEvent(supabase, durable.runId, durable.runnerToken, TIMEOUT_MS, event),
     steps: [
@@ -111,14 +116,27 @@ export async function runFounderJobSearchObjective() {
     ],
   })
 
-  await finalizeObjectiveRun(supabase, durable.runId, durable.runnerToken, result)
+  await finalizeObjectiveRun(supabase, durable.runId, durable.runnerToken, result, durable.metadata)
 
-  const directionEvidence = await recordObjectiveDirectionEvidence(supabase, {
-    runId: durable.runId,
-    objectiveKey: OBJECTIVE_KEY,
-    result,
-    summary: 'Founder job-search objective completed preparation and inspection with authority checks and verified side effects.',
-  })
+  // Direction is an evidence sink, not part of the operational side effect.
+  // Once the durable objective is finalized, evidence publication failure must
+  // not turn verified work into an HTTP failure that a scheduler can replay.
+  let directionEvidence: Awaited<ReturnType<typeof recordObjectiveDirectionEvidence>> | { recorded: 0; unavailable: true; error: string }
+  try {
+    directionEvidence = await recordObjectiveDirectionEvidence(supabase, {
+      runId: durable.runId,
+      objectiveKey: OBJECTIVE_KEY,
+      result,
+      summary: 'Founder job-search objective completed preparation and inspection with authority checks and verified side effects.',
+    })
+  } catch (error) {
+    directionEvidence = {
+      recorded: 0,
+      unavailable: true,
+      error: error instanceof Error ? error.message : String(error),
+    }
+    console.error('[objective-operator] Direction evidence publication failed after durable finalization', error)
+  }
 
   return { runId: durable.runId, directionEvidence, ...result }
 }
