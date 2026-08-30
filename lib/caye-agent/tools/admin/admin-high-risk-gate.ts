@@ -14,6 +14,18 @@ function describeAdminPendingAction(toolName: string, args: Record<string, unkno
 }
 
 /**
+ * A sourcing/scoring run only reads public job boards and updates Caye's
+ * internal founder-only candidate pool. It cannot submit an application or
+ * contact anyone, so requiring a second founder message adds friction without
+ * protecting an external side effect. Keep every other trigger_cron invocation
+ * behind the normal admin high-risk confirmation gate.
+ */
+function canExecuteWithoutConfirmation(toolName: string, args: unknown): boolean {
+  if (toolName !== 'trigger_cron' || !args || typeof args !== 'object') return false
+  return (args as { cron_name?: unknown }).cron_name === 'job-search-sourcing'
+}
+
+/**
  * Admin-shell analog of gateHighRisk (lib/caye-agent/tools/high-risk-gate.ts)
  * — same code-enforced, requestId-based confirmation mechanism (stage on
  * first call, only execute when the same tool+args is seen again from a
@@ -23,14 +35,18 @@ function describeAdminPendingAction(toolName: string, args: Record<string, unkno
  * Deliberately a separate table/gate rather than reusing gateHighRisk
  * directly: that table's workspace_id/operator_id columns are NOT NULL/FK
  * and scope every lookup, which doesn't fit admin-shell's workspace-less,
- * single-caller (founder-only) surface. Loosening those constraints on
- * the shared safety rail for customer-facing high-risk actions, just to
- * fit an unrelated dev/ops console, is out of scope here.
+ * single-caller (founder-only) surface. Loosening those constraints on the
+ * shared safety rail for customer-facing high-risk actions, just to fit an
+ * unrelated dev/ops console, is out of scope here.
  */
 export function gateAdminHighRisk<T>(tool: Tool<T>): Tool<T> {
   return {
     ...tool,
     async execute(args, ctx: ToolContext): Promise<ToolResult> {
+      if (canExecuteWithoutConfirmation(tool.name, args)) {
+        return tool.execute(args, ctx)
+      }
+
       const supabase = createServiceClient()
       const argsKey = stableArgsKey(args)
       const nowISO = new Date().toISOString()
