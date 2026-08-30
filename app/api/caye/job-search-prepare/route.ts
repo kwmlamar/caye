@@ -24,6 +24,12 @@ type CandidateRow = {
   fit_score: number | null
 }
 
+type ExistingApplicationRow = {
+  candidate_id: string
+  resume_variant_id: string | null
+  status: string
+}
+
 function chooseVariant(candidate: CandidateRow, variants: ResumeVariantRow[]): ResumeVariantRow | null {
   const haystack = `${candidate.title} ${(candidate.skills ?? []).join(' ')}`.toLowerCase()
   const preferredKey = /\b(technical support|it support|help ?desk|service desk|support engineer|support specialist|support technician|support representative|frontline support|l1 support|tier 1 support)\b/.test(haystack)
@@ -81,6 +87,7 @@ export async function runJobSearchPreparation(): Promise<Record<string, unknown>
   const runId = runRow.id as string
   const stats = {
     prepared: 0,
+    reprepared: 0,
     needsHuman: 0,
     prohibitedPlatform: 0,
     skippedUnverified: 0,
@@ -117,18 +124,30 @@ export async function runJobSearchPreparation(): Promise<Record<string, unknown>
     const candidateIds = candidateRows.map((candidate) => candidate.id)
     const { data: existingApplications, error: existingError } = await supabase
       .from('job_search_applications')
-      .select('candidate_id')
+      .select('candidate_id,resume_variant_id,status')
       .in('candidate_id', candidateIds)
     if (existingError) throw new Error(existingError.message)
-    const existing = new Set((existingApplications ?? []).map((row) => row.candidate_id as string))
-    const freshCandidates = candidateRows.filter((candidate) => !existing.has(candidate.id)).slice(0, remainingCapacity)
+    const existingByCandidate = new Map(
+      ((existingApplications ?? []) as ExistingApplicationRow[]).map((row) => [row.candidate_id, row]),
+    )
 
-    for (const candidate of freshCandidates) {
+    let processed = 0
+    for (const candidate of candidateRows) {
+      if (processed >= remainingCapacity) break
       const variant = chooseVariant(candidate, verifiedVariants)
       if (!variant) {
         stats.errors.push(`${candidate.company} / ${candidate.title}: no resume variant`)
         continue
       }
+
+      const existing = existingByCandidate.get(candidate.id)
+      const isReprepare = Boolean(
+        existing
+        && existing.status === 'NEEDS_HUMAN'
+        && existing.resume_variant_id !== variant.id,
+      )
+      if (existing && !isReprepare) continue
+
       try {
         const result = await prepareApplication(
           {
@@ -151,12 +170,17 @@ export async function runJobSearchPreparation(): Promise<Record<string, unknown>
           },
         )
         if (result.outcome === 'needs_human') {
+          processed++
           stats.prepared++
           stats.needsHuman++
+          if (isReprepare) stats.reprepared++
         } else if (result.outcome === 'prohibited_platform') {
+          processed++
           stats.prepared++
           stats.prohibitedPlatform++
+          if (isReprepare) stats.reprepared++
         } else if (result.outcome === 'skipped_unverified_source') {
+          processed++
           stats.skippedUnverified++
         }
       } catch (err) {
