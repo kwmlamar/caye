@@ -23,6 +23,7 @@ function structuralResolution(field: DiscoveredField, profile: Awaited<ReturnTyp
     case 'last_name': return last ? { status: 'resolved', field, value: last, source: 'application_specific', reusable: false } : { status: 'unresolved', field, reason: 'Founder last name missing.' }
     case 'email': return profile.contactEmail ? { status: 'resolved', field, value: profile.contactEmail, source: 'application_specific', reusable: false } : { status: 'unresolved', field, reason: 'Founder contact email missing.' }
     case 'phone': return profile.contactPhone ? { status: 'resolved', field, value: profile.contactPhone, source: 'application_specific', reusable: false } : { status: 'unresolved', field, reason: 'Founder phone number missing.' }
+    case 'linkedin': return profile.links.linkedin ? { status: 'resolved', field, value: profile.links.linkedin, source: 'application_specific', reusable: false } : { status: 'unresolved', field, reason: 'Founder LinkedIn URL missing.' }
     case 'resume': return hasResume ? { status: 'resolved', field, value: '[verified resume artifact ready]', source: 'application_specific', reusable: false } : { status: 'unresolved', field, reason: 'Resume artifact missing.' }
     case 'cover_letter': return hasCoverLetter ? { status: 'resolved', field, value: '[cover letter artifact ready]', source: 'application_specific', reusable: false } : { status: 'unresolved', field, reason: 'Cover-letter artifact missing.' }
     default: return { status: 'unresolved', field, reason: `Unknown structural field: ${field.label}` }
