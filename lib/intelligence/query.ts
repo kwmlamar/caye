@@ -59,6 +59,7 @@ export type StrategicIntelligencePriority = {
   confidence:number|null
   materiality:number
   observedAt:string|null
+  domains:string[]
 }
 
 /**
@@ -83,6 +84,7 @@ export async function strategicIntelligencePriorities(args:{scope:IntelligenceSc
       confidence:relation.confidence==null?null:Number(relation.confidence),
       materiality:Math.max(Number(from.materiality??0),Number(to.materiality??0)),
       observedAt:String(relation.created_at??from.observed_at??to.observed_at??'')||null,
+      domains:[...new Set([String(from.domain??''),String(to.domain??'')].filter(Boolean))],
     })
   }
   for(const item of stale){
@@ -94,6 +96,7 @@ export async function strategicIntelligencePriorities(args:{scope:IntelligenceSc
       confidence:item.confidence==null?null:Number(item.confidence),
       materiality,
       observedAt:String(item.observed_at??'')||null,
+      domains:[String(item.domain??'')].filter(Boolean),
     })
   }
   return priorities
