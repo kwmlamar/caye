@@ -122,7 +122,10 @@ export function createSupabaseResearchDeskStore(): ResearchDeskStore {
           lastBudgetUsage: cycle.usage,
         },
       }
-      if (cycle.status === 'completed' || cycle.status === 'unchanged') deskPatch.last_successful_research = cycle.completedAt
+      // A desk can do real, durable research and still finish as partial or
+      // budget_exhausted because a later follow-up ran out of time. Sources are
+      // the truth boundary for whether useful research actually happened.
+      if (cycle.status !== 'failed' && cycle.usage.sources > 0) deskPatch.last_successful_research = cycle.completedAt
       const deskUpdate = await db.from('research_desks').update(deskPatch).eq('id', cycle.deskId)
       if (deskUpdate.error) throw deskUpdate.error
     },
