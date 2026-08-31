@@ -5,6 +5,8 @@ export type EscalationInput = {
   materiality: number;
   urgency: number;
   evidence: StrategicEvidence[];
+  /** Canonical Research Runtime question to deepen/cross-check. */
+  researchQuestionId?: string;
   crossDomainCorroboration?: boolean;
   actionable?: boolean;
 };
