@@ -2,7 +2,6 @@
 
 import HomeScreen from '@/components/dashboard/home/HomeScreen'
 import FounderHome from '@/components/dashboard/founder-home/FounderHome'
-import CayeActivityBridge from '@/components/dashboard/caye-direct/CayeActivityBridge'
 import { useWorkspace } from '@/lib/workspace-context'
 
 // 2026-07-02: founders get one full-page view (FounderHome — its own
@@ -10,17 +9,13 @@ import { useWorkspace } from '@/lib/workspace-context'
 // layout, no slide-out panel). Owners (e.g. Karenda) keep HomeScreen
 // exactly as it was — this redesign never touches their surface.
 export default function DashboardPage() {
-  const { isFounder, workspaceId } = useWorkspace()
+  const { isFounder } = useWorkspace()
 
   return (
     <div className="tc-content" style={{ display: 'flex', flex: 1, height: '100%', overflow: 'hidden' }}>
       <main style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%', minWidth: 0, minHeight: 0 }}>
-        {isFounder ? <>
-          <CayeActivityBridge workspaceId={workspaceId} />
-          <FounderHome />
-        </> : <HomeScreen />}
+        {isFounder ? <FounderHome /> : <HomeScreen />}
       </main>
     </div>
   )
 }
-
