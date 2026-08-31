@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+const labelledControl = { count: vi.fn(async () => 1), fill: vi.fn(), selectOption: vi.fn(), setInputFiles: vi.fn(), first() { return this } }
 const page = {
   route: vi.fn(), goto: vi.fn(), url: vi.fn(() => 'https://job-boards.greenhouse.io/example/jobs/1'),
   setDefaultNavigationTimeout: vi.fn(), setDefaultTimeout: vi.fn(), waitForLoadState: vi.fn(),
-  locator: vi.fn(),
+  locator: vi.fn(), getByLabel: vi.fn(() => labelledControl),
 }
 const context = { newPage: vi.fn(async () => page), close: vi.fn(async () => undefined) }
 const browser = { newContext: vi.fn(async () => context), close: vi.fn(async () => undefined) }
@@ -25,6 +26,7 @@ describe('Greenhouse browser executor (#216)', () => {
     vi.clearAllMocks()
     page.url.mockReturnValue('https://job-boards.greenhouse.io/example/jobs/1')
     page.goto.mockResolvedValue(null)
+    labelledControl.count.mockResolvedValue(1)
     const body = { count: vi.fn(async () => 1), innerText: vi.fn(async () => 'Apply for this job'), first() { return this } }
     const input = { count: vi.fn(async () => 1), fill: vi.fn(), selectOption: vi.fn(), setInputFiles: vi.fn(), first() { return this } }
     page.locator.mockImplementation((selector: string) => {
@@ -32,6 +34,7 @@ describe('Greenhouse browser executor (#216)', () => {
       if (selector === 'input[type="file"]') return input
       return input
     })
+    page.getByLabel.mockReturnValue(labelledControl)
   })
 
   it('uses a fresh context, uploads the verified resume, and has no submit path', async () => {
@@ -42,6 +45,50 @@ describe('Greenhouse browser executor (#216)', () => {
     expect(fileInput.setInputFiles).toHaveBeenCalledWith(expect.objectContaining({ name: expect.stringMatching(/^caye-resume-[a-f0-9]{12}\.pdf$/), mimeType: 'application/pdf' }))
     expect(context.close).toHaveBeenCalledOnce()
     expect(browser.close).toHaveBeenCalledOnce()
+  })
+
+  it('falls back to the exact accessible label when Greenhouse API field name is not the hosted DOM name', async () => {
+    const linkedIn: DiscoveredField = {
+      providerFieldId: 'question_123456', label: 'LinkedIn Profile', semanticKey: 'linkedin', inputType: 'text', required: true, allowedOptions: null, confidence: 0.9,
+    }
+    const noMatch = { count: vi.fn(async () => 0), fill: vi.fn(), selectOption: vi.fn(), first() { return this } }
+    const fileInput = { count: vi.fn(async () => 1), fill: vi.fn(), selectOption: vi.fn(), setInputFiles: vi.fn(), first() { return this } }
+    const body = { count: vi.fn(async () => 1), innerText: vi.fn(async () => 'Apply for this job'), first() { return this } }
+    page.locator.mockImplementation((selector: string) => {
+      if (selector === 'body') return body
+      if (selector === 'input[type="file"]') return fileInput
+      return noMatch
+    })
+    page.getByLabel.mockReturnValue(labelledControl)
+
+    const result = await runGreenhouseBrowserReadiness({
+      ...request,
+      answers: [{ status: 'resolved', field: linkedIn, value: 'https://www.linkedin.com/in/founder', source: 'profile_fact', profileFactId: 'fact-1', reusable: true }],
+    }, [linkedIn])
+
+    expect(result.outcome).toBe('ready')
+    expect(page.getByLabel).toHaveBeenCalledOnce()
+    expect(labelledControl.fill).toHaveBeenCalledWith('https://www.linkedin.com/in/founder')
+  })
+
+  it('fails closed when accessible-label resolution is ambiguous', async () => {
+    const linkedIn: DiscoveredField = {
+      providerFieldId: 'question_123456', label: 'LinkedIn Profile', semanticKey: 'linkedin', inputType: 'text', required: true, allowedOptions: null, confidence: 0.9,
+    }
+    const noMatch = { count: vi.fn(async () => 0), fill: vi.fn(), selectOption: vi.fn(), first() { return this } }
+    const body = { count: vi.fn(async () => 1), innerText: vi.fn(async () => 'Apply for this job'), first() { return this } }
+    const ambiguous = { count: vi.fn(async () => 2), fill: vi.fn(), selectOption: vi.fn(), first() { return this } }
+    page.locator.mockImplementation((selector: string) => selector === 'body' ? body : noMatch)
+    page.getByLabel.mockReturnValue(ambiguous)
+
+    const result = await runGreenhouseBrowserReadiness({
+      ...request,
+      answers: [{ status: 'resolved', field: linkedIn, value: 'https://www.linkedin.com/in/founder', source: 'profile_fact', profileFactId: 'fact-1', reusable: true }],
+    }, [linkedIn])
+
+    expect(result.outcome).toBe('needs_human')
+    expect(result.reason).toMatch(/ambiguous controls/i)
+    expect(ambiguous.fill).not.toHaveBeenCalled()
   })
 
   it('rejects a prohibited initial destination before launching a browser', async () => {
