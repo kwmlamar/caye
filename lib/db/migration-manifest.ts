@@ -185,4 +185,5 @@ export const REPO_MIGRATIONS: readonly string[] = [
   '20260830n_objective_replanning',
   '20260830o_engineering_copilot_closed_loop',
   '20260831004500_connected_accounts_workspace_ownership',
+  '20260831_ai_global_technology_research_desk',
 ]
