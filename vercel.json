@@ -2,6 +2,10 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "crons": [
     {
+      "path": "/api/email/gmail-cron",
+      "schedule": "*/5 * * * *"
+    },
+    {
       "path": "/api/caye/job-search-email-poll",
       "schedule": "*/15 * * * *"
     },
