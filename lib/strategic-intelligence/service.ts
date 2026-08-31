@@ -11,7 +11,7 @@ export type StrategicDependencies = {
     title: string;
     body: string;
     dedupeKey: string;
-  }): Promise<void>;
+  }): Promise<boolean>;
   requestDeeperResearch(input: EscalationInput): Promise<void>;
   requestIndependentCrossCheck(input: EscalationInput): Promise<void>;
 };
@@ -36,7 +36,7 @@ export async function maybeEscalateRecommendation(
   const authority = await deps.resolveAuthority({ scope, workspaceRef });
   if (authority.resolvedBy !== "canonical_authority" || !authority.principalRef) return false;
 
-  await deps.enqueueCanonicalAttention({
+  return deps.enqueueCanonicalAttention({
     authority,
     kind: "strategic_intelligence",
     urgency: "immediate",
@@ -44,7 +44,6 @@ export async function maybeEscalateRecommendation(
     body: sanitizeStrategicHumanOutput(`${recommendation.conciseReasoning}\nNext: ${recommendation.recommendedNextAction}`),
     dedupeKey: `strategic:${recommendation.materialFingerprint}`,
   });
-  return true;
 }
 
 export const CAYE_DIRECT_STRATEGIC_INTENTS = [
