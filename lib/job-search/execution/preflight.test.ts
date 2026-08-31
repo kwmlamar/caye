@@ -66,11 +66,12 @@ describe('runPreflight — pause/rollout gates (#194 scenarios 11, 12, 13)', () 
     if (result.outcome === 'blocked') expect(result.reason).toMatch(/paused/i)
   })
 
-  it('blocks when automation is disabled (the default)', async () => {
+  it('blocks when neither execution mode is open (dry-run off, automation off)', async () => {
     fake.tables.job_search_execution_settings[0].automation_enabled = false
+    fake.tables.job_search_execution_settings[0].dry_run = false
     const result = await runPreflight('app-1')
     expect(result.outcome).toBe('blocked')
-    if (result.outcome === 'blocked') expect(result.reason).toMatch(/automation/i)
+    if (result.outcome === 'blocked') expect(result.reason).toMatch(/both disabled/i)
   })
 
   it('blocks when emergency-paused', async () => {
@@ -79,7 +80,10 @@ describe('runPreflight — pause/rollout gates (#194 scenarios 11, 12, 13)', () 
     expect(result.outcome).toBe('blocked')
   })
 
-  it('blocks when the daily submission cap is already reached', async () => {
+  it('blocks a LIVE attempt when the daily submission cap is already reached', async () => {
+    // The cap is a real-submission cap, so it only gates the live mode.
+    fake.tables.job_search_execution_settings[0].dry_run = false
+    fake.tables.job_search_execution_settings[0].automation_enabled = true
     const todayIso = new Date().toISOString()
     fake.tables.job_search_applications.push({ id: 'other-1', status: 'SUBMITTED', submitted_at: todayIso }, { id: 'other-2', status: 'SUBMITTED', submitted_at: todayIso }, { id: 'other-3', status: 'SUBMITTED', submitted_at: todayIso })
     const result = await runPreflight('app-1')
@@ -167,5 +171,119 @@ describe('runPreflight — verification/artifact gates (#194 scenario 10 and fou
     const result = await runPreflight('app-1')
     expect(result.outcome).toBe('blocked')
     if (result.outcome === 'blocked') expect(result.reason).toMatch(/sponsorship/i)
+  })
+})
+
+/**
+ * CAY-194 — readiness dry-run vs live submission are separate authorities.
+ *
+ * `automation_enabled` governs the consequential act of submitting a real
+ * application. It must not gate the structurally non-submitting readiness
+ * path. The matrix below is the whole contract; emergency pause outranks
+ * every cell in it.
+ */
+describe('runPreflight — execution-mode authority matrix (CAY-194)', () => {
+  function setMode(opts: { dryRun: boolean; automation: boolean }) {
+    fake.tables.job_search_execution_settings[0].dry_run = opts.dryRun
+    fake.tables.job_search_execution_settings[0].automation_enabled = opts.automation
+  }
+
+  function fillDailyCap() {
+    const todayIso = new Date().toISOString()
+    fake.tables.job_search_applications.push(
+      { id: 'cap-1', status: 'SUBMITTED', submitted_at: todayIso },
+      { id: 'cap-2', status: 'SUBMITTED', submitted_at: todayIso },
+      { id: 'cap-3', status: 'SUBMITTED', submitted_at: todayIso },
+    )
+  }
+
+  // A — the exact bug this change fixes.
+  it('A: dry_run=true + automation_enabled=false => clear', async () => {
+    setMode({ dryRun: true, automation: false })
+    const result = await runPreflight('app-1')
+    expect(result.outcome).toBe('clear')
+    if (result.outcome === 'clear') {
+      expect(result.context.dryRun).toBe(true)
+      expect(result.checks.find((c) => c.key === 'execution_mode_allowed')?.passed).toBe(true)
+    }
+  })
+
+  // B — live mode with the live switch off stays blocked.
+  it('B: dry_run=false + automation_enabled=false => blocked', async () => {
+    setMode({ dryRun: false, automation: false })
+    const result = await runPreflight('app-1')
+    expect(result.outcome).toBe('blocked')
+    if (result.outcome === 'blocked') {
+      expect(result.checks.find((c) => c.key === 'execution_mode_allowed')?.passed).toBe(false)
+    }
+  })
+
+  // C — the cap is a real-submission cap and must not gate readiness.
+  it('C: dry_run=true + automation_enabled=false + cap exhausted => still clear', async () => {
+    setMode({ dryRun: true, automation: false })
+    fillDailyCap()
+    const result = await runPreflight('app-1')
+    expect(result.outcome).toBe('clear')
+    if (result.outcome === 'clear') {
+      expect(result.checks.find((c) => c.key === 'daily_cap_remaining')?.passed).toBe(true)
+    }
+  })
+
+  it('C2: dry_run=true still clear when the configured cap is literally 0', async () => {
+    setMode({ dryRun: true, automation: false })
+    fake.tables.job_search_execution_settings[0].daily_submission_cap = 0
+    const result = await runPreflight('app-1')
+    expect(result.outcome).toBe('clear')
+  })
+
+  // D — the live path's existing cap policy is untouched.
+  it('D: dry_run=false + automation_enabled=true + cap 0 => blocked on capacity', async () => {
+    setMode({ dryRun: false, automation: true })
+    fake.tables.job_search_execution_settings[0].daily_submission_cap = 0
+    const result = await runPreflight('app-1')
+    expect(result.outcome).toBe('blocked')
+    if (result.outcome === 'blocked') expect(result.reason).toMatch(/cap/i)
+  })
+
+  it('dry_run=true + automation_enabled=true => clear, and still marked as a dry-run', async () => {
+    setMode({ dryRun: true, automation: true })
+    const result = await runPreflight('app-1')
+    expect(result.outcome).toBe('clear')
+    // Live automation being on must not turn the readiness pass into a live one.
+    if (result.outcome === 'clear') expect(result.context.dryRun).toBe(true)
+  })
+
+  // G — emergency pause outranks every cell of the matrix.
+  it('G: emergency pause blocks a dry-run regardless of the other switches', async () => {
+    for (const dryRun of [true, false]) {
+      for (const automation of [true, false]) {
+        fake = baseline()
+        setMode({ dryRun, automation })
+        fake.tables.job_search_execution_settings[0].emergency_paused = true
+        const result = await runPreflight('app-1')
+        expect(result.outcome).toBe('blocked')
+        if (result.outcome === 'blocked') expect(result.reason).toMatch(/emergency/i)
+      }
+    }
+  })
+
+  it('every non-mode safety gate still blocks a dry-run', async () => {
+    const cases: Array<[string, () => void, RegExp]> = [
+      ['prohibited destination', () => { fake.tables.job_search_candidates[0].apply_url = LINKEDIN_URL }, /LinkedIn|Indeed/i],
+      ['job-search paused', () => { fake.tables.job_search_settings[0].paused = true }, /paused/i],
+      ['provider not allowlisted', () => { fake.tables.job_search_execution_settings[0].allowlisted_providers = [] }, /allowlist/i],
+      ['employer not allowlisted', () => { fake.tables.job_search_execution_settings[0].allowlisted_employer_domains = ['othercompany.com'] }, /allowlist/i],
+      ['profile unverified', () => { fake.tables.job_search_profiles[0].status = 'draft' }, /profile/i],
+      ['resume variant unverified', () => { fake.tables.job_search_resume_variants[0].status = 'draft' }, /resume variant/i],
+      ['not PREPARED', () => { fake.tables.job_search_applications[0].status = 'APPLYING' }, /PREPARED/i],
+    ]
+    for (const [label, mutate, expected] of cases) {
+      fake = baseline()
+      setMode({ dryRun: true, automation: false })
+      mutate()
+      const result = await runPreflight('app-1')
+      expect(result.outcome, label).toBe('blocked')
+      if (result.outcome === 'blocked') expect(result.reason, label).toMatch(expected)
+    }
   })
 })

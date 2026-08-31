@@ -10,6 +10,15 @@ vi.mock('../events', () => ({ logJobSearchEvent: vi.fn(async () => {}) }))
 const discoverFields = vi.fn()
 const submit = vi.fn()
 /**
+ * The real Greenhouse provider exposes `dryRun` as an operation SEPARATE from
+ * `submit` — it may navigate, fill and upload, but the module behind it has no
+ * submit selector and no click path. Mirroring that separation here is what
+ * makes "a dry-run never submits" an assertion about structure rather than
+ * about a boolean checked near the final action.
+ */
+type ProviderDryRunResult = { outcome: 'ready' | 'needs_human'; reason: string }
+const providerDryRun = vi.fn<() => Promise<ProviderDryRunResult>>(async () => ({ outcome: 'ready', reason: 'ready' }))
+/**
  * `canSubmit` mirrors the real provider's capability flag. It is FALSE by
  * default here because that is what the real Greenhouse provider declares —
  * its submission endpoint needs the employer's own API key. Tests that need
@@ -28,6 +37,7 @@ vi.mock('./providers/greenhouse', () => ({
       return canSubmit
     },
     discoverFields: (...args: unknown[]) => discoverFields(...args),
+    dryRun: (...args: unknown[]) => providerDryRun(...(args as [])),
     submit: (...args: unknown[]) => submit(...args),
   },
 }))
@@ -76,6 +86,8 @@ beforeEach(() => {
   fake = baseline()
   discoverFields.mockReset()
   submit.mockReset()
+  providerDryRun.mockReset()
+  providerDryRun.mockResolvedValue({ outcome: 'ready', reason: 'ready' })
   canSubmit = false
 })
 
@@ -382,5 +394,192 @@ describe('executeApplication — preflight_blocked never claims (#194 core invar
     const result = await executeApplication('app-1')
     expect(result.outcome).toBe('preflight_blocked')
     expect(discoverFields).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * CAY-194 — readiness dry-run vs live submission are separate authorities.
+ *
+ * A dry-run runs on its own authority (so it works while the live-action
+ * switch is off) and can never acquire submission authority — not from
+ * `automation_enabled=true`, and not from a mid-flight settings flip.
+ */
+describe('executeApplication — dry-run authority is independent and non-escalating (CAY-194)', () => {
+  function setMode(opts: { dryRun: boolean; automation: boolean }) {
+    fake.tables.job_search_execution_settings[0].dry_run = opts.dryRun
+    fake.tables.job_search_execution_settings[0].automation_enabled = opts.automation
+  }
+
+  function reservations() {
+    return fake.tables.job_search_submission_reservations ?? []
+  }
+
+  // The exact bug: a founder-confirmed readiness dry-run blocked by the
+  // live-action switch.
+  it('a dry-run runs to completion while automation_enabled=false', async () => {
+    setMode({ dryRun: true, automation: false })
+    discoverFields.mockResolvedValue({ outcome: 'clear', fields: [], domainValidations: [] })
+
+    const result = await executeApplication('app-1')
+
+    expect(result.outcome).toBe('needs_human')
+    if (result.outcome === 'needs_human') {
+      expect(result.reason).toBe('dry_run_ready')
+      expect(result.dryRun).toBe(true)
+    }
+    expect(latestAttempt().dry_run).toBe(true)
+  })
+
+  // E — the readiness path goes through the separate dryRun contract only.
+  it('E: a dry-run calls provider.dryRun and never provider.submit', async () => {
+    setMode({ dryRun: true, automation: false })
+    discoverFields.mockResolvedValue({ outcome: 'clear', fields: [], domainValidations: [] })
+
+    await executeApplication('app-1')
+
+    expect(providerDryRun).toHaveBeenCalledTimes(1)
+    expect(submit).toHaveBeenCalledTimes(0)
+  })
+
+  // F — live automation being armed must not upgrade a dry-run.
+  it('F: a dry-run stays non-submitting when automation_enabled=true and the provider CAN submit', async () => {
+    setMode({ dryRun: true, automation: true })
+    allowSubmission()
+    discoverFields.mockResolvedValue({ outcome: 'clear', fields: [], domainValidations: [] })
+
+    const result = await executeApplication('app-1')
+
+    expect(submit).not.toHaveBeenCalled()
+    expect(providerDryRun).toHaveBeenCalledTimes(1)
+    expect(result.outcome).toBe('needs_human')
+    if (result.outcome === 'needs_human') expect(result.dryRun).toBe(true)
+    expect(fake.tables.job_search_applications[0].status).toBe('NEEDS_HUMAN')
+    expect(latestAttempt().dry_run).toBe(true)
+  })
+
+  // H — both modes withdrawn mid-flight stops the attempt.
+  it('H: dry-run AND automation both switched off after the claim stops safely', async () => {
+    setMode({ dryRun: true, automation: false })
+    allowSubmission()
+    discoverFields.mockImplementation(async () => {
+      Object.assign(fake.tables.job_search_execution_settings[0], { dry_run: false, automation_enabled: false })
+      return { outcome: 'clear', fields: [], domainValidations: [] }
+    })
+
+    const result = await executeApplication('app-1')
+
+    expect(submit).not.toHaveBeenCalled()
+    expect(providerDryRun).not.toHaveBeenCalled()
+    expect(result.outcome).toBe('needs_human')
+    if (result.outcome === 'needs_human') expect(result.reason).toMatch(/both disabled/i)
+    expect(fake.tables.job_search_applications[0].status).toBe('NEEDS_HUMAN')
+    expect(reservations()).toHaveLength(0)
+  })
+
+  // Dry-run turned OFF mid-flight must not promote an in-flight readiness
+  // pass into a live one, even with automation armed.
+  it('dry-run switched off mid-flight cannot promote a readiness pass to live', async () => {
+    setMode({ dryRun: true, automation: true })
+    allowSubmission()
+    discoverFields.mockImplementation(async () => {
+      Object.assign(fake.tables.job_search_execution_settings[0], { dry_run: false })
+      return { outcome: 'clear', fields: [], domainValidations: [] }
+    })
+
+    const result = await executeApplication('app-1')
+
+    expect(submit).not.toHaveBeenCalled()
+    expect(result.outcome).toBe('needs_human')
+    if (result.outcome === 'needs_human') expect(result.dryRun).toBe(true)
+    expect(latestAttempt().dry_run).toBe(true)
+    expect(reservations()).toHaveLength(0)
+  })
+
+  // G — emergency pause outranks the dry-run authority.
+  it('G: emergency pause blocks a dry-run outright', async () => {
+    setMode({ dryRun: true, automation: false })
+    fake.tables.job_search_execution_settings[0].emergency_paused = true
+    discoverFields.mockResolvedValue({ outcome: 'clear', fields: [], domainValidations: [] })
+
+    const result = await executeApplication('app-1')
+
+    expect(result.outcome).toBe('preflight_blocked')
+    expect(providerDryRun).not.toHaveBeenCalled()
+    expect(submit).not.toHaveBeenCalled()
+  })
+
+  // C/K — the cap bounds real submissions only.
+  it('C+K: a dry-run runs at cap=0 and consumes no submission reservation', async () => {
+    setMode({ dryRun: true, automation: false })
+    fake.tables.job_search_execution_settings[0].daily_submission_cap = 0
+    discoverFields.mockResolvedValue({ outcome: 'clear', fields: [], domainValidations: [] })
+
+    const result = await executeApplication('app-1')
+
+    expect(result.outcome).toBe('needs_human')
+    if (result.outcome === 'needs_human') expect(result.reason).toBe('dry_run_ready')
+    expect(reservations()).toHaveLength(0)
+    expect(submit).not.toHaveBeenCalled()
+  })
+
+  // L — the live path's atomic reservation behavior is untouched.
+  it('L: the live path still reserves a slot atomically before submitting', async () => {
+    setMode({ dryRun: false, automation: true })
+    allowSubmission()
+    discoverFields.mockResolvedValue({ outcome: 'clear', fields: [], domainValidations: [] })
+    submit.mockResolvedValue({ outcome: 'submitted', response: {}, evidence: { confirmationId: 'conf-1' } })
+
+    const result = await executeApplication('app-1')
+
+    expect(submit).toHaveBeenCalledTimes(1)
+    expect(providerDryRun).not.toHaveBeenCalled()
+    expect(result.outcome).toBe('submitted')
+    expect(reservations()).toHaveLength(1)
+  })
+
+  it('L2: the live path is blocked when no slot can be reserved, and never submits', async () => {
+    setMode({ dryRun: false, automation: true })
+    fake.tables.job_search_execution_settings[0].daily_submission_cap = 0
+    allowSubmission()
+    discoverFields.mockResolvedValue({ outcome: 'clear', fields: [], domainValidations: [] })
+
+    const result = await executeApplication('app-1')
+
+    expect(submit).not.toHaveBeenCalled()
+    expect(reservations()).toHaveLength(0)
+    expect(result.outcome).toBe('preflight_blocked')
+  })
+
+  // A dry-run must never be able to write a submitted/uncertain terminal state.
+  it('a dry-run never writes SUBMITTED or SUBMISSION_UNCERTAIN', async () => {
+    for (const automation of [true, false]) {
+      fake = baseline()
+      providerDryRun.mockResolvedValue({ outcome: 'ready', reason: 'ready' })
+      setMode({ dryRun: true, automation })
+      allowSubmission()
+      discoverFields.mockResolvedValue({ outcome: 'clear', fields: [], domainValidations: [] })
+
+      const result = await executeApplication('app-1')
+
+      expect(result.outcome).not.toBe('submitted')
+      expect(result.outcome).not.toBe('submission_uncertain')
+      expect(fake.tables.job_search_applications[0].status).toBe('NEEDS_HUMAN')
+      expect(fake.tables.job_search_applications[0].submitted_at ?? null).toBeNull()
+    }
+  })
+
+  // A blocked readiness pass is still a non-submitting one.
+  it('a readiness pass that reports needs_human escalates without submitting', async () => {
+    setMode({ dryRun: true, automation: true })
+    allowSubmission()
+    discoverFields.mockResolvedValue({ outcome: 'clear', fields: [], domainValidations: [] })
+    providerDryRun.mockResolvedValue({ outcome: 'needs_human', reason: 'Resume upload control not found.' })
+
+    const result = await executeApplication('app-1')
+
+    expect(submit).not.toHaveBeenCalled()
+    expect(result.outcome).toBe('needs_human')
+    if (result.outcome === 'needs_human') expect(result.reason).toMatch(/Resume upload control/i)
+    expect(reservations()).toHaveLength(0)
   })
 })
