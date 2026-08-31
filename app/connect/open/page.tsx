@@ -26,14 +26,15 @@ const CHANNEL_NAME: Record<string, string> = {
  *
  * The `ext=1` on the outbound link is what stops the loop: the initiator
  * skips its browser check when it's set, so the freshly-opened real
- * browser goes straight to the provider.
+ * browser goes straight to the provider. `source` must survive this hop
+ * too, or a WhatsApp walkthrough gets mistaken for a dashboard connect.
  */
 export default async function ConnectOpenPage({
   searchParams,
 }: {
-  searchParams: Promise<{ t?: string; channel?: string }>
+  searchParams: Promise<{ t?: string; channel?: string; source?: string }>
 }) {
-  const { t, channel } = await searchParams
+  const { t, channel, source } = await searchParams
   const verified = verifyConnectToken(t)
 
   if (!verified.ok || !channel || !isConnectChannel(channel)) {
@@ -55,7 +56,8 @@ export default async function ConnectOpenPage({
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.meetcaye.com'
   const path = connectPathFor(channel)
   const sep = path.includes('?') ? '&' : '?'
-  const target = `${appUrl}${path}${sep}t=${encodeURIComponent(t!)}&ext=1`
+  const sourceParam = source ? `&source=${encodeURIComponent(source)}` : ''
+  const target = `${appUrl}${path}${sep}t=${encodeURIComponent(t!)}&ext=1${sourceParam}`
   const name = CHANNEL_NAME[channel] ?? 'your account'
 
   return (
