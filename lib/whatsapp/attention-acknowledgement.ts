@@ -1,6 +1,6 @@
 import 'server-only'
 import { createServiceClient } from '@/lib/supabase-server'
-import { setAttentionStatus } from '@/lib/owner-attention'
+import { recordOperatorAwareness, setAttentionStatus } from '@/lib/owner-attention'
 
 interface OpenAttentionRow {
   subject_type: string
@@ -92,16 +92,33 @@ export async function resolveAcknowledgedAttentionItems(args: {
   return []
 }
 
-/** Marks the resolved item(s) acknowledged — "operator has responded, stop
- *  reminding until something changes." A material fingerprint change still
- *  reopens it (see decideOperatorNotification); this only silences repeats
- *  of the same unchanged ask. Best-effort, never throws. */
+/**
+ * Marks the resolved item(s) acknowledged and records the stronger fact that
+ * the operator personally demonstrated awareness of the item's CURRENT state.
+ *
+ * These are two different lifecycle facts: acknowledged means "stop treating
+ * this as unseen"; operator awareness is the state-fingerprint evidence used
+ * by proactive composers/gates to avoid telling the owner something they just
+ * told us themselves. Before 2026-08-30 this path only wrote the first fact,
+ * which meant a direct "we handled Autumn" could still leave
+ * operator_aware_fingerprint NULL unless a customer-facing operator send also
+ * existed. Delivery is evidence of delivery, not a prerequisite for awareness.
+ *
+ * A material fingerprint change still re-earns attention. Best-effort, never
+ * throws beyond the helpers' own fail-soft behavior.
+ */
 export async function acknowledgeAttentionItems(
   workspaceId: string,
   items: AttentionSubjectRef[]
 ): Promise<void> {
   for (const item of items) {
     try {
+      await recordOperatorAwareness({
+        workspaceId,
+        subjectType: item.subjectType,
+        subjectId: item.subjectId,
+        evidence: 'operator directly acknowledged this attention item',
+      })
       await setAttentionStatus({
         workspaceId,
         subjectType: item.subjectType,
@@ -109,7 +126,7 @@ export async function acknowledgeAttentionItems(
         status: 'acknowledged',
       })
     } catch (err) {
-      console.error('[attention-acknowledgement] setStatus failed:', err)
+      console.error('[attention-acknowledgement] lifecycle update failed:', err)
     }
   }
 }

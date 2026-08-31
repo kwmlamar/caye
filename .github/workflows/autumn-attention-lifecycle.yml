@@ -1,0 +1,39 @@
+name: Autumn attention lifecycle
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'lib/authorize-autonomous-outbound.ts'
+      - 'lib/authorize-autonomous-outbound.test.ts'
+      - 'lib/whatsapp/actions/handled.ts'
+      - 'lib/whatsapp/actions/handled.test.ts'
+      - 'lib/whatsapp/attention-acknowledgement.ts'
+      - 'lib/whatsapp/attention-acknowledgement.test.ts'
+      - 'lib/caye-agent/frontdesk-entry.ts'
+      - 'lib/caye-agent/tools/write-low/add-internal-note.ts'
+      - 'supabase/migrations/**'
+      - '.github/workflows/autumn-attention-lifecycle.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  lifecycle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Run focused lifecycle regressions
+        run: >-
+          npx vitest run
+          lib/authorize-autonomous-outbound.test.ts
+          lib/whatsapp/actions/handled.test.ts
+          lib/whatsapp/attention-acknowledgement.test.ts
+      - name: Production build
+        run: npm run build
