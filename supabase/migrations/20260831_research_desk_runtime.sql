@@ -43,6 +43,7 @@ create table if not exists public.research_desk_cycles (
   fingerprint text null,
   budget_usage jsonb not null default '{}'::jsonb,
   checkpoint jsonb not null default '{}'::jsonb,
+  next_scheduled_investigation timestamptz null,
   started_at timestamptz not null default now(),
   completed_at timestamptz null,
   created_at timestamptz not null default now(),
@@ -51,6 +52,11 @@ create table if not exists public.research_desk_cycles (
 
 create index if not exists research_desk_cycles_desk_started_idx
   on public.research_desk_cycles (desk_id, started_at desc);
+
+-- These are internal operator tables. The service role owns orchestration; no
+-- browser/client policy is intentionally exposed.
+alter table public.research_desks enable row level security;
+alter table public.research_desk_cycles enable row level security;
 
 -- Claiming a due desk only reserves the wakeup. Search/fetch/synthesis still flow
 -- through the canonical research runtime and its research_runs idempotency.
@@ -92,6 +98,9 @@ begin
   return next;
 end;
 $$;
+
+revoke execute on function public.claim_due_research_desk(text, timestamptz) from public, anon, authenticated;
+grant execute on function public.claim_due_research_desk(text, timestamptz) to service_role;
 
 comment on table public.research_desks is 'Persistent standing missions and bounded exploration policy for generic Caye research desks.';
 comment on table public.research_desk_cycles is 'Idempotent, replayable orchestration checkpoints; canonical evidence remains in research_* evidence tables.';
