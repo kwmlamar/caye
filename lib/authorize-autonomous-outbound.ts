@@ -8,29 +8,25 @@ import type { ForcedEscalation } from './forced-escalation'
  * clear before it executes (#88 — Jonathan Garcia / Full Bimini Experience).
  *
  * Two independent things can hard-block autonomous outbound on a
- * conversation, and this is the single place that resolves both:
+ * conversation:
  *   - an owner_only standing rule matching THIS message (see
  *     lib/standing-rules.ts) — never eligible for standdown;
- *   - a conversation already held for the owner
- *     (unified_conversations.human_agent_enabled) for any prior reason.
+ *   - a conversation hold that was created for THIS inbound turn (or a
+ *     legacy hold whose creation time cannot be proven).
+ *
+ * A conversation-level human_agent_enabled flag is intentionally not treated
+ * as a permanent takeover. A later customer message is a fresh turn and must
+ * be allowed to reach the normal evidence/policy/send gates. Otherwise one
+ * unresolved Friday policy question can freeze an unrelated Sunday logistics
+ * question forever — the 2026-08-30 Autumn McNeill incident.
  *
  * Wired into lib/caye-agent/frontdesk-entry.ts so the check runs BEFORE the
- * model executes, not as a hope that it declines to call a send tool. Every
- * other autonomous send path (cron follow-ups, retries, other channels)
- * should route through this same function rather than reimplementing the
- * check — see the issue for the full inventory, most of which is later
- * slices.
+ * model executes. The send boundary still independently validates current
+ * policy, facts, booking state, stale overrides and execution ownership.
  *
- * FAIL-CLOSED, deliberately, on both reads this function does (the
- * conversation-hold lookup and the standing-rules fetch): this is the
- * owner's actual authority gate, not an advisory check like
- * fetchStandingRules's other (escalate) callers. If we can't tell whether an
- * owner_only rule or an existing hold applies, the safe default is "don't
- * send autonomously" — an autonomous send that turns out to have skipped an
- * owner_only rule cannot be taken back, while a held message just waits an
- * extra beat for the owner. This is the opposite posture from
- * fetchStandingRules's own fail-open default; see that function's doc
- * comment for why the escalate path chooses differently.
+ * FAIL-CLOSED, deliberately, on every authority read this function does. If
+ * we cannot prove that a held conversation's newest customer turn is newer
+ * than the hold, we preserve the hold rather than guessing.
  */
 
 export type AutonomousOutboundBlockReason =
@@ -44,9 +40,16 @@ export type AutonomousOutboundDecision =
       allowed: false
       reason: AutonomousOutboundBlockReason
       /** Present only for blocked_by_owner_policy — the escalation the
-       *  caller should persist/surface to the owner. */
+       * caller should persist/surface to the owner. */
       escalation?: ForcedEscalation
     }
+
+function isStrictlyNewer(iso: string | null | undefined, thanISO: string | null | undefined): boolean {
+  if (!iso || !thanISO) return false
+  const value = new Date(iso).getTime()
+  const anchor = new Date(thanISO).getTime()
+  return Number.isFinite(value) && Number.isFinite(anchor) && value > anchor
+}
 
 export async function authorizeAutonomousOutbound(params: {
   workspaceId: string
@@ -55,15 +58,15 @@ export async function authorizeAutonomousOutbound(params: {
 }): Promise<AutonomousOutboundDecision> {
   const supabase = createServiceClient()
 
-  // Existing hold first — cheapest check, and a hold from ANY prior reason
-  // (a previous standing rule match, a low-confidence answer, a manual
-  // owner takeover) must block regardless of what this specific message
-  // says. Fails CLOSED on a read error: we cannot tell whether this
-  // conversation is held, so autonomous outbound must not proceed on the
-  // assumption that it isn't.
+  // A hold blocks the turn that caused it, not the conversation for the rest
+  // of time. The current inbound is already durably claimed/persisted before
+  // this function runs, so the newest non-internal customer row is the exact
+  // piece of evidence we need. If it is newer than human_agent_marked_at,
+  // evaluate it fresh through the ordinary model + send boundary while the
+  // older owner-attention item remains open independently.
   const { data: convo, error: convoError } = await supabase
     .from('unified_conversations')
-    .select('human_agent_enabled')
+    .select('human_agent_enabled, human_agent_marked_at')
     .eq('id', params.conversationId)
     .maybeSingle()
   if (convoError) {
@@ -71,7 +74,29 @@ export async function authorizeAutonomousOutbound(params: {
     return { allowed: false, reason: 'blocked_by_authority_check_error' }
   }
   if (convo?.human_agent_enabled === true) {
-    return { allowed: false, reason: 'blocked_by_existing_hold' }
+    // A missing/invalid hold timestamp is legacy/ambiguous authority state.
+    // Do not silently reinterpret it as safe.
+    if (!convo.human_agent_marked_at) {
+      return { allowed: false, reason: 'blocked_by_existing_hold' }
+    }
+
+    const { data: latestInbound, error: inboundError } = await supabase
+      .from('unified_messages')
+      .select('sent_at')
+      .eq('conversation_id', params.conversationId)
+      .eq('sender_type', 'customer')
+      .eq('is_internal', false)
+      .order('sent_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (inboundError) {
+      console.error('[authorize-autonomous-outbound] latest inbound lookup failed, failing closed:', inboundError.message)
+      return { allowed: false, reason: 'blocked_by_authority_check_error' }
+    }
+
+    if (!isStrictlyNewer(latestInbound?.sent_at ?? null, convo.human_agent_marked_at)) {
+      return { allowed: false, reason: 'blocked_by_existing_hold' }
+    }
   }
 
   // Fails CLOSED on a read error too (fetchStandingRulesOrThrow, not

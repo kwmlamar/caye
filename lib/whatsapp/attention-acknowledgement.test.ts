@@ -9,6 +9,7 @@ interface Row {
 let OPEN_ITEMS: Row[] = []
 let QUEUE_ROWS: Row[] = []
 let STATUS_UPDATES: Array<{ subjectType: string; subjectId: string; status: string }> = []
+let AWARENESS_UPDATES: Array<{ subjectType: string; subjectId: string; evidence: string }> = []
 
 function openItem(over: Partial<Row> = {}): Row {
   return {
@@ -50,6 +51,10 @@ vi.mock('@/lib/supabase-server', () => ({
 }))
 
 vi.mock('@/lib/owner-attention', () => ({
+  recordOperatorAwareness: vi.fn((args: { subjectType: string; subjectId: string; evidence: string }) => {
+    AWARENESS_UPDATES.push(args)
+    return Promise.resolve()
+  }),
   setAttentionStatus: vi.fn((args: { subjectType: string; subjectId: string; status: string }) => {
     STATUS_UPDATES.push(args)
     return Promise.resolve()
@@ -62,6 +67,7 @@ beforeEach(() => {
   OPEN_ITEMS = []
   QUEUE_ROWS = []
   STATUS_UPDATES = []
+  AWARENESS_UPDATES = []
 })
 
 describe('scoped acknowledgement — the Mrs. Max scenario from the brief', () => {
@@ -128,8 +134,16 @@ describe('scoped acknowledgement — the Mrs. Max scenario from the brief', () =
     expect(matched).toHaveLength(0)
   })
 
-  it('acknowledgeAttentionItems only touches the resolved subject(s), never the whole workspace', async () => {
+  it('acknowledgeAttentionItems records current-state awareness before marking the scoped item acknowledged', async () => {
     await acknowledgeAttentionItems('ws', [{ subjectType: 'conversation', subjectId: 'conv-karin' }])
+    expect(AWARENESS_UPDATES).toEqual([
+      {
+        workspaceId: 'ws',
+        subjectType: 'conversation',
+        subjectId: 'conv-karin',
+        evidence: 'operator directly acknowledged this attention item',
+      },
+    ])
     expect(STATUS_UPDATES).toEqual([
       { workspaceId: 'ws', subjectType: 'conversation', subjectId: 'conv-karin', status: 'acknowledged' },
     ])
