@@ -14,14 +14,16 @@ import { buildInvocationLog } from './observability'
 import type { RichResult } from '@/lib/caye-direct-rich-results'
 import { FOUNDER_DIRECT_EVIDENCE_GUIDANCE } from './caye-direct-evidence-guidance'
 
-/**
- * Spoken replies themselves are tiny, but OpenAI reasoning models count hidden
- * reasoning against the completion budget. 700 tokens was enough for the tool
- * request but, in production, the post-tool round repeatedly consumed the
- * entire budget and returned zero visible text. Leave enough headroom for
- * reasoning plus the short spoken answer while still bounding runaway output.
- */
 const VOICE_MAX_OUTPUT_TOKENS = 1600
+
+const PLAIN_LANGUAGE_GUIDANCE = `PLAIN LANGUAGE — MAKE THE ANSWER EASY TO UNDERSTAND
+- Write for a normal business owner, not an engineer or AI researcher.
+- Use short sentences and everyday words. Lead with what something means for the person reading it.
+- Avoid internal system language and technical jargon unless the founder explicitly asks for technical detail. Words such as provenance, epistemic, substrate, canonical, semantic key, supersession, reconciliation, runtime, materiality, orchestration, and idempotency should almost never appear in an ordinary answer.
+- If a technical term is necessary, explain it immediately in plain English.
+- Do not expose database names, internal IDs, tool names, implementation details, or model plumbing unless they are directly relevant to the question.
+- Prefer "I found new evidence that changes my view" over "a superseding intelligence relation was recorded"; prefer "I checked it and confirmed it worked" over "effect verification returned VERIFIED".
+- Keep the intelligence underneath sophisticated. Keep the explanation on top simple.`
 
 const FOUNDER_DIRECT_REASONING_GUIDANCE = `FOUNDER DIRECT — SYNTHESIZE BEFORE YOU DECLARE SOMETHING UNDEFINED
 - The founder is using Caye Direct as an operating/thinking interface, not merely querying configured database objects.
@@ -113,7 +115,7 @@ export async function runCayeDirectRouterTurn(args: CayeDirectRouterTurnArgs): P
   const start = Date.now()
   let decision: RouterDecision | undefined
   try {
-    const sharedGuidance = `${systemPrompt}\n\n${FOUNDER_DIRECT_REASONING_GUIDANCE}\n\n${FOUNDER_DIRECT_EVIDENCE_GUIDANCE}`
+    const sharedGuidance = `${systemPrompt}\n\n${PLAIN_LANGUAGE_GUIDANCE}\n\n${FOUNDER_DIRECT_REASONING_GUIDANCE}\n\n${FOUNDER_DIRECT_EVIDENCE_GUIDANCE}`
     const result = await runFounderToolLoop({
       ctx,
       requestedMode: args.requestedMode,
