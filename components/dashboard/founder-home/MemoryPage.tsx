@@ -32,14 +32,10 @@ function useMemoryData(workspaceId: string) {
   return data
 }
 
-// ── Real-field-only display logic — nothing here invents content, it
-// only composes what's already in the row. See memory/types.ts for the
-// exact backend fields each of these reads. ──
-
 function ruleSentence(r: Rule): string {
   const routeLabel = r.route_to === 'both' ? 'the owner and founder' : r.route_to === 'founder' ? 'the founder' : 'the owner'
   const trigger = r.trigger_type === 'service_mention' ? `mentions "${r.match_value}"` : `includes the phrase "${r.match_value}"`
-  return `When a customer's message ${trigger}, Caye escalates to ${routeLabel} instead of answering on her own.`
+  return `When a customer's message ${trigger}, Caye sends it to ${routeLabel} instead of answering on her own.`
 }
 
 function ruleToItem(r: Rule): MemoryItemData {
@@ -48,7 +44,7 @@ function ruleToItem(r: Rule): MemoryItemData {
     text: ruleSentence(r),
     tone: 'gold',
     metaLeft: r.is_active ? undefined : 'Turned off',
-    metaRight: r.times_fired > 0 ? `Triggered ${r.times_fired} time${r.times_fired === 1 ? '' : 's'}` : 'Never triggered',
+    metaRight: r.times_fired > 0 ? `Used ${r.times_fired} time${r.times_fired === 1 ? '' : 's'}` : 'Never used',
     technical: [
       { label: 'ID', value: r.id },
       { label: 'Trigger type', value: r.trigger_type },
@@ -68,7 +64,7 @@ function factProvenance(f: Fact): string {
       ? `Learned from ${f.learned_occurrence_count} conversation${f.learned_occurrence_count === 1 ? '' : 's'}`
       : 'Learned from repeated conversations'
   }
-  if (f.source === 'escalation-capture') return 'Learned from an escalation'
+  if (f.source === 'escalation-capture') return 'Learned after asking for help'
   return 'Taught directly'
 }
 
@@ -93,7 +89,7 @@ function candidateToItem(c: Candidate): MemoryItemData {
     id: c.id,
     text: c.sample_text,
     tone: 'gold',
-    metaLeft: `Noticed in ${c.occurrence_count} conversation${c.occurrence_count === 1 ? '' : 's'} · awaiting your answer`,
+    metaLeft: `Noticed in ${c.occurrence_count} conversation${c.occurrence_count === 1 ? '' : 's'} · needs your answer`,
     metaRight: formatDistanceToNow(c.first_seen_at),
     technical: [
       { label: 'ID', value: c.id },
@@ -136,22 +132,11 @@ function FilterPill({ label, active, onClick }: { label: string; active: boolean
   )
 }
 
-/**
- * "What does my employee understand about my business" — not a config
- * viewer. Read-only, matching ContactsPanel's "lens, not an editor"
- * convention: teaching Caye something new (add_business_fact, standing
- * rule creation, confirming a proposed pattern) stays a conversation with
- * her, via the global Ask Caye composer. Nothing here edits or deletes.
- */
 export default function MemoryPage({ workspaceId }: { workspaceId: string }) {
   const data = useMemoryData(workspaceId)
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<Filter>('all')
 
-  // Workspace switches don't remount this page (see FounderHome's
-  // view-swap key, which is keyed on rail, not workspace) — reset local
-  // UI state explicitly so a search/filter from the previous workspace
-  // doesn't linger into this one.
   useEffect(() => {
     setQuery('')
     setFilter('all')
@@ -183,15 +168,14 @@ export default function MemoryPage({ workspaceId }: { workspaceId: string }) {
     && filteredRules.length === 0 && filteredKnowledge.length === 0 && filteredLearned.length === 0 && filteredCandidates.length === 0
 
   return (
-    // paddingBottom clears the floating global Ask Caye composer.
     <div style={{ flex: 1, overflowY: 'auto', padding: '28px 32px 110px' }}>
-      <div style={{ maxWidth: 780 }}>
+      <div style={{ width: '100%', maxWidth: 920, margin: '0 auto' }}>
         <h1 style={{ fontSize: 20, fontWeight: 600, fontFamily: 'var(--font-display)', margin: '0 0 4px' }}>Memory</h1>
         <p style={{ fontSize: 13.5, color: TEXT_QUIET, margin: '0 0 4px', lineHeight: 1.6 }}>
           What Caye knows about this business.
         </p>
         <p style={{ fontSize: 13.5, color: TEXT_QUIET, margin: '0 0 28px', lineHeight: 1.6 }}>
-          Want her to remember something? Ask Caye below — for example,
+          Want Caye to remember something? Ask her below. For example,
           <span style={{ color: 'rgba(245,245,244,0.55)', fontStyle: 'italic' }}> "Remember that private tours require a 50% deposit."</span>
         </p>
 
@@ -201,8 +185,7 @@ export default function MemoryPage({ workspaceId }: { workspaceId: string }) {
           <div style={{ padding: '32px 4px' }}>
             <p style={{ fontSize: 14, color: TEXT, lineHeight: 1.6, margin: '0 0 6px', fontWeight: 600 }}>Caye is still learning this business.</p>
             <p style={{ fontSize: 13.5, color: TEXT_QUIET, lineHeight: 1.6, margin: 0 }}>
-              Teach her how things work by talking to Caye — policies, pricing, rules she should always follow.
-              Everything she learns will show up here.
+              Tell Caye about pricing, policies, and rules. What she learns will show up here.
             </p>
           </div>
         ) : (
@@ -248,7 +231,7 @@ export default function MemoryPage({ workspaceId }: { workspaceId: string }) {
 
                 {showRules && filteredRules.length > 0 && (
                   <section style={{ marginBottom: 30 }}>
-                    <SectionLabel>Standing rules — enforced, not advisory</SectionLabel>
+                    <SectionLabel>Standing rules</SectionLabel>
                     <div>
                       {filteredRules.map((r, i) => <MemoryItem key={r.id} item={ruleToItem(r)} first={i === 0} />)}
                     </div>
