@@ -138,28 +138,28 @@ function CapabilityCard({ capability }: { capability: Capability }) {
             {capability.lastVerifiedAt ? <span>last verified {new Date(capability.lastVerifiedAt).toLocaleDateString()}</span> : <span>not yet verified</span>}
           </div>
 
-          {capability.limitations.length > 0 && <div style={{ fontSize: 11, color: ROSE }}>Gaps: {capability.limitations.join('; ')}</div>}
+          {capability.limitations.length > 0 && <div style={{ fontSize: 11, color: ROSE }}>Needs work: {capability.limitations.join('; ')}</div>}
 
           {capability.relatedObjectives.length > 0 && (
             <div style={{ fontSize: 11, color: TEXT_MUTED }}>
-              <span style={{ color: TEXT_QUIET }}>Objectives · </span>{capability.relatedObjectives.map((link) => link.goal.title).join(' · ')}
+              <span style={{ color: TEXT_QUIET }}>Goals · </span>{capability.relatedObjectives.map((link) => link.goal.title).join(' · ')}
             </div>
           )}
 
           {capability.relatedInitiatives.length > 0 && (
             <div style={{ fontSize: 11, color: TEXT_MUTED }}>
-              <span style={{ color: AQUA }}>Initiatives · </span>{capability.relatedInitiatives.map((link) => link.goal.title).join(' · ')}
+              <span style={{ color: AQUA }}>Work in progress · </span>{capability.relatedInitiatives.map((link) => link.goal.title).join(' · ')}
             </div>
           )}
 
           {capability.dependencies.length > 0 && (
             <div style={{ fontSize: 11, color: TEXT_MUTED }}>
-              <span style={{ color: TEXT_QUIET }}>Depends on · </span>{capability.dependencies.map((dependency) => dependency.capability.title).join(' · ')}
+              <span style={{ color: TEXT_QUIET }}>Needs · </span>{capability.dependencies.map((dependency) => dependency.capability.title).join(' · ')}
             </div>
           )}
 
           {capability.evidence.length === 0 ? (
-            <div style={{ fontSize: 10.5, color: TEXT_QUIET, fontStyle: 'italic' }}>No capability evidence recorded. Code existence alone does not advance maturity.</div>
+            <div style={{ fontSize: 10.5, color: TEXT_QUIET, fontStyle: 'italic' }}>Not verified yet.</div>
           ) : capability.evidence.map((item) => (
             <div key={item.id} style={{ fontSize: 10.5, color: TEXT_MUTED, padding: '3px 0', display: 'grid', gridTemplateColumns: '76px 1fr', gap: 8 }}>
               <span style={{ color: item.verifies_capability ? EMERALD : TEXT_QUIET }}>{item.verifies_capability ? 'verified' : 'supporting'}</span>
@@ -180,8 +180,8 @@ function CapabilitiesSection({ capabilities }: { capabilities: Capability[] }) {
     <section style={{ marginBottom: 32 }}>
       <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12, marginBottom: 10 }}>
         <div>
-          <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.055em', color: TEXT_QUIET }}>OPERATING INTELLIGENCE CAPABILITIES</div>
-          <div style={{ fontSize: 11.5, color: TEXT_MUTED, marginTop: 4 }}>Cross-domain abilities connecting Direction objectives to real initiatives and verified evidence.</div>
+          <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.055em', color: TEXT_QUIET }}>WHAT CAYE CAN DO</div>
+          <div style={{ fontSize: 11.5, color: TEXT_MUTED, marginTop: 4 }}>What works now, what still needs work, and the evidence behind it.</div>
         </div>
         <div style={{ fontSize: 10.5, color: TEXT_QUIET, whiteSpace: 'nowrap' }}>{verified}/{capabilities.length} verified</div>
       </div>
@@ -256,16 +256,16 @@ export default function DirectionPage({ workspaceId }: { workspaceId: string }) 
       .slice(0, 8)
   }, [data])
 
-  if (loading) return <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '28px 32px 60px' }}><CayeLoadingPulse label="Loading direction…" /></div>
+  if (loading) return <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '28px 32px 60px' }}><div style={{ maxWidth: 1180, margin: '0 auto' }}><CayeLoadingPulse label="Loading direction…" /></div></div>
 
   if (!data || (!data.operatorGoals.length && !data.workspaceGoals.length)) {
-    return <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '28px 32px 60px' }}><div style={{ maxWidth: 460, margin: '60px auto', textAlign: 'center' }}><div style={{ fontSize: 15, fontWeight: 600, color: TEXT, marginBottom: 8 }}>No direction set yet</div><div style={{ fontSize: 13, color: TEXT_MUTED, marginBottom: 20, lineHeight: 1.5 }}>Caye has no durable objectives to reason against yet.</div><button type="button" onClick={handleSeed} disabled={seeding} style={{ padding: '9px 18px', borderRadius: 10, border: 0, cursor: seeding ? 'default' : 'pointer', background: 'rgba(78,190,206,0.14)', color: AQUA, font: '600 12.5px inherit', opacity: seeding ? 0.6 : 1 }}>{seeding ? 'Seeding…' : 'Seed starter direction'}</button></div></div>
+    return <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '28px 32px 60px' }}><div style={{ maxWidth: 460, margin: '60px auto', textAlign: 'center' }}><div style={{ fontSize: 15, fontWeight: 600, color: TEXT, marginBottom: 8 }}>No direction set yet</div><div style={{ fontSize: 13, color: TEXT_MUTED, marginBottom: 20, lineHeight: 1.5 }}>Caye does not have any saved goals yet.</div><button type="button" onClick={handleSeed} disabled={seeding} style={{ padding: '9px 18px', borderRadius: 10, border: 0, cursor: seeding ? 'default' : 'pointer', background: 'rgba(78,190,206,0.14)', color: AQUA, font: '600 12.5px inherit', opacity: seeding ? 0.6 : 1 }}>{seeding ? 'Seeding…' : 'Add starter goals'}</button></div></div>
   }
 
   return (
-    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '28px 32px 60px' }}>
-      <div style={{ maxWidth: 760 }}>
-        {vision && <div style={{ marginBottom: 22 }}><div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.06em', color: TEXT_QUIET, marginBottom: 6 }}>DIRECTION</div><div style={{ fontSize: 17, fontWeight: 600, color: TEXT, lineHeight: 1.35 }}>{vision.title}</div>{vision.description && <div style={{ fontSize: 12.5, color: TEXT_MUTED, marginTop: 6, lineHeight: 1.5, maxWidth: 600 }}>{vision.description}</div>}</div>}
+    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '28px 32px 110px' }}>
+      <div style={{ width: '100%', maxWidth: 1180, margin: '0 auto' }}>
+        {vision && <div style={{ marginBottom: 22 }}><div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.06em', color: TEXT_QUIET, marginBottom: 6 }}>DIRECTION</div><div style={{ fontSize: 17, fontWeight: 600, color: TEXT, lineHeight: 1.35 }}>{vision.title}</div>{vision.description && <div style={{ fontSize: 12.5, color: TEXT_MUTED, marginTop: 6, lineHeight: 1.5, maxWidth: 760 }}>{vision.description}</div>}</div>}
 
         {domains.length > 0 && <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 26 }}>{domains.map((domain) => <div key={domain.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 10px', borderRadius: 999, ...glass(0.04) }}><StatusDot status={domain.status} /><span style={{ fontSize: 11.5, fontWeight: 600, color: TEXT }}>{domain.title.toUpperCase()}</span><span style={{ fontSize: 10.5, color: TEXT_QUIET }}>({STATUS_LABEL[domain.status]})</span></div>)}</div>}
 
