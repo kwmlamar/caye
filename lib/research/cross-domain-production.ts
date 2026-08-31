@@ -317,7 +317,7 @@ export function createProductionCrossDomainStore(): CrossDomainRuntimeStore {
         provenance,
       })
       const previousFingerprint = result.item?.provenance?.synthesisFingerprint
-      const changed = previousFingerprint !== fingerprint
+      const changed = !result.deduplicated || previousFingerprint !== fingerprint
       if (changed) {
         const update = await db.from('intelligence_items').update({ provenance, updated_at: new Date().toISOString() }).eq('id', result.item.id)
         if (update.error) throw update.error
