@@ -29,6 +29,14 @@ function structuralResolution(field: DiscoveredField, profile: Awaited<ReturnTyp
   }
 }
 
+function reviewValue(resolution: Extract<FieldResolution, { status: 'resolved' }>) {
+  const option = resolution.field.allowedOptions?.find((candidate) => String(candidate.value) === String(resolution.value))
+  return {
+    displayValue: option?.label ?? resolution.value,
+    providerValue: option ? resolution.value : null,
+  }
+}
+
 export async function inspectApplicationForHumanAssist(applicationId: string) {
   const supabase = createServiceClient()
   const { data: application, error } = await supabase
@@ -136,12 +144,16 @@ export async function inspectApplicationForHumanAssist(applicationId: string) {
     provider: 'greenhouse',
     outcome: readyForBrowser ? 'ready_for_browser' : 'needs_human',
     discoveredRequiredFields: requiredFields.length,
-    finalAnswers: resolved.map((r) => ({
-      label: r.field.label,
-      semanticKey: r.field.semanticKey,
-      value: r.value,
-      source: r.source,
-    })),
+    finalAnswers: resolved.map((r) => {
+      const value = reviewValue(r)
+      return {
+        label: r.field.label,
+        semanticKey: r.field.semanticKey,
+        value: value.displayValue,
+        providerValue: value.providerValue,
+        source: r.source,
+      }
+    }),
     artifacts: {
       resumeReady: artifactTypes.has('resume'),
       coverLetterReady: artifactTypes.has('cover_letter'),
