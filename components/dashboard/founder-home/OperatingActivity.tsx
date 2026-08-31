@@ -20,12 +20,32 @@ type OperatingActivityData = {
   }
 }
 
+type SectionKey = keyof OperatingActivityData['sections']
+
+type SectionConfig = {
+  key: SectionKey
+  title: string
+  shortTitle: string
+  empty: string
+  color: string
+  future?: boolean
+}
+
 const TONE_COLOR: Record<Tone, string> = { neutral: TEXT_QUIET, good: EMERALD, warn: GOLD, attention: ROSE }
 const STATUS = {
-  working: { label: 'WORKING NOW', color: EMERALD },
-  scheduled: { label: 'SCHEDULED', color: AQUA },
-  idle: { label: 'IDLE', color: TEXT_QUIET },
+  working: { label: 'Working now', color: EMERALD },
+  scheduled: { label: 'Next work scheduled', color: AQUA },
+  idle: { label: 'Caught up', color: TEXT_QUIET },
 } as const
+
+const SECTIONS: SectionConfig[] = [
+  { key: 'researchingNow', title: 'Researching now', shortTitle: 'Researching', empty: 'Nothing is being researched right now.', color: AQUA },
+  { key: 'recentlyLearned', title: 'Recently learned', shortTitle: 'Learned', empty: 'Nothing new has been saved yet.', color: EMERALD },
+  { key: 'beliefChanges', title: 'Changed my mind', shortTitle: 'Changed', empty: 'Nothing has changed my mind yet.', color: GOLD },
+  { key: 'actionsTaken', title: 'Actions taken', shortTitle: 'Done', empty: 'No recent action has been verified.', color: EMERALD },
+  { key: 'waitingOnHuman', title: 'Needs you', shortTitle: 'Needs you', empty: 'Nothing needs your decision right now.', color: ROSE },
+  { key: 'nextScheduledWork', title: 'Up next', shortTitle: 'Up next', empty: 'No research is scheduled right now.', color: AQUA, future: true },
+]
 
 function relativeTime(value: string | null | undefined): string | null {
   if (!value) return null
@@ -42,56 +62,38 @@ function relativeTime(value: string | null | undefined): string | null {
   return delta >= 0 ? `in ${days}d` : `${days}d ago`
 }
 
-function ActivityCard({ title, items, empty, future = false }: { title: string; items: ActivityItem[]; empty: string; future?: boolean }) {
-  const [expanded, setExpanded] = useState(false)
-  const shown = expanded ? items : items.slice(0, 3)
-  const canExpand = items.length > 0 && (items.length > 3 || items.some((item) => Boolean(item.detail)))
-
+function ActivityRow({ item, color, future, onOpen }: { item: ActivityItem; color: string; future?: boolean; onOpen: () => void }) {
   return (
-    <div style={{ ...glass(0.035), borderRadius: 12, padding: '12px 13px', minHeight: 112 }}>
-      <button
-        type="button"
-        onClick={() => canExpand && setExpanded((value) => !value)}
-        aria-expanded={canExpand ? expanded : undefined}
-        style={{ width: '100%', border: 0, background: 'transparent', padding: 0, color: TEXT, textAlign: 'left', cursor: canExpand ? 'pointer' : 'default' }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 9 }}>
-          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.045em', color: TEXT_QUIET }}>{title.toUpperCase()}</div>
-          {canExpand && <span aria-hidden style={{ color: TEXT_QUIET, fontSize: 11 }}>{expanded ? '▾' : '▸'}</span>}
-        </div>
-      </button>
+    <button
+      type="button"
+      onClick={onOpen}
+      style={{ width: '100%', display: 'grid', gridTemplateColumns: '7px minmax(0, 1fr) auto', alignItems: 'start', gap: 10, border: 0, borderBottom: '1px solid rgba(255,255,255,0.055)', background: 'transparent', padding: '12px 2px', color: TEXT, textAlign: 'left', cursor: 'pointer' }}
+    >
+      <span aria-hidden style={{ width: 6, height: 6, borderRadius: '50%', marginTop: 5, background: TONE_COLOR[item.tone ?? 'neutral'] || color }} />
+      <span style={{ minWidth: 0 }}>
+        <span style={{ display: 'block', fontSize: 12, lineHeight: 1.45, color: TEXT }}>{item.label}</span>
+        {item.detail && <span style={{ display: '-webkit-box', WebkitLineClamp: 1, WebkitBoxOrient: 'vertical', overflow: 'hidden', marginTop: 3, fontSize: 10.5, lineHeight: 1.4, color: TEXT_MUTED }}>{item.detail}</span>}
+      </span>
+      <span style={{ paddingLeft: 8, whiteSpace: 'nowrap', fontSize: 9.5, color: TEXT_QUIET }}>{item.at ? `${relativeTime(item.at)}${future ? ' · scheduled' : ''}` : '›'}</span>
+    </button>
+  )
+}
 
-      {items.length === 0 ? (
-        <div style={{ fontSize: 11.5, lineHeight: 1.45, color: TEXT_QUIET }}>{empty}</div>
-      ) : (
-        <div style={{ display: 'grid', gap: 9 }}>
-          {shown.map((item, index) => (
-            <button
-              type="button"
-              key={`${item.label}-${index}`}
-              onClick={() => canExpand && setExpanded(true)}
-              style={{ minWidth: 0, width: '100%', border: 0, background: 'transparent', padding: 0, textAlign: 'left', color: TEXT, cursor: item.detail && !expanded ? 'pointer' : 'default' }}
-            >
-              <div style={{ display: 'flex', gap: 7, alignItems: 'flex-start' }}>
-                <span aria-hidden style={{ width: 6, height: 6, borderRadius: '50%', flexShrink: 0, marginTop: 5, background: TONE_COLOR[item.tone ?? 'neutral'], boxShadow: item.tone === 'good' ? `0 0 6px ${EMERALD}88` : undefined }} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 11.5, lineHeight: 1.4, color: TEXT }}>{item.label}</div>
-                  {item.detail && (
-                    <div style={expanded
-                      ? { fontSize: 10.5, lineHeight: 1.5, color: TEXT_MUTED, marginTop: 4, whiteSpace: 'pre-wrap' }
-                      : { fontSize: 10.5, lineHeight: 1.4, color: TEXT_MUTED, marginTop: 2, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
-                    >
-                      {item.detail}
-                    </div>
-                  )}
-                  {item.at && <div style={{ fontSize: 9.5, color: TEXT_QUIET, marginTop: 3 }}>{relativeTime(item.at)}{future ? ' · scheduled' : ''}</div>}
-                </div>
-              </div>
-            </button>
-          ))}
-          {canExpand && !expanded && <div style={{ fontSize: 9.5, color: TEXT_QUIET, paddingLeft: 13 }}>Click to read more</div>}
+function ActivityDetail({ section, item, onClose }: { section: SectionConfig; item: ActivityItem; onClose: () => void }) {
+  return (
+    <div role="dialog" aria-modal="true" aria-label={section.title} onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 80, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24, background: 'rgba(0,0,0,0.64)', backdropFilter: 'blur(8px)' }}>
+      <div onClick={(event) => event.stopPropagation()} style={{ ...glass(0.07), width: 'min(680px, 100%)', maxHeight: '78vh', overflowY: 'auto', borderRadius: 18, padding: '22px 24px 24px', boxShadow: '0 24px 80px rgba(0,0,0,0.45)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, marginBottom: 18 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span aria-hidden style={{ width: 7, height: 7, borderRadius: '50%', background: section.color }} />
+            <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.045em', color: TEXT_MUTED }}>{section.title.toUpperCase()}</span>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close" style={{ border: 0, background: 'transparent', color: TEXT_QUIET, cursor: 'pointer', fontSize: 20, lineHeight: 1 }}>×</button>
         </div>
-      )}
+        <div style={{ fontSize: 17, lineHeight: 1.45, fontWeight: 550, color: TEXT }}>{item.label}</div>
+        {item.detail && <div style={{ marginTop: 14, whiteSpace: 'pre-wrap', fontSize: 13, lineHeight: 1.65, color: TEXT_MUTED }}>{item.detail}</div>}
+        {item.at && <div style={{ marginTop: 18, fontSize: 10.5, color: TEXT_QUIET }}>{relativeTime(item.at)}{section.future ? ' · scheduled' : ''}</div>}
+      </div>
     </div>
   )
 }
@@ -100,6 +102,8 @@ export default function OperatingActivity({ workspaceId }: { workspaceId: string
   const [data, setData] = useState<OperatingActivityData | null>(null)
   const [failed, setFailed] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
+  const [activeSection, setActiveSection] = useState<SectionKey>('recentlyLearned')
+  const [selected, setSelected] = useState<{ section: SectionConfig; item: ActivityItem } | null>(null)
 
   const load = useCallback(async (quiet = false) => {
     if (!quiet) setRefreshing(true)
@@ -127,40 +131,88 @@ export default function OperatingActivity({ workspaceId }: { workspaceId: string
     return () => window.clearInterval(timer)
   }, [load])
 
+  useEffect(() => {
+    setSelected(null)
+  }, [workspaceId])
+
   const state = STATUS[data?.status ?? 'idle']
   const counts = useMemo(() => data ? Object.values(data.sections).reduce((sum, items) => sum + items.length, 0) : 0, [data])
+  const needsYou = data?.sections.waitingOnHuman.length ?? 0
+  const working = data?.sections.researchingNow.length ?? 0
+  const learned = data?.sections.recentlyLearned.length ?? 0
+  const activeConfig = SECTIONS.find((section) => section.key === activeSection) ?? SECTIONS[1]
+  const activeItems = data?.sections[activeConfig.key] ?? []
 
   return (
     <section style={{ marginBottom: 32 }}>
-      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12, marginBottom: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16, marginBottom: 12 }}>
         <div>
-          <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.055em', color: TEXT_QUIET }}>LIVE OPERATING ACTIVITY</div>
-          <div style={{ fontSize: 11.5, color: TEXT_MUTED, marginTop: 4 }}>What Caye is doing, learning, changing, and waiting on.</div>
+          <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.055em', color: TEXT_QUIET }}>CAYE RIGHT NOW</div>
+          <div style={{ fontSize: 11.5, color: TEXT_MUTED, marginTop: 4 }}>A quick view of what Caye is doing, learning, and waiting on.</div>
         </div>
-        <button type="button" onClick={() => load()} disabled={refreshing} style={{ border: 0, background: 'transparent', padding: 0, color: state.color, cursor: refreshing ? 'default' : 'pointer', font: '700 10.5px inherit', whiteSpace: 'nowrap', opacity: refreshing ? 0.55 : 1 }}>
+        <button type="button" onClick={() => load()} disabled={refreshing} style={{ border: 0, background: 'transparent', padding: 0, color: failed ? ROSE : state.color, cursor: refreshing ? 'default' : 'pointer', font: '600 10.5px inherit', whiteSpace: 'nowrap', opacity: refreshing ? 0.55 : 1 }}>
           <span aria-hidden style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', marginRight: 6, background: failed ? ROSE : state.color, boxShadow: data?.status === 'working' ? `0 0 7px ${EMERALD}99` : undefined }} />
-          {failed ? 'ACTIVITY UNAVAILABLE' : refreshing && !data ? 'CHECKING…' : state.label}
+          {failed ? 'Activity unavailable' : refreshing && !data ? 'Checking…' : state.label}
         </button>
       </div>
 
       {failed && !data ? (
-        <div style={{ ...glass(0.035), borderRadius: 12, padding: '13px 14px', fontSize: 11.5, color: ROSE }}>I could not load live activity. I will keep trying.</div>
+        <div style={{ ...glass(0.035), borderRadius: 14, padding: '16px 18px', fontSize: 11.5, color: ROSE }}>I could not load live activity. I will keep trying.</div>
       ) : (
-        <>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8 }}>
-            <ActivityCard title="Researching now" items={data?.sections.researchingNow ?? []} empty="Nothing is being researched right now." />
-            <ActivityCard title="Recently learned" items={data?.sections.recentlyLearned ?? []} empty="Nothing new has been saved yet." />
-            <ActivityCard title="Beliefs changed" items={data?.sections.beliefChanges ?? []} empty="Nothing has changed my mind yet." />
-            <ActivityCard title="Actions taken" items={data?.sections.actionsTaken ?? []} empty="No recent action has been verified." />
-            <ActivityCard title="Waiting on human" items={data?.sections.waitingOnHuman ?? []} empty="Nothing needs a human decision right now." />
-            <ActivityCard title="Next scheduled work" items={data?.sections.nextScheduledWork ?? []} empty="No research is scheduled right now." future />
+        <div style={{ ...glass(0.025), borderRadius: 16, overflow: 'hidden' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+            {[
+              { label: 'Working now', value: working, color: working ? EMERALD : TEXT_QUIET },
+              { label: 'Learned recently', value: learned, color: learned ? EMERALD : TEXT_QUIET },
+              { label: 'Needs you', value: needsYou, color: needsYou ? ROSE : TEXT_QUIET },
+              { label: 'Total activity', value: counts, color: AQUA },
+            ].map((stat) => (
+              <div key={stat.label} style={{ padding: '13px 15px', borderRight: '1px solid rgba(255,255,255,0.05)' }}>
+                <div style={{ fontSize: 18, fontWeight: 600, color: stat.color }}>{stat.value}</div>
+                <div style={{ marginTop: 2, fontSize: 9.5, color: TEXT_QUIET }}>{stat.label}</div>
+              </div>
+            ))}
           </div>
-          <div style={{ marginTop: 7, display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 9.5, color: TEXT_QUIET }}>
-            <span>{counts} live item{counts === 1 ? '' : 's'}</span>
-            <span>{data?.lastActivityAt ? `last activity ${relativeTime(data.lastActivityAt)}` : 'no activity yet'} · refreshes every 30s</span>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '190px minmax(0, 1fr)', minHeight: 250 }}>
+            <div style={{ padding: 8, borderRight: '1px solid rgba(255,255,255,0.06)' }}>
+              {SECTIONS.map((section) => {
+                const count = data?.sections[section.key].length ?? 0
+                const active = activeSection === section.key
+                return (
+                  <button key={section.key} type="button" onClick={() => setActiveSection(section.key)} style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, border: 0, borderRadius: 9, background: active ? 'rgba(255,255,255,0.055)' : 'transparent', padding: '9px 10px', color: active ? TEXT : TEXT_MUTED, cursor: 'pointer', textAlign: 'left' }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                      <span aria-hidden style={{ width: 6, height: 6, borderRadius: '50%', flexShrink: 0, background: count ? section.color : TEXT_QUIET }} />
+                      <span style={{ fontSize: 11.5, whiteSpace: 'nowrap' }}>{section.shortTitle}</span>
+                    </span>
+                    <span style={{ fontSize: 9.5, color: active ? section.color : TEXT_QUIET }}>{count}</span>
+                  </button>
+                )
+              })}
+            </div>
+
+            <div style={{ minWidth: 0, padding: '12px 16px 10px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 3 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: TEXT }}>{activeConfig.title}</div>
+                <div style={{ fontSize: 9.5, color: TEXT_QUIET }}>{activeItems.length} item{activeItems.length === 1 ? '' : 's'}</div>
+              </div>
+              {activeItems.length === 0 ? (
+                <div style={{ padding: '24px 2px', fontSize: 11.5, lineHeight: 1.5, color: TEXT_QUIET }}>{activeConfig.empty}</div>
+              ) : (
+                <div>
+                  {activeItems.map((item, index) => <ActivityRow key={`${item.label}-${index}`} item={item} color={activeConfig.color} future={activeConfig.future} onOpen={() => setSelected({ section: activeConfig, item })} />)}
+                </div>
+              )}
+            </div>
           </div>
-        </>
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '7px 12px', borderTop: '1px solid rgba(255,255,255,0.05)', fontSize: 9.5, color: TEXT_QUIET }}>
+            {data?.lastActivityAt ? `Last activity ${relativeTime(data.lastActivityAt)}` : 'No activity yet'} · updates every 30s
+          </div>
+        </div>
       )}
+
+      {selected && <ActivityDetail section={selected.section} item={selected.item} onClose={() => setSelected(null)} />}
     </section>
   )
 }
