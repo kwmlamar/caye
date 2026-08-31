@@ -141,7 +141,7 @@ export const researchInvestigateCapability: RegisteredCapability<FounderResearch
 
       let question = await findCurrentQuestion(db, canonicalKey)
       let reused = Boolean(question)
-      let programTitle: string
+      let programTitle = ''
 
       if (!question) {
         const program = await resolveProgram(db, args.program)
@@ -170,7 +170,7 @@ export const researchInvestigateCapability: RegisteredCapability<FounderResearch
         if (!question) throw new Error('Canonical research question could not be created.')
       }
 
-      if (!programTitle!) {
+      if (!programTitle) {
         const { data: programRow, error: programError } = await db
           .from('research_programs')
           .select('title')
