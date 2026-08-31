@@ -3,7 +3,10 @@ import {
   createAnthropicResearchProvider,
   createAnthropicResearchSynthesizer,
 } from '@/lib/research/anthropic'
+import { runNextProductionResearchDesk } from '@/lib/research/desks/production'
 import { runNextResearchJob } from '@/lib/research/worker'
+
+export const maxDuration = 300
 
 function authorized(request: NextRequest): boolean {
   const secret = process.env.CRON_SECRET
@@ -29,12 +32,17 @@ export async function GET(request: NextRequest) {
 }
 
 /**
- * Execute one queued founder/operator research run. The queue's unique active-run
- * constraint and SKIP LOCKED claim function provide concurrency safety.
+ * Give due standing-mission desks first use of the research cron. When no desk is
+ * due, preserve the existing founder/operator queued-research worker behavior.
+ * Both paths retain their own idempotent SKIP LOCKED claims.
  */
 export async function runResearchWorker(): Promise<Record<string, unknown>> {
+  const workerId = `research-worker:${process.env.VERCEL_REGION || 'unknown'}`
+  const desk = await runNextProductionResearchDesk(workerId)
+  if (desk.status !== 'idle') return { kind: 'research-desk', ...desk }
+
   const provider = createAnthropicResearchProvider()
   const synthesize = createAnthropicResearchSynthesizer()
-  const workerId = `research-worker:${process.env.VERCEL_REGION || 'unknown'}`
-  return runNextResearchJob({ workerId, provider, synthesize })
+  const job = await runNextResearchJob({ workerId, provider, synthesize })
+  return { kind: 'queued-research', ...job }
 }
