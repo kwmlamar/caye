@@ -60,10 +60,9 @@ export function createCanonicalStrategicDependencies(input: {
 
     async enqueueCanonicalAttention(attention) {
       if (!workspaceId || attention.authority.principalType !== 'business') {
-        // There is no separate founder/personal notification framework to fall
-        // back to. Personal Level-5 items remain available through Direct until
-        // a canonical personal-attention surface exists.
-        return
+        // There is no separate founder/personal proactive-notification framework
+        // to fall back to. Do not claim an interruption happened when it did not.
+        return false
       }
       const ctx: ToolContext = {
         workspaceId,
@@ -72,7 +71,7 @@ export function createCanonicalStrategicDependencies(input: {
         requestId: `strategic-intelligence:${randomUUID()}`,
         origin: 'scan',
       }
-      await routeBusinessDecision({
+      const routed = await routeBusinessDecision({
         ctx,
         domain: 'business_policy',
         risk: 'consequential',
@@ -85,6 +84,9 @@ export function createCanonicalStrategicDependencies(input: {
         },
         resumeLink: { kind: 'strategic_intelligence', fingerprint: attention.dedupeKey },
       })
+      // An attention row without successful delivery is durable pending work,
+      // not proof that the human was interrupted.
+      return routed.routed
     },
 
     async requestDeeperResearch(signal) {
