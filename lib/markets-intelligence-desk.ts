@@ -1,0 +1,66 @@
+export const MARKETS_BUSINESS_CAPITAL_DESK = {
+  key: 'markets_business_capital',
+  domain: 'markets_business_capital',
+  standingMission:
+    "Continuously understand how the economic world is changing, maintain evidence-backed theses, and identify business and market opportunities without predicting short-term prices or taking consequential financial action.",
+  standingQuestions: [
+    'Which macroeconomic developments materially change demand, costs, financing conditions, or business viability?',
+    'Which industries are gaining or losing structural demand, pricing power, supply, or capital?',
+    'Which public or private companies provide strong evidence of an important market shift?',
+    'Where are technological capabilities changing industry cost curves, market structure, or feasible business models?',
+    'Where are capital flows, startup formation, or private-market behavior revealing durable changes?',
+    'Which regulatory changes create, destroy, accelerate, or constrain economic demand?',
+    'Which input costs are falling quickly enough to enable businesses that were previously uneconomic?',
+    'Where is demand growing faster than credible supply?',
+    'Which new technical capability enables a genuinely new product or service category?',
+    'Where does a persistent market mismatch create an unusual business opportunity?',
+    'What evidence would weaken, contradict, invalidate, or supersede each active thesis?',
+    'What catalysts or review triggers should cause an active thesis to be revisited?',
+  ],
+  researchScope: {
+    geography: 'global',
+    languages: 'multilingual_when_material',
+    entities: [
+      'macroeconomies',
+      'industries',
+      'public_companies',
+      'private_markets',
+      'business_models',
+      'technologies',
+      'capital_flows',
+      'regulation',
+      'startups',
+      'market_structure',
+    ],
+  },
+  sourcePreferences: [
+    'primary_regulatory_and_government_data',
+    'company_filings_and_investor_materials',
+    'official_statistics',
+    'peer_reviewed_and_original_research',
+    'credible_industry_data',
+    'independent_reporting',
+    'community_sources_for_leads_not_final_grounding',
+  ],
+  financialBoundary: {
+    analysisAutonomy: true,
+    allowed: [
+      'research',
+      'construct_thesis',
+      'update_thesis',
+      'compare_scenarios',
+      'track_catalyst',
+      'evaluate_historical_hypothesis',
+      'paper_simulation',
+      'detect_opportunity',
+    ],
+    prohibited: [
+      'live_trade_execution',
+      'brokerage_mutation',
+      'capital_deployment',
+      'financial_commitment',
+    ],
+  },
+} as const
+
+export type MarketsBusinessCapitalDesk = typeof MARKETS_BUSINESS_CAPITAL_DESK
