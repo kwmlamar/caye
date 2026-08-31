@@ -61,12 +61,14 @@ class FakeDb {
       intelligence_items: items,
       intelligence_relations: [],
       intelligence_item_claims: [
-        { intelligence_item_id: 'item-new', claim_id: 'claim-new' },
+        { intelligence_item_id: 'item-new', claim_id: 'claim-new-a' },
+        { intelligence_item_id: 'item-new', claim_id: 'claim-new-b' },
         { intelligence_item_id: 'item-old', claim_id: 'claim-old' },
       ],
       research_claims: [
-        { id: 'claim-new', semantic_key: 'new', provenance: { canonicalUrl: 'https://independent-a.example/report' } },
-        { id: 'claim-old', semantic_key: 'old', provenance: { canonicalUrl: 'https://independent-b.example/report' } },
+        { id: 'claim-new-a', semantic_key: 'new-a', provenance: { canonicalUrl: 'https://independent-a.example/report' } },
+        { id: 'claim-new-b', semantic_key: 'new-b', provenance: { canonicalUrl: 'https://independent-b.example/report' } },
+        { id: 'claim-old', semantic_key: 'old', provenance: { canonicalUrl: 'https://prior-belief.example/report' } },
       ],
       intelligence_belief_revisions: [],
     }
@@ -116,20 +118,26 @@ function item(overrides: Partial<IntelligenceItemSnapshot>): IntelligenceItemSna
   }
 }
 
+function corroborationProposal(claimIds: string[]): RelationProposal {
+  return {
+    fromItemId: 'item-new',
+    toItemId: 'item-old',
+    relationType: 'corroborates',
+    rationale: 'Independent new reports corroborate the older belief.',
+    supportingResearchClaimIds: claimIds,
+    confidence: 0.84,
+  }
+}
+
 describe('post-ingestion formation idempotency', () => {
   it('does not append or compound the same belief revision on rerun', async () => {
     const db = new FakeDb([
       item({ id: 'item-new' }),
       item({ id: 'item-old', observed_at: '2026-08-20T18:00:00.000Z', valid_from: '2026-08-20T18:00:00.000Z', confidence: 0.55 }),
     ])
-    const proposer = vi.fn(async (): Promise<RelationProposal[]> => [{
-      fromItemId: 'item-new',
-      toItemId: 'item-old',
-      relationType: 'corroborates',
-      rationale: 'Two independent reports corroborate the older belief.',
-      supportingResearchClaimIds: ['claim-new', 'claim-old'],
-      confidence: 0.84,
-    }])
+    const proposer = vi.fn(async (): Promise<RelationProposal[]> => [
+      corroborationProposal(['claim-new-a', 'claim-new-b', 'claim-old']),
+    ])
 
     const first = await runPostIngestionIntelligenceFormation({ itemId: 'item-new', db, proposer })
     const confidenceAfterFirst = db.tables.intelligence_items.find((row) => row.id === 'item-old')!.confidence
@@ -140,5 +148,23 @@ describe('post-ingestion formation idempotency', () => {
     expect(second.revisionIds).toEqual([])
     expect(db.revisionWrites).toBe(1)
     expect(confidenceAfterSecond).toBe(confidenceAfterFirst)
+  })
+
+  it('does not count the old belief source as independent newly arrived evidence', async () => {
+    const db = new FakeDb([
+      item({ id: 'item-new' }),
+      item({ id: 'item-old', observed_at: '2026-08-20T18:00:00.000Z', valid_from: '2026-08-20T18:00:00.000Z', confidence: 0.55 }),
+    ])
+    db.tables.intelligence_item_claims = db.tables.intelligence_item_claims.filter((row) => row.claim_id !== 'claim-new-b')
+
+    const proposer = vi.fn(async (): Promise<RelationProposal[]> => [
+      corroborationProposal(['claim-new-a', 'claim-old']),
+    ])
+    const result = await runPostIngestionIntelligenceFormation({ itemId: 'item-new', db, proposer })
+
+    expect(result.relationIds).toEqual(['relation-1'])
+    expect(result.revisionIds).toEqual([])
+    expect(db.revisionWrites).toBe(0)
+    expect(db.tables.intelligence_items.find((row) => row.id === 'item-old')!.confidence).toBe(0.55)
   })
 })

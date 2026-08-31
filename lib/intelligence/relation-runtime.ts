@@ -392,6 +392,7 @@ export async function runPostIngestionIntelligenceFormation(input: {
 
   const claimIdsByItem = await loadClaimIdsForItems(db, [newItem.id, ...candidates.map((candidate) => candidate.item.id)])
   const newItemClaimIds = claimIdsByItem.get(newItem.id) ?? []
+  const newItemClaimIdSet = new Set(newItemClaimIds)
   const hydratedCandidates = candidates.map((candidate) => ({ ...candidate, claimIds: claimIdsByItem.get(candidate.item.id) ?? candidate.claimIds }))
   const allClaimIds = [...new Set([newItemClaimIds, ...hydratedCandidates.map((candidate) => candidate.claimIds)].flat())]
   const claimsById = await loadClaims(db, allClaimIds)
@@ -428,15 +429,23 @@ export async function runPostIngestionIntelligenceFormation(input: {
 
       const target = validated.toItemId === newItem.id ? newItem : candidate.item
       if (target.id !== newItem.id) {
+        // Relation grounding may legitimately use evidence already attached to the
+        // existing belief. Revision strength may not. Only independent evidence
+        // carried by the newly ingested item is allowed to move durable confidence.
+        const newEvidenceIdentities = [...new Set(
+          validated.supportingResearchClaimIds
+            .filter((claimId) => newItemClaimIdSet.has(claimId))
+            .map((claimId) => evidenceIdentity(claimsById.get(claimId)!))
+        )].sort()
         const revision = computeBeliefRevision({
           relationType: validated.relationType,
           relationConfidence: validated.confidence,
-          independentEvidence: validated.evidenceIdentityCount,
+          independentEvidence: newEvidenceIdentities.length,
           priorConfidence: target.confidence == null ? null : Number(target.confidence),
           targetMateriality: target.materiality == null ? null : Number(target.materiality),
         })
         if (revision && relation.data?.id) {
-          const key = revisionKey(relation.data.id, target.id, validated.relationType, validated.evidenceIdentities)
+          const key = revisionKey(relation.data.id, target.id, validated.relationType, newEvidenceIdentities)
           if (await hasRevisionKey(db, target.id, key)) continue
 
           const written = await db.rpc('revise_intelligence_belief_confidence', {
