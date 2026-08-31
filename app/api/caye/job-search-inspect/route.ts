@@ -43,18 +43,37 @@ export async function inspectApplicationForHumanAssist(applicationId: string) {
   let host = ''
   try { host = new URL(row.candidate.apply_url).hostname.toLowerCase() } catch { /* handled below */ }
   if (!host.includes('greenhouse')) {
-    return { applicationId, company: row.candidate.company, title: row.candidate.title, outcome: 'unsupported_provider', blockers: ['Human-assisted inspection currently supports Greenhouse only.'] }
+    return {
+      applicationId,
+      company: row.candidate.company,
+      title: row.candidate.title,
+      applicationStatus: row.status,
+      destination: row.candidate.apply_url,
+      outcome: 'unsupported_provider',
+      blockers: ['Human-assisted inspection currently supports Greenhouse only.'],
+    }
   }
 
   const discovery = await greenhouseAtsProvider.discoverFields(row.candidate.apply_url)
   if (discovery.outcome !== 'clear') {
-    return { applicationId, company: row.candidate.company, title: row.candidate.title, outcome: discovery.outcome, blockers: [discovery.reason] }
+    return {
+      applicationId,
+      company: row.candidate.company,
+      title: row.candidate.title,
+      applicationStatus: row.status,
+      destination: row.candidate.apply_url,
+      outcome: discovery.outcome,
+      blockers: [discovery.reason],
+    }
   }
 
   const profile = await getActiveProfile()
   if (!profile) throw new Error('Founder profile missing')
   const facts = await getActiveFacts(profile.id)
-  const { data: artifacts } = await supabase.from('job_search_generated_artifacts').select('artifact_type').eq('application_id', applicationId)
+  const { data: artifacts } = await supabase
+    .from('job_search_generated_artifacts')
+    .select('artifact_type')
+    .eq('application_id', applicationId)
   const artifactTypes = new Set((artifacts ?? []).map((a) => a.artifact_type as string))
 
   const requiredFields = discovery.fields.filter((field) => field.required)
@@ -98,14 +117,38 @@ export async function inspectApplicationForHumanAssist(applicationId: string) {
     updated_at: new Date().toISOString(),
   }).eq('id', applicationId)
 
+  const resolved = resolutions.filter((r): r is Extract<FieldResolution, { status: 'resolved' }> => r.status === 'resolved')
+  const unresolvedFields = unresolved
+    .map((r) => r.status === 'unresolved' ? ({
+      label: r.field.label,
+      semanticKey: r.field.semanticKey,
+      reason: r.reason,
+      options: r.field.allowedOptions?.map((o) => o.label) ?? null,
+    }) : null)
+    .filter(Boolean)
+
   return {
     applicationId,
     company: row.candidate.company,
     title: row.candidate.title,
+    applicationStatus: readyForBrowser ? 'PREPARED' : 'NEEDS_HUMAN',
+    destination: row.candidate.apply_url,
+    provider: 'greenhouse',
     outcome: readyForBrowser ? 'ready_for_browser' : 'needs_human',
     discoveredRequiredFields: requiredFields.length,
-    resolved: resolutions.filter((r) => r.status === 'resolved').map((r) => ({ label: r.field.label, semanticKey: r.field.semanticKey, source: r.status === 'resolved' ? r.source : null })),
-    unresolved: unresolved.map((r) => r.status === 'unresolved' ? ({ label: r.field.label, semanticKey: r.field.semanticKey, reason: r.reason, options: r.field.allowedOptions?.map((o) => o.label) ?? null }) : null).filter(Boolean),
+    finalAnswers: resolved.map((r) => ({
+      label: r.field.label,
+      semanticKey: r.field.semanticKey,
+      value: r.value,
+      source: r.source,
+    })),
+    artifacts: {
+      resumeReady: artifactTypes.has('resume'),
+      coverLetterReady: artifactTypes.has('cover_letter'),
+    },
+    unresolved: unresolvedFields,
+    reviewOnly: true,
+    reviewNote: 'This inspection result is for founder review only. The live executor must independently revalidate the form, answers, artifacts, authority, and destination immediately before any submit click.',
   }
 }
 
