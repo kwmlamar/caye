@@ -4,12 +4,30 @@ import { runOutreachSourcingScan } from '@/app/api/caye/outreach-sourcing-scan/r
 import { getOutreachOperationalStatus } from '@/lib/outreach-operational-status'
 import { resumeOwnerPausedOutreach } from '@/lib/outreach-pause-control'
 import type { Tool } from '../types'
+import { decisionSubjectKey, requiredAuthorityForDomain, resolveWorkspaceDecisionAuthority, routeBusinessDecision } from '@/lib/decision-authority'
 
 export const recoverOutreachOperations: Tool<Record<string, never>> = {
   name: 'recover_outreach_operations',
   description: 'Recover normal outreach operations after an owner asks why sending is paused or asks to resume toward the configured first-touch target. Inspect the live blocker first. Resume only an owner-created pause; never override a bounce safety stop, an unknown pause, a disabled workspace, the daily cap, targeting rules, suppression, or idempotency. When recovery is permitted, run the existing sourcing and autosend jobs and report their actual result in this turn.',
   risk: 'low', roles: ['owner', 'founder'], modes: ['back-office'], inputSchema: { type: 'object', properties: {} },
   async execute(_args, ctx) {
+    const authority = await resolveWorkspaceDecisionAuthority({
+      workspaceId: ctx.workspaceId,
+      actorOperatorId: ctx.operatorId,
+      requiredAuthority: requiredAuthorityForDomain('outreach_control'),
+    })
+    if (!authority.actorAuthorized) {
+      const routed = await routeBusinessDecision({
+        ctx,
+        domain: 'outreach_control',
+        risk: 'consequential',
+        subjectKey: decisionSubjectKey(['recover_outreach_operations', ctx.workspaceId]),
+        summary: 'Resume owner-paused outreach toward the configured first-touch target.',
+        resolution: authority,
+        evidence: { source: 'recover_outreach_operations', resumeTool: 'recover_outreach_operations' },
+      })
+      return routed.result
+    }
     const before = await getOutreachOperationalStatus(ctx.workspaceId)
     if (!before.enabled) return { ok: true, data: { recovered: false, blocker: 'outreach_disabled', status: before } }
     if (before.pause.disposition === 'safety_active' || before.pause.disposition === 'safety_recovery_not_supported' || before.pause.disposition === 'unknown_blocked') {

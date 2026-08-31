@@ -152,7 +152,6 @@ export async function resolveWorkspaceDecisionAuthority(input: {
     .select('delegate_operator_id,scopes,preferred,granted_by_operator_id,valid_from,expires_at,revoked_at')
     .eq('workspace_id', input.workspaceId)
     .is('revoked_at', null)
-    .lte('valid_from', now)
 
   if (delegationError) {
     return {
@@ -166,8 +165,10 @@ export async function resolveWorkspaceDecisionAuthority(input: {
   }
 
   const activeDelegations = (delegations ?? []).filter((row) => {
+    const validFrom = row.valid_from as string | null
     const expiresAt = row.expires_at as string | null
-    return !expiresAt || Date.parse(expiresAt) > Date.now()
+    const nowMs = Date.now()
+    return (!validFrom || Date.parse(validFrom) <= nowMs) && (!expiresAt || Date.parse(expiresAt) > nowMs)
   })
   const principals: DecisionPrincipal[] = (operators ?? []).map((row) => {
     const grants = activeDelegations.filter((grant) => Number(grant.delegate_operator_id) === Number(row.id))
@@ -353,7 +354,7 @@ export async function routeBusinessDecision(input: {
       deliveredTo: null,
       result: {
         ok: false,
-        status: 'RETRYABLE',
+        status: 'FAILED_RETRYABLE',
         error_code: 'DECISION_PERSIST_FAILED',
         error: `The decision belongs to ${owner.name ?? 'an authorized operator'}, but I could not persist the pending decision safely, so I did not treat anyone else as the approver.`,
       },
@@ -385,7 +386,7 @@ export async function routeBusinessDecision(input: {
       },
     })
     if (delivery.ok && (delivery.data as { sent?: unknown } | undefined)?.sent === true) {
-      await markAttentionNotified(input.workspaceId, attention.id, message).catch(() => undefined)
+      await markAttentionNotified({ workspaceId: input.ctx.workspaceId, subjectType: 'decision', subjectId: input.subjectKey, summary: message }).catch(() => undefined)
       return {
         resolution,
         attentionId: attention.id,

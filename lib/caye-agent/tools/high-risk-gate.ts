@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { createServiceClient } from '@/lib/supabase-server'
 import type { Tool, ToolContext, ToolResult } from './types'
 import { claimConversationExecution, releaseConversationExecution } from '@/lib/conversation-execution'
+import { classifyHighRiskDecision, decisionSubjectKey, requiredAuthorityForDomain, resolveWorkspaceDecisionAuthority, routeBusinessDecision, type DecisionAuthorityResolution, type DecisionDomain } from '@/lib/decision-authority'
 
 const PENDING_TTL_MINUTES = 15
 
@@ -202,14 +203,69 @@ export function gateHighRisk<T>(tool: Tool<T>, ttlMinutes: number = PENDING_TTL_
           ? existingQuery.eq('operator_id', ctx.operatorId)
           : existingQuery.is('operator_id', null)
 
-      const { data: existing } = await existingQuery
+      let { data: existing } = await existingQuery
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle()
 
       const summary = await describePendingAction(supabase, tool.name, args as Record<string, unknown>)
+      const decisionDomain: DecisionDomain | null = classifyHighRiskDecision(tool.name)
+      let decisionAuthority: DecisionAuthorityResolution | null = null
+      let approvalOperatorId = ctx.operatorId ?? null
+      if (decisionDomain) {
+        decisionAuthority = await resolveWorkspaceDecisionAuthority({
+          workspaceId: ctx.workspaceId,
+          actorOperatorId: ctx.operatorId,
+          requiredAuthority: requiredAuthorityForDomain(decisionDomain),
+        })
+        if (!decisionAuthority.actorAuthorized) {
+          approvalOperatorId = decisionAuthority.preferredDecisionOwner?.id ?? null
+          if (approvalOperatorId == null) {
+            const unresolved = await routeBusinessDecision({
+              ctx,
+              domain: decisionDomain,
+              risk: 'high',
+              subjectKey: decisionSubjectKey([tool.name, argsKey]),
+              summary,
+              resolution: decisionAuthority,
+              evidence: { source: 'high_risk_gate', toolName: tool.name, argsKey },
+            })
+            return unresolved.result
+          }
+        }
+      }
+
+      // Re-scope the existing lookup to the actual decision owner when the
+      // conversation actor is not authorized. The query was built above
+      // before authority resolution, so rebuild only that narrow case.
+      if (decisionAuthority && !decisionAuthority.actorAuthorized && approvalOperatorId != null) {
+        let ownerQuery = supabase
+          .from('caye_pending_actions')
+          .select('id, created_in_request_id, execution_claim_id')
+          .eq('workspace_id', ctx.workspaceId)
+          .eq('tool_name', tool.name)
+          .eq('args_key', argsKey)
+          .is('executed_at', null)
+          .is('cancelled_at', null)
+          .gt('expires_at', nowISO)
+          .eq('operator_id', approvalOperatorId)
+        const ownerExisting = await ownerQuery.order('created_at', { ascending: false }).limit(1).maybeSingle()
+        existing = ownerExisting.data
+      }
 
       if (existing) {
+        if (decisionDomain && decisionAuthority && !decisionAuthority.actorAuthorized) {
+          const routed = await routeBusinessDecision({
+            ctx,
+            domain: decisionDomain,
+            risk: 'high',
+            subjectKey: decisionSubjectKey([tool.name, argsKey]),
+            summary,
+            resolution: decisionAuthority,
+            evidence: { source: 'high_risk_gate', toolName: tool.name, argsKey, pendingActionId: existing.id },
+          })
+          return { ...routed.result, data: { ...(routed.result.data as Record<string, unknown> ?? {}), pending_action_id: existing.id } }
+        }
         if (existing.created_in_request_id !== ctx.requestId && ctx.origin !== 'scan') {
           // Staged in a PRIOR, separate request — a fresh inbound message
           // arrived and the model called this again with the same args.
@@ -292,8 +348,8 @@ export function gateHighRisk<T>(tool: Tool<T>, ttlMinutes: number = PENDING_TTL_
           .is('cancelled_at', null)
           .gt('expires_at', nowISO)
         staleQuery =
-          ctx.operatorId != null
-            ? staleQuery.eq('operator_id', ctx.operatorId)
+          approvalOperatorId != null
+            ? staleQuery.eq('operator_id', approvalOperatorId)
             : staleQuery.is('operator_id', null)
         const { data: candidates } = await staleQuery
         const stale = (candidates ?? []).filter(
@@ -343,7 +399,7 @@ export function gateHighRisk<T>(tool: Tool<T>, ttlMinutes: number = PENDING_TTL_
       const { error } = await supabase.from('caye_pending_actions').insert({
         id: pendingActionId,
         workspace_id: ctx.workspaceId,
-        operator_id: ctx.operatorId ?? null,
+        operator_id: approvalOperatorId,
         tool_name: tool.name,
         args,
         args_key: argsKey,
@@ -355,6 +411,19 @@ export function gateHighRisk<T>(tool: Tool<T>, ttlMinutes: number = PENDING_TTL_
       if (error) {
         if (executionClaimId) await releaseConversationExecution(executionClaimId).catch(() => undefined)
         return { ok: false, error: `Could not stage this action: ${error.message}` }
+      }
+
+      if (decisionDomain && decisionAuthority && !decisionAuthority.actorAuthorized) {
+        const routed = await routeBusinessDecision({
+          ctx,
+          domain: decisionDomain,
+          risk: 'high',
+          subjectKey: decisionSubjectKey([tool.name, argsKey]),
+          summary,
+          resolution: decisionAuthority,
+          evidence: { source: 'high_risk_gate', toolName: tool.name, argsKey, pendingActionId },
+        })
+        return { ...routed.result, data: { ...(routed.result.data as Record<string, unknown> ?? {}), pending_action_id: pendingActionId, summary } }
       }
 
       return {

@@ -113,7 +113,7 @@ function autonomyBlock(mode: ToolMode, speaker: string, callerRole: Role): strin
     `  Stage the action, then present it with a recommendation and ONE question: "Drafted the reply to Ruslan — takes the call, offers Thursday or Friday. Send it?" Never an open menu of options, never two questions at once, never "what would you like to do?".`,
     `  When you're withholding something on ${speaker}'s behalf, say so plainly and give them a number to approve: "She's asking for 20% off. I haven't agreed to anything. I'd offer 10% — say go and I'll handle it."`,
     '',
-    `- ESCALATE only when the decision commits money ${speaker} hasn't pre-authorised, sets a precedent (pricing, policy, a discount), is irreversible and consequential, needs something only ${speaker} knows, or one of their standing rules says to. Everything else you handle and mention in passing.`,
+    `- ESCALATE only when the decision commits money not already authorised, sets a precedent (pricing, policy, a discount), is irreversible and consequential, needs knowledge only an authorized decision owner has, or a standing rule requires it. Conversation initiator is not authority. Use request_business_decision when a decision is needed; if a gated tool says it routed the decision, tell the current speaker who owns it and what Caye is doing, then stop asking them for approval.`,
     `- An escalation isn't finished until ${speaker} can decide from your message alone. If they have to open the thread to answer you, you haven't handed it off — you've forwarded it.`,
   ]
 }
@@ -215,7 +215,7 @@ export function buildBackOfficeSystemPrompt(args: {
   }
   if (callerIsFounder) {
     lines.push(
-      `- ${speaker} has full operator powers on this workspace via founder role — same tool access as ${operator} — but treat them as a distinct person.`
+      `- ${speaker} has platform-side support and observability tool access, but that does NOT make them the business decision owner. For pricing, payment policy, booking/capacity exceptions, outreach policy, customer commitments, or other consequential business decisions, use the canonical decision-routing tools/gates. If authority data says ${operator} or a delegate owns the decision, route it there and tell ${speaker} who owns it; never ask ${speaker} to approve merely because they opened this conversation.`
     )
   }
   if (callerRole === 'staff') {

@@ -60,7 +60,7 @@ export const recordBusinessDecision: Tool<Input> = {
       requiredAuthority,
     })
     if (!authority.actorAuthorized || !authority.actor) {
-      return { ok: false, status: 'FORBIDDEN', error: 'This operator does not currently hold the authority required for that decision. Nothing was resumed or executed.' }
+      return { ok: false, status: 'NEEDS_HUMAN', error: 'This operator does not currently hold the authority required for that decision. Nothing was resumed or executed.' }
     }
 
     const now = new Date().toISOString()

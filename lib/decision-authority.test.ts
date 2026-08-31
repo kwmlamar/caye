@@ -32,6 +32,7 @@ describe('resolveDecisionAuthorityFromPrincipals', () => {
       principals: [
         principal({ id: 1, role: 'owner', name: 'Verified owner', directScopes: ['business.*'] }),
         principal({ id: 13, role: 'founder', name: 'Platform founder', directScopes: [] }),
+        principal({ id: 22, role: 'owner', name: 'Unverified purported owner', verifiedAt: null, directScopes: ['business.*'] }),
       ],
     })
     expect(result.actorAuthorized).toBe(false)
