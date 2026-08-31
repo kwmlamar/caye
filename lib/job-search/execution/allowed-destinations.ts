@@ -13,7 +13,13 @@
  */
 
 export const ALLOWED_ATS_HOSTS: Record<string, readonly string[]> = {
-  greenhouse: ['boards.greenhouse.io', 'job-boards.greenhouse.io', 'job-boards.eu.greenhouse.io', 'boards-api.greenhouse.io'],
+  greenhouse: [
+    'boards.greenhouse.io',
+    'job-boards.greenhouse.io',
+    'job-boards.eu.greenhouse.io',
+    'boards-api.greenhouse.io',
+    'boards-api.eu.greenhouse.io',
+  ],
 }
 
 export function isAllowedAtsHost(provider: string, hostname: string): boolean {
