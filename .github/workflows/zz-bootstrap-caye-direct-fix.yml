@@ -1,0 +1,38 @@
+name: Bootstrap Caye Direct fix
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/caye-direct-tool-routing-activity
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Run patch embedded in feature branch
+        shell: bash
+        run: |
+          sed -n "/python3 <<'PY'/,/^          PY$/p" .github/workflows/zz-caye-direct-tool-routing-activity.yml \
+            | sed '1d;$d;s/^          //' > /tmp/caye-direct-patch.py
+          python3 /tmp/caye-direct-patch.py
+      - run: npm ci
+      - run: npx vitest run lib/model-router/tool-bridge/founder-tool-selector.test.ts
+      - run: npm run build
+      - name: Commit and push feature branch
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Fix Founder Direct tool routing and live activity status"
+          git push origin HEAD:fix/caye-direct-tool-routing-activity
