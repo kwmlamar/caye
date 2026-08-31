@@ -1,7 +1,10 @@
-'use client'
+import { redirect } from 'next/navigation'
 
-import MobileApp from '@/components/mobile/MobileApp'
-
-export default function MobilePage() {
-  return <MobileApp />
+export default async function MobilePage({
+  params,
+}: {
+  params: Promise<{ workspaceId: string }>
+}) {
+  const { workspaceId } = await params
+  redirect(`/dashboard/${workspaceId}`)
 }

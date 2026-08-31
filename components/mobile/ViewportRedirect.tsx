@@ -1,40 +1,17 @@
 'use client'
 
-import { useEffect } from 'react'
-import { useRouter } from 'next/navigation'
-
-const MOBILE_QUERY = '(max-width: 767px)'
-
 /**
- * Bidirectional viewport router.
+ * Legacy compatibility shim.
  *
- * - mode="toMobile"  — mounted on the desktop dashboard. If the viewport is
- *   phone-sized, sends the user to the mobile app.
- * - mode="toDesktop" — mounted on the mobile app. If the viewport is wide,
- *   sends the user back to the desktop dashboard.
- *
- * Runs once on mount only — it never yanks the user mid-session on resize.
- * Renders nothing.
+ * Caye used to maintain a separate `/m/:workspaceId` dashboard and this
+ * component automatically pushed phone-sized browsers into it. The current
+ * dashboard is the canonical UI on every viewport, so automatic viewport
+ * routing is intentionally retired. Keep the component as a no-op until all
+ * historical imports disappear naturally.
  */
-export default function ViewportRedirect({
-  mode,
-  workspaceId,
-}: {
+export default function ViewportRedirect(_props: {
   mode: 'toMobile' | 'toDesktop'
   workspaceId: string
 }) {
-  const router = useRouter()
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return
-    const isMobile = window.matchMedia(MOBILE_QUERY).matches
-
-    if (mode === 'toMobile' && isMobile) {
-      router.replace(`/m/${workspaceId}`)
-    } else if (mode === 'toDesktop' && !isMobile) {
-      router.replace(`/dashboard/${workspaceId}`)
-    }
-  }, [mode, workspaceId, router])
-
   return null
 }
