@@ -63,8 +63,17 @@ async function revalidateRolloutOrStop(): Promise<{ ok: true; dryRun: boolean } 
   if (rollout.emergencyPaused) {
     return { ok: false, reason: 'Execution was emergency-paused after this attempt started — stopping before any submission.' }
   }
-  if (!rollout.automationEnabled) {
-    return { ok: false, reason: 'Application automation was disabled after this attempt started — stopping before any submission.' }
+  // Mirrors the preflight execution-mode gate: dry-run and live submission
+  // are separate authorities, so the live-action switch alone no longer stops
+  // a structurally non-submitting readiness pass. Execution stops only when
+  // NEITHER mode is open.
+  //
+  // This cannot widen submission authority. The caller below takes dry-run as
+  // `revalidated.dryRun || context.dryRun`, so a re-read that turns dry-run
+  // OFF can never promote an attempt that started as a dry-run into a live
+  // one — the only permitted movement is toward dry-run, never away from it.
+  if (!rollout.dryRun && !rollout.automationEnabled) {
+    return { ok: false, reason: 'Readiness dry-run and live application automation are both disabled — stopping before any submission.' }
   }
   return { ok: true, dryRun: rollout.dryRun }
 }

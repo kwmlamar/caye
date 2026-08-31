@@ -130,8 +130,33 @@ export async function runPreflight(applicationId: string): Promise<PreflightResu
   checks.push(check('execution_not_emergency_paused', !rollout.emergencyPaused, rollout.emergencyPaused ? 'Execution is emergency-paused.' : 'Execution is not emergency-paused.'))
   if (rollout.emergencyPaused) return { outcome: 'blocked', checks, reason: checks[checks.length - 1].detail }
 
-  checks.push(check('automation_enabled', rollout.automationEnabled, rollout.automationEnabled ? 'Automation is enabled.' : 'Automation is disabled by default — no execution runs until a founder explicitly enables it.'))
-  if (!rollout.automationEnabled) return { outcome: 'blocked', checks, reason: checks[checks.length - 1].detail }
+  // Readiness dry-run and live submission are SEPARATE authorities, and this
+  // check reports which one (if either) is open.
+  //
+  // `automation_enabled` governs the consequential act of submitting a real
+  // application. It is not a master switch for this module: a dry-run is
+  // structurally non-submitting (executor.ts returns before provider.submit(),
+  // and the browser readiness module has no submit selector), so gating it on
+  // the live-action switch forced a founder to arm real submission just to
+  // test the safe path. Dry-run therefore stands on its own authority here.
+  //
+  // What this does NOT do is let a dry-run inherit submission permission: the
+  // reverse implication (automation_enabled ⇒ may submit) is unchanged, and
+  // is enforced separately in executor.ts, which only reaches the live branch
+  // when dry-run is off at BOTH preflight and post-claim revalidation.
+  const executionModeAllowed = rollout.dryRun || rollout.automationEnabled
+  checks.push(
+    check(
+      'execution_mode_allowed',
+      executionModeAllowed,
+      rollout.dryRun
+        ? 'Readiness dry-run is permitted. Live submission automation is not required for, and is not granted by, this mode.'
+        : rollout.automationEnabled
+          ? 'Live submission automation is enabled.'
+          : 'Readiness dry-run and live submission automation are both disabled — no execution mode is open.',
+    ),
+  )
+  if (!executionModeAllowed) return { outcome: 'blocked', checks, reason: checks[checks.length - 1].detail }
 
   const providerAllowlisted = rollout.allowlistedProviders.includes(provider)
   checks.push(check('provider_allowlisted', providerAllowlisted, providerAllowlisted ? `Provider "${provider}" is allowlisted for rollout.` : `Provider "${provider}" is not in the rollout allowlist.`))
@@ -149,10 +174,19 @@ export async function runPreflight(applicationId: string): Promise<PreflightResu
     if (!domainAllowed) return { outcome: 'blocked', checks, reason: checks[checks.length - 1].detail }
   }
 
-  // 10 — daily cap remains.
-  const remaining = await getRemainingDailySubmissionCapacity()
-  checks.push(check('daily_cap_remaining', remaining > 0, remaining > 0 ? `${remaining} submission(s) remain under today's cap.` : 'Daily submission cap already reached.'))
-  if (remaining <= 0) return { outcome: 'blocked', checks, reason: checks[checks.length - 1].detail }
+  // 10 — daily cap remains. The cap bounds REAL submissions, so a dry-run
+  // neither requires nor consumes capacity: a readiness pass sends nothing to
+  // an employer, and blocking it at cap=0 would make the safe path
+  // untestable exactly when the founder most wants to check it. The live
+  // path's own atomic reservation in executor.ts is unchanged and remains the
+  // authoritative enforcement point; this read stays a fail-fast courtesy.
+  if (rollout.dryRun) {
+    checks.push(check('daily_cap_remaining', true, 'Readiness dry-run neither requires nor consumes daily submission capacity.'))
+  } else {
+    const remaining = await getRemainingDailySubmissionCapacity()
+    checks.push(check('daily_cap_remaining', remaining > 0, remaining > 0 ? `${remaining} submission(s) remain under today's cap.` : 'Daily submission cap already reached.'))
+    if (remaining <= 0) return { outcome: 'blocked', checks, reason: checks[checks.length - 1].detail }
+  }
 
   // 6 & 7 — founder profile and resume variant verified.
   const { data: profile } = await supabase.from('job_search_profiles').select('status, contact_email').order('created_at', { ascending: true }).limit(1).maybeSingle()
