@@ -107,6 +107,22 @@ begin
     raise exception 'relation evidence contains an unknown research claim';
   end if;
 
+  -- A relation cannot borrow an arbitrary valid claim merely because that claim
+  -- exists. At least one endpoint must already be grounded by every supplied
+  -- claim through the canonical intelligence_item_claims evidence graph.
+  if exists (
+    select 1
+    from unnest(p_evidence_claim_ids) as evidence(claim_id)
+    where not exists (
+      select 1
+      from public.intelligence_item_claims item_claim
+      where item_claim.claim_id = evidence.claim_id
+        and item_claim.intelligence_item_id in (p_from_item_id, p_to_item_id)
+    )
+  ) then
+    raise exception 'relation evidence must already ground at least one endpoint';
+  end if;
+
   insert into public.intelligence_relations (
     from_item_id, to_item_id, relation_type, status, confidence, provenance
   ) values (
