@@ -23,6 +23,7 @@ beforeEach(() => {
 describe('strategic research snapshot', () => {
   it('suppresses stale weekly intelligence instead of re-announcing it', async () => {
     mocks.getLatestBriefs.mockResolvedValue([{
+      revision: 1,
       created_at: '2026-08-01T00:00:00.000Z',
       material_changes: ['Old change'],
       recommendations: ['Old recommendation'],
@@ -37,6 +38,7 @@ describe('strategic research snapshot', () => {
 
   it('surfaces material changes, conflicts, recommendations, and unresolved questions', async () => {
     mocks.getLatestBriefs.mockResolvedValue([{
+      revision: 2,
       created_at: '2026-08-30T00:00:00.000Z',
       material_changes: ['Inference costs fell materially'],
       recommendations: ['Benchmark the new routing option'],
@@ -72,12 +74,28 @@ describe('strategic research snapshot', () => {
     expect(snapshot.changedMindRecently[0]).toContain('Evidence is contesting')
   })
 
-  it('deduplicates unchanged recommendations within the weekly projection', async () => {
-    mocks.getLatestBriefs.mockResolvedValue([
-      { created_at: '2026-08-30T00:00:00.000Z', material_changes: [], recommendations: ['Run the benchmark'], implications: [], conflicting_evidence: [], unknowns: [], current_understanding: '' },
-      { created_at: '2026-08-29T00:00:00.000Z', material_changes: [], recommendations: ['run the benchmark'], implications: [], conflicting_evidence: [], unknowns: [], current_understanding: '' },
-    ])
+  it('suppresses repeated unchanged recommendations on later revisions', async () => {
+    mocks.getLatestBriefs.mockResolvedValue([{
+      revision: 3,
+      created_at: '2026-08-30T00:00:00.000Z',
+      material_changes: [],
+      recommendations: ['Run the benchmark'],
+      implications: [], conflicting_evidence: [], unknowns: [], current_understanding: 'No material change.',
+    }])
     const snapshot = await buildStrategicResearchSnapshot(NOW)
-    expect(snapshot.recommendedNextActions).toHaveLength(1)
+    expect(snapshot.recommendedNextActions).toEqual([])
+    expect(snapshot.whatYouShouldKnow).toEqual([])
+  })
+
+  it('allows first-revision recommendations to establish the baseline', async () => {
+    mocks.getLatestBriefs.mockResolvedValue([{
+      revision: 1,
+      created_at: '2026-08-30T00:00:00.000Z',
+      material_changes: [],
+      recommendations: ['Run the benchmark'],
+      implications: [], conflicting_evidence: [], unknowns: [], current_understanding: 'Initial evidence-backed baseline.',
+    }])
+    const snapshot = await buildStrategicResearchSnapshot(NOW)
+    expect(snapshot.recommendedNextActions).toEqual(['Run the benchmark'])
   })
 })
