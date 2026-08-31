@@ -93,7 +93,7 @@ export async function runNextResearchJob(
       synthesize: input.synthesize,
     })
 
-    return { ...result, runId: run.id }
+    return { ...result, runId: run.id, questionId: question.id }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
 
@@ -101,6 +101,6 @@ export async function runNextResearchJob(
     // for failures that happen after claim but before execution begins. The
     // status predicate makes it harmless once executeResearchRun changed state.
     await dependencies.failRun(run.id, message, input.provider.name)
-    return { status: 'failed' as const, runId: run.id, error: message }
+    return { status: 'failed' as const, runId: run.id, questionId: run.question_id, error: message }
   }
 }
