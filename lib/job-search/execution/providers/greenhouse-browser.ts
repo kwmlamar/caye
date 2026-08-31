@@ -1,6 +1,7 @@
 /** Greenhouse applicant-page browser adapter. Never accepts a caller URL. */
 import 'server-only'
 import crypto from 'node:crypto'
+import type { Locator, Page } from 'playwright-core'
 import { isAllowedAtsHost } from '../allowed-destinations'
 import { validateDestination } from '../ssrf-guard'
 import type { DiscoveredField, SubmissionRequest } from '../types'
@@ -23,6 +24,52 @@ function allowedPublicSubresource(url: string): boolean {
 
 function cssAttributeValue(value: string): string {
   return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+}
+
+function regexValue(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/**
+ * Greenhouse's public questions API exposes a field `name`, but the hosted
+ * applicant page does not promise to reuse that value as the DOM control's
+ * `name` attribute. Prefer that strongest provider identifier when present,
+ * then fall back to browser-native label association. `getByLabel` resolves
+ * both explicit label[for]/id pairs and nested labels, which matches the
+ * semantics the applicant sees without guessing from nearby text.
+ *
+ * Every strategy must resolve to exactly one control. We never take `.first()`
+ * before counting because doing so would hide an ambiguous match.
+ */
+async function resolveSingleControl(page: Page, field: DiscoveredField): Promise<{ control: Locator } | { reason: string }> {
+  const strategies: { description: string; locator: Locator }[] = [
+    {
+      description: 'provider field name',
+      locator: page.locator(`[name="${cssAttributeValue(field.providerFieldId)}"]`),
+    },
+    {
+      description: 'provider field id',
+      locator: page.locator(`[id="${cssAttributeValue(field.providerFieldId)}"]`),
+    },
+    {
+      description: 'accessible label',
+      // Greenhouse visually marks required fields with `*`; allow only that
+      // decoration and surrounding whitespace around the discovered label.
+      locator: page.getByLabel(new RegExp(`^\\s*${regexValue(field.label.trim())}\\s*\\*?\\s*$`, 'i')),
+    },
+  ]
+
+  const ambiguous: string[] = []
+  for (const strategy of strategies) {
+    const count = await strategy.locator.count()
+    if (count === 1) return { control: strategy.locator }
+    if (count > 1) ambiguous.push(`${strategy.description} matched ${count} controls`)
+  }
+
+  if (ambiguous.length > 0) {
+    return { reason: `Greenhouse exposed ambiguous controls for required field "${field.label}" (${ambiguous.join('; ')}).` }
+  }
+  return { reason: `Greenhouse did not expose a control for required field "${field.label}" by provider identifier or accessible label.` }
 }
 
 function makeResumePdf(text: string): Buffer {
@@ -92,9 +139,9 @@ export async function runGreenhouseBrowserReadiness(request: SubmissionRequest, 
     let actions = 0
     for (const answer of request.answers) {
       if (answer.status !== 'resolved') continue
-      const selector = `[name="${cssAttributeValue(answer.field.providerFieldId)}"]`
-      const control = page.locator(selector).first()
-      if ((await control.count()) !== 1) return { outcome: 'needs_human', reason: `Greenhouse form did not expose exactly one control for required field "${answer.field.label}".` }
+      const resolution = await resolveSingleControl(page, answer.field)
+      if ('reason' in resolution) return { outcome: 'needs_human', reason: resolution.reason }
+      const control = resolution.control
       if (++actions > MAX_ACTIONS) return { outcome: 'needs_human', reason: 'Browser action limit reached before submission.' }
       if (answer.field.inputType === 'select') await control.selectOption(answer.value)
       else await control.fill(answer.value)
