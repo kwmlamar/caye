@@ -62,6 +62,24 @@ function makeFakeSupabase() {
     rpc: claimSim.rpc,
     __rows: rows,
     from(_table: string) {
+      if (_table === 'operator_allowlist') {
+        let workspaceId = 'ws-default'
+        const builder = {
+          select() { return builder },
+          eq(col: string, val: unknown) { if (col === 'workspace_id') workspaceId = String(val); return builder },
+          then(resolve: (v: { data: Row[]; error: null }) => void) {
+            resolve({ data: [{ id: 1, workspace_id: workspaceId, name: 'Authorized owner', role: 'owner', verified_at: '2026-08-30T00:00:00.000Z', decision_scopes: ['business.*', 'routing.*'] }], error: null })
+          },
+        }
+        return builder
+      }
+      if (_table === 'operator_authority_delegations') {
+        const builder = {
+          select() { return builder }, eq() { return builder }, is() { return builder },
+          then(resolve: (v: { data: Row[]; error: null }) => void) { resolve({ data: [], error: null }) },
+        }
+        return builder
+      }
       return {
         select(_cols: string) {
           const filters: Array<(row: Row) => boolean> = []

@@ -4,6 +4,7 @@ import type { Tool, ToolContext, ToolResult } from '../types'
 import { findHighRiskTool } from '../high-risk-registry'
 import { verifyExternalDraftIntent } from '../external-draft-intent'
 import { assertConversationOwnedByWorkspace } from '../write-low/_guards'
+import { classifyHighRiskDecision, decisionSubjectKey, requiredAuthorityForDomain, resolveWorkspaceDecisionAuthority, routeBusinessDecision } from '@/lib/decision-authority'
 
 interface ConfirmPendingActionInput {
   pending_action_id: string
@@ -135,6 +136,36 @@ If the operator asked for changes, stage the corrected action first and confirm 
       return {
         ok: false,
         error: `Tool '${tool.name}' is not available to role '${ctx.callerRole}'. Permitted roles: ${tool.roles.join(', ')}.`,
+      }
+    }
+
+    const decisionDomain = classifyHighRiskDecision(row.tool_name as string)
+    if (decisionDomain) {
+      const authority = await resolveWorkspaceDecisionAuthority({
+        workspaceId: ctx.workspaceId,
+        actorOperatorId: ctx.operatorId,
+        requiredAuthority: requiredAuthorityForDomain(decisionDomain),
+      })
+      if (!authority.actorAuthorized) {
+        if (authority.preferredDecisionOwner) {
+          await supabase
+            .from('caye_pending_actions')
+            .update({ operator_id: authority.preferredDecisionOwner.id })
+            .eq('id', row.id)
+            .eq('workspace_id', ctx.workspaceId)
+            .is('executed_at', null)
+            .is('cancelled_at', null)
+        }
+        const routed = await routeBusinessDecision({
+          ctx,
+          domain: decisionDomain,
+          risk: 'high',
+          subjectKey: decisionSubjectKey(['legacy-pending-action', row.id]),
+          summary: row.summary as string,
+          resolution: authority,
+          evidence: { source: 'confirm_pending_action', pendingActionId: row.id, toolName: row.tool_name },
+        })
+        return routed.result
       }
     }
 

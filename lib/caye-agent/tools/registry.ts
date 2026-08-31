@@ -27,6 +27,7 @@ import { getTeamMembers } from './read/get-team-members'
 import { getChannelStatus } from './read/get-channel-status'
 import { getOutreachStatus } from './read/get-outreach-operational-status'
 import { getOutreachTargeting } from './read/get-outreach-targeting'
+import { getPendingBusinessDecisions } from './read/get-pending-business-decisions'
 import { getArtifact } from './read/get-artifact'
 import { searchArtifacts } from './read/search-artifacts'
 import { cayeCapabilitiesTool } from './read/caye-capabilities'
@@ -57,6 +58,8 @@ import { addTeamMember } from './write-low/add-team-member'
 import { createOutreachLeads } from './write-low/create-outreach-leads'
 import { runOutreach } from './write-low/run-outreach'
 import { recoverOutreachOperations } from './write-low/recover-outreach-operations'
+import { requestBusinessDecision } from './write-low/request-business-decision'
+import { recordBusinessDecision } from './write-low/record-business-decision'
 import { updateTeamMemberPermissions } from './write-low/update-team-member-permissions'
 import { updateTeamMemberName } from './write-low/update-team-member-name'
 import { switchWorkspace } from './write-low/switch-workspace'
@@ -184,6 +187,7 @@ export const TOOL_REGISTRY: AnyTool[] = [
   getChannelStatus as AnyTool,
   getOutreachStatus as AnyTool,
   getOutreachTargeting as AnyTool,
+  getPendingBusinessDecisions as AnyTool,
   getArtifact as AnyTool,
   searchArtifacts as AnyTool,
   cayeCapabilitiesTool as AnyTool,
@@ -227,6 +231,8 @@ export const TOOL_REGISTRY: AnyTool[] = [
   createOutreachLeads as AnyTool,
   runOutreach as AnyTool,
   recoverOutreachOperations as AnyTool,
+  requestBusinessDecision as AnyTool,
+  recordBusinessDecision as AnyTool,
   relateToDirectThread as AnyTool,
   annotateArtifactTool as AnyTool,
   retrieveArtifactForOperator as AnyTool,
