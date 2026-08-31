@@ -95,6 +95,7 @@ export function createSupabaseResearchDeskStore(): ResearchDeskStore {
         summary: cycle.summary,
         fingerprint: cycle.fingerprint ?? null,
         budget_usage: cycle.usage,
+        next_scheduled_investigation: cycle.nextScheduledInvestigation,
         checkpoint: {
           results: cycle.investigatedQuestions.map((question) => ({ question: { question } })),
           errors: cycle.errors,
