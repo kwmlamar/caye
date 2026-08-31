@@ -5,6 +5,7 @@ on:
     paths:
       - 'lib/coding-session/**'
       - 'supabase/migrations/*engineering_copilot_closed_loop.sql'
+      - 'supabase/migrations/*coding_session_learning_audit.sql'
       - '.github/workflows/engineering-copilot-closed-loop.yml'
 
 permissions:
