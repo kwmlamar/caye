@@ -12,6 +12,8 @@ replaceOne('lib/caye-agent/tools/high-risk-gate.ts', "      const { data: existi
 replaceOne('lib/caye-agent/tools/high-risk-gate.ts', "        existing = ownerExisting", "        existing = ownerExisting.data")
 replaceOne('lib/decision-authority.ts', ".eq('workspace_id', input.workspaceId)\n    .is('revoked_at', null)\n    .lte('valid_from', now)", ".eq('workspace_id', input.workspaceId)\n    .is('revoked_at', null)")
 replaceOne('lib/decision-authority.ts', "  const activeDelegations = (delegations ?? []).filter((row) => {\n    const expiresAt = row.expires_at as string | null\n    return !expiresAt || Date.parse(expiresAt) > Date.now()\n  })", "  const activeDelegations = (delegations ?? []).filter((row) => {\n    const validFrom = row.valid_from as string | null\n    const expiresAt = row.expires_at as string | null\n    const nowMs = Date.now()\n    return (!validFrom || Date.parse(validFrom) <= nowMs) && (!expiresAt || Date.parse(expiresAt) > nowMs)\n  })")
+replaceOne('lib/decision-authority.ts', "status: 'RETRYABLE'", "status: 'FAILED_RETRYABLE'")
+replaceOne('lib/caye-agent/tools/write-low/record-business-decision.ts', "status: 'FORBIDDEN'", "status: 'NEEDS_HUMAN'")
 
 replaceOne(
   'lib/caye-agent/tools/high-risk-gate.test.ts',
