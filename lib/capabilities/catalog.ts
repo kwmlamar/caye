@@ -14,6 +14,7 @@ import { researchBriefCapability } from './research-brief'
 import { researchClaimsCapability } from './research-claims'
 import { researchStartCapability } from './research-start'
 import { researchStatusCapability } from './research-status'
+import { researchStrategicCapability } from './research-strategic'
 import { createCapabilityRegistry } from './registry'
 
 /**
@@ -41,6 +42,7 @@ export const cayeCapabilityRegistry = createCapabilityRegistry([
   researchStatusCapability,
   researchClaimsCapability,
   researchBriefCapability,
+  researchStrategicCapability,
   researchStartCapability,
   // CAY-28 — founder-only physical property intelligence. property.list is
   // discovery (fresh-session safe); property.snapshot resolves workspace
