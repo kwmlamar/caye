@@ -17,7 +17,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - name: Run patch embedded in feature branch
         shell: bash
@@ -25,6 +25,7 @@ jobs:
           sed -n "/python3 <<'PY'/,/^          PY$/p" .github/workflows/zz-caye-direct-tool-routing-activity.yml \
             | sed '1d;$d;s/^          //' > /tmp/caye-direct-patch.py
           python3 /tmp/caye-direct-patch.py
+          sed -i 's/const { isFounder } = useWorkspace()/const { isFounder, workspaceId } = useWorkspace()/' 'app/dashboard/[workspaceId]/page.tsx'
       - run: npm ci
       - run: npx vitest run lib/model-router/tool-bridge/founder-tool-selector.test.ts
       - run: npm run build
