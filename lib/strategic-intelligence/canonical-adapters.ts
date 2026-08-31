@@ -7,6 +7,7 @@ import {
   routeBusinessDecision,
 } from '@/lib/decision-authority'
 import { queueResearchRun } from '@/lib/research/runtime'
+import { createServiceClient } from '@/lib/supabase-server'
 import type { ToolContext } from '@/lib/caye-agent/tools/types'
 import type { StrategicDependencies } from './service'
 import type { StrategicAuthority } from './types'
@@ -64,6 +65,24 @@ export function createCanonicalStrategicDependencies(input: {
         // to fall back to. Do not claim an interruption happened when it did not.
         return false
       }
+
+      // Durable anti-spam is grounded in the existing attention ledger, not in
+      // process memory. A strategic fingerprint that was already told, resolved,
+      // dismissed, or is currently in flight has not re-earned interruption.
+      const { data: existing } = await createServiceClient()
+        .from('caye_owner_attention')
+        .select('status,state_fingerprint,notified_fingerprint,pending_notification_queue_id')
+        .eq('workspace_id', workspaceId)
+        .eq('subject_type', 'decision')
+        .eq('subject_id', attention.dedupeKey)
+        .maybeSingle()
+
+      if (existing) {
+        if (existing.status === 'resolved' || existing.status === 'dismissed') return false
+        if (existing.pending_notification_queue_id) return false
+        if (existing.state_fingerprint && existing.state_fingerprint === existing.notified_fingerprint) return false
+      }
+
       const ctx: ToolContext = {
         workspaceId,
         callerRole: 'founder',
