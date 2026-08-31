@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { runCrossDomainSynthesisIfDue } from '@/lib/research/cross-domain-production'
 import { runNextProductionResearchDesk } from '@/lib/research/desks/production'
+import {
+  advanceResearchInvestigationLifecycle,
+  queueDueResearchInvestigations,
+  recordResearchInvestigationFailure,
+} from '@/lib/research/investigation-lifecycle'
 import { createResearchProviderSession } from '@/lib/research/providers/router'
 import { recordResearchRoutingProvenance } from '@/lib/research/providers/provenance'
 import { runNextResearchJob } from '@/lib/research/worker'
@@ -31,10 +36,9 @@ export async function GET(request: NextRequest) {
 }
 
 /**
- * Cross-domain synthesis is checked first because a material belief revision
- * should be reassessed on the next 15-minute worker tick rather than waiting for
- * a standing desk slot. When synthesis is not due, preserve the existing desk
- * and founder/operator queued-research ordering.
+ * One existing worker now carries the complete autonomous research loop:
+ * cross-domain reassessment, standing desks, due durable investigations, then
+ * the canonical queued-run executor. No second cron or shadow research queue.
  */
 export async function runResearchWorker(): Promise<Record<string, unknown>> {
   const crossDomain = await runCrossDomainSynthesisIfDue()
@@ -43,6 +47,10 @@ export async function runResearchWorker(): Promise<Record<string, unknown>> {
   const workerId = `research-worker:${process.env.VERCEL_REGION || 'unknown'}`
   const desk = await runNextProductionResearchDesk(workerId)
   if (desk.status !== 'idle') return { kind: 'research-desk', ...desk }
+
+  // A due investigation becomes an ordinary canonical research_run. The queue's
+  // existing active-run uniqueness guard converges concurrent worker ticks.
+  const dueQueued = await queueDueResearchInvestigations(3)
 
   // Provider choice is configuration, not a hard-wired vendor. The session
   // remembers a provider that fails permanently so one exhausted account cannot
@@ -53,5 +61,16 @@ export async function runResearchWorker(): Promise<Record<string, unknown>> {
   if ('runId' in job && job.runId) {
     await recordResearchRoutingProvenance(job.runId, binding.provenance())
   }
-  return { kind: 'queued-research', provider: binding.provider.name, ...job }
+
+  let lifecycle = null
+  if ('questionId' in job && typeof job.questionId === 'string') {
+    if (job.status === 'completed') {
+      lifecycle = await advanceResearchInvestigationLifecycle(job.questionId)
+    } else if (job.status === 'failed') {
+      await recordResearchInvestigationFailure(job.questionId)
+      lifecycle = { lifecycleStatus: 'active_or_paused', reason: 'research_run_failed' }
+    }
+  }
+
+  return { kind: 'queued-research', provider: binding.provider.name, dueQueued, lifecycle, ...job }
 }
