@@ -17,18 +17,6 @@ type WorkspaceTab = 'caye' | 'channels'
 type OperationsTab = 'performance' | 'cost' | 'health' | 'tools' | 'admin'
 type Tab = WorkspaceTab | OperationsTab
 
-// Two distinct groups sharing one nav column, not seven equal-weight
-// destinations (2026-08-26 redesign — see Products/Caye/CLAUDE.md's
-// audit notes). "Workspace" is what this founder-viewed workspace's Caye
-// is configured to do — the same conceptual surface a workspace owner's
-// own Settings covers, just reached from the founder's console instead
-// of components/settings/* (that light-themed owner surface is untouched
-// by this change; the two have always been separate implementations, see
-// app/dashboard/[workspaceId]/settings/page.tsx vs. this file).
-// "Operations" is founder-only machinery inspection — cross-workspace
-// performance/cost, infra health, the raw tool registry, and the dev/ops
-// console — visually demoted (smaller label, tucked lower, its own
-// section heading) so it doesn't read as more workspace settings.
 const WORKSPACE_TABS: { id: WorkspaceTab; label: string }[] = [
   { id: 'caye', label: 'Caye' },
   { id: 'channels', label: 'Channels' },
@@ -65,11 +53,6 @@ function NavSectionLabel({ children }: { children: ReactNode }) {
   )
 }
 
-// Configuration, integrations, and founder power tools — deliberately off
-// Home. This is where they moved to, not where they died: everything that
-// was on the old dashboard's Channels/Settings/Cost/Health/Tools/Admin
-// Shell rail destinations still exists, just consolidated under one
-// secondary surface instead of six parallel nav icons.
 export default function SettingsPage({ workspaceId }: { workspaceId: string }) {
   const [tab, setTab] = useState<Tab>('caye')
 
@@ -98,9 +81,10 @@ export default function SettingsPage({ workspaceId }: { workspaceId: string }) {
           <TabButton key={t.id} label={t.label} active={tab === t.id} onClick={() => setTab(t.id)} quiet />
         ))}
       </nav>
-      {/* paddingBottom clears the floating global composer. */}
-      <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflowY: 'auto', paddingBottom: 96 }}>
-        {body}
+      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '0 24px 110px' }}>
+        <div style={{ width: '100%', maxWidth: 1180, margin: '0 auto' }}>
+          {body}
+        </div>
       </div>
     </div>
   )
