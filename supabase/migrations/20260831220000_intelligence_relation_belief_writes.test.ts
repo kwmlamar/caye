@@ -16,12 +16,15 @@ describe('intelligence relation and belief write contracts', () => {
     expect(migration).toMatch(/on conflict \(from_item_id, to_item_id, relation_type\) do update/i)
   })
 
-  it('requires explicit endpoints, same intelligence scope, and claim evidence', () => {
+  it('requires explicit endpoints, same intelligence scope, and endpoint-grounded claim evidence', () => {
     expect(migration).toMatch(/p_from_item_id uuid/i)
     expect(migration).toMatch(/p_to_item_id uuid/i)
     expect(migration).toMatch(/p_evidence_claim_ids uuid\[\]/i)
     expect(migration).toMatch(/endpoints must share scope and workspace/i)
     expect(migration).toMatch(/grounded relation requires research claim evidence/i)
+    expect(migration).toMatch(/from public\.intelligence_item_claims item_claim/i)
+    expect(migration).toMatch(/item_claim\.intelligence_item_id in \(p_from_item_id, p_to_item_id\)/i)
+    expect(migration).toMatch(/relation evidence must already ground at least one endpoint/i)
     expect(migration).not.toMatch(/cross\s+join/i)
   })
 
