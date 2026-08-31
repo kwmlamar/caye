@@ -73,11 +73,23 @@ interface SendGmailReplyResult {
 
 /**
  * Sends a plain-text reply via Gmail's send endpoint. Throws on any non-2xx.
+ *
+ * Safety invariant: connected accounts marked metadata.observe_only=true are
+ * read-only at the transport boundary. This is intentionally enforced here,
+ * not just in a poller or prompt, so no current or future caller can send from
+ * an observation-only mailbox by accident.
  */
 export async function sendGmailReply(args: SendGmailReplyArgs): Promise<SendGmailReplyResult> {
   const { to, subject, body, gmailThreadId, conversationId, workspaceId } = args
 
-  const { accessToken, emailAddress } = await getGmailContext(workspaceId)
+  const gmail = await getGmailContext(workspaceId)
+  const observeOnly = gmail.accountRow.metadata?.observe_only === true ||
+    gmail.accountRow.metadata?.observe_only === 'true'
+  if (observeOnly) {
+    throw new Error(`Gmail outbound disabled: workspace ${workspaceId} is in observe-only mode`)
+  }
+
+  const { accessToken, emailAddress } = gmail
   const rfcInReplyTo = await findLatestInboundRfcMessageId(conversationId)
 
   // RFC 822 message. Keep headers ASCII-safe; body can be UTF-8.

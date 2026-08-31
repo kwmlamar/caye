@@ -6,6 +6,10 @@
       "schedule": "*/5 * * * *"
     },
     {
+      "path": "/api/caye/gmail-observation-discovery",
+      "schedule": "*/15 * * * *"
+    },
+    {
       "path": "/api/caye/job-search-email-poll",
       "schedule": "*/15 * * * *"
     },
