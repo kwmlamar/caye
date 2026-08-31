@@ -1,6 +1,7 @@
 import 'server-only'
 import { createServiceClient } from '@/lib/supabase-server'
 import { EpistemicType, IntelligenceScope, assertIntelligenceScope, intelligenceSemanticKey, normalizeIntelligenceStatement } from './identity'
+import { runPostIngestionIntelligenceFormation, type IntelligenceRelationType } from './relation-runtime'
 
 export type IntelligenceEvidence = { claimId: string; role?: 'supports'|'contradicts'|'context' }
 export type IntelligenceFinding = {
@@ -38,8 +39,11 @@ function score(value: number | undefined): number { return Math.max(0, Math.min(
  * Canonical durable ingestion boundary for all future research desks.
  * Evidence-backed items are initially inserted as unknown, their evidence edges
  * are persisted, and only then are they promoted to the requested epistemic type.
- * This preserves the database evidence guard across Supabase's per-request
- * transactions instead of asking a deferred trigger to span multiple requests.
+ *
+ * Existing beliefs are never confidence-bumped in place. Repeated evidence is
+ * attached first, then the bounded post-ingestion runtime decides whether any
+ * material confidence change is justified and writes it through the append-only
+ * canonical belief-revision path.
  */
 export async function ingestIntelligenceFinding(input: IntelligenceFinding) {
   validateIntelligenceFinding(input)
@@ -68,9 +72,9 @@ export async function ingestIntelligenceFinding(input: IntelligenceFinding) {
     if (created.error) throw created.error
     item = created.data
   } else {
-    // Repetition strengthens evidence, not ontology. Preserve the original epistemic boundary.
+    // Repetition may refresh relevance/materiality/recency, but confidence is belief state
+    // and therefore moves only through revise_intelligence_belief_confidence(...).
     const updated = await db.from('intelligence_items').update({
-      confidence: input.confidence == null ? item.confidence : Math.max(Number(item.confidence ?? 0), input.confidence),
       relevance: Math.max(Number(item.relevance ?? 0), score(input.relevance)),
       materiality: Math.max(Number(item.materiality ?? 0), score(input.materiality)),
       observed_at: input.observedAt ?? new Date().toISOString(), updated_at:new Date().toISOString(),
@@ -95,20 +99,44 @@ export async function ingestIntelligenceFinding(input: IntelligenceFinding) {
     item = promoted.data
   }
 
-  return { item, semanticKey, deduplicated:Boolean(existing.data) }
+  // Relation/revision formation is bounded and intentionally non-fatal to ingestion.
+  // The item and its evidence remain canonical even if synthesis has a transient failure.
+  let formation: Awaited<ReturnType<typeof runPostIngestionIntelligenceFormation>> | null = null
+  try {
+    formation = await runPostIngestionIntelligenceFormation({ itemId: item.id, db })
+  } catch (error) {
+    console.error('[intelligence] bounded post-ingestion formation failed', { itemId: item.id, error })
+  }
+
+  return { item, semanticKey, deduplicated:Boolean(existing.data), formation }
 }
 
-export async function relateIntelligence(input:{fromItemId:string;toItemId:string;relationType:'related'|'corroborates'|'contradicts'|'supersedes'|'causes'|'implicates';confidence?:number;provenance?:Record<string,unknown>}) {
+export async function relateIntelligence(input:{
+  fromItemId:string
+  toItemId:string
+  relationType:IntelligenceRelationType
+  evidenceClaimIds:string[]
+  confidence?:number
+  provenance?:Record<string,unknown>
+}) {
   if (input.fromItemId === input.toItemId) throw new Error('intelligence item cannot relate to itself')
+  if (!input.evidenceClaimIds.length) throw new Error('intelligence relation requires grounded research claims')
   const db=createServiceClient()
-  const {data,error}=await db.from('intelligence_relations').upsert({from_item_id:input.fromItemId,to_item_id:input.toItemId,relation_type:input.relationType,confidence:input.confidence??null,provenance:input.provenance??{}},{onConflict:'from_item_id,to_item_id,relation_type'}).select('*').single()
+  const {data,error}=await db.rpc('upsert_grounded_intelligence_relation', {
+    p_from_item_id: input.fromItemId,
+    p_to_item_id: input.toItemId,
+    p_relation_type: input.relationType,
+    p_confidence: input.confidence ?? null,
+    p_evidence_claim_ids: [...new Set(input.evidenceClaimIds)],
+    p_provenance: input.provenance ?? {},
+  })
   if(error) throw error
   return data
 }
 
-export async function supersedeIntelligence(oldItemId:string,newItemId:string,provenance:Record<string,unknown>={}) {
+export async function supersedeIntelligence(oldItemId:string,newItemId:string,evidenceClaimIds:string[],provenance:Record<string,unknown>={}) {
   const db=createServiceClient()
-  const relation=await relateIntelligence({fromItemId:newItemId,toItemId:oldItemId,relationType:'supersedes',provenance})
+  const relation=await relateIntelligence({fromItemId:newItemId,toItemId:oldItemId,relationType:'supersedes',evidenceClaimIds,provenance})
   const {error}=await db.from('intelligence_items').update({status:'superseded',superseded_by:newItemId,valid_until:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',oldItemId).neq('id',newItemId)
   if(error) throw error
   return relation
