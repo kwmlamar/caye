@@ -152,6 +152,29 @@ export async function getLatestBriefs() {
   return [...latest.values()]
 }
 
+/**
+ * Supabase/Postgrest rejections are plain objects, not Errors, so String(err)
+ * on one yields the literal "[object Object]" — which is what several failed
+ * production research runs recorded, leaving nothing to diagnose. Preserve the
+ * actual code/message/details instead.
+ */
+export function describeResearchError(error: unknown): string {
+  if (error instanceof Error) return error.message
+  if (error && typeof error === 'object') {
+    const value = error as Record<string, unknown>
+    const parts = [value.code, value.message, value.details, value.hint]
+      .filter((part): part is string | number => part !== null && part !== undefined && part !== '')
+      .map(String)
+    if (parts.length) return parts.join(' | ')
+    try {
+      return JSON.stringify(error)
+    } catch {
+      return Object.prototype.toString.call(error)
+    }
+  }
+  return String(error)
+}
+
 function sourceHash(source: ResearchFetchedSource): string {
   return source.contentHash ?? createHash('sha256').update(`${source.url}\n${source.content}`).digest('hex')
 }
@@ -185,7 +208,7 @@ export async function executeResearchRun(args: {
       try {
         source = await args.provider.fetch(result)
       } catch (error) {
-        fetchFailures.push(`${result.url}: ${error instanceof Error ? error.message : String(error)}`)
+        fetchFailures.push(`${result.url}: ${describeResearchError(error)}`)
         continue
       }
 
@@ -245,7 +268,7 @@ export async function executeResearchRun(args: {
     if (error) throw error
     return {status:'completed' as const,sourceCount:observed.length,skippedSourceCount:fetchFailures.length,revision:Number(revision)}
   } catch (error) {
-    await db.from('research_runs').update({status:observed.length?'partial':'failed',completed_at:new Date().toISOString(),provider:args.provider.name,error:error instanceof Error?error.message:String(error)}).eq('id',args.runId).neq('status','completed')
+    await db.from('research_runs').update({status:observed.length?'partial':'failed',completed_at:new Date().toISOString(),provider:args.provider.name,error:describeResearchError(error)}).eq('id',args.runId).neq('status','completed')
     throw error
   }
 }
