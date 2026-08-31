@@ -71,14 +71,6 @@ function SearchIcon({ color }: { color: string }) {
   )
 }
 
-/**
- * "These are the people Caye knows through your business, and this is her
- * understanding of every relationship" — not a contact database. Replaces
- * ContactsPanel.tsx wholesale (2026-08-13 redesign); see lib/people.ts and
- * app/api/founder/people/route.ts for the architecture behind it — one
- * normalized shape fed by contacts (customer-facing workspaces) or
- * outreach_leads (internal_sales), which don't share an identity model.
- */
 export default function PeoplePage({ workspaceId, onReviewConversation }: {
   workspaceId: string
   onReviewConversation: (conversationId: string) => void
@@ -90,8 +82,6 @@ export default function PeoplePage({ workspaceId, onReviewConversation }: {
   const [filter, setFilter] = useState<Filter>('all')
   const [selectedId, setSelectedId] = useState<string | null>(null)
 
-  // Workspace switches don't remount this page — reset local UI state so a
-  // filter/search from the previous workspace doesn't linger into this one.
   useEffect(() => {
     setQuery('')
     setFilter('all')
@@ -116,12 +106,11 @@ export default function PeoplePage({ workspaceId, onReviewConversation }: {
   }, [people])
 
   return (
-    // paddingBottom clears the floating global Ask Caye composer.
     <div style={{ flex: 1, overflowY: 'auto', padding: '28px 32px 110px' }}>
-      <div style={{ maxWidth: 780 }}>
+      <div style={{ width: '100%', maxWidth: 920, margin: '0 auto' }}>
         <h1 style={{ fontSize: 20, fontWeight: 600, fontFamily: 'var(--font-display)', margin: '0 0 4px' }}>People</h1>
         <p style={{ fontSize: 13.5, color: TEXT_QUIET, margin: '0 0 28px', lineHeight: 1.6 }}>
-          {isSales ? 'Everyone Caye is working through your outbound market.' : 'Everyone Caye knows through your business.'}
+          {isSales ? 'People Caye is working with through outbound.' : 'People Caye knows through this business.'}
         </p>
 
         {loading ? (
@@ -131,12 +120,12 @@ export default function PeoplePage({ workspaceId, onReviewConversation }: {
         ) : !people || people.length === 0 ? (
           <div style={{ padding: '32px 4px' }}>
             <p style={{ fontSize: 14, color: TEXT, lineHeight: 1.6, margin: '0 0 6px', fontWeight: 600 }}>
-              {isSales ? "Caye hasn't sourced any prospects yet." : 'No one yet.'}
+              {isSales ? "Caye hasn't found any prospects yet." : 'No one yet.'}
             </p>
             <p style={{ fontSize: 13.5, color: TEXT_QUIET, lineHeight: 1.6, margin: 0 }}>
               {isSales
-                ? 'Once autonomous sourcing runs, prospects will show up here as Caye finds and works them.'
-                : 'People appear here automatically once guests message this business on WhatsApp, Instagram, Messenger, or email.'}
+                ? 'Prospects will appear here as Caye finds and works them.'
+                : 'People appear here after they message this business.'}
             </p>
           </div>
         ) : (

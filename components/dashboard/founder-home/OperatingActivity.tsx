@@ -43,25 +43,53 @@ function relativeTime(value: string | null | undefined): string | null {
 }
 
 function ActivityCard({ title, items, empty, future = false }: { title: string; items: ActivityItem[]; empty: string; future?: boolean }) {
+  const [expanded, setExpanded] = useState(false)
+  const shown = expanded ? items : items.slice(0, 3)
+  const canExpand = items.length > 0 && (items.length > 3 || items.some((item) => Boolean(item.detail)))
+
   return (
     <div style={{ ...glass(0.035), borderRadius: 12, padding: '12px 13px', minHeight: 112 }}>
-      <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.045em', color: TEXT_QUIET, marginBottom: 9 }}>{title.toUpperCase()}</div>
+      <button
+        type="button"
+        onClick={() => canExpand && setExpanded((value) => !value)}
+        aria-expanded={canExpand ? expanded : undefined}
+        style={{ width: '100%', border: 0, background: 'transparent', padding: 0, color: TEXT, textAlign: 'left', cursor: canExpand ? 'pointer' : 'default' }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 9 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.045em', color: TEXT_QUIET }}>{title.toUpperCase()}</div>
+          {canExpand && <span aria-hidden style={{ color: TEXT_QUIET, fontSize: 11 }}>{expanded ? '▾' : '▸'}</span>}
+        </div>
+      </button>
+
       {items.length === 0 ? (
         <div style={{ fontSize: 11.5, lineHeight: 1.45, color: TEXT_QUIET }}>{empty}</div>
       ) : (
         <div style={{ display: 'grid', gap: 9 }}>
-          {items.slice(0, 3).map((item, index) => (
-            <div key={`${item.label}-${index}`} style={{ minWidth: 0 }}>
+          {shown.map((item, index) => (
+            <button
+              type="button"
+              key={`${item.label}-${index}`}
+              onClick={() => canExpand && setExpanded(true)}
+              style={{ minWidth: 0, width: '100%', border: 0, background: 'transparent', padding: 0, textAlign: 'left', color: TEXT, cursor: item.detail && !expanded ? 'pointer' : 'default' }}
+            >
               <div style={{ display: 'flex', gap: 7, alignItems: 'flex-start' }}>
                 <span aria-hidden style={{ width: 6, height: 6, borderRadius: '50%', flexShrink: 0, marginTop: 5, background: TONE_COLOR[item.tone ?? 'neutral'], boxShadow: item.tone === 'good' ? `0 0 6px ${EMERALD}88` : undefined }} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 11.5, lineHeight: 1.4, color: TEXT }}>{item.label}</div>
-                  {item.detail && <div style={{ fontSize: 10.5, lineHeight: 1.4, color: TEXT_MUTED, marginTop: 2, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{item.detail}</div>}
+                  {item.detail && (
+                    <div style={expanded
+                      ? { fontSize: 10.5, lineHeight: 1.5, color: TEXT_MUTED, marginTop: 4, whiteSpace: 'pre-wrap' }
+                      : { fontSize: 10.5, lineHeight: 1.4, color: TEXT_MUTED, marginTop: 2, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
+                    >
+                      {item.detail}
+                    </div>
+                  )}
                   {item.at && <div style={{ fontSize: 9.5, color: TEXT_QUIET, marginTop: 3 }}>{relativeTime(item.at)}{future ? ' · scheduled' : ''}</div>}
                 </div>
               </div>
-            </div>
+            </button>
           ))}
+          {canExpand && !expanded && <div style={{ fontSize: 9.5, color: TEXT_QUIET, paddingLeft: 13 }}>Click to read more</div>}
         </div>
       )}
     </div>
@@ -107,7 +135,7 @@ export default function OperatingActivity({ workspaceId }: { workspaceId: string
       <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12, marginBottom: 10 }}>
         <div>
           <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.055em', color: TEXT_QUIET }}>LIVE OPERATING ACTIVITY</div>
-          <div style={{ fontSize: 11.5, color: TEXT_MUTED, marginTop: 4 }}>What Caye is doing, learning, changing, and waiting on without requiring a chat prompt.</div>
+          <div style={{ fontSize: 11.5, color: TEXT_MUTED, marginTop: 4 }}>What Caye is doing, learning, changing, and waiting on.</div>
         </div>
         <button type="button" onClick={() => load()} disabled={refreshing} style={{ border: 0, background: 'transparent', padding: 0, color: state.color, cursor: refreshing ? 'default' : 'pointer', font: '700 10.5px inherit', whiteSpace: 'nowrap', opacity: refreshing ? 0.55 : 1 }}>
           <span aria-hidden style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', marginRight: 6, background: failed ? ROSE : state.color, boxShadow: data?.status === 'working' ? `0 0 7px ${EMERALD}99` : undefined }} />
@@ -116,20 +144,20 @@ export default function OperatingActivity({ workspaceId }: { workspaceId: string
       </div>
 
       {failed && !data ? (
-        <div style={{ ...glass(0.035), borderRadius: 12, padding: '13px 14px', fontSize: 11.5, color: ROSE }}>Live activity could not be read. The panel will retry automatically.</div>
+        <div style={{ ...glass(0.035), borderRadius: 12, padding: '13px 14px', fontSize: 11.5, color: ROSE }}>I could not load live activity. I will keep trying.</div>
       ) : (
         <>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8 }}>
-            <ActivityCard title="Researching now" items={data?.sections.researchingNow ?? []} empty="No investigation is running right now." />
-            <ActivityCard title="Recently learned" items={data?.sections.recentlyLearned ?? []} empty="No durable intelligence has been recorded yet." />
-            <ActivityCard title="Beliefs changed" items={data?.sections.beliefChanges ?? []} empty="No explicit contradiction or supersession has been recorded yet." />
-            <ActivityCard title="Actions taken" items={data?.sections.actionsTaken ?? []} empty="No recently verified action for this workspace." />
-            <ActivityCard title="Waiting on human" items={data?.sections.waitingOnHuman ?? []} empty="Nothing in this workspace currently needs a human decision." />
-            <ActivityCard title="Next scheduled work" items={data?.sections.nextScheduledWork ?? []} empty="No autonomous research work is currently scheduled." future />
+            <ActivityCard title="Researching now" items={data?.sections.researchingNow ?? []} empty="Nothing is being researched right now." />
+            <ActivityCard title="Recently learned" items={data?.sections.recentlyLearned ?? []} empty="Nothing new has been saved yet." />
+            <ActivityCard title="Beliefs changed" items={data?.sections.beliefChanges ?? []} empty="Nothing has changed my mind yet." />
+            <ActivityCard title="Actions taken" items={data?.sections.actionsTaken ?? []} empty="No recent action has been verified." />
+            <ActivityCard title="Waiting on human" items={data?.sections.waitingOnHuman ?? []} empty="Nothing needs a human decision right now." />
+            <ActivityCard title="Next scheduled work" items={data?.sections.nextScheduledWork ?? []} empty="No research is scheduled right now." future />
           </div>
           <div style={{ marginTop: 7, display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 9.5, color: TEXT_QUIET }}>
-            <span>{counts} live signal{counts === 1 ? '' : 's'} shown</span>
-            <span>{data?.lastActivityAt ? `last activity ${relativeTime(data.lastActivityAt)}` : 'no recorded activity yet'} · refreshes every 30s</span>
+            <span>{counts} live item{counts === 1 ? '' : 's'}</span>
+            <span>{data?.lastActivityAt ? `last activity ${relativeTime(data.lastActivityAt)}` : 'no activity yet'} · refreshes every 30s</span>
           </div>
         </>
       )}
