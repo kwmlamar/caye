@@ -33,9 +33,17 @@ describe("strategic intelligence escalation", () => {
     let attention = 0;
     const deps = {
       resolveAuthority: async () => ({ principalType: "unknown" as const, principalRef: null, resolvedBy: "unresolved" as const }),
-      enqueueCanonicalAttention: async () => { attention++; }, requestDeeperResearch: async () => {}, requestIndependentCrossCheck: async () => {},
+      enqueueCanonicalAttention: async () => { attention++; return true; }, requestDeeperResearch: async () => {}, requestIndependentCrossCheck: async () => {},
     };
     expect(await maybeEscalateRecommendation(deps, rec(), null, "business", "workspace")).toBe(false);
     expect(attention).toBe(0);
+  });
+
+  it("does not claim an interruption when canonical delivery did not happen", async () => {
+    const deps = {
+      resolveAuthority: async () => ({ principalType: "business" as const, principalRef: "operator:1", resolvedBy: "canonical_authority" as const }),
+      enqueueCanonicalAttention: async () => false, requestDeeperResearch: async () => {}, requestIndependentCrossCheck: async () => {},
+    };
+    expect(await maybeEscalateRecommendation(deps, rec(), null, "business", "workspace")).toBe(false);
   });
 });
