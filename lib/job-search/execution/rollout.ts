@@ -82,21 +82,44 @@ export async function setDryRun(dryRun: boolean, actor: string): Promise<void> {
 }
 
 /**
- * Hard ceiling on the rollout cap, enforced in code (and mirrored by a CHECK
- * constraint in the migration) rather than left to the caller.
+ * Hard ceiling on the rollout cap, enforced in code and mirrored by a CHECK
+ * constraint in the database (20260831_job_search_live_submission.sql).
  *
- * The cap exists to bound blast radius during initial validation. Without an
- * upper bound, one confirmed `set_daily_submission_cap` call with a fat-
- * fingered or model-suggested argument (150, 1500) quietly removes the very
- * limit the other controls are counting on — a safety control that can be set
- * to infinity is not a safety control.
+ * 150 is the founder operator's policy maximum. Without an upper bound, one
+ * confirmed `set_daily_submission_cap` call with a fat-fingered or
+ * model-suggested argument (1500, 15000) quietly removes the very limit the
+ * other controls are counting on — a safety control that can be set to
+ * infinity is not a safety control.
+ *
+ * Raising the CEILING is not the same as raising the CAP. The live cap stays
+ * whatever the founder last set, and is advanced one deliberate,
+ * confirmation-gated step at a time through ROLLOUT_STAGES below.
  */
-export const MAX_DAILY_SUBMISSION_CAP = 10
+export const MAX_DAILY_SUBMISSION_CAP = 150
+
+/**
+ * The rollout ladder for real submissions.
+ *
+ * Each rung is only justified by evidence from the one below it: a stage
+ * advances when the previous stage produced no unexplained uncertainty, no
+ * duplicate submission, no incorrect answer, and no provider block. That
+ * evidence lives in job_search_execution_attempts, which is why
+ * `describeRolloutStage` reports the current rung rather than inferring
+ * readiness — advancing is a founder decision, made on real data.
+ */
+export const ROLLOUT_STAGES = [1, 5, 25, 75, 150] as const
+
+export type RolloutStage = (typeof ROLLOUT_STAGES)[number]
+
+/** The next rung above the current cap, or null when already at the ceiling. */
+export function nextRolloutStage(currentCap: number): RolloutStage | null {
+  return ROLLOUT_STAGES.find((stage) => stage > currentCap) ?? null
+}
 
 export async function setDailySubmissionCap(cap: number, actor: string): Promise<void> {
   if (!Number.isInteger(cap) || cap < 0) throw new Error('Daily submission cap must be a non-negative integer.')
   if (cap > MAX_DAILY_SUBMISSION_CAP) {
-    throw new Error(`Daily submission cap may not exceed ${MAX_DAILY_SUBMISSION_CAP}. Raising the ceiling itself is a deliberate code change, not a runtime setting.`)
+    throw new Error(`Daily submission cap may not exceed ${MAX_DAILY_SUBMISSION_CAP}. Raising the ceiling itself is a deliberate code and migration change, not a runtime setting.`)
   }
   await updateSettings({ daily_submission_cap: cap }, actor, { execution_daily_submission_cap: cap })
 }

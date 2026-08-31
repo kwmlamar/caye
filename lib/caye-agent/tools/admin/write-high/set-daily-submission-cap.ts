@@ -20,7 +20,7 @@ export const setDailySubmissionCap: Tool<SetDailySubmissionCapInput> = {
     'Set the maximum number of real ATS submissions per day (independent of the 150/day sourcing/scoring policy cap — this is the initial low-volume rollout cap, e.g. 3-5). HIGH-RISK — confirmation is enforced in code: the first call only stages the change, then relay the summary and call again with identical arguments once the founder confirms in a NEW message.',
   risk: 'high',
   roles: ['founder'],
-  modes: ['admin-shell'],
+  modes: ['admin-shell', 'back-office'],
   inputSchema: {
     type: 'object',
     properties: { cap: { type: 'number', description: 'New daily submission cap (non-negative integer).' } },

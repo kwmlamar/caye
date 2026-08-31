@@ -85,12 +85,19 @@ describe('New Admin Shell tools are founder-only and never front-desk-reachable 
     'disable-dry-run-mode',
     'set-daily-submission-cap',
     'run-application-execution',
-  ])('high-risk write tool %s is admin-shell-only and requires confirmation (risk=high)', async (fileBase) => {
+  ])('high-risk write tool %s is founder-only, confirmation-gated, and never customer-reachable', async (fileBase) => {
     const mod = await import(`../../caye-agent/tools/admin/write-high/${fileBase}.ts`)
     const tool = Object.values(mod)[0] as { roles: string[]; modes: string[]; risk: string }
     expect(tool.roles).toEqual(['founder'])
-    expect(tool.modes).toEqual(['admin-shell'])
     expect(tool.risk).toBe('high')
+    // Caye Direct (back-office) is the canonical founder control plane, so
+    // these are deliberately reachable from BOTH founder surfaces. The
+    // guarantee that matters is not which founder channel is used — it is
+    // that no customer-facing surface can reach them at all, and that every
+    // one of them still requires an explicit confirmation.
+    expect(tool.modes.every((m) => m === 'admin-shell' || m === 'back-office')).toBe(true)
+    expect(tool.modes).not.toContain('front-desk')
+    expect(tool.modes).not.toContain('driver')
   })
 })
 
@@ -114,15 +121,18 @@ describe('Rollout controls are unreachable from any customer-facing surface (pos
     }
   })
 
-  it('the capability-INCREASING controls are admin-shell-only, even for the founder', () => {
-    // Asymmetry by design: the founder can hit the brakes from either channel,
-    // but anything that makes real submission more possible is confined to the
-    // deliberate admin surface.
+  it('the capability-INCREASING controls are founder-only in both founder channels, and confirmation-gated', () => {
+    // Caye Direct is the canonical founder control plane, so the founder
+    // reaches these from either surface. What is NOT relaxed: they remain
+    // founder-only (asserted above for every non-founder role and for
+    // front-desk), and each one is wrapped by gateAdminHighRisk, so reaching
+    // the tool is not the same as executing it — the first call only stages
+    // the action and a separate founder confirmation is required to run it.
     const backOffice = toolNamesFor('back-office', 'founder')
     const adminShell = toolNamesFor('admin-shell', 'founder')
     for (const risky of ['enable_application_automation', 'disable_dry_run_mode', 'set_daily_submission_cap', 'run_application_execution']) {
-      expect(backOffice).not.toContain(risky)
       expect(adminShell).toContain(risky)
+      expect(backOffice).toContain(risky)
     }
   })
 
@@ -159,9 +169,28 @@ describe('executeApplication has exactly one founder-only production caller (pos
     expect(offenders).toEqual(['lib/caye-agent/tools/admin/write-high/run-application-execution.ts'])
   })
 
-  it('no provider can submit until a production-validated implementation is separately enabled', () => {
-    expect(greenhouseAtsProvider.canSubmit).toBe(false)
+  it('only the audited Greenhouse provider can submit; every other provider still cannot', () => {
+    // Greenhouse's live path is audited (providers/greenhouse-submit.ts) and
+    // reachable only through the submission authority boundary. Nothing else
+    // has a lawful submission channel, and canSubmit is a code property that
+    // no database flag can turn on.
+    expect(greenhouseAtsProvider.canSubmit).toBe(true)
     expect(unsupportedProvider('lever').canSubmit).toBe(false)
+    expect(unsupportedProvider('workday').canSubmit).toBe(false)
+    expect(unsupportedProvider('ashby').canSubmit).toBe(false)
+    expect(unsupportedProvider('generic').canSubmit).toBe(false)
+  })
+
+  it('only the audited submission module contains a browser click', () => {
+    // The one consequential browser operation in the whole job-search subtree
+    // must live in exactly one file. If a click appears anywhere else, the
+    // "one deliberate submit action" guarantee is no longer structural.
+    const offenders: string[] = []
+    for (const file of listSourceFiles(JOB_SEARCH_DIR, (e) => e.endsWith('.ts') && !e.endsWith('.test.ts'))) {
+      const content = readFileSync(file, 'utf8')
+      if (/\.click\(|\.press\(|form\.submit\(|requestSubmit\(/.test(content)) offenders.push(path.relative(REPO_ROOT, file))
+    }
+    expect(offenders).toEqual(['lib/job-search/execution/providers/greenhouse-submit.ts'])
   })
 })
 

@@ -70,6 +70,7 @@ import { safeFetch } from '../safe-fetch'
 import { isAllowedAtsHost } from '../allowed-destinations'
 import { classifyFieldLabel } from '../field-classifier'
 import { runGreenhouseBrowserReadiness } from './greenhouse-browser'
+import { submitGreenhouseApplication, type FinalAuthorityCheck, type LiveSubmissionTelemetry } from './greenhouse-submit'
 
 const GREENHOUSE_API_HOST = 'boards-api.greenhouse.io'
 const REQUEST_TIMEOUT_MS = 15_000
@@ -151,12 +152,21 @@ export const greenhouseAtsProvider: AtsExecutorProvider = {
   providerKey: 'greenhouse',
 
   /**
-   * Deliberately false. The prior browser prototype was not validated against
-   * Greenhouse's live DOM nor packaged with a production Chromium runtime.
-   * It may perform a non-consequential readiness pass only; it cannot click
-   * Submit until a separately audited implementation proves both properties.
+   * True as of the audited hosted-form submission path.
+   *
+   * The two properties this flag was withheld for are now both satisfied: the
+   * browser adapter is validated against Greenhouse's live DOM (a real
+   * production readiness pass resolved and filled the hosted-form controls on
+   * a live posting), and it runs on the production Chromium runtime.
+   *
+   * This remains a CAPABILITY flag, not a permission: it says a lawful
+   * submission channel exists. Whether any given attempt may use it is
+   * decided entirely by submission-gate.ts, which re-reads every kill switch,
+   * the claim, the artifact binding, and the daily reservation. Flipping this
+   * true does not enable submission on its own - dry_run must be off and
+   * automation_enabled must be on, both set by explicit founder confirmation.
    */
-  canSubmit: false,
+  canSubmit: true,
 
   async dryRun(request, fields) {
     return runGreenhouseBrowserReadiness(request, fields)
@@ -229,9 +239,26 @@ export const greenhouseAtsProvider: AtsExecutorProvider = {
    * config change can resurrect an unauthenticated submission attempt.
    */
   async submit(): Promise<SubmissionResult> {
+    // The provider-neutral `submit` signature carries no authority callback,
+    // and a real Greenhouse submission may never run without one. Callers
+    // reach the live path through submitLive() instead; this refuses rather
+    // than silently submitting with no last-moment revalidation.
     return {
       outcome: 'not_supported',
-      reason: 'Greenhouse browser submission remains disabled pending provider-DOM and production-runtime validation. This executor can perform dry-run readiness checks only.',
+      reason: 'Greenhouse live submission must be invoked through submitLive() with a final authority check. The provider-neutral submit() entry point performs no action.',
     }
+  },
+
+  /**
+   * The audited live-submission entry point.
+   *
+   * Separate from submit() on purpose: its signature REQUIRES the caller to
+   * hand over a final authority check, so it is impossible to call this
+   * without also supplying the last-moment revalidation that runs in the
+   * instant before the click. A missing safety step becomes a type error
+   * rather than a runtime oversight.
+   */
+  async submitLive(request, fields, finalCheck: FinalAuthorityCheck): Promise<{ result: SubmissionResult; telemetry: LiveSubmissionTelemetry }> {
+    return submitGreenhouseApplication(request, fields, finalCheck)
   },
 }

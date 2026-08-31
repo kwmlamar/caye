@@ -15,7 +15,7 @@ export const disableDryRunMode: Tool<Record<string, never>> = {
     'Turn dry-run mode OFF — the change that allows a real submission to actually reach an ATS (still requires automation to be enabled). HIGH-RISK — confirmation is enforced in code: the first call only stages the change, then relay the summary and call again with identical arguments once the founder confirms in a NEW message.',
   risk: 'high',
   roles: ['founder'],
-  modes: ['admin-shell'],
+  modes: ['admin-shell', 'back-office'],
   inputSchema: { type: 'object', properties: {} },
 
   async execute() {

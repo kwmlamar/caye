@@ -35,7 +35,7 @@ export function makeFakeSupabase(initial: Record<string, Row[]> = {}) {
   for (const [k, v] of Object.entries(initial)) tables[k] = v.map((r) => ({ ...r }))
   let counter = 0
 
-  function builder(table: string, mode: 'select' | 'update' | 'insert', payload?: Row | Row[], selectOpts?: { count?: string; head?: boolean }) {
+  function builder(table: string, mode: 'select' | 'update' | 'insert' | 'delete', payload?: Row | Row[], selectOpts?: { count?: string; head?: boolean }) {
     const filters: Filter[] = []
     let orderCol: string | null = null
     let orderAsc = true
@@ -46,6 +46,11 @@ export function makeFakeSupabase(initial: Record<string, Row[]> = {}) {
       if (mode === 'update') {
         const matched = store.filter((r) => matches(r, filters))
         matched.forEach((r) => Object.assign(r, payload as Row))
+        return matched
+      }
+      if (mode === 'delete') {
+        const matched = store.filter((r) => matches(r, filters))
+        tables[table] = store.filter((r) => !matches(r, filters))
         return matched
       }
       if (mode === 'insert') {
@@ -135,12 +140,27 @@ export function makeFakeSupabase(initial: Record<string, Row[]> = {}) {
         update(patch: Row) {
           return builder(table, 'update', patch)
         },
+        delete() {
+          return builder(table, 'delete')
+        },
         insert(rowOrRows: Row | Row[]) {
           return builder(table, 'insert', rowOrRows)
         },
       }
     },
-    async rpc(name: string, args: { p_application_id: string; p_claim_token: string }) {
+    async rpc(name: string, args: Record<string, string>) {
+      if (name === 'consume_job_search_batch_slot') {
+        // Mirrors the single-statement bounded UPDATE in the migration.
+        const row = (tables.job_search_batch_authorizations ?? []).find((r) => r.id === args.p_authorization_id)
+        if (!row) return { data: false, error: null }
+        if (row.revoked_at) return { data: false, error: null }
+        if (row.provider !== args.p_provider) return { data: false, error: null }
+        if (Date.parse(row.expires_at as string) <= Date.now()) return { data: false, error: null }
+        const consumed = (row.consumed_count as number) ?? 0
+        if (consumed >= (row.max_applications as number)) return { data: false, error: null }
+        row.consumed_count = consumed + 1
+        return { data: true, error: null }
+      }
       if (name !== 'reserve_job_search_submission_slot') return { data: null, error: { message: 'unknown rpc' } }
       const application = (tables.job_search_applications ?? []).find((row) => row.id === args.p_application_id)
       if (!application || application.status !== 'APPLYING' || application.execution_claim_token !== args.p_claim_token) return { data: false, error: null }

@@ -11,6 +11,9 @@ function describeAdminPendingAction(toolName: string, args: Record<string, unkno
   if (toolName === 'disable_dry_run_mode') return 'Disable dry-run mode — real submissions can reach an ATS'
   if (toolName === 'set_daily_submission_cap') return `Set daily ATS submission cap to ${args.cap}`
   if (toolName === 'run_application_execution') return `Run the browser executor for stored application ${args.application_id}`
+  if (toolName === 'apply_to_qualified_jobs') {
+    return `Submit REAL applications to up to ${args.max_applications} qualified Greenhouse job(s) scoring ${args.min_score ?? 70}+. This contacts real employers.`
+  }
   return `Run ${toolName}`
 }
 

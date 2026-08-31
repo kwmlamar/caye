@@ -22,7 +22,7 @@ export const enableApplicationAutomation: Tool<Record<string, never>> = {
     'Enable real ATS application-submission automation. HIGH-RISK — this is what allows the executor to actually submit applications (still bounded by dry_run, daily_submission_cap, and provider/employer allowlists). Confirmation is enforced in code: the first call only stages the change, then relay the summary and call again with identical arguments once the founder confirms in a NEW message.',
   risk: 'high',
   roles: ['founder'],
-  modes: ['admin-shell'],
+  modes: ['admin-shell', 'back-office'],
   inputSchema: { type: 'object', properties: {} },
 
   async execute() {

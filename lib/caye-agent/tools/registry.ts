@@ -87,6 +87,7 @@ import { getWorkspaceAutonomy } from './admin/read/get-workspace-autonomy'
 import { triggerCron } from './admin/write-high/trigger-cron'
 import { setWorkspaceAutonomy } from './admin/write-high/set-workspace-autonomy'
 import { gateAdminHighRisk } from './admin/admin-high-risk-gate'
+import { applyToQualifiedJobs, previewQualifiedJobs } from './admin/write-high/apply-to-qualified-jobs'
 import { getJobSearchSummary } from './admin/read/get-job-search-summary'
 import { listJobSearchQueue } from './admin/read/list-job-search-queue'
 import { listJobSearchCandidates } from './admin/read/list-job-search-candidates'
@@ -285,6 +286,8 @@ export const TOOL_REGISTRY: AnyTool[] = [
   gateAdminHighRisk(disableDryRunMode) as AnyTool,
   gateAdminHighRisk(setDailySubmissionCap) as AnyTool,
   gateAdminHighRisk(runApplicationExecution) as AnyTool,
+  previewQualifiedJobs as AnyTool,
+  gateAdminHighRisk(applyToQualifiedJobs) as AnyTool,
 ]
 
 export function findTool(name: string): AnyTool | undefined {
