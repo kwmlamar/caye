@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { runCrossDomainSynthesisIfDue } from '@/lib/research/cross-domain-production'
 import { runNextProductionResearchDesk } from '@/lib/research/desks/production'
 import { createResearchProviderSession } from '@/lib/research/providers/router'
 import { recordResearchRoutingProvenance } from '@/lib/research/providers/provenance'
@@ -30,11 +31,15 @@ export async function GET(request: NextRequest) {
 }
 
 /**
- * Give due standing-mission desks first use of the research cron. When no desk is
- * due, preserve the existing founder/operator queued-research worker behavior.
- * Both paths retain their own idempotent SKIP LOCKED claims.
+ * Cross-domain synthesis is checked first because a material belief revision
+ * should be reassessed on the next 15-minute worker tick rather than waiting for
+ * a standing desk slot. When synthesis is not due, preserve the existing desk
+ * and founder/operator queued-research ordering.
  */
 export async function runResearchWorker(): Promise<Record<string, unknown>> {
+  const crossDomain = await runCrossDomainSynthesisIfDue()
+  if (crossDomain.status !== 'idle') return { kind: 'cross-domain-synthesis', ...crossDomain }
+
   const workerId = `research-worker:${process.env.VERCEL_REGION || 'unknown'}`
   const desk = await runNextProductionResearchDesk(workerId)
   if (desk.status !== 'idle') return { kind: 'research-desk', ...desk }
