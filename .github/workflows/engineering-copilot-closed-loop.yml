@@ -5,6 +5,7 @@ on:
     paths:
       - 'lib/coding-session/**'
       - 'supabase/migrations/*engineering_copilot_closed_loop.sql'
+      - 'supabase/migrations/*coding_session_learning_audit.sql'
       - '.github/workflows/engineering-copilot-closed-loop.yml'
 
 permissions:
@@ -21,5 +22,5 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: Run closed-loop verdict tests
-        run: npx vitest run lib/coding-session/closure-policy.test.ts
+      - name: Run closed-loop verdict and learning-audit tests
+        run: npx vitest run lib/coding-session/closure-policy.test.ts lib/coding-session/coding-session-learning-audit.migration.test.ts
