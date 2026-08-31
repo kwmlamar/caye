@@ -16,7 +16,7 @@ type Args = {
   lead?: string
   /** Epistemically neutral question Caye should actually verify. */
   verificationQuestion?: string
-  /** Stable subject/relation key, e.g. "nvidia:hugging-face:acquisition". */
+  /** Stable semantic subject/relation key, independent of surface wording. */
   canonicalKey?: string
   /** Choose only when the domain is defensible; otherwise use wildcard. */
   program?: FounderResearchProgramKey
@@ -39,7 +39,7 @@ const PROGRAMS = [
 export const startCanonicalResearchTool: Tool<Args> = {
   name: 'start_canonical_research',
   description:
-    'Founder-only low-risk Caye Direct research action. Use it when the founder says look into, investigate, research, verify, or keep an eye on something. For a new topic, treat factual assertions as UNVERIFIED LEADS, never facts: provide lead, a neutral verificationQuestion, a stable canonicalKey describing the subject/relation, and the best canonical program (use wildcard_global_discovery when no domain clearly fits). This creates/reuses a durable canonical question and queues the existing research runtime. Use questionId only when starting an already-known canonical question.',
+    'Founder-only low-risk Caye Direct research action. Use it when the founder says look into, investigate, research, verify, or keep an eye on something. For a new topic, treat factual assertions as UNVERIFIED LEADS, never facts: provide lead, a neutral verificationQuestion, and a stable semantic canonicalKey based on the primary entities + relation/topic rather than the sentence wording (example: NVIDIA bought Hugging Face / did NVIDIA acquire Hugging Face => nvidia:hugging-face:acquisition). Choose the best canonical program; use wildcard_global_discovery when no domain clearly fits. This creates/reuses a durable canonical question and queues the existing research runtime. Use questionId only when starting an already-known canonical question.',
   risk: 'low',
   roles: ['founder'],
   modes: ['back-office'],
@@ -55,8 +55,8 @@ export const startCanonicalResearchTool: Tool<Args> = {
     additionalProperties: false,
   },
   async execute(args, rawCtx) {
-    if (rawCtx.channel !== 'dashboard') {
-      return { ok: false, error: 'Canonical research writes are available only in founder Caye Direct.' }
+    if (rawCtx.callerRole !== 'founder' || rawCtx.channel !== 'dashboard') {
+      return { ok: false, error: 'Canonical research writes are available only to the founder in Caye Direct.' }
     }
 
     const ctx = rawCtx as CapabilityToolContext
