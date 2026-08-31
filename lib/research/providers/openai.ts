@@ -31,7 +31,7 @@ import type {
 // OPENAI_RESEARCH_MODEL once stronger reasoning is wanted and access is confirmed.
 const DEFAULT_RESEARCH_MODEL = process.env.OPENAI_RESEARCH_MODEL || 'gpt-5-mini'
 const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1'
-const SEARCH_MAX_TOKENS = 2_048
+const SEARCH_MAX_TOKENS = 4_096
 
 type UnknownRecord = Record<string, unknown>
 
@@ -44,11 +44,22 @@ function text(value: unknown): string | null {
 }
 
 /**
- * Parse url_citation annotations out of a Responses API payload.
+ * Parse consulted sources out of a Responses API payload.
  *
- * Shape (POST /v1/responses): output[] contains `web_search_call` items and a
- * `message` item whose content[] holds `output_text` parts carrying
- * `annotations[] = { type: 'url_citation', url, title, start_index, end_index }`.
+ * Two channels, both required:
+ *
+ * 1. `message.content[].output_text.annotations[]` of type `url_citation`
+ *    ({ url, title, start_index, end_index }) — the references the model
+ *    actually cited in prose. Richest, but only present if it wrote prose.
+ * 2. `web_search_call.action.sources[]`, returned when the request asks for
+ *    `include: ["web_search_call.action.sources"]` — the complete list of URLs
+ *    the model consulted.
+ *
+ * Channel 2 exists because channel 1 alone is not reliable on reasoning models:
+ * the first production cycle after the provider migration returned zero
+ * citations because hidden reasoning consumed the output budget before any
+ * annotated text was emitted, so the run found no sources at all. Discovery
+ * must not depend on the model choosing to narrate.
  *
  * Exported for tests.
  */
@@ -59,6 +70,14 @@ export function extractOpenAiSearchResults(payload: unknown): ResearchSearchResu
   const results: ResearchSearchResult[] = []
   const seen = new Set<string>()
 
+  const add = (rawUrl: unknown, rawTitle: unknown) => {
+    const url = text(rawUrl)
+    if (!url || seen.has(url)) return
+    seen.add(url)
+    results.push({ url, title: text(rawTitle) ?? undefined })
+  }
+
+  // Cited references first — they carry titles and reflect what the model used.
   for (const itemValue of output) {
     const item = record(itemValue)
     if (item?.type !== 'message' || !Array.isArray(item.content)) continue
@@ -70,11 +89,22 @@ export function extractOpenAiSearchResults(payload: unknown): ResearchSearchResu
       for (const annotationValue of part.annotations) {
         const annotation = record(annotationValue)
         if (annotation?.type !== 'url_citation') continue
-        const url = text(annotation.url)
-        if (!url || seen.has(url)) continue
-        seen.add(url)
-        results.push({ url, title: text(annotation.title) ?? undefined })
+        add(annotation.url, annotation.title)
       }
+    }
+  }
+
+  // Then everything the search tool reports having consulted.
+  for (const itemValue of output) {
+    const item = record(itemValue)
+    if (item?.type !== 'web_search_call') continue
+    const sources = record(item.action)?.sources
+    if (!Array.isArray(sources)) continue
+
+    for (const sourceValue of sources) {
+      const source = record(sourceValue)
+      if (source) add(source.url, source.title)
+      else add(sourceValue, undefined)
     }
   }
 
@@ -190,8 +220,16 @@ export function createOpenAiResearchProvider(options: OpenAiResearchProviderOpti
         model,
         tools: [{ type: 'web_search' }],
         tool_choice: 'required',
+        // Return the full consulted list, not only what the model cites in prose.
+        include: ['web_search_call.action.sources'],
+        // Hidden reasoning is billed against max_output_tokens on GPT-5-class
+        // models and will happily spend the entire budget before emitting any
+        // text — the same trap documented in
+        // lib/model-router/backends/openai-compatible.ts. Discovery does not
+        // need deep reasoning; it needs sources.
+        reasoning: { effort: 'low' },
         max_output_tokens: SEARCH_MAX_TOKENS,
-        input: `Search the web for authoritative, diverse sources that directly help answer this research question. Prefer primary sources, official documentation, peer-reviewed work, and high-quality reporting. Cite every source you consult. Do not answer the question yet. Research question: ${query}`,
+        input: `Search the web for authoritative, diverse sources that directly help answer this research question. Prefer primary sources, official documentation, peer-reviewed work, and high-quality reporting. Then list the sources you consulted as a short bulleted list, citing each one. Do not answer the research question itself. Research question: ${query}`,
       }, requireKey(), doFetch)
 
       reportUsage(payload)
@@ -215,6 +253,9 @@ export function createOpenAiResearchProvider(options: OpenAiResearchProviderOpti
         model,
         instructions: request.system,
         input: request.user,
+        // Same budget trap as search: the synthesis contract needs its tokens
+        // spent on the JSON object, not on hidden reasoning that truncates it.
+        reasoning: { effort: 'low' },
         max_output_tokens: request.maxOutputTokens,
       }, requireKey(), doFetch)
 

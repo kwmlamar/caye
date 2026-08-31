@@ -71,6 +71,64 @@ describe('OpenAI research evidence parsing', () => {
   })
 })
 
+describe('source discovery on reasoning models', () => {
+  // Regression for the first production cycle after the provider migration:
+  // gpt-5-mini spent its whole output budget on hidden reasoning, emitted no
+  // annotated prose, and the run found zero sources.
+  it('recovers sources from web_search_call.action.sources when the model cited nothing', () => {
+    expect(extractOpenAiSearchResults({
+      output: [
+        {
+          type: 'web_search_call',
+          id: 'ws_1',
+          status: 'completed',
+          action: {
+            type: 'search',
+            query: 'china us ai',
+            sources: [
+              { url: 'https://example.gov/a', title: 'Gov A' },
+              { url: 'https://arxiv.org/abs/1', title: 'Paper' },
+            ],
+          },
+        },
+        { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: '', annotations: [] }] },
+      ],
+    })).toEqual([
+      { url: 'https://example.gov/a', title: 'Gov A' },
+      { url: 'https://arxiv.org/abs/1', title: 'Paper' },
+    ])
+  })
+
+  it('returns no sources when the response is truncated with neither citations nor sources', () => {
+    expect(extractOpenAiSearchResults({
+      status: 'incomplete',
+      incomplete_details: { reason: 'max_output_tokens' },
+      output: [{ type: 'web_search_call', id: 'ws_1', status: 'completed', action: { type: 'search', query: 'x' } }],
+    })).toEqual([])
+  })
+
+  it('prefers cited references but still adds every other consulted source', () => {
+    expect(extractOpenAiSearchResults({
+      output: [
+        { type: 'web_search_call', action: { type: 'search', sources: [{ url: 'https://b.gov/2' }, { url: 'https://a.gov/1' }] } },
+        {
+          type: 'message',
+          content: [{ type: 'output_text', text: 'x', annotations: [{ type: 'url_citation', url: 'https://a.gov/1', title: 'Cited A' }] }],
+        },
+      ],
+    })).toEqual([
+      { url: 'https://a.gov/1', title: 'Cited A' },
+      { url: 'https://b.gov/2' },
+    ])
+  })
+
+  it('tolerates a bare string source entry without inventing a title', () => {
+    expect(extractOpenAiSearchResults({
+      output: [{ type: 'web_search_call', action: { type: 'search', sources: ['https://plain.gov/x'] } }],
+    })).toEqual([{ url: 'https://plain.gov/x' }])
+  })
+})
+
 describe('OpenAI research provider', () => {
   it('requests the web_search tool and normalizes results to the canonical shape', async () => {
     const fetchMock = vi.fn(async () => jsonResponse(WEB_SEARCH_RESPONSE))
@@ -89,6 +147,10 @@ describe('OpenAI research provider', () => {
     expect(body.tools).toEqual([{ type: 'web_search' }])
     // Real external research, not pretrained recall.
     expect(body.tool_choice).toBe('required')
+    // Sources must not depend on the model choosing to narrate.
+    expect(body.include).toEqual(['web_search_call.action.sources'])
+    // Hidden reasoning must not consume the budget before sources are emitted.
+    expect(body.reasoning).toEqual({ effort: 'low' })
     expect((init.headers as Record<string, string>).authorization).toBe('Bearer sk-test')
   })
 
@@ -196,5 +258,10 @@ describe('OpenAI research provider', () => {
 
     const result = await provider.complete({ system: 's', user: 'u', maxOutputTokens: 8192 })
     expect(result.usage).toEqual({ model: 'gpt-5', inputTokens: 1200, outputTokens: 300 })
+
+    const body = JSON.parse((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body as string)
+    // Synthesis tokens belong to the JSON contract, not to hidden reasoning.
+    expect(body.reasoning).toEqual({ effort: 'low' })
+    expect(body.max_output_tokens).toBe(8192)
   })
 })
