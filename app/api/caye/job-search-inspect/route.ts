@@ -88,16 +88,21 @@ export async function inspectApplicationForHumanAssist(applicationId: string) {
   }
 
   const unresolved = resolutions.filter((resolution) => resolution.status === 'unresolved')
+  const readyForBrowser = unresolved.length === 0
   const reason = unresolved.length
     ? `Human-assisted form inspection found ${unresolved.length} unresolved required field(s): ${unresolved.map((r) => r.status === 'unresolved' ? r.field.label : '').join('; ')}`
-    : 'Human-assisted form inspection complete: every discovered required field is resolved. Browser interaction is still required for submission.'
-  await supabase.from('job_search_applications').update({ status: 'NEEDS_HUMAN', needs_human_reason: reason, updated_at: new Date().toISOString() }).eq('id', applicationId)
+    : 'Human-assisted form inspection complete: every discovered required field is resolved. Application is prepared for the browser readiness executor.'
+  await supabase.from('job_search_applications').update({
+    status: readyForBrowser ? 'PREPARED' : 'NEEDS_HUMAN',
+    needs_human_reason: readyForBrowser ? null : reason,
+    updated_at: new Date().toISOString(),
+  }).eq('id', applicationId)
 
   return {
     applicationId,
     company: row.candidate.company,
     title: row.candidate.title,
-    outcome: unresolved.length ? 'needs_human' : 'ready_for_browser',
+    outcome: readyForBrowser ? 'ready_for_browser' : 'needs_human',
     discoveredRequiredFields: requiredFields.length,
     resolved: resolutions.filter((r) => r.status === 'resolved').map((r) => ({ label: r.field.label, semanticKey: r.field.semanticKey, source: r.status === 'resolved' ? r.source : null })),
     unresolved: unresolved.map((r) => r.status === 'unresolved' ? ({ label: r.field.label, semanticKey: r.field.semanticKey, reason: r.reason, options: r.field.allowedOptions?.map((o) => o.label) ?? null }) : null).filter(Boolean),
