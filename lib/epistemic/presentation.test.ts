@@ -1,0 +1,11 @@
+import { describe,expect,it } from 'vitest'
+import { chooseAuthoritativeEvidence,summarizeEpistemicEvidence } from './presentation'
+describe('epistemic presentation',()=>{
+it('marks stale memory instead of presenting it current',()=>{const r=summarizeEpistemicEvidence([{label:'opening time',value:'9 AM',kind:'durable_memory',confidence:.9,expiresAt:'2026-08-29T00:00:00Z'}],new Date('2026-08-30T00:00:00Z'));expect(r.known).toHaveLength(0);expect(r.stale[0]).toContain('stale since')})
+it('surfaces live observation contradicting memory',()=>{const r=summarizeEpistemicEvidence([{label:'outreach',value:'paused',kind:'observed_live',confidence:1,environment:'production',contradictedBy:['stored-enabled']},{label:'outreach',value:'enabled',kind:'durable_memory',confidence:.8}]);expect(r.known.some(v=>v.includes('Observed live'))).toBe(true);expect(r.conflicts[0]).toContain('contradictory validated source')})
+it('keeps explicit human correction above derived learning',()=>{expect(chooseAuthoritativeEvidence([{label:'deposit',value:'50%',kind:'validated_learning',confidence:1},{label:'deposit',value:'25%',kind:'explicit_human',confidence:.8}])?.value).toBe('25%')})
+it('lets validated live evidence supersede derived learning with lineage',()=>{const x=chooseAuthoritativeEvidence([{label:'provider',value:'healthy',kind:'validated_learning',confidence:1},{label:'provider',value:'down',kind:'observed_live',confidence:.95,environment:'production',supersedes:['prior-derived']}]);expect(x?.value).toBe('down');expect(x?.supersedes).toEqual(['prior-derived'])})
+it('never presents simulated evidence as live',()=>{const r=summarizeEpistemicEvidence([{label:'send',value:'delivered',kind:'observed_live',confidence:1,environment:'simulated'}]);expect(r.known).toHaveLength(0);expect(r.inferred[0]).toContain('environment: simulated')})
+it('never presents branch evidence as production',()=>{const r=summarizeEpistemicEvidence([{label:'feature',value:'works',kind:'observed_live',confidence:1,environment:'branch'}]);expect(r.known).toHaveLength(0);expect(r.inferred[0]).toContain('environment: branch')})
+it('keeps predictions separate from facts',()=>{const r=summarizeEpistemicEvidence([{label:'effect',value:'will reduce retries',kind:'prediction',confidence:.7}]);expect(r.predictions).toHaveLength(1);expect(r.known).toHaveLength(0)})
+})
