@@ -36,6 +36,13 @@ function toDesk(row: DeskRow): ResearchDeskDefinition {
   }
 }
 
+function normalizeCheckpoint(value: unknown): ResearchDeskCheckpoint | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const checkpoint = value as Partial<ResearchDeskCheckpoint>
+  if (!Array.isArray(checkpoint.processedQuestionKeys) || !Array.isArray(checkpoint.pendingQuestions) || !Array.isArray(checkpoint.results) || !checkpoint.usage) return null
+  return checkpoint as ResearchDeskCheckpoint
+}
+
 function toCycle(row: CycleRow): ResearchDeskCycle {
   return {
     deskId: row.desk_id,
@@ -77,7 +84,7 @@ export function createSupabaseResearchDeskStore(): ResearchDeskStore {
       const existing = await db.from('research_desk_cycles').select('*').eq('desk_id', deskId).eq('wakeup_key', wakeupKey).single()
       if (existing.error) throw existing.error
       if (existing.data.status === 'running') {
-        return { reserved: true as const, checkpoint: existing.data.checkpoint as ResearchDeskCheckpoint }
+        return { reserved: true as const, checkpoint: normalizeCheckpoint(existing.data.checkpoint) }
       }
       return { reserved: false as const, cycle: toCycle(existing.data) }
     },
