@@ -22,16 +22,13 @@ export type FounderResearchInvestigationArgs = {
   program: FounderResearchProgramKey
   mode?: InvestigationMode
   refreshIntervalHours?: number
-  origin: {
-    workspaceId: string
-    threadId: string
-    messageId: string
-  }
+  origin: { workspaceId: string; threadId: string; messageId: string }
 }
 
 const FALLBACK_PROGRAM: FounderResearchProgramKey = 'wildcard_global_discovery'
 const MODES: InvestigationMode[] = ['one_shot', 'follow_until_resolved', 'monitor']
 const MODE_WEIGHT: Record<InvestigationMode, number> = { one_shot: 0, follow_until_resolved: 1, monitor: 2 }
+const MONITOR_LANGUAGE = /\b(keep\s+(an\s+)?eye\s+on|keep\s+watching|monitor|track\s+this|watch\s+this|follow\s+this)\b/i
 
 export function normalizeResearchCanonicalKey(value: string): string {
   return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, ':').replace(/^:+|:+$/g, '').slice(0, 180)
@@ -75,13 +72,14 @@ export const researchInvestigateCapability: RegisteredCapability<FounderResearch
     const verificationQuestion = args?.verificationQuestion?.trim()
     const canonicalKey = normalizeResearchCanonicalKey(args?.canonicalKey ?? '')
     const origin = args?.origin
-    const mode: InvestigationMode = args.mode && MODES.includes(args.mode) ? args.mode : 'follow_until_resolved'
-    const refreshIntervalHours = args.refreshIntervalHours == null ? (mode === 'monitor' ? 24 : 6) : Math.round(args.refreshIntervalHours)
+    const explicitMode = args.mode && MODES.includes(args.mode) ? args.mode : null
     if (!lead || !verificationQuestion || !canonicalKey || !origin?.workspaceId || !origin.threadId || !origin.messageId) {
       return failed('invalid_args', 'lead, verificationQuestion, canonicalKey, and trusted Direct origin are required.')
     }
     if (!(args.program in FOUNDER_RESEARCH_PROGRAMS)) return failed('invalid_args', 'Unknown canonical research program.')
-    if (refreshIntervalHours < 1 || refreshIntervalHours > 720) return failed('invalid_args', 'refreshIntervalHours must be between 1 and 720.')
+    if (args.refreshIntervalHours != null && (args.refreshIntervalHours < 1 || args.refreshIntervalHours > 720)) {
+      return failed('invalid_args', 'refreshIntervalHours must be between 1 and 720.')
+    }
 
     try {
       const db = createServiceClient()
@@ -91,6 +89,12 @@ export const researchInvestigateCapability: RegisteredCapability<FounderResearch
       if (inboundError) throw inboundError
       if (!inbound?.id || typeof inbound.body !== 'string' || !inbound.body.trim()) return failed('not_authorized', 'Trusted founder Direct provenance could not be verified.')
 
+      // The durable founder message is more authoritative than model paraphrase for
+      // determining whether this is standing monitoring. Ordinary “look into it”
+      // defaults to follow-until-resolved; explicit watch language stays alive.
+      const mode: InvestigationMode = explicitMode ?? (MONITOR_LANGUAGE.test(inbound.body) ? 'monitor' : 'follow_until_resolved')
+      const refreshIntervalHours = args.refreshIntervalHours == null ? (mode === 'monitor' ? 24 : 6) : Math.round(args.refreshIntervalHours)
+
       let question = await findCurrentQuestion(db, canonicalKey)
       let reused = Boolean(question)
       let programTitle = ''
@@ -99,13 +103,8 @@ export const researchInvestigateCapability: RegisteredCapability<FounderResearch
         const program = await resolveProgram(db, args.program)
         programTitle = program.title
         const inserted = await db.from('research_questions').insert({
-          program_id: program.id,
-          question: verificationQuestion,
-          status: 'open',
-          canonical_key: canonicalKey,
-          investigation_mode: mode,
-          lifecycle_status: 'active',
-          refresh_interval_hours: refreshIntervalHours,
+          program_id: program.id, question: verificationQuestion, status: 'open', canonical_key: canonicalKey,
+          investigation_mode: mode, lifecycle_status: 'active', refresh_interval_hours: refreshIntervalHours,
           max_autonomous_runs: mode === 'monitor' ? 48 : 8,
         }).select('id,program_id,question,status,canonical_key,investigation_mode,lifecycle_status,refresh_interval_hours').single()
         if (inserted.error?.code === '23505') { question = await findCurrentQuestion(db, canonicalKey); reused = true }
@@ -113,17 +112,12 @@ export const researchInvestigateCapability: RegisteredCapability<FounderResearch
         else question = inserted.data
         if (!question) throw new Error('Canonical research question could not be created.')
       } else {
-        // Repeating the request may increase persistence (one-shot -> follow -> monitor),
-        // but never silently downgrade an investigation the founder already asked to keep alive.
         const currentMode = (question.investigation_mode ?? 'one_shot') as InvestigationMode
         const effectiveMode = MODE_WEIGHT[mode] > MODE_WEIGHT[currentMode] ? mode : currentMode
         const reactivated = await db.from('research_questions').update({
-          investigation_mode: effectiveMode,
-          lifecycle_status: 'active',
+          investigation_mode: effectiveMode, lifecycle_status: 'active',
           refresh_interval_hours: effectiveMode === mode ? refreshIntervalHours : question.refresh_interval_hours,
-          resolved_at: null,
-          resolution_reason: null,
-          max_autonomous_runs: effectiveMode === 'monitor' ? 48 : 8,
+          resolved_at: null, resolution_reason: null, max_autonomous_runs: effectiveMode === 'monitor' ? 48 : 8,
         }).eq('id', question.id)
         if (reactivated.error) throw reactivated.error
         question = { ...question, investigation_mode: effectiveMode, lifecycle_status: 'active' }
@@ -144,14 +138,15 @@ export const researchInvestigateCapability: RegisteredCapability<FounderResearch
       if (originInsert.error && originInsert.error.code !== '23505') throw originInsert.error
 
       const run = await queueResearchRun(question.id, 'founder_direct')
+      const effectiveMode = (question.investigation_mode ?? mode) as InvestigationMode
       return {
         status: 'staged',
         data: {
           durable: true, reused, epistemicStatus: 'unverified_lead', questionId: question.id,
           verificationQuestion: question.question, canonicalKey, program: programTitle,
-          investigationMode: question.investigation_mode ?? mode, refreshIntervalHours,
+          investigationMode: effectiveMode, refreshIntervalHours,
           runId: run.id, runStatus: run.status,
-          next: mode === 'monitor'
+          next: effectiveMode === 'monitor'
             ? 'The initial research run is queued and this investigation will continue monitoring on an adaptive cadence.'
             : 'The initial research run is queued and Caye will autonomously revisit unresolved or contradictory evidence within the bounded investigation budget.',
         },
