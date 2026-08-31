@@ -39,9 +39,22 @@ describe('intelligence relation and belief write contracts', () => {
     expect(migration).toMatch(/belief revision requires research claim evidence/i)
   })
 
-  it('keeps write authority service-role only', () => {
+  it('keeps new relation and revision tables behind RLS with no client-role privileges', () => {
+    for (const table of [
+      'intelligence_relation_claims',
+      'intelligence_belief_revisions',
+      'intelligence_belief_revision_claims',
+    ]) {
+      expect(migration).toMatch(new RegExp(`alter table public\\.${table} enable row level security`, 'i'))
+    }
+    expect(migration).toMatch(/revoke all on public\.intelligence_relation_claims,[\s\S]*public\.intelligence_belief_revisions,[\s\S]*public\.intelligence_belief_revision_claims[\s\S]*from anon, authenticated/i)
+  })
+
+  it('keeps write RPC authority service-role only and security-definer scoped', () => {
+    expect(migration).toMatch(/create or replace function public\.upsert_grounded_intelligence_relation[\s\S]*language plpgsql[\s\S]*security definer[\s\S]*set search_path = public/i)
     expect(migration).toMatch(/revoke all on function public\.upsert_grounded_intelligence_relation[\s\S]*from public, anon, authenticated/i)
     expect(migration).toMatch(/grant execute on function public\.upsert_grounded_intelligence_relation[\s\S]*to service_role/i)
+    expect(migration).toMatch(/create or replace function public\.revise_intelligence_belief_confidence[\s\S]*language plpgsql[\s\S]*security definer[\s\S]*set search_path = public/i)
     expect(migration).toMatch(/revoke all on function public\.revise_intelligence_belief_confidence[\s\S]*from public, anon, authenticated/i)
     expect(migration).toMatch(/grant execute on function public\.revise_intelligence_belief_confidence[\s\S]*to service_role/i)
   })
