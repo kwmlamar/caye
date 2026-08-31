@@ -3,6 +3,7 @@ import 'server-only'
 import { createHash } from 'node:crypto'
 import { createServiceClient } from '@/lib/supabase-server'
 import { ingestIntelligenceFinding, type IntelligenceFinding } from '@/lib/intelligence/ingest'
+import { strategicIntelligencePriorities } from '@/lib/intelligence/query'
 import { executeResearchRun, queueResearchRun } from '@/lib/research/runtime'
 import { createResearchProviderSession } from '@/lib/research/providers/router'
 import { recordResearchRoutingProvenance } from '@/lib/research/providers/provenance'
@@ -13,6 +14,7 @@ import {
   type ResearchDeskQuestion,
   type ResearchDeskResearchResult,
 } from './runtime'
+import { graphPriorityQuestions } from './intelligence-priorities'
 import {
   claimDueResearchDesk,
   createSupabaseResearchDeskScheduler,
@@ -122,14 +124,27 @@ async function projectRunIntoIntelligence(args: {
   }
 }
 
-function planner(mode: 'monitoring' | 'discovery', desk: ResearchDeskDefinition, intelligence: ExistingDeskIntelligence, remainingQueries: number): ResearchDeskQuestion[] {
+async function planner(mode: 'monitoring' | 'discovery', desk: ResearchDeskDefinition, intelligence: ExistingDeskIntelligence, remainingQueries: number): Promise<ResearchDeskQuestion[]> {
   if (remainingQueries <= 0) return []
   if (mode === 'monitoring') {
-    const recent = new Set(intelligence.recentQuestions.map(normalize))
+    const priorities = await strategicIntelligencePriorities({ scope: { kind: 'operator' }, limit: Math.min(remainingQueries * 2, 12) })
+    const graphQuestions = graphPriorityQuestions({
+      desk,
+      priorities,
+      recentQuestions: intelligence.recentQuestions,
+      limit: remainingQueries,
+    })
+    if (graphQuestions.length >= remainingQueries) return graphQuestions
+
+    const recent = new Set([...intelligence.recentQuestions, ...graphQuestions.map((item) => item.question)].map(normalize))
     const available = desk.standingQuestions.filter((question) => !recent.has(normalize(question)))
-    const pool = available.length ? available : desk.standingQuestions
-    const limit = Math.max(1, Math.min(pool.length, Math.floor(remainingQueries * 0.6) || 1))
-    return pool.slice(0, limit).map((question) => ({ question, mode: 'monitoring' as const, depth: 0 }))
+    const pool = available.length ? available : desk.standingQuestions.filter((question) => !graphQuestions.some((item) => normalize(item.question) === normalize(question)))
+    const slots = remainingQueries - graphQuestions.length
+    const limit = Math.max(0, Math.min(pool.length, Math.floor(remainingQueries * 0.6) || 1, slots))
+    return [
+      ...graphQuestions,
+      ...pool.slice(0, limit).map((question) => ({ question, mode: 'monitoring' as const, depth: 0 })),
+    ]
   }
 
   const prompts = [
