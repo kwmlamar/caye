@@ -3,7 +3,7 @@ import { NextRequest } from 'next/server'
 
 vi.mock('server-only', () => ({}))
 
-const runGmailPoll = vi.fn()
+const { runGmailPoll } = vi.hoisted(() => ({ runGmailPoll: vi.fn() }))
 vi.mock('@/app/api/email/gmail-poll/route', () => ({ runGmailPoll }))
 
 import { GET } from './route'
