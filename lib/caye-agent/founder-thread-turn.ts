@@ -60,6 +60,8 @@ export interface FounderThreadTurnOptions {
    * byte.
    */
   responseStyle?: 'voice'
+  /** Ephemeral founder-visible progress row for this Direct turn. */
+  activityId?: string | null
 }
 
 /**
@@ -272,6 +274,7 @@ export async function runFounderThreadTurn(
       engineeringOrigin: { threadId, messageId: inboundRow.id },
       channel: 'dashboard',
       responseStyle: options!.responseStyle,
+      activityId: options!.activityId ?? null,
     })
     const richResult = mergeRichResults(
       mergeRichResults(

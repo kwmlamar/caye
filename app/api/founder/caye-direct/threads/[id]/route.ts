@@ -26,6 +26,7 @@ import { resolveAuthoritativeThreadWorkspace } from '@/lib/caye-direct-thread-sc
 import { runFounderThreadTurn } from '@/lib/caye-agent/founder-thread-turn'
 import type { RequestedMode } from '@/lib/model-router/types'
 import { resolveRichResultReferences } from '@/lib/caye-direct-rich-result-resolution'
+import { startCayeDirectActivity, updateCayeDirectActivity } from '@/lib/caye-direct-activity'
 
 const VALID_REQUESTED_MODES: readonly RequestedMode[] = ['auto', 'claude', 'openai', 'api']
 
@@ -81,6 +82,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const thread = await getFounderThreadById(supabase, threadId)
   if (!thread) return NextResponse.json({ error: 'Thread not found' }, { status: 404 })
 
+  let activityId: string | null = null
   try {
     const authoritativeWorkspaceId = await resolveAuthoritativeThreadWorkspace(supabase, threadId)
     const turnWorkspaceId = authoritativeWorkspaceId ?? workspaceId
@@ -96,19 +98,26 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     // runFounderThreadTurn still forces attachment turns onto the production
     // multimodal path because the router cannot see raw attachment blocks.
     const requestedMode = VALID_REQUESTED_MODES.find((m) => m === model) ?? 'auto'
+    activityId = await startCayeDirectActivity({
+      workspaceId: turnWorkspaceId,
+      threadId,
+      kind: attachments?.length ? 'analyzing_image' : 'thinking',
+    })
     const result = await runFounderThreadTurn(
       turnWorkspaceId,
       threadId,
       message ?? '',
-      { requestedMode, founderUserId: user.id },
+      { requestedMode, founderUserId: user.id, activityId },
       attachments
     )
+    await updateCayeDirectActivity(activityId, { kind: 'completed' })
     return NextResponse.json({
       ...result,
       activeWorkspaceId: turnWorkspaceId,
       workspaceContextSource: authoritativeWorkspaceId ? 'linked_subject' : 'dashboard',
     })
   } catch (err) {
+    await updateCayeDirectActivity(activityId, { kind: 'failed' })
     const msg = err instanceof Error ? err.message : 'Agent failed'
     if (msg === 'Thread not found') return NextResponse.json({ error: msg }, { status: 404 })
     if (msg === 'Invalid attachment') return NextResponse.json({ error: msg }, { status: 400 })

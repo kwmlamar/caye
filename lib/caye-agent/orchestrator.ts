@@ -9,6 +9,7 @@ import {
   type ToolStatus,
 } from './tools/result'
 import { classifyToolResponse } from './response-intent'
+import { updateCayeDirectActivity } from '@/lib/caye-direct-activity'
 
 /**
  * orchestrator.ts
@@ -92,6 +93,10 @@ export async function runToolWithRecovery(
   meta: { mode: ToolMode; toolUseId?: string }
 ): Promise<OrchestratedResult> {
   const startedAt = Date.now()
+  const directActivityId = (ctx as ToolContext & { directActivityId?: string | null }).directActivityId
+  if (directActivityId) {
+    void updateCayeDirectActivity(directActivityId, { kind: 'calling_tool', toolName: tool.name })
+  }
   // Saving an external draft is the one high-risk write that can safely retry
   // when the tool itself proves the provider rejected it before creation.
   // Ambiguous failures stay at one attempt; duplicate drafts are worse than a
@@ -128,6 +133,9 @@ export async function runToolWithRecovery(
   void logToolCall({ tool, args, ctx: scopedCtx, meta, result: last, attempts, durationMs }).catch(
     (err) => console.error('[orchestrator] tool-call log write failed:', err)
   )
+  if (directActivityId) {
+    void updateCayeDirectActivity(directActivityId, { kind: 'thinking' })
+  }
 
   return { result: last, attempts, durationMs }
 }
