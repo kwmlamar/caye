@@ -34,18 +34,13 @@ import { claimConversationExecution, releaseConversationExecution } from '@/lib/
  * already did both, or correctly did neither (held).
  */
 
-// Same fallback used by every other business-local read site (e.g.
-// lib/caye-agent/index.ts, lib/caye-agent/tools/read/*) for workspaces
-// with no `customers.timezone` set yet.
 const DEFAULT_WORKSPACE_TIMEZONE = 'America/Nassau'
 
 export interface ConvergedFrontDeskTurnInput {
   workspaceId: string
   conversationId: string
   /** The real, persisted unified_messages.id for the customer's inbound
-   *  message that triggered this turn — NOT the provider's channel_message_id.
-   *  Required for both send idempotency (dispatchOperatorReply) and
-   *  agent-turn persistence (a real FK on caye_frontdesk_agent_turns). */
+   *  message that triggered this turn — NOT the provider's channel_message_id. */
   triggeringMessageId: string
   businessName: string | null
   channel: 'email' | 'whatsapp' | 'instagram' | 'messenger'
@@ -69,13 +64,6 @@ interface SendCustomerReplyToolResultData {
   flagged_for_review?: boolean
 }
 
-/**
- * Scans the turns a tool-loop invocation produced for a successful
- * `send_customer_reply` call. Real production behavior, not a replay
- * heuristic: pairs each `tool_use` block with its matching `tool_result`
- * by `tool_use_id` (the same pairing the Anthropic API itself requires),
- * then reads the SAME `stripForModel`-shaped payload the model saw.
- */
 function findSuccessfulSend(newTurns: Anthropic.MessageParam[]): SendCustomerReplyToolResultData | null {
   const resultsById = new Map<string, unknown>()
   for (const turn of newTurns) {
@@ -118,33 +106,15 @@ export async function runConvergedFrontDeskTurn(
   input: ConvergedFrontDeskTurnInput
 ): Promise<ConvergedFrontDeskTurnResult> {
   const supabase = createServiceClient()
-  // Hoisted so the catch block can release a claim acquired before the
-  // crash — otherwise a mid-turn throw leaves the conversation claimed by
-  // an execution that no longer exists until the lease naturally expires,
-  // blocking the operator from replying to a thread Caye already gave up on.
   let executionClaimId: string | null = null
 
   try {
-    // Owner policy beats model judgment, always (#88). Resolve standing
-    // rules + the existing hold BEFORE the model gets a chance to run — an
-    // owner_only match or a held conversation must never reach the tool
-    // loop, let alone send_customer_reply.
     const authz = await authorizeAutonomousOutbound({
       workspaceId: input.workspaceId,
       conversationId: input.conversationId,
       inboundBody: input.inboundBody,
     })
     if (!authz.allowed) {
-      // blocked_by_existing_hold means the conversation was ALREADY held
-      // before this turn — nothing new happened that the owner doesn't
-      // already know about. Skip markHeld entirely: it would otherwise (a)
-      // overwrite the real original human_agent_reason with this generic
-      // placeholder, and (b) enqueue a fresh urgent_hold ping every single
-      // inbound turn a customer sends while the thread sits held, which
-      // reads to the owner as a new, distinct event each time. Both
-      // blocked_by_owner_policy and blocked_by_authority_check_error ARE
-      // new information this turn (a rule just fired, or we just lost the
-      // ability to tell) and still go through markHeld below.
       if (authz.reason === 'blocked_by_existing_hold') {
         const holdReason =
           'Conversation is already held for the owner — Caye will not reply autonomously until it is released.'
@@ -175,10 +145,6 @@ export async function runConvergedFrontDeskTurn(
     executionClaimId = execution.claim.id
 
     const [{ history: historyForModel }, relationshipCtx, operational, { data: customerRow }] = await Promise.all([
-      // loadFrontDeskConversationContext's `history` field is ALREADY
-      // relative-time-annotated + compacted (see context.ts's own doc
-      // comment) — this is the form to feed the model directly, not a raw
-      // form needing further processing.
       loadFrontDeskConversationContext(input.conversationId),
       loadRelationshipContext(input.workspaceId, input.contactId ?? null),
       loadOperationalContext(input.workspaceId, 'front-desk'),
@@ -186,9 +152,6 @@ export async function runConvergedFrontDeskTurn(
     ])
     const workspaceTimezone = (customerRow?.timezone as string | null) || DEFAULT_WORKSPACE_TIMEZONE
 
-    // The customer's current message is already the last row of the
-    // reloaded history — claimInboundMessage persisted it BEFORE this
-    // function was ever called. No manual turn construction needed.
     if (historyForModel.length === 0) {
       throw new Error('loadFrontDeskConversationContext returned no history — the triggering inbound row is missing')
     }
@@ -215,12 +178,6 @@ export async function runConvergedFrontDeskTurn(
 
     const ctx = {
       workspaceId: input.workspaceId,
-      // System invocation, not a human operator — same precedent as cron
-      // paths (briefings, EOD summaries), which use 'founder' per Role's
-      // own doc comment ("Cron-driven system invocations... use 'founder'
-      // since they have no human caller and need access to every tool").
-      // A real customer-facing email turn is exactly this shape: no human
-      // operator identity to attach, needs the full front-desk tool set.
       callerRole: 'founder' as const,
       requestId: randomUUID(),
       conversationId: input.conversationId,
@@ -238,25 +195,11 @@ export async function runConvergedFrontDeskTurn(
       initialMessages: historyForModel,
       ctx,
       mode: 'front-desk',
-      // No `tools` override — the real TOOL_REGISTRY filtered to
-      // modes:['front-desk'] is exactly what should run in production.
     })
 
     const sendResult = findSuccessfulSend(loopResult.newTurns)
     const toolsUsed = collectToolsUsed(loopResult.newTurns)
 
-    // Persistence is deliberately isolated from the outcome determination
-    // below it. A real customer email may already have gone out (via
-    // send_customer_reply -> dispatchOperatorReply, inside runToolLoop,
-    // ABOVE this line) by the time persistence runs — a persistence
-    // failure here (e.g. the caye_frontdesk_agent_turns migration not yet
-    // applied) must NEVER be allowed to turn an already-successful send
-    // into a reported error/hold. That would be actively misleading: the
-    // customer got their reply, but the owner would see "Caye hit an
-    // error" and the dashboard would show held/error instead of sent.
-    // Continuity (what persistence buys) degrading is an acceptable,
-    // visible-in-logs failure mode; double-reporting a real send as a
-    // failure is not.
     try {
       await persistFrontDeskAgentTurns(
         supabase,
@@ -276,17 +219,11 @@ export async function runConvergedFrontDeskTurn(
       return { outcome: 'sent', toolsUsed, usedOutputFallbackPath: !!loopResult.usedOutputFallbackPath }
     }
 
-    // Held (evidence insufficient, or the model never produced a send) —
-    // same owner-notification shape the legacy hold path already uses,
-    // so Mrs. Max isn't left unaware a customer message went unanswered.
     const holdReason = 'Caye (converged) could not answer with enough confidence — held for review.'
     await markHeld(supabase, input, holdReason)
     await releaseConversationExecution(execution.claim.id)
     return { outcome: 'held', toolsUsed, usedOutputFallbackPath: !!loopResult.usedOutputFallbackPath, holdReason }
   } catch (err) {
-    // Part 22: a crash must fail closed, not fall through to the legacy
-    // generator — that risks two independent customer responses. Treat
-    // exactly like a hold, with the error visible to the owner.
     const message = err instanceof Error ? err.message : String(err)
     console.error('[frontdesk-entry] converged runtime threw:', message)
     const holdReason = `Caye (converged) hit an error and could not process this message: ${message}`
@@ -309,21 +246,33 @@ async function markHeld(
   input: ConvergedFrontDeskTurnInput,
   reason: string
 ): Promise<void> {
+  const heldAt = new Date().toISOString()
   await supabase
     .from('unified_conversations')
-    .update({ human_agent_enabled: true, human_agent_reason: reason })
+    .update({
+      human_agent_enabled: true,
+      human_agent_reason: reason,
+      human_agent_marked_at: heldAt,
+    })
     .eq('id', input.conversationId)
 
+  // This is an operator/internal audit record, not an outbound delivery.
   await supabase.from('unified_messages').insert({
     conversation_id: input.conversationId,
     channel_message_id: null,
     sender_type: 'business',
     content: reason,
     message_type: 'text',
-    sent_at: new Date().toISOString(),
-    status: 'sent',
+    sent_at: heldAt,
+    status: 'internal',
     is_internal: true,
-    metadata: { generated_by: 'caye', hold_reason: reason, runtime: 'converged_frontdesk' },
+    metadata: {
+      generated_by: 'caye',
+      hold_reason: reason,
+      runtime: 'converged_frontdesk',
+      audience: 'internal',
+      message_kind: 'hold_notice',
+    },
   })
 
   await enqueueHoldPing({
