@@ -14,20 +14,23 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(`${appUrl}/connect?link_error=${verified.reason}`)
   }
   const workspaceId = verified.workspaceId
+  const source = req.nextUrl.searchParams.get('source') || 'desktop'
 
   // See the gmail route — embedded WebViews get an escape hatch first.
+  // Keep the origin with the handoff; otherwise a WhatsApp connect silently
+  // degrades to the desktop return path after OAuth.
   if (!req.nextUrl.searchParams.get('ext')) {
     const { isEmbeddedBrowser } = await import('@/lib/channels/embedded-browser')
     if (isEmbeddedBrowser(req.headers.get('user-agent'))) {
       const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.meetcaye.com'
       const t = encodeURIComponent(req.nextUrl.searchParams.get('t') ?? '')
-      return NextResponse.redirect(`${appUrl}/connect/open?channel=zoho&t=${t}`)
+      const sourceParam = encodeURIComponent(source)
+      return NextResponse.redirect(`${appUrl}/connect/open?channel=zoho&t=${t}&source=${sourceParam}`)
     }
   }
 
   const redirectUri = `${process.env.NEXT_PUBLIC_APP_URL}/api/auth/zoho/callback`
 
-  const source = req.nextUrl.searchParams.get('source') || 'desktop'
   const rawToken = req.nextUrl.searchParams.get('t') || ''
   if (source === 'job-search' && !isFounderUserId(workspaceId)) {
     return NextResponse.redirect(`${process.env.NEXT_PUBLIC_APP_URL || 'https://www.meetcaye.com'}/connect?link_error=forbidden`)
