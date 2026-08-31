@@ -35,6 +35,13 @@ function isFresh(createdAt: unknown, nowMs: number): boolean {
   return Number.isFinite(timestamp) && timestamp >= nowMs - WEEK_MS && timestamp <= nowMs + 60_000
 }
 
+function isMaterialBrief(brief: { revision?: unknown; material_changes?: unknown }): boolean {
+  // Revision one establishes a baseline. Later revisions only earn weekly
+  // attention when synthesis explicitly recorded a material change.
+  if (Number(brief.revision) === 1) return true
+  return strings(brief.material_changes).length > 0
+}
+
 export type StrategicResearchSnapshot = {
   generatedAt: string
   whatChanged: string[]
@@ -57,6 +64,7 @@ export async function buildStrategicResearchSnapshot(now = new Date()): Promise<
   ])
   const nowMs = now.getTime()
   const freshBriefs = briefs.filter((brief) => isFresh(brief.created_at, nowMs))
+  const materialBriefs = freshBriefs.filter(isMaterialBrief)
 
   const strongestBeliefs = claims
     .filter((claim) => claim.status === 'current' || claim.status === 'contested')
@@ -70,18 +78,18 @@ export async function buildStrategicResearchSnapshot(now = new Date()): Promise<
     .sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0))
     .slice(0, 12)
 
-  const whatChanged = dedupe(freshBriefs.flatMap((brief) => strings(brief.material_changes)))
-  const whatYouShouldKnow = dedupe(freshBriefs.map((brief) => String(brief.current_understanding ?? '')))
-  const opportunities = dedupe(freshBriefs.flatMap((brief) => [
+  const whatChanged = dedupe(materialBriefs.flatMap((brief) => strings(brief.material_changes)))
+  const whatYouShouldKnow = dedupe(materialBriefs.map((brief) => String(brief.current_understanding ?? '')))
+  const opportunities = dedupe(materialBriefs.flatMap((brief) => [
     ...strings(brief.recommendations),
     ...strings(brief.implications),
   ]))
-  const threatsAndChangedAssumptions = dedupe(freshBriefs.flatMap((brief) => strings(brief.conflicting_evidence)))
+  const threatsAndChangedAssumptions = dedupe(materialBriefs.flatMap((brief) => strings(brief.conflicting_evidence)))
   const changedMindRecently = dedupe([
-    ...freshBriefs.flatMap((brief) => strings(brief.conflicting_evidence)),
+    ...materialBriefs.flatMap((brief) => strings(brief.conflicting_evidence)),
     ...strongestBeliefs.filter((claim) => claim.contested).map((claim) => `Evidence is contesting: ${claim.statement}`),
   ])
-  const evidenceWouldChangeRecommendations = dedupe(freshBriefs.flatMap((brief) => strings(brief.unknowns)))
+  const evidenceWouldChangeRecommendations = dedupe(materialBriefs.flatMap((brief) => strings(brief.unknowns)))
 
   const stillInvestigating = dedupe(programs.flatMap((program) =>
     (program.research_questions ?? [])
@@ -94,7 +102,7 @@ export async function buildStrategicResearchSnapshot(now = new Date()): Promise<
   // repeats of material changes are the safest evidence-backed approximation.
   const changedKeys = new Set(whatChanged.map((item) => item.toLowerCase()))
   const whatYouMightBeMissing = dedupe(
-    freshBriefs.flatMap((brief) => strings(brief.implications)).filter((item) => !changedKeys.has(clean(item).toLowerCase())),
+    materialBriefs.flatMap((brief) => strings(brief.implications)).filter((item) => !changedKeys.has(clean(item).toLowerCase())),
   )
 
   return {
@@ -105,7 +113,7 @@ export async function buildStrategicResearchSnapshot(now = new Date()): Promise<
     whatYouMightBeMissing,
     opportunities,
     threatsAndChangedAssumptions,
-    recommendedNextActions: dedupe(freshBriefs.flatMap((brief) => strings(brief.recommendations))),
+    recommendedNextActions: dedupe(materialBriefs.flatMap((brief) => strings(brief.recommendations))),
     stillInvestigating,
     changedMindRecently,
     evidenceWouldChangeRecommendations,
