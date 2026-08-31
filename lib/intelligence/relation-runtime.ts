@@ -59,6 +59,7 @@ export type RelationProposer = (context: RelationProposalContext) => Promise<Rel
 export type ValidatedRelationProposal = RelationProposal & {
   confidence: number
   evidenceIdentityCount: number
+  evidenceIdentities: string[]
 }
 
 const MAX_CANDIDATES = 16
@@ -107,9 +108,21 @@ function provenanceString(provenance: Record<string, unknown> | null | undefined
   return null
 }
 
+function objectiveIds(item: IntelligenceItemSnapshot): Set<string> {
+  const raw = item.provenance?.objectiveIds ?? item.provenance?.objective_ids
+  if (!Array.isArray(raw)) return new Set()
+  return new Set(raw.filter((value): value is string => typeof value === 'string' && value.length > 0))
+}
+
+function setOverlapCount(a: Set<string>, b: Set<string>): number {
+  let count = 0
+  for (const value of a) if (b.has(value)) count += 1
+  return count
+}
+
 /**
- * Evidence identity is deliberately source/article oriented rather than claim-id oriented.
- * Two rows produced from the same article remain one independent piece of evidence.
+ * Evidence identity is source/article oriented rather than claim-id oriented.
+ * Multiple extracted claims from the same article are still one independent source.
  */
 export function evidenceIdentity(claim: ClaimSnapshot): string {
   const provenance = claim.provenance ?? undefined
@@ -128,11 +141,13 @@ export function rankCandidate(newItem: IntelligenceItemSnapshot, candidate: Inte
   const topicOverlap = overlap(tokens(newItem.topic), tokens(candidate.topic))
   const claimOverlap = overlap(tokens(newItem.canonical_claim), tokens(candidate.canonical_claim))
   const sameDomain = newItem.domain === candidate.domain
+  const sharedObjectives = setOverlapCount(objectiveIds(newItem), objectiveIds(candidate))
   const highMateriality = Number(candidate.materiality ?? 0) >= HIGH_MATERIALITY
 
-  // Structural gate. Text similarity alone is not enough to enter the neighborhood.
-  if (!sameDomain && sharedClaimCount === 0 && !isExistingNeighbor) return null
-  if (topicOverlap === 0 && sharedClaimCount === 0 && !isExistingNeighbor) return null
+  // Structural gate. Similar prose is insufficient without a domain, evidence,
+  // objective, or already-established relation connection.
+  if (!sameDomain && sharedClaimCount === 0 && sharedObjectives === 0 && !isExistingNeighbor) return null
+  if (topicOverlap === 0 && sharedClaimCount === 0 && sharedObjectives === 0 && !isExistingNeighbor) return null
 
   const reasons: string[] = []
   let score = 0
@@ -140,6 +155,7 @@ export function rankCandidate(newItem: IntelligenceItemSnapshot, candidate: Inte
   if (topicOverlap > 0) { score += Math.min(0.32, topicOverlap * 0.4); reasons.push('topic_overlap') }
   if (claimOverlap > 0) { score += Math.min(0.16, claimOverlap * 0.2); reasons.push('claim_overlap') }
   if (sharedClaimCount > 0) { score += Math.min(0.3, sharedClaimCount * 0.12); reasons.push('shared_research_claim') }
+  if (sharedObjectives > 0) { score += Math.min(0.2, sharedObjectives * 0.1); reasons.push('shared_objective') }
   if (highMateriality) { score += 0.08; reasons.push('high_materiality') }
   if (isExistingNeighbor) { score += 0.2; reasons.push('existing_relation') }
 
@@ -179,17 +195,17 @@ export function validateRelationProposal(input: {
     if (!allowedClaimIds.has(claimId) || !claimsById.has(claimId)) throw new Error('arbitrary or ungrounded research claim rejected')
   }
 
-  const identities = new Set(uniqueClaimIds.map((id) => evidenceIdentity(claimsById.get(id)!)))
-  const independentEvidence = identities.size
+  const identities = [...new Set(uniqueClaimIds.map((id) => evidenceIdentity(claimsById.get(id)!)))].sort()
+  const independentEvidence = identities.length
   const ceiling = confidenceCeiling(independentEvidence, proposal.relationType)
 
   if (proposal.relationType === 'causes') {
     if (independentEvidence < CAUSAL_MIN_INDEPENDENT_EVIDENCE || proposal.confidence < CAUSAL_MIN_CONFIDENCE) {
       throw new Error('causal relation rejected: stronger independent evidence required')
     }
-    const from = proposal.fromItemId === newItem.id ? newItem : candidate
-    const to = proposal.toItemId === newItem.id ? newItem : candidate
-    if (timestamp(from.observed_at) >= timestamp(to.observed_at) && timestamp(from.valid_from) >= timestamp(to.valid_from)) {
+    const cause = proposal.fromItemId === newItem.id ? newItem : candidate
+    const effect = proposal.toItemId === newItem.id ? newItem : candidate
+    if (timestamp(cause.observed_at) >= timestamp(effect.observed_at) && timestamp(cause.valid_from) >= timestamp(effect.valid_from)) {
       throw new Error('causal relation rejected: temporal ordering is not supported')
     }
   }
@@ -205,6 +221,7 @@ export function validateRelationProposal(input: {
     supportingResearchClaimIds: uniqueClaimIds,
     confidence: Math.min(proposal.confidence, ceiling),
     evidenceIdentityCount: independentEvidence,
+    evidenceIdentities: identities,
   }
 }
 
@@ -219,7 +236,7 @@ export function computeBeliefRevision(input: {
   if (prior == null || !Number.isFinite(prior)) return null
   if (!['corroborates','contradicts','supersedes'].includes(input.relationType)) return null
 
-  // One source, or two rows derived from the same article, is not enough to move durable belief state.
+  // A single article cannot move durable confidence, even if it was ingested twice.
   if (input.independentEvidence < 2) return null
 
   const strength = clamp(input.relationConfidence) * Math.min(1, input.independentEvidence / 3)
@@ -298,6 +315,21 @@ async function loadClaims(db: any, claimIds: string[]): Promise<Map<string, Clai
   return result
 }
 
+async function loadExistingNeighborItems(db: any, newItem: IntelligenceItemSnapshot): Promise<IntelligenceItemSnapshot[]> {
+  const relations = await db.from('intelligence_relations')
+    .select('from_item_id,to_item_id')
+    .or(`from_item_id.eq.${newItem.id},to_item_id.eq.${newItem.id}`)
+    .eq('status','active')
+    .limit(MAX_CANDIDATES)
+  if (relations.error) throw relations.error
+
+  const ids = [...new Set((relations.data ?? []).map((relation: any) => relation.from_item_id === newItem.id ? relation.to_item_id : relation.from_item_id))]
+  if (!ids.length) return []
+  const found = await db.from('intelligence_items').select('*').in('id', ids).limit(MAX_CANDIDATES)
+  if (found.error) throw found.error
+  return (found.data ?? []).filter((candidate: IntelligenceItemSnapshot) => sameScope(newItem, candidate))
+}
+
 export async function findBoundedRelationCandidates(db: any, newItem: IntelligenceItemSnapshot): Promise<RelationCandidate[]> {
   let query = db.from('intelligence_items').select('*')
     .eq('scope', newItem.scope)
@@ -311,28 +343,38 @@ export async function findBoundedRelationCandidates(db: any, newItem: Intelligen
   const nearby = await query
   if (nearby.error) throw nearby.error
 
-  const relations = await db.from('intelligence_relations')
-    .select('from_item_id,to_item_id')
-    .or(`from_item_id.eq.${newItem.id},to_item_id.eq.${newItem.id}`)
-    .eq('status','active')
-    .limit(MAX_CANDIDATES)
-  if (relations.error) throw relations.error
-  const neighborIds = new Set<string>()
-  for (const relation of relations.data ?? []) neighborIds.add(relation.from_item_id === newItem.id ? relation.to_item_id : relation.from_item_id)
+  const neighbors = await loadExistingNeighborItems(db, newItem)
+  const merged = new Map<string, IntelligenceItemSnapshot>()
+  for (const raw of [...(nearby.data ?? []), ...neighbors]) merged.set(raw.id, raw as IntelligenceItemSnapshot)
+  const existingNeighborIds = new Set(neighbors.map((candidate) => candidate.id))
 
-  const initialIds = [newItem.id, ...(nearby.data ?? []).map((item: any) => item.id)]
+  const initialIds = [newItem.id, ...merged.keys()]
   const claimIdsByItem = await loadClaimIdsForItems(db, initialIds)
   const newClaims = new Set(claimIdsByItem.get(newItem.id) ?? [])
 
   const ranked: RelationCandidate[] = []
-  for (const raw of nearby.data ?? []) {
-    const candidate = raw as IntelligenceItemSnapshot
+  for (const candidate of merged.values()) {
     const candidateClaims = claimIdsByItem.get(candidate.id) ?? []
     const shared = candidateClaims.filter((claimId) => newClaims.has(claimId)).length
-    const rankedCandidate = rankCandidate(newItem, candidate, shared, neighborIds.has(candidate.id))
+    const rankedCandidate = rankCandidate(newItem, candidate, shared, existingNeighborIds.has(candidate.id))
     if (rankedCandidate) ranked.push({ ...rankedCandidate, claimIds: candidateClaims })
   }
   return boundCandidates(ranked)
+}
+
+function revisionKey(relationId: string, targetId: string, relationType: IntelligenceRelationType, evidenceIdentities: string[]): string {
+  return [relationId, targetId, relationType, ...[...evidenceIdentities].sort()].join('|')
+}
+
+async function hasRevisionKey(db: any, targetId: string, key: string): Promise<boolean> {
+  const existing = await db.from('intelligence_belief_revisions')
+    .select('id')
+    .eq('intelligence_item_id', targetId)
+    .contains('provenance', { runtime: 'bounded_relation_formation_v1', revision_key: key })
+    .limit(1)
+    .maybeSingle()
+  if (existing.error) throw existing.error
+  return Boolean(existing.data)
 }
 
 export async function runPostIngestionIntelligenceFormation(input: {
@@ -361,7 +403,6 @@ export async function runPostIngestionIntelligenceFormation(input: {
   const revisionIds: string[] = []
   let rejected = 0
 
-  // One proposal per candidate/type is enough. The database also enforces idempotent relation identity.
   const seen = new Set<string>()
   for (const proposal of proposals.slice(0, MAX_CANDIDATES * 2)) {
     const otherId = proposal.fromItemId === newItem.id ? proposal.toItemId : proposal.fromItemId
@@ -386,7 +427,6 @@ export async function runPostIngestionIntelligenceFormation(input: {
       if (relation.data?.id) relationIds.push(relation.data.id)
 
       const target = validated.toItemId === newItem.id ? newItem : candidate.item
-      // New evidence should revise an existing belief, not immediately revise the item that just arrived.
       if (target.id !== newItem.id) {
         const revision = computeBeliefRevision({
           relationType: validated.relationType,
@@ -395,14 +435,22 @@ export async function runPostIngestionIntelligenceFormation(input: {
           priorConfidence: target.confidence == null ? null : Number(target.confidence),
           targetMateriality: target.materiality == null ? null : Number(target.materiality),
         })
-        if (revision) {
+        if (revision && relation.data?.id) {
+          const key = revisionKey(relation.data.id, target.id, validated.relationType, validated.evidenceIdentities)
+          if (await hasRevisionKey(db, target.id, key)) continue
+
           const written = await db.rpc('revise_intelligence_belief_confidence', {
             p_intelligence_item_id: target.id,
             p_revised_confidence: revision.revisedConfidence,
             p_rationale: validated.rationale,
             p_evidence_claim_ids: validated.supportingResearchClaimIds,
             p_evidence_role: revision.role,
-            p_provenance: { runtime: 'bounded_relation_formation_v1', relation_type: validated.relationType, relation_id: relation.data?.id ?? null },
+            p_provenance: {
+              runtime: 'bounded_relation_formation_v1',
+              relation_type: validated.relationType,
+              relation_id: relation.data.id,
+              revision_key: key,
+            },
           })
           if (written.error) throw written.error
           if (written.data?.id) revisionIds.push(written.data.id)
