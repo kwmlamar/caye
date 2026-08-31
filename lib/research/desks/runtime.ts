@@ -308,14 +308,15 @@ export async function runResearchDeskCycle(
       evaluation.relevance >= desk.relevanceThreshold
     const successful = results.filter((result) => result.status === 'completed').length
     const failed = results.filter((result) => result.status === 'failed').length
+    const partial = results.some((result) => result.status === 'partial')
     const exhausted = budgetExceeded(usage, desk.explorationBudget) || now().getTime() >= deadline
     const changed = evaluation.novel || evaluation.material || evaluation.contradictory
 
     let status: ResearchDeskCycleStatus
-    if (!changed && failed === 0) status = 'unchanged'
-    else if (exhausted && pending.length) status = 'budget_exhausted'
+    if (exhausted && pending.length) status = 'budget_exhausted'
     else if (successful === 0 && failed > 0) status = 'failed'
-    else if (failed > 0 || results.some((result) => result.status === 'partial')) status = 'partial'
+    else if (failed > 0 || partial) status = 'partial'
+    else if (!changed) status = 'unchanged'
     else status = 'completed'
 
     const scheduleReason = status === 'failed' ? 'failure' : meetsThreshold ? 'material-change' : 'cadence'
