@@ -58,24 +58,25 @@ export default function WorkspaceSwitcher({
   }, [open])
 
   return (
-    <div ref={rootRef} style={{ position: 'relative' }}>
+    <div ref={rootRef} style={{ position: 'relative', width: '100%', minWidth: 0 }}>
       <button
         onClick={() => setOpen((o) => !o)}
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-label={`Current workspace: ${businessName}, ${STATUS_LABEL[status]}. Click to switch.`}
         style={{
-          display: 'flex', alignItems: 'center', gap: 10, padding: '6px 10px 6px 6px',
+          width: '100%', minWidth: 0,
+          display: 'flex', alignItems: 'center', gap: 10, padding: '6px 6px',
           borderRadius: 12, border: 'none', cursor: 'pointer',
           background: open ? 'rgba(255,255,255,0.06)' : 'transparent',
           transition: 'background 0.15s ease',
         }}
       >
-        <CayeMark size={30} />
-        <div style={{ textAlign: 'left', minWidth: 0 }}>
+        <span style={{ flexShrink: 0, display: 'flex' }}><CayeMark size={30} /></span>
+        <div style={{ textAlign: 'left', minWidth: 0, flex: 1 }}>
           <div style={{
             fontSize: 13.5, fontWeight: 600, color: '#f4f4f5', letterSpacing: '-0.01em',
-            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 200,
+            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
           }}>
             {businessName}
           </div>
@@ -86,10 +87,6 @@ export default function WorkspaceSwitcher({
             </span>
           </div>
         </div>
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={LABEL_COLOR} strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"
-          style={{ flexShrink: 0, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s ease' }}>
-          <polyline points="6 9 12 15 18 9" />
-        </svg>
       </button>
 
       {open && (
