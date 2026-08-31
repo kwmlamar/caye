@@ -4,9 +4,23 @@ const mocks = vi.hoisted(() => ({
   getAllCurrentClaims: vi.fn(),
   getLatestBriefs: vi.fn(),
   getResearchStatus: vi.fn(),
+  highMaterialityIntelligence: vi.fn(),
+  recentBeliefRevisions: vi.fn(),
+  strategicIntelligencePriorities: vi.fn(),
+  unresolvedContradictions: vi.fn(),
 }))
 
-vi.mock('@/lib/research/runtime', () => mocks)
+vi.mock('@/lib/research/runtime', () => ({
+  getAllCurrentClaims: mocks.getAllCurrentClaims,
+  getLatestBriefs: mocks.getLatestBriefs,
+  getResearchStatus: mocks.getResearchStatus,
+}))
+vi.mock('@/lib/intelligence/query', () => ({
+  highMaterialityIntelligence: mocks.highMaterialityIntelligence,
+  recentBeliefRevisions: mocks.recentBeliefRevisions,
+  strategicIntelligencePriorities: mocks.strategicIntelligencePriorities,
+  unresolvedContradictions: mocks.unresolvedContradictions,
+}))
 vi.mock('server-only', () => ({}))
 
 import { buildStrategicResearchSnapshot } from '../snapshot'
@@ -18,6 +32,10 @@ beforeEach(() => {
   mocks.getAllCurrentClaims.mockResolvedValue([])
   mocks.getLatestBriefs.mockResolvedValue([])
   mocks.getResearchStatus.mockResolvedValue([])
+  mocks.highMaterialityIntelligence.mockResolvedValue([])
+  mocks.recentBeliefRevisions.mockResolvedValue([])
+  mocks.strategicIntelligencePriorities.mockResolvedValue([])
+  mocks.unresolvedContradictions.mockResolvedValue([])
 })
 
 describe('strategic research snapshot', () => {
@@ -97,5 +115,37 @@ describe('strategic research snapshot', () => {
     }])
     const snapshot = await buildStrategicResearchSnapshot(NOW)
     expect(snapshot.recommendedNextActions).toEqual(['Run the benchmark'])
+  })
+
+  it('projects durable intelligence contradictions and belief revisions into strategy', async () => {
+    mocks.highMaterialityIntelligence.mockImplementation(async ({ scope }: { scope: { kind: string } }) => scope.kind === 'operator' ? [{
+      id: 'item-a', canonical_claim: 'Agentic support tooling is compressing routine support work.', status: 'current', confidence: 0.78,
+      materiality: 0.92, valid_until: null,
+    }] : [])
+    mocks.unresolvedContradictions.mockImplementation(async ({ scope }: { scope: { kind: string } }) => scope.kind === 'operator' ? [{
+      from_item_id: 'item-a', to_item_id: 'item-b',
+      from: { canonical_claim: 'Agentic support tooling is compressing routine support work.' },
+      to: { canonical_claim: 'Entry-level support hiring remains resilient.' },
+    }] : [])
+    mocks.recentBeliefRevisions.mockImplementation(async ({ scope }: { scope: { kind: string } }) => scope.kind === 'operator' ? [{
+      prior_confidence: 0.86, revised_confidence: 0.78,
+      rationale: 'New hiring data weakened the near-term displacement thesis.',
+      item: { canonical_claim: 'Agentic support tooling is compressing routine support work.' },
+    }] : [])
+    mocks.strategicIntelligencePriorities.mockImplementation(async ({ scope }: { scope: { kind: string } }) => scope.kind === 'operator' ? [{
+      statement: 'Resolve contradiction: support automation versus resilient hiring',
+    }] : [])
+
+    const snapshot = await buildStrategicResearchSnapshot(NOW)
+
+    expect(snapshot.strongestBeliefs[0]).toMatchObject({
+      statement: 'Agentic support tooling is compressing routine support work.',
+      confidence: 0.78,
+      contested: true,
+    })
+    expect(snapshot.whatChanged[0]).toContain('86% → 78%')
+    expect(snapshot.changedMindRecently.join(' ')).toContain('New hiring data weakened')
+    expect(snapshot.threatsAndChangedAssumptions.join(' ')).toContain('Entry-level support hiring remains resilient')
+    expect(snapshot.stillInvestigating).toContain('Resolve contradiction: support automation versus resilient hiring')
   })
 })
