@@ -18,6 +18,7 @@ describe('engineering coding-session closure', () => {
       comparison: 'confirmed',
       environment: 'branch',
       productionVerified: false,
+      evidenceSources: ['branch', 'test'],
     })
   })
 
@@ -39,12 +40,67 @@ describe('engineering coding-session closure', () => {
     })
   })
 
-  it('requires a healthy production observation for production verification', () => {
-    expect(evaluateEngineeringClosure({ ...base, productionObserved: true, productionHealthy: true })).toMatchObject({
-      verdict: 'production_verified', environment: 'production', productionVerified: true,
-    })
-    expect(evaluateEngineeringClosure({ ...base, productionObserved: true, productionHealthy: false })).toMatchObject({
+  it('treats a wrong prediction as contradicted when production is bad', () => {
+    expect(evaluateEngineeringClosure({
+      ...base,
+      productionObserved: true,
+      productionHealthy: false,
+      productionEvidenceSource: 'production',
+    })).toMatchObject({
       verdict: 'failed', comparison: 'contradicted', environment: 'production', productionVerified: false,
+    })
+  })
+
+  it('does not let successful implementation hide a bad production outcome', () => {
+    const result = evaluateEngineeringClosure({
+      ...base,
+      productionObserved: true,
+      productionHealthy: false,
+      productionEvidenceSource: 'production',
+    })
+    expect(result.evidenceSources).toEqual(['branch', 'test', 'production'])
+    expect(result.verdict).toBe('failed')
+  })
+
+  it('keeps passing tests branch-only when production effect is absent', () => {
+    expect(evaluateEngineeringClosure(base)).toMatchObject({
+      verdict: 'branch_verified', environment: 'branch', productionVerified: false,
+    })
+  })
+
+  it('rejects simulated evidence presented as an observed production effect', () => {
+    expect(evaluateEngineeringClosure({
+      ...base,
+      productionObserved: true,
+      productionHealthy: true,
+      productionEvidenceSource: 'simulated',
+    })).toMatchObject({
+      verdict: 'inconclusive', comparison: 'inconclusive', environment: 'production', productionVerified: false,
+    })
+  })
+
+  it('rejects branch-only evidence presented as an observed production effect', () => {
+    expect(evaluateEngineeringClosure({
+      ...base,
+      productionObserved: true,
+      productionHealthy: true,
+      productionEvidenceSource: 'branch',
+    })).toMatchObject({
+      verdict: 'inconclusive', comparison: 'inconclusive', productionVerified: false,
+    })
+  })
+
+  it('requires independent production evidence for production verification', () => {
+    expect(evaluateEngineeringClosure({ ...base, productionObserved: true, productionHealthy: true })).toMatchObject({
+      verdict: 'inconclusive', productionVerified: false,
+    })
+    expect(evaluateEngineeringClosure({
+      ...base,
+      productionObserved: true,
+      productionHealthy: true,
+      productionEvidenceSource: 'production',
+    })).toMatchObject({
+      verdict: 'production_verified', environment: 'production', productionVerified: true,
     })
   })
 
