@@ -6,6 +6,7 @@ import { getThread, getThreadEntities, describeEntity } from '@/lib/caye-direct-
 import { annotateHistoryWithRelativeTime } from './situation'
 import { loadAgentTurnsForTriggers } from '@/lib/caye-frontdesk-agent-turns'
 import { revalidateHistory } from './history-grounding'
+import { summarizeEpistemicEvidence, type EpistemicEvidence } from '@/lib/epistemic/presentation'
 
 // Same bound as the operator sliding window (SLIDING_WINDOW_MESSAGES) —
 // a Direct thread's own linked-message count is the natural cap here,
@@ -188,22 +189,49 @@ export async function loadDirectThreadContext(
 
   const lines: string[] = []
   lines.push(`- Thread title: ${thread.title || '(untitled — this is the first exchange)'}`)
+
+  const rememberedEvidence: EpistemicEvidence[] = []
   if (thread.summary?.trim()) {
-    lines.push(`- Rolling summary of everything before the recent messages below: ${thread.summary.trim()}`)
+    rememberedEvidence.push({
+      label: 'Thread summary',
+      value: thread.summary.trim(),
+      kind: 'durable_memory',
+      sourceLabel: 'Caye Direct thread history',
+    })
   }
   if (entities.length > 0) {
     const labels = await Promise.all(entities.map((e) => describeEntity(supabase, e)))
-    lines.push(`- Linked to: ${labels.join('; ')}`)
+    for (const label of labels) {
+      rememberedEvidence.push({
+        label: 'Linked subject',
+        value: label,
+        kind: 'durable_memory',
+        sourceLabel: 'Caye Direct thread link',
+      })
+    }
   }
 
-  const promptBlock =
-    lines.length > 0
-      ? [
-          'YOU ARE INSIDE A CAYE DIRECT THREAD — a persistent, topic-scoped conversation with the founder, not a fresh chat.',
-          ...lines,
-          '- This thread can span days or weeks. Recent turns follow below; treat the summary line (if present) as established fact, not something to re-derive.',
-        ].join('\n')
-      : null
+  if (rememberedEvidence.length > 0) {
+    lines.push('', 'DURABLE THREAD MEMORY — useful context, not a live system observation')
+    lines.push(summarizeEpistemicEvidence(rememberedEvidence).rendered)
+  }
+
+  lines.push(
+    '',
+    'EVIDENCE / PROVENANCE DISCIPLINE FOR CAYE DIRECT',
+    '- Current rows returned by read tools are observed live facts for the environment that tool actually queried. Never relabel branch, test, or simulated evidence as observed production.',
+    '- The durable thread memory above and prior conversational turns are remembered context, not proof of current system state. Re-check consequential current-state claims with the appropriate read tool.',
+    '- A statement the founder gives you in the current turn is explicit human-provided knowledge. Where the existing authority architecture applies, explicit human knowledge outranks derived learned lessons; preserve correction/supersession lineage rather than silently rewriting history.',
+    '- Anything you conclude by combining sources is an inference. Anything about a future result is a prediction. Do not phrase either as an observed fact.',
+    '- If evidence is stale, live observation contradicts memory, or validated sources conflict, name the conflict and which source is fresher or more authoritative instead of blending them into one confident sentence.',
+    '- If asked what you know, how you know it, how certain you are, or what conflicts, answer with compact human labels such as Observed live / Remembered / Human-provided / Inferred / Prediction / Unknown / Stale / Conflict / Validated lesson. Do not expose row IDs, table names, or raw provenance blobs.'
+  )
+
+  const promptBlock = [
+    'YOU ARE INSIDE A CAYE DIRECT THREAD — a persistent, topic-scoped conversation with the founder, not a fresh chat.',
+    ...lines,
+    '- This thread can span days or weeks. Recent turns follow below. Use durable memory for continuity, but do not confuse it with a fresh live observation.',
+  ].join('\n')
 
   return { history, promptBlock }
 }
