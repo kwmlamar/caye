@@ -36,8 +36,10 @@ function score(value: number | undefined): number { return Math.max(0, Math.min(
 
 /**
  * Canonical durable ingestion boundary for all future research desks.
- * It deterministically deduplicates equivalent normalized claims within a scope,
- * accumulates evidence idempotently, and never upgrades epistemic type implicitly.
+ * Evidence-backed items are initially inserted as unknown, their evidence edges
+ * are persisted, and only then are they promoted to the requested epistemic type.
+ * This preserves the database evidence guard across Supabase's per-request
+ * transactions instead of asking a deferred trigger to span multiple requests.
  */
 export async function ingestIntelligenceFinding(input: IntelligenceFinding) {
   validateIntelligenceFinding(input)
@@ -46,15 +48,19 @@ export async function ingestIntelligenceFinding(input: IntelligenceFinding) {
   const workspaceId = input.scope.kind === 'workspace' ? input.scope.workspaceId : null
   const scope = input.scope.kind
 
-  const existing = await db.from('intelligence_items').select('*')
-    .eq('scope',scope).is('workspace_id',workspaceId).eq('domain',input.domain).eq('semantic_key',semanticKey).maybeSingle()
+  let existingQuery = db.from('intelligence_items').select('*')
+    .eq('scope',scope).eq('domain',input.domain).eq('semantic_key',semanticKey)
+  existingQuery = workspaceId == null ? existingQuery.is('workspace_id', null) : existingQuery.eq('workspace_id', workspaceId)
+  const existing = await existingQuery.maybeSingle()
   if (existing.error) throw existing.error
 
   let item = existing.data
+  const requestedEvidenceBackedType = EVIDENCE_BACKED.has(input.epistemicType) ? input.epistemicType : null
   if (!item) {
     const created = await db.from('intelligence_items').insert({
       workspace_id:workspaceId, scope, domain:input.domain, topic:input.topic,
-      canonical_claim:input.claim.trim(), semantic_key:semanticKey, epistemic_type:input.epistemicType,
+      canonical_claim:input.claim.trim(), semantic_key:semanticKey,
+      epistemic_type:requestedEvidenceBackedType ? 'unknown' : input.epistemicType,
       confidence:input.confidence ?? null, relevance:score(input.relevance), novelty:score(input.novelty), materiality:score(input.materiality),
       observed_at:input.observedAt ?? new Date().toISOString(), valid_from:input.validFrom ?? new Date().toISOString(),
       valid_until:input.validUntil ?? null, refresh_after:input.refreshAfter ?? null, provenance:input.provenance ?? {},
@@ -79,6 +85,16 @@ export async function ingestIntelligenceFinding(input: IntelligenceFinding) {
     },{onConflict:'intelligence_item_id,claim_id,role'})
     if (edge.error) throw edge.error
   }
+
+  if (!existing.data && requestedEvidenceBackedType) {
+    const promoted = await db.from('intelligence_items').update({
+      epistemic_type: requestedEvidenceBackedType,
+      updated_at: new Date().toISOString(),
+    }).eq('id', item.id).select('*').single()
+    if (promoted.error) throw promoted.error
+    item = promoted.data
+  }
+
   return { item, semanticKey, deduplicated:Boolean(existing.data) }
 }
 
