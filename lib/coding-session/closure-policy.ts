@@ -8,6 +8,7 @@ export type EngineeringVerdict =
   | 'production_verified'
 
 export type PredictionComparison = 'confirmed' | 'contradicted' | 'inconclusive'
+export type EngineeringEvidenceSource = 'simulated' | 'branch' | 'test' | 'production'
 
 export interface EngineeringClosureInput {
   repository: string
@@ -18,6 +19,7 @@ export interface EngineeringClosureInput {
   branchPushPassed: boolean
   productionObserved: boolean
   productionHealthy?: boolean | null
+  productionEvidenceSource?: EngineeringEvidenceSource | null
 }
 
 export interface EngineeringClosure {
@@ -26,21 +28,31 @@ export interface EngineeringClosure {
   environment: 'branch' | 'production'
   productionVerified: boolean
   summary: string
+  evidenceSources: EngineeringEvidenceSource[]
+}
+
+function branchEvidenceSources(input: EngineeringClosureInput): EngineeringEvidenceSource[] {
+  const sources: EngineeringEvidenceSource[] = ['branch']
+  if (input.testPassed !== null || input.buildPassed !== null) sources.push('test')
+  return sources
 }
 
 /**
  * Converts observed engineering evidence into an honest verdict.
- * A patch, local test, build, or review-branch push can never become a
- * production-success claim. Production verification requires a separate
- * production observation after an authorized merge/deploy.
+ * A patch, simulation, local test, build, or review-branch push can never become
+ * a production-success claim. Production verification requires a separately
+ * authorized deployment plus an independently observed production signal.
  */
 export function evaluateEngineeringClosure(input: EngineeringClosureInput): EngineeringClosure {
+  const evidenceSources = branchEvidenceSources(input)
+
   if (input.repository !== TRUSTED_CODING_REPOSITORY) {
     return {
       verdict: 'failed',
       comparison: 'contradicted',
       environment: 'branch',
       productionVerified: false,
+      evidenceSources,
       summary: `Repository identity mismatch: expected ${TRUSTED_CODING_REPOSITORY}.`,
     }
   }
@@ -51,6 +63,7 @@ export function evaluateEngineeringClosure(input: EngineeringClosureInput): Engi
       comparison: 'contradicted',
       environment: 'branch',
       productionVerified: false,
+      evidenceSources,
       summary: 'Engineering execution was not isolated from the protected base branch.',
     }
   }
@@ -61,6 +74,7 @@ export function evaluateEngineeringClosure(input: EngineeringClosureInput): Engi
       comparison: input.testPassed === false || input.buildPassed === false ? 'contradicted' : 'inconclusive',
       environment: 'branch',
       productionVerified: false,
+      evidenceSources,
       summary: 'The branch did not produce complete passing execution evidence.',
     }
   }
@@ -71,17 +85,35 @@ export function evaluateEngineeringClosure(input: EngineeringClosureInput): Engi
       comparison: 'confirmed',
       environment: 'branch',
       productionVerified: false,
+      evidenceSources,
       summary: 'Prediction confirmed for the isolated review branch; production remains unverified and requires authorized merge/deploy plus observation.',
     }
   }
 
+  // A caller cannot upgrade simulated, branch, or test evidence into an observed
+  // production fact merely by setting productionObserved=true.
+  if (input.productionEvidenceSource !== 'production') {
+    return {
+      verdict: 'inconclusive',
+      comparison: 'inconclusive',
+      environment: 'production',
+      productionVerified: false,
+      evidenceSources: input.productionEvidenceSource
+        ? [...evidenceSources, input.productionEvidenceSource]
+        : evidenceSources,
+      summary: 'Production was claimed as observed, but no independent production evidence source was supplied.',
+    }
+  }
+
+  const productionSources: EngineeringEvidenceSource[] = [...evidenceSources, 'production']
   if (input.productionHealthy === true) {
     return {
       verdict: 'production_verified',
       comparison: 'confirmed',
       environment: 'production',
       productionVerified: true,
-      summary: 'Authorized production change was observed healthy after deployment.',
+      evidenceSources: productionSources,
+      summary: 'Authorized production change was independently observed healthy after deployment.',
     }
   }
 
@@ -90,6 +122,7 @@ export function evaluateEngineeringClosure(input: EngineeringClosureInput): Engi
     comparison: input.productionHealthy === false ? 'contradicted' : 'inconclusive',
     environment: 'production',
     productionVerified: false,
+    evidenceSources: productionSources,
     summary: input.productionHealthy === false
       ? 'Production observation contradicted the expected result; recovery or rollback is required.'
       : 'Production was observed, but the evidence is insufficient for a success verdict.',
