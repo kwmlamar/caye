@@ -93,6 +93,14 @@ import { listJobSearchQueue } from './admin/read/list-job-search-queue'
 import { listJobSearchCandidates } from './admin/read/list-job-search-candidates'
 import { explainJobSearchRejection } from './admin/read/explain-job-search-rejection'
 import { pauseJobSearch } from './admin/write-low/pause-job-search'
+import {
+  startJobApplications,
+  pauseJobApplications,
+  resumeJobApplications,
+  stopJobApplications,
+  setJobApplicationPolicy,
+  getJobApplicationAutonomy,
+} from './admin/write-low/manage-job-application-autonomy'
 import { resumeJobSearch } from './admin/write-low/resume-job-search'
 import { listApplicationsNeedingReview } from './admin/read/list-applications-needing-review'
 import { inspectJobSearchApplications } from './admin/read/inspect-job-search-applications'
@@ -272,6 +280,12 @@ export const TOOL_REGISTRY: AnyTool[] = [
   listJobSearchCandidates as AnyTool,
   explainJobSearchRejection as AnyTool,
   pauseJobSearch as AnyTool,
+  startJobApplications as AnyTool,
+  pauseJobApplications as AnyTool,
+  resumeJobApplications as AnyTool,
+  stopJobApplications as AnyTool,
+  setJobApplicationPolicy as AnyTool,
+  getJobApplicationAutonomy as AnyTool,
   resumeJobSearch as AnyTool,
   listApplicationsNeedingReview as AnyTool,
   inspectJobSearchApplications as AnyTool,

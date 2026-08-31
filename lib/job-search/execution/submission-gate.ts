@@ -28,6 +28,7 @@ import 'server-only'
 import { createServiceClient } from '@/lib/supabase-server'
 import { isProhibitedApplyDestination } from '../policy-gate'
 import { getJobSearchSettings } from '../settings'
+import { getStandingAuthorization, isStandingAuthorizationActive } from '../standing-authorization'
 import { getExecutionRolloutSettings } from './rollout'
 import { validateDestination } from './ssrf-guard'
 import { isAllowedAtsHost } from './allowed-destinations'
@@ -101,7 +102,7 @@ export async function checkSubmissionAuthority(input: SubmissionAuthorityInput):
   // --- Candidate still qualified ----------------------------------------
   const { data: candidate } = await supabase
     .from('job_search_candidates')
-    .select('id, status, apply_url')
+    .select('id, status, apply_url, fit_score, title')
     .eq('id', application.candidate_id)
     .maybeSingle()
   if (!candidate) return deny('candidate_missing', 'Candidate row disappeared before submission.')
@@ -140,6 +141,53 @@ export async function checkSubmissionAuthority(input: SubmissionAuthorityInput):
     .eq('answer_source', 'needs_human')
     .is('answer', null)
   if ((unresolved ?? []).length > 0) return deny('unresolved_answers', `${(unresolved ?? []).length} required question(s) remain unresolved; refusing to submit an incomplete application.`)
+
+  // --- Standing authorization envelope, re-derived from the database -----
+  //
+  // When the founder has granted standing authorization, THIS is where that
+  // authorization is proven — from durable state, against the live row, with
+  // the browser already open. Nothing upstream is trusted to have checked it,
+  // and no caller can assert it: there is no "authorized" flag in the input.
+  //
+  // Strictly additive. An active standing policy can only ever refuse a
+  // submission here, never permit one the other checks rejected.
+  const standing = await getStandingAuthorization()
+  if (isStandingAuthorizationActive(standing)) {
+    if (!standing.allowedProviders.includes(input.provider)) {
+      return deny('outside_standing_policy', `Standing authorization does not cover provider "${input.provider}".`)
+    }
+
+    const employer = input.company.trim().toLowerCase()
+    if (standing.excludedEmployers.some((excluded) => employer === excluded.trim().toLowerCase())) {
+      return deny('outside_standing_policy', `${input.company} is on the founder's excluded-employer list.`)
+    }
+
+    const fitScore = (candidate as { fit_score?: number | null }).fit_score ?? null
+    if ((fitScore ?? 0) < standing.minFitScore) {
+      return deny('outside_standing_policy', `Fit score ${fitScore ?? 'unknown'} is below the standing threshold of ${standing.minFitScore}.`)
+    }
+
+    if (standing.allowedJobFamilies.length > 0) {
+      const title = String((candidate as { title?: string }).title ?? '').toLowerCase()
+      if (!standing.allowedJobFamilies.some((family) => title.includes(family.toLowerCase()))) {
+        return deny('outside_standing_policy', 'This role is outside the job families the founder authorized.')
+      }
+    }
+
+    // The standing daily ceiling is the founder's, and is independent of the
+    // staged rollout cap enforced by the reservation below. The lower wins.
+    const todayStart = new Date()
+    todayStart.setUTCHours(0, 0, 0, 0)
+    const { count, error: countError } = await supabase
+      .from('job_search_applications')
+      .select('id', { count: 'exact', head: true })
+      .in('status', ['SUBMITTED', 'SUBMISSION_UNCERTAIN'])
+      .gte('submitted_at', todayStart.toISOString())
+    if (countError) return deny('standing_cap_unreadable', 'Could not read today\'s submission count; refusing to submit.')
+    if ((count ?? 0) >= standing.maxApplicationsPerDay) {
+      return deny('standing_cap_reached', `The founder's standing daily ceiling of ${standing.maxApplicationsPerDay} is already reached.`)
+    }
+  }
 
   // --- Never submit twice ------------------------------------------------
   const { data: priorSubmission } = await supabase
