@@ -16,4 +16,13 @@ describe('Founder Direct tool manifest selection', () => {
     expect(names).toContain('start_job_applications')
     expect(names.some((name) => /job|application/i.test(name))).toBe(true)
   })
+
+  it.each([
+    'Caye, look into this for me.',
+    'I heard NVIDIA bought Hugging Face. Investigate that.',
+    'Research whether this matters for Caye.',
+    'Keep an eye on this.',
+  ])('keeps canonical research creation visible for founder language: %s', (message) => {
+    expect(selectFounderToolNames(message)).toContain('start_canonical_research')
+  })
 })

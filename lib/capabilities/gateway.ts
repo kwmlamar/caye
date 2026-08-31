@@ -7,6 +7,7 @@ import type {
   CapabilityName,
   CapabilityResult,
 } from './types'
+import type { FounderResearchProgramKey } from './research-investigate'
 
 export type FounderCapabilityInvocationInput = {
   capability: string
@@ -22,6 +23,27 @@ export type FounderResearchStartInput = {
   version: 1
   workspaceId: null
   args: { questionId: string }
+}
+
+export type FounderResearchInvestigateInput = {
+  capability: 'research.investigate'
+  version: 1
+  workspaceId: null
+  args: {
+    lead: string
+    verificationQuestion: string
+    canonicalKey: string
+    program: FounderResearchProgramKey
+  }
+}
+
+export type FounderDirectOrigin = {
+  /** Workspace where the authenticated Direct turn was persisted. Never model supplied. */
+  workspaceId: string
+  /** Durable Direct thread id from the server turn boundary. */
+  threadId: string
+  /** Durable inbound caye_operator_messages id from the server turn boundary. */
+  messageId: string
 }
 
 /**
@@ -173,6 +195,52 @@ export async function invokeFounderResearchStartCapability(
     })
   } catch {
     return failed('unavailable', 'Research run could not be queued.', true)
+  }
+}
+
+/**
+ * Narrow founder-only write boundary for turning one authenticated Caye Direct
+ * turn into a canonical research question. `origin` is ambient trusted server
+ * context and is intentionally separate from model-generated capability args.
+ */
+export async function invokeFounderResearchInvestigateCapability(
+  authenticatedFounderUserId: string,
+  origin: FounderDirectOrigin,
+  input: FounderResearchInvestigateInput,
+): Promise<CapabilityResult> {
+  const capability = getRegisteredCapability(cayeCapabilityRegistry, 'research.investigate')
+  if (!capability || capability.manifest.access !== 'write' || capability.manifest.risk !== 'low') {
+    return failed('unavailable', 'Research investigation capability is unavailable.')
+  }
+  if (input.workspaceId !== null || input.capability !== 'research.investigate' || input.version !== 1) {
+    return failed('invalid_args', 'Research investigation requires operator scope and version 1.')
+  }
+  if (!origin?.workspaceId || !origin.threadId || !origin.messageId) {
+    return failed('invalid_args', 'Trusted founder Direct provenance is required.')
+  }
+  const { lead, verificationQuestion, canonicalKey, program } = input.args ?? {}
+  if (
+    typeof lead !== 'string' || !lead.trim() ||
+    typeof verificationQuestion !== 'string' || !verificationQuestion.trim() ||
+    typeof canonicalKey !== 'string' || !canonicalKey.trim() ||
+    typeof program !== 'string'
+  ) {
+    return failed('invalid_args', 'A lead, verification question, canonical key, and canonical program are required.')
+  }
+  try {
+    return await invokeValidatedCapability(capability, {
+      lead: lead.trim(),
+      verificationQuestion: verificationQuestion.trim(),
+      canonicalKey: canonicalKey.trim(),
+      program,
+      origin,
+    }, {
+      actor: { kind: 'founder', userId: authenticatedFounderUserId },
+      scope: { workspaceId: null },
+      caller: 'caye_direct',
+    })
+  } catch {
+    return failed('unavailable', 'Research investigation could not be created.', true)
   }
 }
 
