@@ -17,6 +17,22 @@ export const LLM_PRICING: Record<
   'gpt-5': { input: 1.25, output: 10, cache_read: 0.125, cache_write_1h: 0 },
 }
 
+/**
+ * Resolve a provider-returned model id to a pricing key.
+ *
+ * Providers echo back a dated snapshot rather than the alias you requested —
+ * asking for `gpt-5-mini` yields `gpt-5-mini-2025-08-07`. Keying the table
+ * strictly on exact match silently priced every such call at $0, which is worse
+ * than a wrong price because it looks like real data. Exact match still wins, so
+ * explicitly-priced dated ids (e.g. claude-haiku-4-5-20251001) are unaffected.
+ */
+export function pricingKeyFor(model: string): string | null {
+  if (LLM_PRICING[model]) return model
+  // OpenAI style: -YYYY-MM-DD. Anthropic style: -YYYYMMDD.
+  const base = model.replace(/-\d{4}-\d{2}-\d{2}$/, '').replace(/-\d{8}$/, '')
+  return base !== model && LLM_PRICING[base] ? base : null
+}
+
 export function costForModel(
   model: string,
   input: number,
@@ -24,7 +40,8 @@ export function costForModel(
   cacheRead: number,
   cacheWrite: number
 ): number {
-  const p = LLM_PRICING[model]
+  const key = pricingKeyFor(model)
+  const p = key ? LLM_PRICING[key] : undefined
   if (!p) return 0
   return (
     (input * p.input) / 1_000_000 +

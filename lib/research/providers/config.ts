@@ -4,6 +4,7 @@ import { REQUIRED_RESEARCH_CAPABILITIES, type ResearchProviderAdapter, type Rese
 import { createOpenAiResearchProvider } from './openai'
 import { createAnthropicResearchAdapter } from './anthropic'
 import { createOpenRouterResearchAdapter } from './openrouter'
+import { logGenericLlmUsage } from '@/lib/llm-telemetry'
 
 /**
  * Deterministic research provider preference.
@@ -69,9 +70,21 @@ export function resolveResearchProviderPreference(env: NodeJS.ProcessEnv = proce
 
 export type ResearchProviderFactories = Partial<Record<ResearchProviderId, () => ResearchProviderAdapter>>
 
+/**
+ * Research spend belongs in the same ledger as every other Caye LLM call, so
+ * the admin spend surface does not quietly under-report continuous research.
+ * Fire-and-forget: a telemetry write must never fail a research run.
+ */
+function researchUsageLogger(source: string) {
+  return (usage: { model: string; inputTokens?: number; outputTokens?: number }) => {
+    void logGenericLlmUsage(usage, { source, callerRole: 'founder' })
+      .catch((error) => console.error('[research/providers] usage log failed:', error))
+  }
+}
+
 export const DEFAULT_PROVIDER_FACTORIES: ResearchProviderFactories = {
-  openai: () => createOpenAiResearchProvider(),
-  anthropic: () => createAnthropicResearchAdapter(),
+  openai: () => createOpenAiResearchProvider({ onUsage: researchUsageLogger('lib/research/providers/openai.ts:research') }),
+  anthropic: () => createAnthropicResearchAdapter({ onUsage: researchUsageLogger('lib/research/providers/anthropic.ts:research') }),
   openrouter: () => createOpenRouterResearchAdapter(),
 }
 
