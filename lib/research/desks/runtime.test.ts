@@ -77,7 +77,7 @@ function dependencies(options: {
     store: memory.store,
     intelligence: { read: vi.fn(async () => options.intelligence ?? { recentQuestions: [], currentClaims: [], latestBrief: null }) },
     planner: { plan: vi.fn(async ({ mode }) => (mode === 'monitoring' ? options.monitoring ?? ['monitor change'] : options.discovery ?? ['discover unknown development']).map((question) => ({ question, mode, depth: 0 }))) },
-    executor,
+    executor: { execute: executor },
     evaluator: { evaluate: vi.fn(async () => ({
       novel: false,
       material: false,
