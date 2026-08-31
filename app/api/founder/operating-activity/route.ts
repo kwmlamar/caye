@@ -13,7 +13,6 @@ function cleanText(value: unknown): string | null {
   if (typeof value !== 'string') return null
   const trimmed = value.trim()
   if (!trimmed) return null
-  // Human-facing activity must never surface internal UUIDs as labels/details.
   return trimmed.replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi, 'internal record')
 }
 
@@ -24,6 +23,7 @@ export async function GET(req: NextRequest) {
   const workspaceId = req.nextUrl.searchParams.get('workspaceId')
   if (!workspaceId) return NextResponse.json({ error: 'workspaceId is required' }, { status: 400 })
 
+  const includeAllLearned = req.nextUrl.searchParams.get('allLearned') === '1'
   const db = createServiceClient()
   const now = new Date().toISOString()
 
@@ -34,11 +34,11 @@ export async function GET(req: NextRequest) {
       .order('started_at', { ascending: false })
       .limit(3),
     db.from('intelligence_items')
-      .select('canonical_claim,topic,domain,epistemic_type,confidence,materiality,created_at,updated_at,scope,workspace_id,status')
+      .select('canonical_claim,topic,domain,epistemic_type,confidence,materiality,created_at,updated_at,scope,workspace_id,status', { count: 'exact' })
       .or(`scope.eq.operator,workspace_id.eq.${workspaceId}`)
       .in('status', ['current', 'contested'])
       .order('updated_at', { ascending: false })
-      .limit(5),
+      .limit(includeAllLearned ? 200 : 5),
     db.from('intelligence_relations')
       .select('relation_type,confidence,created_at,from_item:intelligence_items!intelligence_relations_from_item_id_fkey(canonical_claim,scope,workspace_id),to_item:intelligence_items!intelligence_relations_to_item_id_fkey(canonical_claim,scope,workspace_id)')
       .in('relation_type', ['contradicts', 'supersedes'])
@@ -137,6 +137,9 @@ export async function GET(req: NextRequest) {
     status,
     generatedAt: now,
     lastActivityAt,
+    sectionTotals: {
+      recentlyLearned: intelligence.count ?? recentlyLearned.length,
+    },
     sections: {
       researchingNow,
       recentlyLearned,
