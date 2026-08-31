@@ -7,6 +7,7 @@ import {
   extractHtmlTitle,
   extractReadableText,
   fetchResearchDocument,
+  sanitizeForStorage,
 } from './source-fetch'
 
 describe('research source URL guard', () => {
@@ -133,5 +134,31 @@ describe('durable document extraction', () => {
 
     await expect(fetchResearchDocument('https://example.gov/blank', { fetch: fetchMock as any }))
       .rejects.toThrow(/no readable text/)
+  })
+})
+
+
+describe('storage sanitization', () => {
+  it('strips null bytes and control characters Postgres jsonb cannot store', () => {
+    expect(sanitizeForStorage('GDP grew \u0000 2.1% in 2026')).toBe('GDP grew  2.1% in 2026')
+  })
+
+  it('keeps tabs and newlines, which carry document structure', () => {
+    expect(sanitizeForStorage('First fact.\nSecond\tcolumn.')).toBe('First fact.\nSecond\tcolumn.')
+  })
+
+  it('strips lone surrogates while preserving valid astral characters', () => {
+    expect(sanitizeForStorage('ok \uD800 text')).toBe('ok  text')
+    expect(sanitizeForStorage('emoji \u{1F600} kept')).toBe('emoji \u{1F600} kept')
+  })
+
+  it('sanitizes fetched document content end to end', async () => {
+    const fetchMock = vi.fn(async () => new Response(
+      '<html><body><p>Value\u0000is 5</p></body></html>',
+      { status: 200, headers: { 'content-type': 'text/html' } },
+    ))
+    const document = await fetchResearchDocument('https://example.gov/a', { fetch: fetchMock as any })
+    expect(document.content).toBe('Valueis 5')
+    expect(document.content).not.toContain('\u0000')
   })
 })

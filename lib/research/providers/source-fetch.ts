@@ -153,6 +153,24 @@ export function extractHtmlTitle(html: string): string | undefined {
   return title || undefined
 }
 
+/**
+ * Strip characters Postgres cannot store.
+ *
+ * A jsonb value may not contain U+0000, and real web pages do carry stray null
+ * bytes and other C0 control characters. Storing the snapshot is the step that
+ * makes evidence durable, so a single bad byte must not take down a research
+ * run. Tabs and newlines are kept — they carry document structure.
+ */
+export function sanitizeForStorage(value: string): string {
+  return value
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
+    // Lone surrogates are equally unstorable and equally not evidence.
+    .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, '')
+    .replace(/(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '')
+    .trim()
+}
+
 export interface FetchedDocument {
   content: string
   title?: string
@@ -213,7 +231,7 @@ export async function fetchResearchDocument(
     }
     const body = new TextDecoder('utf-8', { fatal: false }).decode(buffer)
     const isHtml = /html|xml/i.test(contentType) || /^\s*<(?:!doctype|html)/i.test(body)
-    const content = isHtml ? extractReadableText(body) : body.trim()
+    const content = sanitizeForStorage(isHtml ? extractReadableText(body) : body.trim())
 
     if (!content) throw sourceError(`Research source returned no readable text: ${current}`)
 
