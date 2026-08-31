@@ -2,6 +2,7 @@ import 'server-only'
 import { createServiceClient } from '@/lib/supabase-server'
 import type { Tool, ToolContext, ToolResult } from '../types'
 import { stableArgsKey } from '../high-risk-gate'
+import { getStandingAuthorization, isStandingAuthorizationActive } from '@/lib/job-search/standing-authorization'
 
 const PENDING_TTL_MINUTES = 15
 
@@ -23,17 +24,52 @@ function describeAdminPendingAction(toolName: string, args: Record<string, unkno
  * and inspection reads public ATS form metadata plus verified founder facts.
  * Consequential ATS execution remains behind the separate confirmation gate.
  */
-function canExecuteWithoutConfirmation(toolName: string, args: unknown): boolean {
+function isNonConsequentialCron(toolName: string, args: unknown): boolean {
   if (toolName !== 'trigger_cron' || !args || typeof args !== 'object') return false
   const cronName = (args as { cron_name?: unknown }).cron_name
   return cronName === 'job-search-sourcing' || cronName === 'job-search-prepare' || cronName === 'job-search-inspect'
+}
+
+/**
+ * Job-submission tools covered by a founder standing authorization.
+ *
+ * This is the one place the per-action confirmation loop is removed, and it is
+ * removed narrowly. The founder decided ONCE that Caye may apply to qualified
+ * roles; making them re-confirm each batch is asking the same question again,
+ * not adding safety.
+ *
+ * Three things this deliberately does NOT do:
+ *
+ *  - It does not read authorization from `args`. A model cannot talk its way
+ *    past this by claiming the founder approved something; the only input is
+ *    durable database state written by a founder-scoped tool.
+ *  - It does not weaken the gate for anything else. Every other high-risk
+ *    admin tool, including the rollout controls that RAISE capability, still
+ *    requires explicit confirmation.
+ *  - It does not decide whether any individual application may be submitted.
+ *    That is still settled per-application, later, by the submission authority
+ *    boundary, which independently re-proves the same standing policy against
+ *    the live row immediately before the click.
+ */
+const STANDING_AUTHORIZED_TOOLS = new Set(['apply_to_qualified_jobs', 'run_application_execution'])
+
+async function canExecuteWithoutConfirmation(toolName: string, args: unknown): Promise<boolean> {
+  if (isNonConsequentialCron(toolName, args)) return true
+  if (!STANDING_AUTHORIZED_TOOLS.has(toolName)) return false
+
+  try {
+    return isStandingAuthorizationActive(await getStandingAuthorization())
+  } catch {
+    // Unreadable authorization is not authorization. Fall back to confirming.
+    return false
+  }
 }
 
 export function gateAdminHighRisk<T>(tool: Tool<T>): Tool<T> {
   return {
     ...tool,
     async execute(args, ctx: ToolContext): Promise<ToolResult> {
-      if (canExecuteWithoutConfirmation(tool.name, args)) return tool.execute(args, ctx)
+      if (await canExecuteWithoutConfirmation(tool.name, args)) return tool.execute(args, ctx)
 
       const supabase = createServiceClient()
       const argsKey = stableArgsKey(args)

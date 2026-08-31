@@ -194,5 +194,6 @@ export const REPO_MIGRATIONS: readonly string[] = [
   '20260831_caye_intelligence_substrate',
   '20260831_fix_research_desk_claim_rpc',
   '20260831_job_search_live_submission',
+  '20260831_job_search_standing_authorization',
   '20260831_research_desk_runtime',
 ]

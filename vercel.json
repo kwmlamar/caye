@@ -32,6 +32,14 @@
     {
       "path": "/api/caye/growth-ingest",
       "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/caye/job-search-prepare",
+      "schedule": "20 */4 * * *"
+    },
+    {
+      "path": "/api/caye/job-search-apply",
+      "schedule": "*/30 * * * *"
     }
   ]
 }
