@@ -1,5 +1,6 @@
 export const TRUSTED_CODING_REPOSITORY = 'kwmlamar/caye'
 export const CODING_BASE_BRANCH = 'main'
+export const SOFTWARE_LEARNING_MIN_EVIDENCE = 2
 
 export type EngineeringVerdict =
   | 'branch_verified'
@@ -29,6 +30,24 @@ export interface EngineeringClosure {
   productionVerified: boolean
   summary: string
   evidenceSources: EngineeringEvidenceSource[]
+}
+
+export interface SoftwareLearningEvidenceInput {
+  workspaceId: string | null
+  learningKey: string | null
+  verdict: EngineeringVerdict | null
+  environment: 'branch' | 'production' | null
+  productionEvidenceSource: EngineeringEvidenceSource | null
+  hasExecutionEvidence: boolean
+  hasObservedOutcome: boolean
+  matchingIndependentProductionOutcomes: number
+}
+
+export interface SoftwareLearningEvidenceAssessment {
+  candidate: boolean
+  reusable: boolean
+  minimumEvidenceThreshold: number
+  reason: string
 }
 
 function branchEvidenceSources(input: EngineeringClosureInput): EngineeringEvidenceSource[] {
@@ -72,6 +91,35 @@ export function evaluateEngineeringClosure(input: EngineeringClosureInput): Engi
   }
 
   return { verdict: input.productionHealthy === false ? 'failed' : 'inconclusive', comparison: input.productionHealthy === false ? 'contradicted' : 'inconclusive', environment: 'production', productionVerified: false, evidenceSources: productionSources, summary: input.productionHealthy === false ? 'Production observation contradicted the expected result; recovery or rollback is required.' : 'Production was observed, but the evidence is insufficient for a success verdict.' }
+}
+
+/**
+ * Decides whether a software engineering outcome is strong enough to enter the
+ * existing learning audit, and whether repeated evidence is sufficient to be
+ * considered reusable. This does not write reusable memory itself.
+ *
+ * Workspace scope is deliberate: operator_learning_audit is workspace-scoped.
+ * Founder/global coding sessions must not be mislabeled as a customer workspace
+ * merely to manufacture learning evidence.
+ */
+export function assessSoftwareLearningEvidence(input: SoftwareLearningEvidenceInput): SoftwareLearningEvidenceAssessment {
+  const base = { candidate: false, reusable: false, minimumEvidenceThreshold: SOFTWARE_LEARNING_MIN_EVIDENCE }
+
+  if (!input.workspaceId) return { ...base, reason: 'Founder/global coding sessions are outside the workspace learning audit scope.' }
+  if (!input.learningKey?.trim()) return { ...base, reason: 'A stable learning key is required before engineering evidence can be grouped.' }
+  if (input.environment !== 'production' || input.productionEvidenceSource !== 'production') return { ...base, reason: 'Only independently observed production outcomes qualify as learning evidence.' }
+  if (!input.hasExecutionEvidence || !input.hasObservedOutcome) return { ...base, reason: 'Both implementation evidence and an observed outcome are required.' }
+  if (input.verdict === null || input.verdict === 'branch_verified' || input.verdict === 'inconclusive') return { ...base, reason: 'Only conclusive production outcomes become learning candidates.' }
+
+  const reusable = input.matchingIndependentProductionOutcomes >= SOFTWARE_LEARNING_MIN_EVIDENCE
+  return {
+    candidate: true,
+    reusable,
+    minimumEvidenceThreshold: SOFTWARE_LEARNING_MIN_EVIDENCE,
+    reason: reusable
+      ? `Repeated evidence threshold satisfied by ${input.matchingIndependentProductionOutcomes} independent matching production outcomes.`
+      : `Evidence-backed outcome is a candidate only; reusable learning requires at least ${SOFTWARE_LEARNING_MIN_EVIDENCE} independent matching production outcomes.`,
+  }
 }
 
 export function codingSessionBranch(sessionId: string): string {
