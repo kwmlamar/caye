@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { getSession } from '@/lib/supabase'
 import { CayeLoadingPulse } from './CayeLoadingPulse'
+import OperatingActivity from './OperatingActivity'
 import { AQUA, EMERALD, GOLD, ROSE, TEXT, TEXT_MUTED, TEXT_QUIET, glass } from '../surface'
 
 type GoalKind = 'vision' | 'domain' | 'objective' | 'goal' | 'initiative'
@@ -270,6 +271,7 @@ export default function DirectionPage({ workspaceId }: { workspaceId: string }) 
 
         {activeFocus.length > 0 && <div style={{ marginBottom: 30 }}><div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.04em', color: TEXT_QUIET, marginBottom: 8 }}>CURRENT FOCUS</div>{activeFocus.map((goal) => <div key={goal.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 2px', fontSize: 13, color: TEXT }}><span aria-hidden style={{ color: AQUA }}>→</span>{goal.title}{goal.scope === 'workspace' && <span style={{ fontSize: 10, color: TEXT_QUIET, ...glass(0.05), padding: '1px 6px', borderRadius: 999 }}>this workspace</span>}</div>)}</div>}
 
+        <OperatingActivity workspaceId={workspaceId} />
         <CapabilitiesSection capabilities={data.capabilities} />
         <TreeSection title="Operator direction" goals={data.operatorGoals} />
         <TreeSection title="This workspace" goals={data.workspaceGoals} />
