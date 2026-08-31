@@ -27,22 +27,25 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(`${appUrl}/connect?link_error=${verified.reason}`)
   }
   const workspaceId = verified.workspaceId
+  const source = req.nextUrl.searchParams.get('source') || 'desktop'
 
   // Google refuses OAuth inside embedded WebViews, which is what a tap
   // from WhatsApp opens on Android. Divert those to an interstitial that
   // can escape to a real browser; everyone else goes straight through.
+  // Preserve `source` across that handoff so a WhatsApp-originated connect
+  // returns to /connect/done instead of leaking into the authenticated dashboard.
   // `ext=1` is set by that page and prevents a loop.
   if (!req.nextUrl.searchParams.get('ext')) {
     const { isEmbeddedBrowser } = await import('@/lib/channels/embedded-browser')
     if (isEmbeddedBrowser(req.headers.get('user-agent'))) {
       const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.meetcaye.com'
       const t = encodeURIComponent(req.nextUrl.searchParams.get('t') ?? '')
-      return NextResponse.redirect(`${appUrl}/connect/open?channel=gmail&t=${t}`)
+      const sourceParam = encodeURIComponent(source)
+      return NextResponse.redirect(`${appUrl}/connect/open?channel=gmail&t=${t}&source=${sourceParam}`)
     }
   }
 
   const redirectUri = `${process.env.NEXT_PUBLIC_APP_URL}/api/auth/gmail/callback`
-  const source = req.nextUrl.searchParams.get('source') || 'desktop'
 
   const params = new URLSearchParams({
     response_type: 'code',
