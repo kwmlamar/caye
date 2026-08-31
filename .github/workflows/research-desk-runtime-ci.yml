@@ -1,0 +1,29 @@
+name: Research desk runtime
+
+on:
+  pull_request:
+    paths:
+      - 'lib/research/desks/runtime.ts'
+      - 'lib/research/desks/runtime.test.ts'
+      - 'lib/research/desks/supabase.ts'
+      - 'supabase/migrations/20260831_research_desk_runtime.sql'
+      - '.github/workflows/research-desk-runtime-ci.yml'
+  push:
+    branches:
+      - feat/research-desk-runtime
+
+jobs:
+  research-desk-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Research desk lifecycle tests
+        run: npx vitest run lib/research/desks/runtime.test.ts
+      - name: Production build
+        run: npm run build
