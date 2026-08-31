@@ -12,10 +12,54 @@ import type { ToolContext } from '@/lib/caye-agent/tools/types'
 import type { StrategicDependencies } from './service'
 import type { StrategicAuthority } from './types'
 
-/**
- * Canonical adapters for strategic intelligence. No second authority resolver,
- * notification queue, research queue, or attention table lives here.
- */
+async function enqueueFounderWhatsAppAlert(input: {
+  workspaceId: string
+  founderUserId: string
+  title: string
+  body: string
+  dedupeKey: string
+}): Promise<boolean> {
+  const db = createServiceClient()
+  const preference = await db
+    .from('founder_notification_preferences')
+    .select('whatsapp_enabled,min_escalation_level')
+    .eq('founder_user_id', input.founderUserId)
+    .maybeSingle()
+  if (preference.error || !preference.data?.whatsapp_enabled || Number(preference.data.min_escalation_level ?? 5) > 5) return false
+
+  const membership = await db
+    .from('workspace_members')
+    .select('role')
+    .eq('workspace_id', input.workspaceId)
+    .eq('user_id', input.founderUserId)
+    .maybeSingle()
+  if (membership.error || !membership.data) return false
+
+  const operators = await db
+    .from('operator_allowlist')
+    .select('id,phone')
+    .eq('workspace_id', input.workspaceId)
+    .eq('role', 'founder')
+    .not('verified_at', 'is', null)
+    .limit(2)
+  if (operators.error || operators.data?.length !== 1 || !operators.data[0]?.phone) return false
+
+  const message = [`Caye found something important.`, '', input.title, input.body].filter(Boolean).join('\n').slice(0, 1800)
+  const queued = await db.from('caye_outbound_queue').insert({
+    workspace_id: input.workspaceId,
+    kind: 'operator_reminder',
+    payload: {
+      to_phone: operators.data[0].phone,
+      body: message,
+      original_request: 'strategic_intelligence_level_5',
+    },
+    idempotency_key: `strategic-whatsapp:${input.founderUserId}:${input.dedupeKey}`,
+  })
+  if (!queued.error) return true
+  return queued.error.code === '23505'
+}
+
+/** Canonical adapters for strategic intelligence. */
 export function createCanonicalStrategicDependencies(input: {
   workspaceId?: string | null
   /** Authenticated founder identity, supplied only by a trusted Direct/server boundary. */
@@ -26,49 +70,36 @@ export function createCanonicalStrategicDependencies(input: {
   return {
     async resolveAuthority(request): Promise<StrategicAuthority> {
       if (request.scope === 'personal') {
-        // Personal strategic authority is only resolvable from an authenticated
-        // founder identity. Never infer it from caller role, model context, or a
-        // business workspace operator.
-        if (!input.founderUserId) {
-          return { principalType: 'unknown', principalRef: null, resolvedBy: 'unresolved' }
-        }
-        return {
-          principalType: 'personal',
-          principalRef: `founder:${input.founderUserId}`,
-          resolvedBy: 'canonical_authority',
-        }
+        if (!input.founderUserId) return { principalType: 'unknown', principalRef: null, resolvedBy: 'unresolved' }
+        return { principalType: 'personal', principalRef: `founder:${input.founderUserId}`, resolvedBy: 'canonical_authority' }
       }
 
       const targetWorkspace = request.workspaceRef ?? workspaceId
-      if (!targetWorkspace) {
-        return { principalType: 'unknown', principalRef: null, resolvedBy: 'unresolved' }
-      }
+      if (!targetWorkspace) return { principalType: 'unknown', principalRef: null, resolvedBy: 'unresolved' }
       const resolution = await resolveWorkspaceDecisionAuthority({
         workspaceId: targetWorkspace,
         actorOperatorId: null,
         requiredAuthority: requiredAuthorityForDomain('business_policy'),
       })
       const principal = resolution.preferredDecisionOwner
-      if (!principal) {
-        return { principalType: 'unknown', principalRef: null, resolvedBy: 'unresolved' }
-      }
-      return {
-        principalType: 'business',
-        principalRef: `operator:${principal.id}`,
-        resolvedBy: 'canonical_authority',
-      }
+      if (!principal) return { principalType: 'unknown', principalRef: null, resolvedBy: 'unresolved' }
+      return { principalType: 'business', principalRef: `operator:${principal.id}`, resolvedBy: 'canonical_authority' }
     },
 
     async enqueueCanonicalAttention(attention) {
-      if (!workspaceId || attention.authority.principalType !== 'business') {
-        // There is no separate founder/personal proactive-notification framework
-        // to fall back to. Do not claim an interruption happened when it did not.
-        return false
+      if (attention.authority.principalType === 'personal') {
+        if (!workspaceId || !input.founderUserId || attention.authority.principalRef !== `founder:${input.founderUserId}`) return false
+        return enqueueFounderWhatsAppAlert({
+          workspaceId,
+          founderUserId: input.founderUserId,
+          title: attention.title,
+          body: attention.body,
+          dedupeKey: attention.dedupeKey,
+        })
       }
 
-      // Durable anti-spam is grounded in the existing attention ledger, not in
-      // process memory. A strategic fingerprint that was already told, resolved,
-      // dismissed, or is currently in flight has not re-earned interruption.
+      if (!workspaceId || attention.authority.principalType !== 'business') return false
+
       const { data: existing } = await createServiceClient()
         .from('caye_owner_attention')
         .select('status,state_fingerprint,notified_fingerprint,pending_notification_queue_id')
@@ -96,15 +127,9 @@ export function createCanonicalStrategicDependencies(input: {
         risk: 'consequential',
         subjectKey: attention.dedupeKey,
         summary: `${attention.title}: ${attention.body}`,
-        evidence: {
-          source: 'strategic_intelligence',
-          escalationLevel: 5,
-          materialFingerprint: attention.dedupeKey,
-        },
+        evidence: { source: 'strategic_intelligence', escalationLevel: 5, materialFingerprint: attention.dedupeKey },
         resumeLink: { kind: 'strategic_intelligence', fingerprint: attention.dedupeKey },
       })
-      // An attention row without successful delivery is durable pending work,
-      // not proof that the human was interrupted.
       return routed.routed
     },
 
@@ -115,9 +140,6 @@ export function createCanonicalStrategicDependencies(input: {
 
     async requestIndependentCrossCheck(signal) {
       if (!signal.researchQuestionId) return
-      // Research Runtime dedupes an already-active question. The run is tagged
-      // separately so synthesis can demand corroboration rather than treating
-      // the second pass as an independent source by fiat.
       await queueResearchRun(signal.researchQuestionId, 'strategic-cross-check')
     },
   }
