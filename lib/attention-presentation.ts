@@ -1,12 +1,5 @@
 import { founderBriefingLeak } from './operator-text-guard'
 
-/**
- * Canonical human-facing presentation for attention subjects.
- *
- * Internal IDs remain durable audit/evidence keys. They are never the fallback
- * label for an operator. If we cannot resolve a business identity, we describe
- * the kind of work rather than dumping a UUID into the conversation.
- */
 export interface AttentionPresentationInput {
   subjectType: string
   title?: string | null
@@ -14,6 +7,8 @@ export interface AttentionPresentationInput {
   customerEmail?: string | null
   customerPhone?: string | null
   serviceName?: string | null
+  /** Human-safe qualifier used only when two visible subjects would otherwise collide. */
+  disambiguator?: string | null
   action?: string | null
 }
 
@@ -32,7 +27,8 @@ export function hasInternalIdentifierLeak(text: string): boolean {
 
 function identity(input: AttentionPresentationInput): string | null {
   const name = input.customerName?.trim()
-  if (name) return name
+  const disambiguator = stripInternalIdentifiers(input.disambiguator?.trim() ?? '')
+  if (name) return disambiguator ? `${name} (${disambiguator})` : name
   const email = input.customerEmail?.trim()
   if (email) return email
   const phone = input.customerPhone?.trim()
@@ -42,7 +38,7 @@ function identity(input: AttentionPresentationInput): string | null {
 
 export function attentionSubjectLabel(input: AttentionPresentationInput): string {
   const who = identity(input)
-  const service = input.serviceName?.trim()
+  const service = stripInternalIdentifiers(input.serviceName?.trim() ?? '')
   if (who && service) return `${who}'s ${service}`
   if (who) return who
   if (service) return service
@@ -56,6 +52,7 @@ export function attentionSubjectLabel(input: AttentionPresentationInput): string
     case 'booking': return 'customer booking'
     case 'payment': return 'customer payment'
     case 'objective': return 'operator objective'
+    case 'decision': return 'business decision'
     default: return 'attention item'
   }
 }
@@ -64,6 +61,16 @@ export function presentAttentionOutcome(input: AttentionPresentationInput): stri
   const subject = attentionSubjectLabel(input)
   const action = stripInternalIdentifiers(input.action ?? '').replace(/[.!]+$/, '')
   const sentence = action ? `${action} ${subject}.` : `Updated ${subject}.`
-  if (hasInternalIdentifierLeak(sentence)) return 'Updated the attention item.'
-  return sentence
+  return hasInternalIdentifierLeak(sentence) ? 'Updated the attention item.' : sentence
+}
+
+/**
+ * Last-mile repair for legacy operator prose that already contains a raw id.
+ * It deliberately does not expose the id and does not pretend an unknown id is
+ * a customer name. Rich call sites should use attentionSubjectLabel instead.
+ */
+export function humanizeLegacyAttentionText(text: string): string {
+  const clean = stripInternalIdentifiers(text)
+  if (/^Skipped held thread\b/i.test(clean)) return 'Removed the held customer conversation from the queue.'
+  return clean
 }
