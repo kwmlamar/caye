@@ -4,6 +4,7 @@ import type Anthropic from '@anthropic-ai/sdk'
 import { buildBackOfficeTurnContext } from '@/lib/caye-agent'
 import type { ToolContext } from '@/lib/caye-agent/tools/types'
 import { runFounderToolLoop } from './tool-bridge/founder-tool-loop'
+import { selectFounderToolNames } from './tool-bridge/founder-tool-selector'
 import { ClaudeSubscriptionBackend } from './backends/claude-subscription'
 import { OpenAICodexSubscriptionBackend } from './backends/openai-codex-subscription'
 import { AnthropicApiBackend } from './backends/anthropic-api'
@@ -58,6 +59,7 @@ export interface CayeDirectRouterTurnArgs {
   engineeringOrigin?: { threadId: string; messageId: string }
   channel?: 'dashboard'
   responseStyle?: 'voice'
+  activityId?: string | null
 }
 
 export interface CayeDirectRouterTurnResult {
@@ -109,7 +111,7 @@ export async function runCayeDirectRouterTurn(args: CayeDirectRouterTurnArgs): P
     engineeringAnalysisIds,
     businessArtifactIds,
   }
-  Object.assign(toolCtx, { founderUserId: args.founderUserId })
+  Object.assign(toolCtx, { founderUserId: args.founderUserId, directActivityId: args.activityId ?? null })
 
   const isVoice = args.responseStyle === 'voice'
   const start = Date.now()
@@ -124,7 +126,7 @@ export async function runCayeDirectRouterTurn(args: CayeDirectRouterTurnArgs): P
       system: isVoice ? `${sharedGuidance}\n\n${VOICE_DELIVERY_GUIDANCE}` : sharedGuidance,
       initialMessages,
       signal: AbortSignal.timeout(180_000),
-      restrictToToolNames: args.restrictToToolNames,
+      restrictToToolNames: args.restrictToToolNames ?? selectFounderToolNames(args.message),
       ...(isVoice ? { maxOutputTokens: VOICE_MAX_OUTPUT_TOKENS } : {}),
     })
     decision = result.decision
