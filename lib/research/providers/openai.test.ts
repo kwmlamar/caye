@@ -98,6 +98,16 @@ describe('OpenAI research provider', () => {
     expect(provider.id).toBe('openai')
   })
 
+  it('defaults to the model this account has proven access to', () => {
+    const previous = process.env.OPENAI_RESEARCH_MODEL
+    delete process.env.OPENAI_RESEARCH_MODEL
+    try {
+      expect(createOpenAiResearchProvider({ apiKey: 'sk-test' }).name).toBe('openai:gpt-5-mini')
+    } finally {
+      if (previous !== undefined) process.env.OPENAI_RESEARCH_MODEL = previous
+    }
+  })
+
   it('declares every capability continuous research requires', () => {
     const provider = createOpenAiResearchProvider({ apiKey: 'sk-test' })
     for (const capability of ['web_search', 'source_citations', 'durable_source_fetch', 'structured_output'] as const) {

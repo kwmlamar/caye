@@ -24,7 +24,12 @@ import type {
  * is a sensor pointing at sources, not the record of what those sources said.
  */
 
-const DEFAULT_RESEARCH_MODEL = process.env.OPENAI_RESEARCH_MODEL || 'gpt-5'
+// gpt-5-mini, not gpt-5: this account has 148 successful gpt-5-mini calls in
+// production over the last 30 days and no recorded gpt-5 usage, so mini is the
+// model whose access is actually evidenced here. It is also the cheaper option,
+// which is the operating reason for this migration. Override with
+// OPENAI_RESEARCH_MODEL once stronger reasoning is wanted and access is confirmed.
+const DEFAULT_RESEARCH_MODEL = process.env.OPENAI_RESEARCH_MODEL || 'gpt-5-mini'
 const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1'
 const SEARCH_MAX_TOKENS = 2_048
 
