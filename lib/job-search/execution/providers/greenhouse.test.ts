@@ -160,11 +160,18 @@ describe('greenhouseAtsProvider browser capability (#216)', () => {
     }
   }
 
-  it('keeps live applicant submission disabled until the browser implementation is independently validated', () => {
-    expect(greenhouseAtsProvider.canSubmit).toBe(false)
+  it('declares the audited live-submission capability', () => {
+    // canSubmit is a CAPABILITY, not a permission: it says a lawful submission
+    // channel exists. Whether any attempt may use it is decided entirely by
+    // submission-gate.ts.
+    expect(greenhouseAtsProvider.canSubmit).toBe(true)
+    expect(typeof greenhouseAtsProvider.submitLive).toBe('function')
   })
 
-  it('refuses submit without touching the browser or employer API', async () => {
+  it('refuses the provider-neutral submit(), which carries no final authority check', async () => {
+    // A real submission may never run without the last-moment revalidation.
+    // submit() cannot receive one, so it performs no action at all — the live
+    // path is reachable only through submitLive(), whose signature requires it.
     await expect(greenhouseAtsProvider.submit(request(), [field])).resolves.toMatchObject({ outcome: 'not_supported' })
   })
 })

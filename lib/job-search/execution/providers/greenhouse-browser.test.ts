@@ -6,7 +6,7 @@ const page = {
   setDefaultNavigationTimeout: vi.fn(), setDefaultTimeout: vi.fn(), waitForLoadState: vi.fn(),
   locator: vi.fn(), getByLabel: vi.fn(() => labelledControl),
 }
-const context = { newPage: vi.fn(async () => page), close: vi.fn(async () => undefined) }
+const context = { newPage: vi.fn(async () => page), close: vi.fn(async () => undefined), on: vi.fn() }
 const browser = { newContext: vi.fn(async () => context), close: vi.fn(async () => undefined) }
 vi.mock('./serverless-chromium', () => ({ launchServerlessChromium: vi.fn(async () => browser) }))
 
@@ -77,7 +77,7 @@ describe('Greenhouse browser executor (#216)', () => {
     }
     const noMatch = { count: vi.fn(async () => 0), fill: vi.fn(), selectOption: vi.fn(), first() { return this } }
     const body = { count: vi.fn(async () => 1), innerText: vi.fn(async () => 'Apply for this job'), first() { return this } }
-    const ambiguous = { count: vi.fn(async () => 2), fill: vi.fn(), selectOption: vi.fn(), first() { return this } }
+    const ambiguous = { count: vi.fn(async () => 2), fill: vi.fn(), selectOption: vi.fn(), setInputFiles: vi.fn(), first() { return this } }
     page.locator.mockImplementation((selector: string) => selector === 'body' ? body : noMatch)
     page.getByLabel.mockReturnValue(ambiguous)
 

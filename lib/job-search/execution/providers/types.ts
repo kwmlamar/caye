@@ -30,4 +30,34 @@ export interface AtsExecutorProvider {
    * `{ outcome: 'not_supported' }` and performs no network call.
    */
   submit(request: SubmissionRequest, fields: DiscoveredField[]): Promise<SubmissionResult>
+  /**
+   * The audited live-submission path, when the provider has one.
+   *
+   * Its signature deliberately REQUIRES a `finalCheck`. That is the
+   * last-moment authority revalidation, run with the form filled and the
+   * browser open, in the instant before the single consequential click. A
+   * provider cannot offer live submission without accepting it, so "we forgot
+   * to re-check before clicking" is a type error rather than an incident.
+   *
+   * Optional on the interface because most providers have no lawful
+   * submission channel at all; those simply omit it and can never be reached
+   * by the executor's live branch.
+   */
+  submitLive?(
+    request: SubmissionRequest,
+    fields: DiscoveredField[],
+    finalCheck: () => Promise<{ ok: true } | { ok: false; reason: string }>,
+  ): Promise<{ result: SubmissionResult; telemetry: LiveSubmissionTelemetry }>
+}
+
+/** Non-sensitive, auditable facts about one live submission attempt. */
+export type LiveSubmissionTelemetry = {
+  destinationUrl: string
+  resultUrl: string | null
+  submitClickedAt: string | null
+  submitObservedAt: string | null
+  resumeSha256: string | null
+  answerSetSha256: string
+  confirmationMethod: string | null
+  confirmationSignals: string[]
 }

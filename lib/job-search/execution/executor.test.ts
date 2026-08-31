@@ -17,6 +17,19 @@ const submit = vi.fn()
  * about a boolean checked near the final action.
  */
 type ProviderDryRunResult = { outcome: 'ready' | 'needs_human'; reason: string }
+function liveTelemetry(submitClickedAt: string | null) {
+  return {
+    destinationUrl: 'https://job-boards.greenhouse.io/exampleco/jobs/12345',
+    resultUrl: 'https://job-boards.greenhouse.io/exampleco/jobs/12345',
+    submitClickedAt,
+    submitObservedAt: submitClickedAt ? new Date().toISOString() : null,
+    resumeSha256: 'a'.repeat(64),
+    answerSetSha256: 'b'.repeat(64),
+    confirmationMethod: submitClickedAt ? 'browser_confirmation' : null,
+    confirmationSignals: submitClickedAt ? ['greenhouse_confirmation_dom'] : [],
+  }
+}
+
 const providerDryRun = vi.fn<() => Promise<ProviderDryRunResult>>(async () => ({ outcome: 'ready', reason: 'ready' }))
 /**
  * `canSubmit` mirrors the real provider's capability flag. It is FALSE by
@@ -39,6 +52,27 @@ vi.mock('./providers/greenhouse', () => ({
     discoverFields: (...args: unknown[]) => discoverFields(...args),
     dryRun: (...args: unknown[]) => providerDryRun(...(args as [])),
     submit: (...args: unknown[]) => submit(...args),
+    /**
+     * Models the real provider's live contract: it MUST run the executor's
+     * final authority check before doing anything consequential, and it
+     * reports telemetry describing whether a click was dispatched.
+     *
+     * It delegates the outcome to the same `submit` mock the existing tests
+     * already drive, so those tests keep asserting on `submit` while now
+     * flowing through the real live code path. `submitClickedAt` is derived
+     * from the outcome: 'submitted' and 'submission_uncertain' both imply the
+     * click happened, which is exactly the property the reservation-release
+     * and no-retry logic keys off.
+     */
+    async submitLive(request: unknown, fields: unknown, finalCheck: () => Promise<{ ok: true } | { ok: false; reason: string }>) {
+      const authorized = await finalCheck()
+      if (!authorized.ok) {
+        return { result: { outcome: 'failed', reason: authorized.reason, retryable: false }, telemetry: liveTelemetry(null) }
+      }
+      const result = await submit(request, fields)
+      const clicked = result.outcome === 'submitted' || result.outcome === 'submission_uncertain'
+      return { result, telemetry: liveTelemetry(clicked ? new Date().toISOString() : null) }
+    },
   },
 }))
 

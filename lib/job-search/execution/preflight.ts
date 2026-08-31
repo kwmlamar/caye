@@ -32,6 +32,8 @@ export type PreflightContext = {
   resumeArtifactId: string
   resumeVariantId: string
   dryRun: boolean
+  /** Set only when this execution runs inside a founder-authorized autonomous batch. Recorded on the attempt so every submission traces back to the authorization that permitted it. */
+  batchAuthorizationId?: string
 }
 
 export type PreflightResult =

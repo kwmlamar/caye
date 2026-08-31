@@ -7,7 +7,7 @@ let fake = makeFakeSupabase()
 vi.mock('@/lib/supabase-server', () => ({ createServiceClient: () => fake.client }))
 vi.mock('../events', () => ({ logJobSearchEvent: vi.fn(async () => {}) }))
 
-const { MAX_DAILY_SUBMISSION_CAP, getExecutionRolloutSettings, setAutomationEnabled, setDryRun, setDailySubmissionCap, setEmergencyPaused, getRemainingDailySubmissionCapacity } = await import('./rollout')
+const { MAX_DAILY_SUBMISSION_CAP, ROLLOUT_STAGES, nextRolloutStage, getExecutionRolloutSettings, setAutomationEnabled, setDryRun, setDailySubmissionCap, setEmergencyPaused, getRemainingDailySubmissionCapacity } = await import('./rollout')
 
 const DEFAULT_ROW = {
   id: true,
@@ -66,10 +66,12 @@ describe('rollout setters (#194)', () => {
   })
 
   it('setDailySubmissionCap refuses a cap above the hard ceiling', async () => {
-    // A safety control any caller can set to 150 or 1500 is not a safety
-    // control. Raising the ceiling must be a code+migration change.
-    await expect(setDailySubmissionCap(150, 'founder')).rejects.toThrow(/may not exceed/i)
+    // A safety control any caller can set to an arbitrary number is not a
+    // safety control. The ceiling is now the founder operator's policy
+    // maximum (150); raising it further must be a code+migration change.
+    await expect(setDailySubmissionCap(151, 'founder')).rejects.toThrow(/may not exceed/i)
     await expect(setDailySubmissionCap(MAX_DAILY_SUBMISSION_CAP + 1, 'founder')).rejects.toThrow()
+    await expect(setDailySubmissionCap(1500, 'founder')).rejects.toThrow(/may not exceed/i)
     // ...and the stored value is untouched by the rejected call.
     expect((await getExecutionRolloutSettings()).dailySubmissionCap).toBe(3)
   })
@@ -109,5 +111,26 @@ describe('getRemainingDailySubmissionCapacity (#194)', () => {
   it('ignores attempts from a previous day', async () => {
     fake.tables.job_search_applications.push({ id: 'old', status: 'SUBMITTED', submitted_at: '2020-01-01T00:00:00.000Z' })
     expect(await getRemainingDailySubmissionCapacity()).toBe(3)
+  })
+})
+
+describe('rollout stage ladder', () => {
+  it('advances 1 -> 5 -> 25 -> 75 -> 150 and then stops', () => {
+    expect(nextRolloutStage(0)).toBe(1)
+    expect(nextRolloutStage(1)).toBe(5)
+    expect(nextRolloutStage(5)).toBe(25)
+    expect(nextRolloutStage(25)).toBe(75)
+    expect(nextRolloutStage(75)).toBe(150)
+    expect(nextRolloutStage(150)).toBeNull()
+  })
+
+  it('never proposes a stage above the hard ceiling', () => {
+    for (const stage of ROLLOUT_STAGES) expect(stage).toBeLessThanOrEqual(MAX_DAILY_SUBMISSION_CAP)
+    expect(nextRolloutStage(MAX_DAILY_SUBMISSION_CAP)).toBeNull()
+  })
+
+  it('proposes the next rung up from an arbitrary intermediate cap, never a jump to the ceiling', () => {
+    expect(nextRolloutStage(3)).toBe(5)
+    expect(nextRolloutStage(30)).toBe(75)
   })
 })

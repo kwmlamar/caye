@@ -27,7 +27,8 @@ import { unsupportedProvider } from './providers/unsupported'
 import type { AtsExecutorProvider } from './providers/types'
 import { resolveDiscoveredField, STRUCTURAL_SEMANTIC_KEYS } from './answers'
 import { describeBlockerCategory } from './blockers'
-import { reserveSubmissionSlot } from './reservation'
+import { authorizeSubmission, revalidateSubmissionAuthority } from './submission-gate'
+import { releaseUnspentSubmissionReservation } from './reservation'
 import type { DiscoveredField, DomainValidation, ExecutionProvider, FieldResolution, HumanReviewBlocker } from './types'
 
 export type ExecuteApplicationResult =
@@ -92,6 +93,20 @@ async function recordAttempt(params: {
   confirmationEvidence?: Record<string, unknown>
   resumeArtifactId?: string | null
   failureReason?: string | null
+  /** Consequential-action evidence. Present only for attempts that crossed the submission authority boundary. */
+  evidence?: {
+    destinationUrl: string
+    resultUrl: string | null
+    claimToken: string
+    submissionReservationId: string
+    submitClickedAt: string | null
+    submitObservedAt: string | null
+    confirmationMethod: string | null
+    confirmationSignals: string[]
+    resumeArtifactSha256: string | null
+    answerSetSha256: string
+    batchAuthorizationId: string | null
+  }
 }): Promise<boolean> {
   const supabase = createServiceClient()
   const { error } = await supabase.from('job_search_execution_attempts').insert({
@@ -109,6 +124,21 @@ async function recordAttempt(params: {
     resume_artifact_id: params.resumeArtifactId ?? null,
     failure_reason: params.failureReason ?? null,
     completed_at: new Date().toISOString(),
+    ...(params.evidence
+      ? {
+          destination_url: params.evidence.destinationUrl,
+          result_url: params.evidence.resultUrl,
+          claim_token: params.evidence.claimToken,
+          submission_reservation_id: params.evidence.submissionReservationId === 'unknown' ? null : params.evidence.submissionReservationId,
+          submit_clicked_at: params.evidence.submitClickedAt,
+          submit_observed_at: params.evidence.submitObservedAt,
+          confirmation_method: params.evidence.confirmationMethod,
+          confirmation_signals: params.evidence.confirmationSignals,
+          resume_artifact_sha256: params.evidence.resumeArtifactSha256,
+          answer_set_sha256: params.evidence.answerSetSha256,
+          batch_authorization_id: params.evidence.batchAuthorizationId,
+        }
+      : {}),
   })
   // A unique(application_id, attempt_number) collision here means another
   // concurrent call already recorded this exact attempt — benign, and the
@@ -131,7 +161,10 @@ async function fetchArtifactContent(applicationId: string, artifactType: 'resume
   return data ? { id: data.id as string, content: data.content as string } : null
 }
 
-export async function executeApplication(applicationId: string): Promise<ExecuteApplicationResult> {
+export async function executeApplication(
+  applicationId: string,
+  options: { batchAuthorizationId?: string } = {},
+): Promise<ExecuteApplicationResult> {
   const preflight = await runPreflight(applicationId)
 
   if (preflight.outcome === 'blocked') {
@@ -149,7 +182,10 @@ export async function executeApplication(applicationId: string): Promise<Execute
     return { outcome: 'preflight_blocked', reason: preflight.reason }
   }
 
-  const { context } = preflight
+  // Every submission traces back to the authorization that permitted it: a
+  // per-application founder confirmation leaves this unset, a bounded
+  // autonomous batch stamps its authorization id onto the attempt row.
+  const context = { ...preflight.context, batchAuthorizationId: options.batchAuthorizationId }
   const claim = await claimApplicationForExecution(applicationId)
   if (!claim) return { outcome: 'skipped_concurrent_claim' }
 
@@ -333,11 +369,9 @@ async function runClaimedExecution(claim: ApplicationClaim, providerKey: Executi
 
   // Capability gate. `canSubmit` is a property of the provider implementation,
   // not a setting — no combination of rollout flags can make this true for a
-  // provider that has no lawful submission channel. Greenhouse is false (its
-  // submission endpoint needs the employer's own API key), so in practice
-  // every prepared application terminates here, fully prepared, awaiting the
-  // founder. This is the honest end of the pipeline today.
-  if (!provider.canSubmit) {
+  // provider that has no lawful submission channel. A provider without an
+  // audited live path terminates here, fully prepared, awaiting the founder.
+  if (!provider.canSubmit || !provider.submitLive) {
     const notSupported = await provider.submit(
       {
         applicationId: claim.applicationId,
@@ -356,14 +390,29 @@ async function runClaimedExecution(claim: ApplicationClaim, providerKey: Executi
 
   if (!profile.contactEmail) return finishNeedsHuman('Founder profile has no contact email.', [{ category: 'profile_incomplete', label: 'Founder profile incomplete', reason: 'No contact email.' }])
 
-  // This is the final non-consequential operation before a provider can
-  // click Submit. It is a database transaction, not a read-then-act count.
-  // Once acquired it is deliberately consumed even for an uncertain send.
-  if (!(await reserveSubmissionSlot(claim))) {
-    return finishNeedsHuman('Daily real-submission capacity is unavailable; no submit action was attempted.', [{ category: 'daily_cap_reached', label: 'Daily submission cap reached', reason: 'No atomic daily submission slot could be reserved.' }], discovery.domainValidations)
+  // ==========================================================================
+  // SUBMISSION AUTHORITY BOUNDARY
+  // ==========================================================================
+  // Everything above prepared an application. Past this point a real employer
+  // can be contacted. The gate re-reads every kill switch, the claim, the
+  // candidate, the founder profile, the artifact binding, and the unresolved-
+  // answer set from scratch — nothing from preflight is trusted — and ends by
+  // taking the atomic daily reservation. See submission-gate.ts.
+  const gateInput = {
+    claim,
+    provider: providerKey,
+    applyUrl: context.applyUrl,
+    company: context.company,
+    resumeArtifactId: resumeArtifact.id,
+    resumeVariantId: context.resumeVariantId,
   }
 
-  const submission = await provider.submit(
+  const authorized = await authorizeSubmission(gateInput)
+  if (!authorized.ok) {
+    return finishNeedsHuman(authorized.reason, [{ category: authorized.category, label: describeBlockerCategory(authorized.category), reason: authorized.reason }], discovery.domainValidations)
+  }
+
+  const { result: submission, telemetry } = await provider.submitLive(
     {
       applicationId: claim.applicationId,
       candidateId: context.candidateId,
@@ -374,7 +423,34 @@ async function runClaimedExecution(claim: ApplicationClaim, providerKey: Executi
       founder: { fullName: profile.fullName ?? '', email: profile.contactEmail, phone: profile.contactPhone },
     },
     fields,
+    // The last-moment revalidation, run with the form filled and the browser
+    // open. This is the final exit before the one consequential click.
+    () => revalidateSubmissionAuthority(gateInput),
   )
+
+  /** Consequential-action evidence, attached to every attempt row past the boundary. */
+  const evidence = {
+    destinationUrl: telemetry.destinationUrl,
+    resultUrl: telemetry.resultUrl,
+    claimToken: claim.token,
+    submissionReservationId: authorized.reservationId,
+    submitClickedAt: telemetry.submitClickedAt,
+    submitObservedAt: telemetry.submitObservedAt,
+    confirmationMethod: telemetry.confirmationMethod,
+    confirmationSignals: telemetry.confirmationSignals,
+    resumeArtifactSha256: telemetry.resumeSha256,
+    answerSetSha256: telemetry.answerSetSha256,
+    batchAuthorizationId: context.batchAuthorizationId ?? null,
+  }
+
+  // A reservation taken but never spent is given back. `submitClickedAt` is
+  // stamped immediately before the click, so its absence is proof that no
+  // application was sent — and holding the row would both burn a day's
+  // capacity and (because the row is UNIQUE per application) permanently bar
+  // this application from ever being submitted.
+  if (telemetry.submitClickedAt === null) {
+    await releaseUnspentSubmissionReservation(claim)
+  }
 
   if (submission.outcome === 'not_supported') {
     return finishNeedsHuman(submission.reason, [{ category: 'submission_not_supported', label: describeBlockerCategory('submission_not_supported'), reason: submission.reason }], discovery.domainValidations)
@@ -399,6 +475,7 @@ async function runClaimedExecution(claim: ApplicationClaim, providerKey: Executi
       resumeArtifactId: resumeArtifact.id,
       submissionResponse: submission.response,
       confirmationEvidence: submission.evidence as unknown as Record<string, unknown>,
+      evidence,
     })
     if (!audited) {
       // A real submission happened but we could not durably record it. Never
@@ -442,6 +519,7 @@ async function runClaimedExecution(claim: ApplicationClaim, providerKey: Executi
       resumeArtifactId: resumeArtifact.id,
       submissionResponse: submission.response,
       failureReason: submission.reason,
+      evidence,
     })
     await logJobSearchEvent({ eventType: 'application_failed', entityType: 'application', entityId: claim.applicationId, payload: { reason: 'submission_uncertain' } })
     return { outcome: 'submission_uncertain', reason: submission.reason }
@@ -467,6 +545,7 @@ async function runClaimedExecution(claim: ApplicationClaim, providerKey: Executi
       resumeArtifactId: resumeArtifact.id,
       submissionResponse: submission.response,
       failureReason: submission.reason,
+      evidence,
     })
     await logJobSearchEvent({ eventType: 'application_failed', entityType: 'application', entityId: claim.applicationId, payload: { reason: submission.reason, retryable: true } })
     return { outcome: 'failed', reason: submission.reason, retryable: true }
@@ -482,6 +561,7 @@ async function runClaimedExecution(claim: ApplicationClaim, providerKey: Executi
     resumeArtifactId: resumeArtifact.id,
     submissionResponse: submission.response,
     failureReason: submission.reason,
+    evidence,
   })
   await logJobSearchEvent({ eventType: 'application_failed', entityType: 'application', entityId: claim.applicationId, payload: { reason: submission.reason, retryable: false } })
   return { outcome: 'failed', reason: submission.reason, retryable: false }
