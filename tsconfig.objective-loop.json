@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": [
+    "next-env.d.ts",
+    "lib/operator/objective-loop.ts",
+    "lib/operator/objective-loop-adversarial.test.ts",
+    "lib/operator/objective-run.ts",
+    "lib/operator/objective-store.ts",
+    "lib/capabilities/types.ts"
+  ],
+  "exclude": ["node_modules"]
+}

@@ -1,0 +1,30 @@
+name: Canonical objective loop
+
+on:
+  pull_request:
+    paths:
+      - 'lib/operator/objective-loop.ts'
+      - 'lib/operator/objective-loop-adversarial.test.ts'
+      - 'lib/operator/objective-run.ts'
+      - 'lib/operator/objective-store.ts'
+      - 'tsconfig.objective-loop.json'
+      - '.github/workflows/objective-loop.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  objective-loop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Run objective loop adversarial tests
+        run: npx vitest run lib/operator/objective-loop-adversarial.test.ts lib/operator/objective-run.test.ts lib/operator/objective-run-interruption.test.ts lib/operator/objective-store-policy.test.ts
+      - name: Typecheck objective loop
+        run: npx tsc --noEmit --pretty false -p tsconfig.objective-loop.json
