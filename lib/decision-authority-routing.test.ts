@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('server-only', () => ({}))
 
+// This suite intentionally runs after reconciliation with the canonical attention lifecycle.
 const mocks = vi.hoisted(() => ({
   send: vi.fn(),
   observe: vi.fn(),
