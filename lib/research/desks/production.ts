@@ -3,11 +3,9 @@ import 'server-only'
 import { createHash } from 'node:crypto'
 import { createServiceClient } from '@/lib/supabase-server'
 import { ingestIntelligenceFinding, type IntelligenceFinding } from '@/lib/intelligence/ingest'
-import {
-  createAnthropicResearchProvider,
-  createAnthropicResearchSynthesizer,
-} from '@/lib/research/anthropic'
 import { executeResearchRun, queueResearchRun } from '@/lib/research/runtime'
+import { createResearchProviderSession } from '@/lib/research/providers/router'
+import { recordResearchRoutingProvenance } from '@/lib/research/providers/provenance'
 import {
   runResearchDeskCycle,
   type ExistingDeskIntelligence,
@@ -145,8 +143,10 @@ export async function runNextProductionResearchDesk(workerId: string) {
   const claimed = await claimDueResearchDesk(workerId)
   if (!claimed) return { status: 'idle' as const }
 
-  const provider = createAnthropicResearchProvider()
-  const synthesize = createAnthropicResearchSynthesizer()
+  // One routing session per desk cycle. The session-scoped failure memo is the
+  // reason a zero-credit provider costs this cycle a single rejected call
+  // instead of one per question per source.
+  const session = createResearchProviderSession()
   const db = createServiceClient()
 
   const cycle = await runResearchDeskCycle(claimed, {
@@ -159,30 +159,46 @@ export async function runNextProductionResearchDesk(workerId: string) {
         const queued = await queueResearchRun(questionId, `research-desk:${desk.key}`)
         if (queued.status === 'running') throw new Error(`Research question already running: ${question.question}`)
 
+        // Per-run provenance scope; the dead-provider memo stays on the session.
+        const binding = session.beginRun()
         const startedAt = new Date().toISOString()
         const claimedRun = await db.from('research_runs').update({
           status: 'running',
           claimed_at: startedAt,
           claimed_by: workerId,
           started_at: startedAt,
-          provider: provider.name,
+          provider: binding.provider.name,
         }).eq('id', queued.id).eq('status', 'queued').select('id').maybeSingle()
         if (claimedRun.error) throw claimedRun.error
         if (!claimedRun.data) throw new Error(`Research run could not be claimed: ${queued.id}`)
 
-        const run = await executeResearchRun({ runId: queued.id, questionId, question: question.question, provider, synthesize })
-        const brief = await db.from('research_briefs').select('material_changes,conflicting_evidence').eq('run_id', queued.id).maybeSingle()
-        if (brief.error) throw brief.error
-        const materialChanges = Array.isArray(brief.data?.material_changes) ? brief.data.material_changes.filter((value): value is string => typeof value === 'string') : []
-        const conflicting = Array.isArray(brief.data?.conflicting_evidence) && brief.data.conflicting_evidence.length > 0
-        await projectRunIntoIntelligence({ desk, question, runId: queued.id, materialChanges })
+        try {
+          const run = await executeResearchRun({
+            runId: queued.id,
+            questionId,
+            question: question.question,
+            provider: binding.provider,
+            synthesize: binding.synthesize,
+          })
 
-        return {
-          question,
-          status: run.status,
-          sourceCount: run.sourceCount,
-          materialChanges,
-          claims: conflicting ? [{ statement: 'Credible conflicting evidence exists in the latest research brief.', stance: 'contradicts' }] : [],
+          const brief = await db.from('research_briefs').select('material_changes,conflicting_evidence').eq('run_id', queued.id).maybeSingle()
+          if (brief.error) throw brief.error
+          const materialChanges = Array.isArray(brief.data?.material_changes) ? brief.data.material_changes.filter((value): value is string => typeof value === 'string') : []
+          const conflicting = Array.isArray(brief.data?.conflicting_evidence) && brief.data.conflicting_evidence.length > 0
+          await projectRunIntoIntelligence({ desk, question, runId: queued.id, materialChanges })
+
+          return {
+            question,
+            status: run.status,
+            sourceCount: run.sourceCount,
+            materialChanges,
+            claims: conflicting ? [{ statement: 'Credible conflicting evidence exists in the latest research brief.', stance: 'contradicts' }] : [],
+          }
+        } finally {
+          // Record routing on success and failure alike — a run that fell all
+          // the way through the chain is exactly the one worth explaining.
+          await recordResearchRoutingProvenance(queued.id, binding.provenance())
+            .catch((error) => console.error('[research-desk] routing provenance write failed:', error))
         }
       },
     },
