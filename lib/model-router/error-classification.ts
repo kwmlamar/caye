@@ -53,8 +53,18 @@ export interface RawBackendError {
  * ... or try again at Aug 20th, 2026 4:38 PM." Matched independent of
  * httpStatus, since CLI transports don't have one — a message-only signal
  * from a subprocess is still a real signal.
+ *
+ * Also live-observed (2026-08-31, 14 failed production research runs):
+ * Anthropic returns HTTP *400* for an exhausted account —
+ * `{"type":"invalid_request_error","message":"Your credit balance is too low
+ * to access the Anthropic API. Please go to Plans & Billing to upgrade or
+ * purchase credits."}`. Before this pattern covered it, the 4xx branch below
+ * classified account exhaustion as `malformed_request` with fallback:false,
+ * so a billing problem masqueraded as a bad request and blocked failover to a
+ * healthy provider. Billing exhaustion is a provider-availability fact, not a
+ * request-shape defect.
  */
-const QUOTA_MESSAGE_PATTERN = /usage limit|quota|insufficient (credits|quota)|purchase more credits|upgrade to (pro|plus)/i
+const QUOTA_MESSAGE_PATTERN = /usage limit|quota|insufficient (credits|quota)|purchase (more )?credits|upgrade to (pro|plus)|credit balance is too low|billing/i
 
 export function classifyBackendError(err: RawBackendError): ClassifiedError {
   if (err.sideEffectOccurred) {

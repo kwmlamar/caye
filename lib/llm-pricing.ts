@@ -12,6 +12,9 @@ export const LLM_PRICING: Record<
   // OpenAI GPT-5 mini: $0.25/M input, $0.025/M cached input, $2/M output.
   // OpenAI has no Anthropic-style cache-write token class, so cache_write_1h is zero.
   'gpt-5-mini': { input: 0.25, output: 2, cache_read: 0.025, cache_write_1h: 0 },
+  // OpenAI GPT-5: $1.25/M input, $0.125/M cached input, $10/M output. Used as
+  // the default continuous-research model (lib/research/providers/openai.ts).
+  'gpt-5': { input: 1.25, output: 10, cache_read: 0.125, cache_write_1h: 0 },
 }
 
 export function costForModel(

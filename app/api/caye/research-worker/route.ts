@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import {
-  createAnthropicResearchProvider,
-  createAnthropicResearchSynthesizer,
-} from '@/lib/research/anthropic'
 import { runNextProductionResearchDesk } from '@/lib/research/desks/production'
+import { createResearchProviderSession } from '@/lib/research/providers/router'
+import { recordResearchRoutingProvenance } from '@/lib/research/providers/provenance'
 import { runNextResearchJob } from '@/lib/research/worker'
 
 export const maxDuration = 300
@@ -41,8 +39,14 @@ export async function runResearchWorker(): Promise<Record<string, unknown>> {
   const desk = await runNextProductionResearchDesk(workerId)
   if (desk.status !== 'idle') return { kind: 'research-desk', ...desk }
 
-  const provider = createAnthropicResearchProvider()
-  const synthesize = createAnthropicResearchSynthesizer()
-  const job = await runNextResearchJob({ workerId, provider, synthesize })
-  return { kind: 'queued-research', ...job }
+  // Provider choice is configuration, not a hard-wired vendor. The session
+  // remembers a provider that fails permanently so one exhausted account cannot
+  // be re-dialled for every remaining question in this invocation.
+  const session = createResearchProviderSession()
+  const binding = session.beginRun()
+  const job = await runNextResearchJob({ workerId, provider: binding.provider, synthesize: binding.synthesize })
+  if ('runId' in job && job.runId) {
+    await recordResearchRoutingProvenance(job.runId, binding.provenance())
+  }
+  return { kind: 'queued-research', provider: binding.provider.name, ...job }
 }
