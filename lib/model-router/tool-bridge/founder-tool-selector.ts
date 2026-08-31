@@ -26,7 +26,7 @@ function words(value: string): string[] {
 
 const DOMAIN_HINTS: Array<{ re: RegExp; terms: string[] }> = [
   { re: /\b(job|jobs|career|apply|application|resume|recruit|hiring|interview|ats|greenhouse|lever)\b/i, terms: ['job','application','career','resume','candidate','ats','greenhouse','recruit','hiring'] },
-  { re: /\b(research|intelligence|evidence|claim|belief|trend|market|source)\b/i, terms: ['research','intelligence','evidence','claim','belief','source','trend'] },
+  { re: /\b(research|intelligence|evidence|claim|belief|trend|market|source|investigat\w*|verify|verification)\b|\blook into\b|\bkeep an eye on\b|\bi heard\b/i, terms: ['research','intelligence','evidence','claim','belief','source','trend','canonical','investigation','verify'] },
   { re: /\b(email|gmail|inbox|message|reply|draft)\b/i, terms: ['email','gmail','inbox','message','reply','draft'] },
   { re: /\b(booking|tour|reservation|guest|customer|lead|quote|payment)\b/i, terms: ['booking','tour','reservation','guest','customer','lead','quote','payment'] },
   { re: /\b(file|image|photo|pdf|document|attachment|artifact)\b/i, terms: ['file','image','photo','pdf','document','attachment','artifact'] },
