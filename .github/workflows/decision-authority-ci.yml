@@ -1,0 +1,42 @@
+name: Decision authority routing
+
+on:
+  pull_request:
+    paths:
+      - 'lib/decision-authority.ts'
+      - 'lib/decision-authority*.test.ts'
+      - 'lib/caye-agent/tools/high-risk-gate.ts'
+      - 'lib/caye-agent/tools/high-risk-gate.test.ts'
+      - 'lib/caye-agent/tools/read/get-pending-business-decisions.ts'
+      - 'lib/caye-agent/tools/write-low/request-business-decision.ts'
+      - 'lib/caye-agent/tools/write-low/record-business-decision.ts'
+      - 'lib/caye-agent/tools/write-low/record-business-decision.test.ts'
+      - 'lib/caye-agent/tools/write-low/recover-outreach-operations.ts'
+      - 'lib/caye-agent/tools/write-high/confirm-pending-action.ts'
+      - 'supabase/migrations/20260830_cay28_decision_authority.sql'
+      - '.github/workflows/decision-authority-ci.yml'
+  push:
+    branches:
+      - cay-28-authority-routing-v2
+
+jobs:
+  authority-routing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Adversarial authority tests
+        run: >-
+          npx vitest run
+          lib/decision-authority.test.ts
+          lib/decision-authority-routing.test.ts
+          lib/caye-agent/tools/high-risk-gate.test.ts
+          lib/caye-agent/tools/write-low/record-business-decision.test.ts
+          lib/operator/objective-run.test.ts
+      - name: Production build
+        run: npm run build
