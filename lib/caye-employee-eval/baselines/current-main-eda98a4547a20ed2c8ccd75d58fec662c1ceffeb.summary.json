@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 1,
+  "benchmarkVersion": "caye-employee-eval/1.0.0",
+  "evaluatedCodeRevision": "eda98a4547a20ed2c8ccd75d58fec662c1ceffeb",
+  "evaluatorMainRevision": "3a999a6ba962990d28cc909c3bacb7121367cf8f",
+  "generatedAt": "2026-09-01T17:00:00-04:00",
+  "aggregateScore": 0.9,
+  "passed": false,
+  "hardFailures": [
+    "required_trace_unevaluable",
+    "authoritative_correction_ignored"
+  ],
+  "dimensions": {
+    "onboarding_learning": { "score": 0.0, "passed": false, "passedAssertions": 0, "totalAssertions": 22 },
+    "continuous_learning": { "score": 0.0, "passed": false, "passedAssertions": 0, "totalAssertions": 107 },
+    "memory_correctness": { "score": 0.0, "passed": false, "passedAssertions": 0, "totalAssertions": 69 },
+    "contradiction_handling": { "score": 0.0, "passed": false, "passedAssertions": 0, "totalAssertions": 2 },
+    "provenance_authority": { "score": 0.3, "passed": false, "passedAssertions": 2, "totalAssertions": 65 },
+    "retrieval_quality": { "score": 0.9, "passed": false, "passedAssertions": 2, "totalAssertions": 23 },
+    "proactive_opportunity_detection": { "score": 0.0, "passed": false, "passedAssertions": 0, "totalAssertions": 12 },
+    "economic_relevance": { "score": 1.4, "passed": false, "passedAssertions": 2, "totalAssertions": 16 },
+    "autonomous_execution": { "score": 1.9, "passed": false, "passedAssertions": 3, "totalAssertions": 17 },
+    "human_interruption_quality": { "score": 2.3, "passed": false, "passedAssertions": 2, "totalAssertions": 9 },
+    "task_completion": { "score": 0.0, "passed": false, "passedAssertions": 0, "totalAssertions": 6 },
+    "workspace_context_isolation": { "score": 0.0, "passed": false, "passedAssertions": 4, "totalAssertions": 5 },
+    "temporal_reasoning": { "score": 0.0, "passed": false, "passedAssertions": 2, "totalAssertions": 4 },
+    "failure_recovery": { "score": 6.7, "passed": false, "passedAssertions": 2, "totalAssertions": 3 },
+    "observability": { "score": 0.0, "passed": false, "passedAssertions": 2, "totalAssertions": 10 }
+  },
+  "failureCountsBySubsystem": {
+    "coverage": 2,
+    "memory": 170,
+    "temporal": 2,
+    "learning_pipeline": 114,
+    "opportunities": 24,
+    "execution": 12,
+    "attention": 6,
+    "task_completion": 6,
+    "economics": 11,
+    "isolation": 1,
+    "failure_recovery": 1
+  },
+  "economicLedgers": {
+    "ods-construction-end-to-end-v1": {
+      "owner_minutes_saved": 0,
+      "customer_wait_minutes_avoided": 0,
+      "revenue_at_risk": 0,
+      "revenue_protected": 0,
+      "revenue_created": 0,
+      "human_interruptions": 0,
+      "unnecessary_interruptions": 0,
+      "actions_completed_autonomously": 0,
+      "eligible_actions_not_completed": 0,
+      "duplicate_opportunities": 0,
+      "stale_or_wrong_facts_used": 0
+    },
+    "bimini-island-tours-end-to-end-v1": {
+      "owner_minutes_saved": 0,
+      "customer_wait_minutes_avoided": 0,
+      "revenue_at_risk": 0,
+      "revenue_protected": 0,
+      "revenue_created": 0,
+      "human_interruptions": 0,
+      "unnecessary_interruptions": 0,
+      "actions_completed_autonomously": 0,
+      "eligible_actions_not_completed": 0,
+      "duplicate_opportunities": 0,
+      "stale_or_wrong_facts_used": 0
+    }
+  },
+  "fullReportWorkflowRunId": 33481667910,
+  "fullReportArtifactId": 9790162675,
+  "fullReportArtifactSha256": "1b9d77d028edb699191e073da23ee2c20cd6603ab21ba5ab70e3f0c02ccd7307",
+  "note": "This summary is frozen evidence. The full machine-readable report and Markdown scorecard are generated from the same benchmark and include every failing assertion grouped by subsystem. Do not alter v1 fixtures or thresholds to improve this score."
+}
