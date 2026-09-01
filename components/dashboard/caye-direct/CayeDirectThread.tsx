@@ -144,11 +144,11 @@ function LiveWorkRail({ threadId, open }: { threadId: string; open: boolean }) {
   }
 
   return (
-    <aside aria-label="Key live work" style={{ ...shell, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden', background: 'rgba(13,13,14,.985)', backdropFilter: 'blur(18px)' }}>
+    <aside aria-label="Caye live work" style={{ ...shell, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden', background: 'rgba(13,13,14,.985)', backdropFilter: 'blur(18px)' }}>
       <div style={{ padding: compact ? '16px 56px 12px 16px' : '22px 58px 16px 20px', borderBottom: '1px solid rgba(255,255,255,.055)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
           <span aria-hidden style={{ width: 8, height: 8, borderRadius: '50%', background: attention ? '#f3ba63' : '#55c7d8', boxShadow: attention ? '0 0 0 4px rgba(243,186,99,.08)' : '0 0 0 4px rgba(85,199,216,.08)' }} />
-          <div style={{ fontSize: 13, fontWeight: 650, color: '#f1f1f3', letterSpacing: '-.01em' }}>Key is working</div>
+          <div style={{ fontSize: 13, fontWeight: 650, color: '#f1f1f3', letterSpacing: '-.01em' }}>Caye is working</div>
           <span style={{ marginLeft: 'auto', fontSize: 10.5, color: '#69696f', fontFamily: 'var(--font-mono)' }}>{elapsed}</span>
         </div>
         <div style={{ marginTop: 13, display: 'inline-flex', alignItems: 'center', maxWidth: '100%', border: '1px solid rgba(255,255,255,.07)', borderRadius: 999, padding: '5px 9px', background: 'rgba(255,255,255,.025)', fontSize: 10.5, color: attention ? '#d8b879' : '#9fa0a6' }}>
