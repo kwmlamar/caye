@@ -7,8 +7,6 @@ import { isEvidenceSufficient, observationStateAfterAttempt, type Recommendation
 /** Code-owned observers only. A recommendation/model may not invent an observer or query. */
 export const RECOMMENDATION_OBSERVERS = {
   'research.cadence-effect.v1': true,
-  'goal.metric.v1': true,
-  'system.metric.v1': true,
 } as const
 
 export type RecommendationObserverKey = keyof typeof RECOMMENDATION_OBSERVERS
@@ -132,9 +130,16 @@ export async function recordExecutedRecommendationAction(input: ExecutedRecommen
   return { outcome, observation }
 }
 
-/** Feed one code-observed measurement into #372, then close/reschedule the bounded observation. */
+/** Feed one claimed code-observed measurement into #372, then close/reschedule the finite observation. */
 export async function recordRecommendationObservation(input: {
-  observation: RecommendationObservationWindow & { id: string; recommendationId: string; decisionId: string; workspaceId?: string | null; cadenceSeconds: number }
+  observation: RecommendationObservationWindow & {
+    id: string
+    recommendationId: string
+    decisionId: string
+    workspaceId?: string | null
+    cadenceSeconds: number
+    claimToken: string
+  }
   evidence: DurableOutcomeEvidence[]
   observedAt?: string
 }) {
@@ -156,6 +161,7 @@ export async function recordRecommendationObservation(input: {
   const supabase = createServiceClient()
   const { data: observation, error } = await supabase.rpc('advance_caye_recommendation_outcome_observation', {
     p_observation_id: input.observation.id,
+    p_claim_token: input.observation.claimToken,
     p_state: state,
     p_next_observation_at: next,
     p_observed_at: observedAt,
