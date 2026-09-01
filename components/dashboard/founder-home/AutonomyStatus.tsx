@@ -92,7 +92,6 @@ export default function AutonomyStatus({ workspaceId }: { workspaceId: string })
           workspaceId,
           recommendationId: item.id,
           recommendationFingerprint: item.fingerprint,
-          decisionId: item.decision.id,
           action,
         }),
       })
