@@ -1,6 +1,14 @@
 name: Caye Employee Eval
 
 on:
+  push:
+    branches:
+      - employee-eval-v1
+    paths:
+      - 'lib/caye-employee-eval/**'
+      - 'scripts/caye-employee-eval.mjs'
+      - 'package.json'
+      - '.github/workflows/employee-eval-ci.yml'
   pull_request:
     paths:
       - 'lib/caye-employee-eval/**'
