@@ -1,0 +1,40 @@
+name: Recommendation decision lifecycle
+
+on:
+  pull_request:
+    paths:
+      - 'lib/recommendations/decisions.ts'
+      - 'lib/recommendations/decisions.test.ts'
+      - 'supabase/migrations/20260901013000_durable_recommendation_decision_lifecycle.sql'
+      - 'supabase/migrations/20260901013000_durable_recommendation_decision_lifecycle.test.ts'
+      - '.github/workflows/recommendation-decision-lifecycle.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  recommendation-decisions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Run recommendation decision tests
+        run: npx vitest run lib/recommendations/decisions.test.ts supabase/migrations/20260901013000_durable_recommendation_decision_lifecycle.test.ts
+      - name: Typecheck recommendation decision module
+        run: |
+          cat > tsconfig.recommendation-decisions.ci.json <<'EOF'
+          {
+            "extends": "./tsconfig.json",
+            "compilerOptions": { "incremental": false },
+            "files": ["lib/recommendations/decisions.ts"],
+            "include": []
+          }
+          EOF
+          npx tsc --noEmit -p tsconfig.recommendation-decisions.ci.json
+      - name: Production build
+        run: npm run build
