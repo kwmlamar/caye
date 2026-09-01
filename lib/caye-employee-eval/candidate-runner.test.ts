@@ -44,7 +44,9 @@ describe('Caye Employee Eval candidate runner', () => {
     const generatedAt = new Date().toISOString()
     const report = evaluateEmployeeBenchmark(FROZEN_EMPLOYEE_SCENARIOS, snapshots, generatedAt)
 
-    const expectedRevision = process.env.GITHUB_SHA || process.env.CAYE_EMPLOYEE_CODE_REVISION
+    // pull_request workflows set GITHUB_SHA to a synthetic merge commit.
+    // The candidate evidence must identify the actual PR head revision instead.
+    const expectedRevision = process.env.CAYE_EMPLOYEE_CODE_REVISION || process.env.GITHUB_SHA
     if (expectedRevision) {
       expect(report.codeRevision).toBe(expectedRevision)
     }
