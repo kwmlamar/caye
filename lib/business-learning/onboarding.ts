@@ -86,8 +86,6 @@ async function writeOnboardingEvent(
     capability: 'business_memory_learning',
     details: args.details ?? {},
   })
-  // Parallel completion retries can race between the lookup and insert. The
-  // migration's partial unique index turns that race into an idempotent no-op.
   if (error && error.code !== '23505') throw new Error(`onboarding learning event write failed: ${error.message}`)
 }
 
@@ -215,8 +213,6 @@ export async function submitOwnerOnboardingLearning(
       }
     }
 
-    // A previously failed observation is deliberately retried. Processed or
-    // excluded rows are no-ops inside the canonical processor.
     await processBusinessLearningObservation(observationId)
     await mirrorCanonicalEvents(supabase, input.workspaceId, observationId, observation.source_id)
 
@@ -281,7 +277,7 @@ export async function backfillOwnerOnboardingLearning(options: {
   const supabase = createServiceClient()
   let query = supabase
     .from('workspace_ai_config')
-    .select('workspace_id, raw_onboarding_answers, onboarding_answers, onboarding_completed_at, updated_at, created_at')
+    .select('workspace_id, raw_onboarding_answers, onboarding_completed_at, updated_at, created_at, system_prompt, tone, pricing_info, common_questions, cancellation_policy, escalation_rules, never_say')
     .eq('onboarding_complete', true)
     .order('onboarding_completed_at', { ascending: true, nullsFirst: true })
     .limit(Math.max(1, Math.min(options.limit ?? 500, 5000)))
@@ -305,6 +301,15 @@ export async function backfillOwnerOnboardingLearning(options: {
     result.scanned += 1
     const workspaceId = String(row.workspace_id)
     const eventTime = String(row.onboarding_completed_at ?? row.updated_at ?? row.created_at ?? new Date(0).toISOString())
+    const profile: Record<string, unknown> = {
+      system_prompt: row.system_prompt,
+      tone: row.tone,
+      pricing_info: row.pricing_info,
+      common_questions: row.common_questions,
+      cancellation_policy: row.cancellation_policy,
+      escalation_rules: row.escalation_rules,
+      never_say: row.never_say,
+    }
 
     const { data: owner } = await supabase
       .from('customers')
@@ -315,9 +320,7 @@ export async function backfillOwnerOnboardingLearning(options: {
     const submitted = await submitOwnerOnboardingLearning({
       workspaceId,
       rawAnswers: row.raw_onboarding_answers,
-      profile: row.onboarding_answers && typeof row.onboarding_answers === 'object'
-        ? row.onboarding_answers as Record<string, unknown>
-        : null,
+      profile,
       eventTime,
       actorId: owner?.id ? String(owner.id) : workspaceId,
       actorName: owner?.full_name ? String(owner.full_name) : null,
