@@ -1,15 +1,7 @@
 import 'server-only'
 import type { AIMessageParams, AIResponseMessage, AITool } from '../types'
 
-/**
- * Anthropic-schema <-> OpenAI Chat Completions translation.
- *
- * This is the whole cost of provider independence: one file that knows both
- * dialects, so no feature module has to. Everything Caye's agent loop relies
- * on has to survive the round trip — tool calls, tool results, images, stop
- * reasons and usage — because the loop re-feeds its own history back in.
- */
-
+/** Anthropic-schema <-> OpenAI Chat Completions translation. */
 export interface OpenAiMessage {
   role: 'system' | 'user' | 'assistant' | 'tool'
   content?: unknown
@@ -17,7 +9,6 @@ export interface OpenAiMessage {
   tool_call_id?: string
 }
 
-/** Anthropic accepts `system` as a string or an array of text blocks. */
 export function systemText(system: AIMessageParams['system']): string {
   if (!system) return ''
   if (typeof system === 'string') return system
@@ -27,7 +18,7 @@ export function systemText(system: AIMessageParams['system']): string {
     .join('\n\n')
 }
 
-function imagePart(block: Record<string, unknown>): OpenAiMessage['content'] | null {
+function imagePart(block: Record<string, unknown>): Record<string, unknown> | null {
   const source = block.source as Record<string, unknown> | undefined
   if (!source) return null
   if (source.type === 'base64' && typeof source.data === 'string') {
@@ -40,18 +31,33 @@ function imagePart(block: Record<string, unknown>): OpenAiMessage['content'] | n
   return null
 }
 
-/** Tool-result content can be a string, or blocks (including images). */
-function toolResultText(content: unknown): string {
-  if (typeof content === 'string') return content
-  if (!Array.isArray(content)) return JSON.stringify(content ?? '')
-  const parts: string[] = []
+/**
+ * Tool messages themselves are text-only in Chat Completions. Keep their text
+ * in the tool message, then carry any nested images into the immediately
+ * following user multimodal message. This preserves the observation instead
+ * of silently replacing it with "image omitted" during provider failover.
+ */
+function translateToolResult(content: unknown): { text: string; images: Record<string, unknown>[] } {
+  if (typeof content === 'string') return { text: content, images: [] }
+  if (!Array.isArray(content)) return { text: JSON.stringify(content ?? ''), images: [] }
+
+  const text: string[] = []
+  const images: Record<string, unknown>[] = []
   for (const block of content) {
     const b = block as Record<string, unknown>
-    if (b?.type === 'text' && typeof b.text === 'string') parts.push(b.text)
-    else if (b?.type === 'image') parts.push('[image omitted — tool results cannot carry images on this provider]')
-    else parts.push(JSON.stringify(b))
+    if (b?.type === 'text' && typeof b.text === 'string') {
+      text.push(b.text)
+    } else if (b?.type === 'image') {
+      const image = imagePart(b)
+      if (image) {
+        images.push(image)
+        text.push('[image supplied in the following user message]')
+      }
+    } else {
+      text.push(JSON.stringify(b))
+    }
   }
-  return parts.join('\n')
+  return { text: text.join('\n'), images }
 }
 
 export function toOpenAiMessages(params: AIMessageParams): OpenAiMessage[] {
@@ -61,7 +67,6 @@ export function toOpenAiMessages(params: AIMessageParams): OpenAiMessage[] {
 
   for (const message of params.messages ?? []) {
     const content = message.content
-
     if (typeof content === 'string') {
       out.push({ role: message.role, content })
       continue
@@ -82,17 +87,13 @@ export function toOpenAiMessages(params: AIMessageParams): OpenAiMessage[] {
           })
         }
       }
-      out.push({
-        role: 'assistant',
-        content: text.length ? text.join('\n') : null,
-        ...(toolCalls.length ? { tool_calls: toolCalls } : {}),
-      })
+      out.push({ role: 'assistant', content: text.length ? text.join('\n') : null, ...(toolCalls.length ? { tool_calls: toolCalls } : {}) })
       continue
     }
 
-    // User turn: may mix text, images and tool_results. OpenAI requires every
-    // tool_result to be its own `role:'tool'` message keyed by call id, and it
-    // must come BEFORE any subsequent user text for the same turn.
+    // OpenAI requires tool results before any subsequent user content for the
+    // same turn. Nested tool-result images therefore join that subsequent
+    // user message after their matching role:'tool' messages.
     const userParts: unknown[] = []
     const toolMessages: OpenAiMessage[] = []
     for (const raw of content) {
@@ -103,16 +104,15 @@ export function toOpenAiMessages(params: AIMessageParams): OpenAiMessage[] {
         const part = imagePart(block)
         if (part) userParts.push(part)
       } else if (block?.type === 'tool_result' && typeof block.tool_use_id === 'string') {
-        toolMessages.push({ role: 'tool', tool_call_id: block.tool_use_id, content: toolResultText(block.content) })
+        const translated = translateToolResult(block.content)
+        toolMessages.push({ role: 'tool', tool_call_id: block.tool_use_id, content: translated.text })
+        userParts.push(...translated.images)
       }
     }
     out.push(...toolMessages)
     if (userParts.length) {
       const onlyText = userParts.every((p) => (p as { type?: string }).type === 'text')
-      out.push({
-        role: 'user',
-        content: onlyText ? userParts.map((p) => (p as { text: string }).text).join('\n') : userParts,
-      })
+      out.push({ role: 'user', content: onlyText ? userParts.map((p) => (p as { text: string }).text).join('\n') : userParts })
     }
   }
   return out
@@ -129,7 +129,6 @@ export function toOpenAiTools(tools: AIMessageParams['tools']): unknown[] | unde
         function: {
           name: t.name,
           description: t.description ?? '',
-          // `cache_control` is Anthropic-only and is a 400 on OpenAI.
           parameters: stripAnthropicOnly(t.input_schema),
         },
       }
@@ -146,14 +145,10 @@ function stripAnthropicOnly(schema: unknown): unknown {
 export function toOpenAiToolChoice(choice: AIMessageParams['tool_choice']): unknown {
   if (!choice) return undefined
   switch (choice.type) {
-    case 'any':
-      return 'required'
-    case 'tool':
-      return { type: 'function', function: { name: (choice as { name: string }).name } }
-    case 'none':
-      return 'none'
-    default:
-      return 'auto'
+    case 'any': return 'required'
+    case 'tool': return { type: 'function', function: { name: (choice as { name: string }).name } }
+    case 'none': return 'none'
+    default: return 'auto'
   }
 }
 
@@ -174,11 +169,6 @@ function safeArgs(raw: unknown): Record<string, unknown> {
   }
 }
 
-/**
- * Normalize an OpenAI Chat Completions response into Caye's canonical
- * Anthropic-shaped message. Every downstream guard in lib/caye-agent reads
- * `content` blocks, so this is what makes a provider swap invisible to them.
- */
 export function fromOpenAiResponse(json: Record<string, any>, fallbackModel: string): AIResponseMessage {
   const message = json?.choices?.[0]?.message ?? {}
   const calls: any[] = Array.isArray(message.tool_calls) ? message.tool_calls : []
