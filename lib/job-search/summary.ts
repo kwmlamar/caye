@@ -1,15 +1,21 @@
 /**
  * Job-search operator (#192) — daily founder summary.
  *
- * Feeds Phase 7 founder UX ("How many did you apply to?", the compact
- * daily-summary shape from the issue). Deliberately returns structured
- * counts rather than pre-formatted prose — the admin-shell tool that
- * calls this (get-job-search-summary.ts) lets Caye's own voice render it
- * inline in the founder conversation, matching "fit into Caye's existing
- * founder interaction model" rather than hard-coding wording here.
+ * Feeds the existing founder UX with pipeline counts plus the measured
+ * application-response funnel. Recruiter responses are surfaced here rather
+ * than through a second CRM or notification system.
  */
 import 'server-only'
 import { createServiceClient } from '@/lib/supabase-server'
+import { getJobResponseFunnel, type JobResponseFunnel } from '@/lib/job-search/funnel-metrics'
+import type { ResponseClassification } from '@/lib/job-search/response-classification'
+
+export type ImportantJobResponse = {
+  applicationId: string
+  classification: ResponseClassification
+  subject: string | null
+  receivedAt: string
+}
 
 export type DailySummary = {
   businessDate: string
@@ -20,15 +26,33 @@ export type DailySummary = {
   rejected: number
   rejectionBreakdown: Record<string, number>
   paused: boolean
+  responseFunnel: JobResponseFunnel
+  importantResponses: ImportantJobResponse[]
 }
 
-export async function getDailySummary(): Promise<DailySummary> {
+const IMPORTANT_RESPONSE_TYPES: ResponseClassification[] = [
+  'offer',
+  'interview_request',
+  'screen_request',
+  'recruiter_interest',
+  'assessment',
+  'scheduling',
+  'additional_information',
+]
+
+export async function getDailySummary(date = new Date()): Promise<DailySummary> {
   const supabase = createServiceClient()
-  const todayStart = new Date()
+  const todayStart = new Date(date)
   todayStart.setUTCHours(0, 0, 0, 0)
   const todayStartISO = todayStart.toISOString()
 
-  const [{ data: candidatesToday }, { data: applicationsToday }, { data: settingsRow }] = await Promise.all([
+  const [
+    { data: candidatesToday },
+    { data: applicationsToday },
+    { data: settingsRow },
+    { data: importantRows },
+    responseFunnel,
+  ] = await Promise.all([
     supabase
       .from('job_search_candidates')
       .select('status, hard_block_reason')
@@ -38,6 +62,14 @@ export async function getDailySummary(): Promise<DailySummary> {
       .select('status')
       .gte('prepared_at', todayStartISO),
     supabase.from('job_search_settings').select('paused').eq('id', true).maybeSingle(),
+    supabase
+      .from('job_search_followups')
+      .select('application_id, response_classification, subject, created_at')
+      .eq('direction', 'INBOUND')
+      .in('response_classification', IMPORTANT_RESPONSE_TYPES)
+      .order('created_at', { ascending: false })
+      .limit(10),
+    getJobResponseFunnel(),
   ])
 
   const candidates = candidatesToday ?? []
@@ -53,6 +85,16 @@ export async function getDailySummary(): Promise<DailySummary> {
     }
   }
 
+  const importantResponses: ImportantJobResponse[] = (importantRows ?? []).flatMap((row) => {
+    if (!row.response_classification || !row.created_at) return []
+    return [{
+      applicationId: row.application_id,
+      classification: row.response_classification as ResponseClassification,
+      subject: row.subject ?? null,
+      receivedAt: row.created_at,
+    }]
+  })
+
   return {
     businessDate: todayStart.toISOString().slice(0, 10),
     sourced: candidates.length,
@@ -62,5 +104,7 @@ export async function getDailySummary(): Promise<DailySummary> {
     rejected,
     rejectionBreakdown,
     paused: settingsRow?.paused ?? true,
+    responseFunnel,
+    importantResponses,
   }
 }
