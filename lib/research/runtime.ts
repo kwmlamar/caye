@@ -26,6 +26,22 @@ export function classifyResearchSourceQuality(source: Pick<ResearchSearchResult,
   return 'unknown'
 }
 
+function normalizeSourceUrl(value: string): string {
+  try {
+    const url = new URL(value)
+    url.hash = ''
+    return url.toString().replace(/\/$/, '').toLowerCase()
+  } catch {
+    return value.trim().replace(/\/$/, '').toLowerCase()
+  }
+}
+
+export function excludePreviouslyObservedSources(results: ResearchSearchResult[], priorUrls: Iterable<string>): ResearchSearchResult[] {
+  const excluded = new Set([...priorUrls].map(normalizeSourceUrl))
+  if (!excluded.size) return results
+  return results.filter((result) => !excluded.has(normalizeSourceUrl(result.url)))
+}
+
 async function getOperatorResearchQuestionIds(): Promise<string[]> {
   const db = createServiceClient()
   const { data, error } = await db
@@ -179,6 +195,30 @@ function sourceHash(source: ResearchFetchedSource): string {
   return source.contentHash ?? createHash('sha256').update(`${source.url}\n${source.content}`).digest('hex')
 }
 
+async function priorCrossCheckSourceUrls(questionId: string): Promise<string[]> {
+  const db = createServiceClient()
+  const { data: question, error: questionError } = await db.from('research_questions')
+    .select('investigation_origin,parent_question_id')
+    .eq('id', questionId)
+    .maybeSingle()
+  if (questionError) throw questionError
+  if (question?.investigation_origin !== 'autonomous_cross_check' || !question.parent_question_id) return []
+
+  const { data: runs, error: runsError } = await db.from('research_runs').select('id').eq('question_id', question.parent_question_id)
+  if (runsError) throw runsError
+  const runIds = (runs ?? []).map((run) => run.id)
+  if (!runIds.length) return []
+
+  const { data: edges, error: edgesError } = await db.from('research_run_sources').select('source_id').in('run_id', runIds)
+  if (edgesError) throw edgesError
+  const sourceIds = [...new Set((edges ?? []).map((edge) => edge.source_id))]
+  if (!sourceIds.length) return []
+
+  const { data: sources, error: sourcesError } = await db.from('research_sources').select('canonical_url').in('id', sourceIds)
+  if (sourcesError) throw sourcesError
+  return (sources ?? []).map((source) => source.canonical_url).filter((url): url is string => typeof url === 'string' && url.length > 0)
+}
+
 // Search is a sensor, not the architecture. Observations are durable before
 // synthesis, while claims + evidence edges + brief revision commit atomically.
 export async function executeResearchRun(args: {
@@ -200,8 +240,15 @@ export async function executeResearchRun(args: {
   const db = createServiceClient()
   const observed:Array<{id:string;source:ResearchFetchedSource}>=[]
   try {
-    const results = await args.provider.search(args.question,{limit:8})
+    const priorUrls = await priorCrossCheckSourceUrls(args.questionId)
+    const searchLimit = priorUrls.length ? 12 : 8
+    const rawResults = await args.provider.search(args.question,{limit:searchLimit})
+    const results = excludePreviouslyObservedSources(rawResults, priorUrls).slice(0, 8)
     const fetchFailures: string[] = []
+
+    if (priorUrls.length && !results.length) {
+      throw new Error('Independent cross-check found no source candidates outside the parent investigation evidence set')
+    }
 
     for (const result of results) {
       let source: ResearchFetchedSource
