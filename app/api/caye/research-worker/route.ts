@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { runMaterialIntelligenceRecommendations } from '@/lib/recommendations/production'
 import { runCrossDomainSynthesisIfDue } from '@/lib/research/cross-domain-production'
 import { runNextProductionResearchDesk } from '@/lib/research/desks/production'
 import {
@@ -35,18 +36,33 @@ export async function GET(request: NextRequest) {
   }
 }
 
+async function runRecommendationsSafely() {
+  try {
+    return { status: 'completed' as const, ...(await runMaterialIntelligenceRecommendations()) }
+  } catch (error) {
+    // Recommendation generation is downstream of canonical intelligence. A
+    // transient model/provider failure must not turn a successful research or
+    // synthesis cycle into a failed worker invocation.
+    return { status: 'failed' as const, error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
 /**
- * One existing worker now carries the complete autonomous research loop:
- * cross-domain reassessment, standing desks, due durable investigations, then
- * the canonical queued-run executor. No second cron or shadow research queue.
+ * One existing worker carries the complete autonomous research loop:
+ * cross-domain reassessment, grounded recommendation proposal, standing desks,
+ * due durable investigations, then the canonical queued-run executor. No second
+ * cron or shadow research queue.
  */
 export async function runResearchWorker(): Promise<Record<string, unknown>> {
   const crossDomain = await runCrossDomainSynthesisIfDue()
-  if (crossDomain.status !== 'idle') return { kind: 'cross-domain-synthesis', ...crossDomain }
+  const recommendations = await runRecommendationsSafely()
+  if (crossDomain.status !== 'idle') {
+    return { kind: 'cross-domain-synthesis', recommendations, ...crossDomain }
+  }
 
   const workerId = `research-worker:${process.env.VERCEL_REGION || 'unknown'}`
   const desk = await runNextProductionResearchDesk(workerId)
-  if (desk.status !== 'idle') return { kind: 'research-desk', ...desk }
+  if (desk.status !== 'idle') return { kind: 'research-desk', recommendations, ...desk }
 
   // A due investigation becomes an ordinary canonical research_run. The queue's
   // existing active-run uniqueness guard converges concurrent worker ticks.
@@ -72,5 +88,5 @@ export async function runResearchWorker(): Promise<Record<string, unknown>> {
     }
   }
 
-  return { kind: 'queued-research', provider: binding.provider.name, dueQueued, lifecycle, ...job }
+  return { kind: 'queued-research', provider: binding.provider.name, dueQueued, lifecycle, recommendations, ...job }
 }
