@@ -33,7 +33,7 @@ jobs:
         run: npm test
       - name: Typecheck
         if: always()
-        run: npm run typecheck
+        run: npx tsc --noEmit
       - name: Build
         if: always()
         run: npm run build
