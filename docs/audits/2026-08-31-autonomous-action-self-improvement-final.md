@@ -9,9 +9,11 @@ During the audit, PR #382 merged into `main` at `e73fa2d79832f9c2a2b36f539e7fab0
 - **PR #386 — Fail closed autonomous recommendation capabilities.** Generic `risk: low` is no longer sufficient for recommendation autonomy. The autonomous capability catalog is intentionally empty until a capability has both code-owned authority/impact classification and replay-safe idempotency. Unclassified action kinds fail toward founder-only authority semantics. This is a safety kill switch, not a competing executor.
 - **PR #387 — Disable unbounded recommendation-triggered coding.** The recommendation-to-coding bridge rejects before sandbox/model launch until a structured code-owned coding intent and bounded recursion lineage exist. This prevents natural-language recommendation prose from becoming executable coding-agent instructions and suppresses recursive self-improvement through that bridge.
 
-PR #387's targeted `Engineering copilot closed loop` workflow completed successfully.
+PR #386's first targeted run exposed a brittle source-contract assertion requiring the exact registry lookup spelling `findTool(raw.capabilityKey.trim())`; the safety behavior tests themselves passed. The implementation spelling was corrected without relaxing the fail-closed boundary. The new #386 head now passes the targeted `Autonomous recommendation actions` workflow.
 
-PR #386's first targeted run failed because an existing source-contract test required the exact registry lookup spelling `findTool(raw.capabilityKey.trim())`; the safety tests themselves passed. The implementation was corrected without relaxing the fail-closed boundary. Do not merge #386 until the new head's targeted workflow is green.
+PR #387 passes the targeted `Engineering copilot closed loop` workflow.
+
+Neither repair was merged by this audit because `main` itself has no required status-check protection; bypassing the unresolved merge-policy finding to land a safety patch would undermine the audit's own invariant.
 
 ## Findings remaining after the opened repairs
 
