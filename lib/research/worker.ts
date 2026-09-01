@@ -1,6 +1,7 @@
 import 'server-only'
 
 import { createServiceClient } from '@/lib/supabase-server'
+import { surfaceFounderInvestigationUpdate } from './founder-investigation-updates'
 import {
   claimResearchRun,
   executeResearchRun,
@@ -56,6 +57,29 @@ async function failClaimedResearchRun(runId: string, error: string, provider: st
   if (result.error) throw result.error
 }
 
+async function projectFounderInvestigationUpdate(questionId: string): Promise<void> {
+  const db = createServiceClient()
+  const [briefResult, claimsResult] = await Promise.all([
+    db.from('research_briefs').select('current_understanding,conflicting_evidence,material_changes,implications,recommendations').eq('question_id', questionId).order('revision', { ascending: false }).limit(1).maybeSingle(),
+    db.from('research_claims').select('confidence').eq('question_id', questionId).in('status', ['current', 'contested']),
+  ])
+  if (briefResult.error) throw briefResult.error
+  if (claimsResult.error) throw claimsResult.error
+  if (!briefResult.data) return
+
+  await surfaceFounderInvestigationUpdate(db, {
+    questionId,
+    synthesis: {
+      brief: briefResult.data.current_understanding ?? '',
+      claims: (claimsResult.data ?? []).map((claim) => ({ confidence: claim.confidence })),
+      conflictingEvidence: briefResult.data.conflicting_evidence ?? [],
+      materialChanges: briefResult.data.material_changes ?? [],
+      implications: briefResult.data.implications ?? [],
+      recommendations: briefResult.data.recommendations ?? [],
+    },
+  })
+}
+
 const DEFAULT_DEPENDENCIES: ResearchWorkerDependencies = {
   claimRun: claimResearchRun as (workerId: string) => Promise<ClaimedResearchRun | null>,
   loadQuestion: loadResearchQuestion,
@@ -92,6 +116,14 @@ export async function runNextResearchJob(
       provider: input.provider,
       synthesize: input.synthesize,
     })
+
+    // Founder-facing projection is deliberately post-commit. A Direct/attention
+    // failure must never turn a successfully persisted research run into a failed run.
+    try {
+      await projectFounderInvestigationUpdate(question.id)
+    } catch (projectionError) {
+      console.error('[research-worker] founder investigation projection failed', projectionError)
+    }
 
     return { ...result, runId: run.id, questionId: question.id }
   } catch (error) {
