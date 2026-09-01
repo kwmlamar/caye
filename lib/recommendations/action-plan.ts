@@ -75,8 +75,7 @@ export function validateRecommendationActionPlan(value: unknown): Recommendation
   if (!Array.isArray(raw.preconditions) || raw.preconditions.some((entry) => typeof entry !== 'string')) throw new Error('recommendation action plan preconditions must be strings')
   if (!['quiet', 'material', 'consequential'].includes(String(raw.materiality))) throw new Error('recommendation action plan materiality is invalid')
 
-  const capabilityKey = raw.capabilityKey.trim()
-  const tool = findTool(capabilityKey)
+  const tool = findTool(raw.capabilityKey.trim())
   if (!tool) throw new Error('recommendation action plan references an unregistered capability')
   if (!isAutonomousRecommendationCapability(tool.name)) {
     throw new Error('recommendation capability is not explicitly approved for autonomous replay-safe execution')
