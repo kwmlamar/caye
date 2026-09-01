@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import type { FounderRailId } from '@/lib/types'
 import type { WorkspaceMembership } from '@/lib/workspace-context'
 import type { CustomerStatus } from '@/types/database'
@@ -58,8 +59,9 @@ function Icon({ path, size = 16, stroke = 'currentColor' }: { path: ReactNode; s
 }
 
 function ThreadRowMenu({
-  pinned, onRename, onTogglePin, onArchive, onDelete, onClose,
+  anchorEl, pinned, onRename, onTogglePin, onArchive, onDelete, onClose,
 }: {
+  anchorEl: HTMLElement
   pinned: boolean
   onRename: () => void
   onTogglePin: () => void
@@ -68,21 +70,55 @@ function ThreadRowMenu({
   onClose: () => void
 }) {
   const rootRef = useRef<HTMLDivElement>(null)
+  const [position, setPosition] = useState({ top: 0, left: 0 })
 
   useEffect(() => {
+    const menuWidth = 176
+    const gap = 8
+    const viewportPadding = 8
+
+    function updatePosition() {
+      const anchor = anchorEl.getBoundingClientRect()
+      const menuHeight = rootRef.current?.offsetHeight ?? 138
+      const preferredLeft = anchor.right + gap
+      const left = Math.min(preferredLeft, window.innerWidth - menuWidth - viewportPadding)
+      const belowTop = anchor.bottom + 4
+      const top = belowTop + menuHeight <= window.innerHeight - viewportPadding
+        ? belowTop
+        : Math.max(viewportPadding, anchor.top - menuHeight - 4)
+
+      setPosition({
+        top,
+        left: Math.max(viewportPadding, left),
+      })
+    }
+
     function onDocClick(e: MouseEvent) {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) onClose()
+      const target = e.target as Node
+      if (
+        rootRef.current &&
+        !rootRef.current.contains(target) &&
+        !anchorEl.contains(target)
+      ) onClose()
     }
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === 'Escape') onClose()
     }
+
+    updatePosition()
+    const frame = requestAnimationFrame(updatePosition)
     document.addEventListener('mousedown', onDocClick)
     window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('resize', updatePosition)
+    window.addEventListener('scroll', updatePosition, true)
     return () => {
+      cancelAnimationFrame(frame)
       document.removeEventListener('mousedown', onDocClick)
       window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('resize', updatePosition)
+      window.removeEventListener('scroll', updatePosition, true)
     }
-  }, [onClose])
+  }, [anchorEl, onClose])
 
   const items: { label: string; icon: ReactNode; onClick: () => void; danger?: boolean }[] = [
     { label: 'Rename', icon: RENAME_ICON, onClick: onRename },
@@ -91,13 +127,13 @@ function ThreadRowMenu({
     { label: 'Delete', icon: DELETE_ICON, onClick: onDelete, danger: true },
   ]
 
-  return (
+  return createPortal(
     <div
       ref={rootRef}
       role="menu"
       className="cs-thread-menu"
       style={{
-        position: 'absolute', top: '100%', right: 4, zIndex: 100,
+        position: 'fixed', top: position.top, left: position.left, zIndex: 10000,
         width: 176, borderRadius: 12, padding: 5,
         ...sidebarPopoverSurface(), boxShadow: paneShadowSoft,
       }}
@@ -121,7 +157,8 @@ function ThreadRowMenu({
           {item.label}
         </button>
       ))}
-    </div>
+    </div>,
+    document.body
   )
 }
 
@@ -227,6 +264,7 @@ export default function CommandSidebar({
   hasActivity: (workspaceId: string) => boolean
 }) {
   const [openMenuId, setOpenMenuId] = useState<string | null>(null)
+  const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null)
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
   const [moreOpen, setMoreOpen] = useState(false)
@@ -242,10 +280,15 @@ export default function CommandSidebar({
     if (secondaryActive) setMoreOpen(true)
   }, [secondaryActive])
 
+  function closeThreadMenu() {
+    setOpenMenuId(null)
+    setMenuAnchor(null)
+  }
+
   function startRename(thread: ThreadListItem) {
     setRenamingId(thread.id)
     setRenameValue(thread.title || '')
-    setOpenMenuId(null)
+    closeThreadMenu()
   }
 
   function commitRename() {
@@ -314,7 +357,15 @@ export default function CommandSidebar({
           aria-label="More options"
           aria-haspopup="menu"
           aria-expanded={menuOpen}
-          onClick={(e) => { e.stopPropagation(); setOpenMenuId((current) => current === thread.id ? null : thread.id) }}
+          onClick={(e) => {
+            e.stopPropagation()
+            if (menuOpen) {
+              closeThreadMenu()
+            } else {
+              setOpenMenuId(thread.id)
+              setMenuAnchor(e.currentTarget)
+            }
+          }}
           style={{
             position: 'absolute', right: 4, top: '50%', transform: 'translateY(-50%)',
             width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -325,17 +376,18 @@ export default function CommandSidebar({
         >
           <Icon path={THREAD_MORE_ICON} size={13} />
         </button>
-        {menuOpen && (
+        {menuOpen && menuAnchor && (
           <ThreadRowMenu
+            anchorEl={menuAnchor}
             pinned={!!thread.pinned_at}
             onRename={() => startRename(thread)}
-            onTogglePin={() => { onTogglePinThread(thread.id, !thread.pinned_at); setOpenMenuId(null) }}
-            onArchive={() => { onArchiveThread(thread.id); setOpenMenuId(null) }}
+            onTogglePin={() => { onTogglePinThread(thread.id, !thread.pinned_at); closeThreadMenu() }}
+            onArchive={() => { onArchiveThread(thread.id); closeThreadMenu() }}
             onDelete={() => {
-              setOpenMenuId(null)
+              closeThreadMenu()
               if (window.confirm(`Delete "${thread.title || 'New conversation'}"? This can't be undone.`)) onDeleteThread(thread.id)
             }}
-            onClose={() => setOpenMenuId(null)}
+            onClose={closeThreadMenu}
           />
         )}
       </div>
