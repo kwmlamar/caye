@@ -37,7 +37,7 @@ export type RecommendationActionRuntime = {
 }
 
 export type RecommendationActionOperationResult =
-  | { disposition: 'synced'; reason: string }
+  | { disposition: 'synced'; reason: string; executionRef?: string | null }
   | { disposition: 'retry'; error: string }
   | { disposition: 'dead_letter'; error: string }
 
@@ -104,5 +104,5 @@ export async function runRecommendationActionOperation(
     executionRef: outcome.executionRef ?? null,
   })
   if (outcome.material) await runtime.surfaceMaterialCompletion({ recommendationId, workspaceId: row.workspace_id, executionRef: outcome.executionRef ?? null })
-  return { disposition: 'synced', reason: 'completed' }
+  return { disposition: 'synced', reason: 'completed', executionRef: outcome.executionRef ?? null }
 }
