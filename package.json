@@ -17,7 +17,8 @@
     "generate:icons": "node scripts/generate-caye-mark.js",
     "caye:bench:replay": "node scripts/caye-bench-replay.mjs",
     "caye:bench:corpus": "node scripts/caye-bench-corpus.mjs",
-    "caye:bench:export": "node scripts/caye-bench-export.mjs"
+    "caye:bench:export": "node scripts/caye-bench-export.mjs",
+    "caye:employee:eval": "node scripts/caye-employee-eval.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.96.0",
@@ -39,7 +40,7 @@
     "resend": "^6.18.0",
     "sonner": "^2.0.7",
     "stripe": "^22.3.2",
-    "tailwind-merge": "^3.4.0",
+    "tailwind-merge": "^4.0.0",
     "three": "^0.185.1"
   },
   "devDependencies": {
