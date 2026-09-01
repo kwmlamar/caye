@@ -10,7 +10,9 @@ import {
   AIProviderError,
   NoAIProviderAvailableError,
   type AICallContext,
+  type AIErrorCategory,
   type AIMessageParams,
+  type AIProviderId,
   type AIResult,
   type AIRouting,
   type AIRoutingAttempt,
@@ -20,21 +22,25 @@ import {
  * The Caye AI Gateway.
  *
  * Feature code asks for a capability; this decides who answers. Claude is one
- * replaceable supplier here, not infrastructure — if the Anthropic account is
- * out of credit, rate limited, or down, the same request is served by OpenAI
- * or OpenRouter and the caller cannot tell the difference from the response
- * shape alone (only from `result.routing`).
- *
- * What this layer explicitly does NOT do, and must never start doing:
- * workspace isolation, booking rules, approval gates, tool authorization,
- * operator precedence, learning eligibility, customer-communication policy.
- * Those are decided before a request reaches here and enforced after it
- * returns, by the same deterministic code regardless of who served the turn.
- * A provider swap changes latency and cost. It must never change what Caye
- * is allowed to do.
+ * replaceable supplier here, not infrastructure. Provider availability may
+ * change latency/cost, but must never change Caye's authorization or business
+ * policy.
  */
 
 const RATE_LIMIT_RETRY_CAP_MS = 2_000
+
+/**
+ * These categories describe the provider/account as a whole rather than the
+ * selected model. Once observed, retrying a second model from the same vendor
+ * in the same request is wasted latency (and for billing/auth, guaranteed to
+ * fail). Cross-request suppression still lives in the shared circuit breaker.
+ */
+const PROVIDER_WIDE_FAILURES = new Set<AIErrorCategory>([
+  'billing_exhausted',
+  'authentication',
+  'quota',
+  'rate_limit',
+])
 
 export interface GenerateArgs {
   params: AIMessageParams
@@ -46,6 +52,8 @@ export async function generate({ params, ctx, signal }: GenerateArgs): Promise<A
   const task = inferTask(ctx.source, ctx.task)
   const startedAt = Date.now()
   const attempts: AIRoutingAttempt[] = []
+  const failedProviders = new Set<AIProviderId>()
+  let failoverOccurred = false
 
   const [health, settings] = await Promise.all([loadProviderHealth(), loadProviderSettings()])
   const order = providerPriorityOverride() ?? priorityOrder(settings)
@@ -61,6 +69,10 @@ export async function generate({ params, ctx, signal }: GenerateArgs): Promise<A
     const adapter = providerAdapter(spec.provider)
     const base = { provider: spec.provider, model: spec.id }
 
+    if (failedProviders.has(spec.provider)) {
+      attempts.push({ ...base, outcome: 'skipped_provider_failed', detail: 'Provider already failed this request with a provider-wide availability error.' })
+      continue
+    }
     if (settings.get(spec.provider)?.enabled === false) {
       attempts.push({ ...base, outcome: 'skipped_disabled' })
       continue
@@ -91,7 +103,10 @@ export async function generate({ params, ctx, signal }: GenerateArgs): Promise<A
         provider: spec.provider,
         model: outcome.response.model || spec.id,
         attempts,
-        fellBack: attempts.length > 1,
+        // Skipping an unavailable/unconfigured route is routing, not failover.
+        // This becomes true only after a real attempted model failed and a
+        // later route served the request.
+        fellBack: failoverOccurred,
         latencyMs: Date.now() - startedAt,
       }
       const usage = usageFromResponse(outcome.response)
@@ -105,19 +120,21 @@ export async function generate({ params, ctx, signal }: GenerateArgs): Promise<A
     attempts.push({ ...base, outcome: error.category, detail: safeDetail(error.message), latencyMs: outcome.latencyMs })
     void recordProviderFailure(spec.provider, error.category, error.message).catch(() => {})
 
-    // Deterministic, request-shaped failure (or a possible side effect):
-    // stop. Fanning the same broken request across three providers buys
-    // three identical errors, three bills, and a slower failure.
-    if (!policyFor(error.category).failover) {
-      const routing = failedRouting(task, spec.provider, spec.id, attempts, startedAt)
+    if (PROVIDER_WIDE_FAILURES.has(error.category)) failedProviders.add(spec.provider)
+
+    // Deterministic, request-shaped failure (or a possible side effect): stop.
+    const policy = policyFor(error.category)
+    if (!policy.failover) {
+      const routing = failedRouting(task, spec.provider, spec.id, attempts, startedAt, failoverOccurred)
       logAiCall({ ctx, routing, outcome: 'failure', failureCategory: error.category })
       logRoutingDecision(ctx, routing, 'failure')
       throw error
     }
+    failoverOccurred = true
   }
 
   const last = attempts[attempts.length - 1]
-  const routing = failedRouting(task, last?.provider ?? 'anthropic', last?.model ?? 'none', attempts, startedAt)
+  const routing = failedRouting(task, last?.provider ?? 'anthropic', last?.model ?? 'none', attempts, startedAt, failoverOccurred)
   logAiCall({ ctx, routing, outcome: 'failure', failureCategory: lastError?.category ?? 'unknown' })
   logRoutingDecision(ctx, routing, 'failure')
   throw new NoAIProviderAvailableError(task, attempts, lastError)
@@ -127,15 +144,7 @@ type AttemptOutcome =
   | { ok: true; response: Awaited<ReturnType<ReturnType<typeof providerAdapter>['generate']>>; latencyMs: number }
   | { ok: false; error: AIProviderError; latencyMs: number }
 
-/**
- * One provider, with a single bounded same-provider retry for rate limits.
- *
- * Rate limiting is the one failure where the same provider is likely to
- * succeed moments later, and where failing over immediately would push a
- * transient spike onto a provider that may be more expensive or less suited
- * to the task. Everything else fails over straight away — retrying a 500 or a
- * timeout in place just adds latency to an already-slow request.
- */
+/** One provider, with a single bounded same-provider retry for rate limits. */
 async function attemptProvider(
   adapter: ReturnType<typeof providerAdapter>,
   params: AIMessageParams,
@@ -168,9 +177,10 @@ function failedRouting(
   provider: AIRouting['provider'],
   model: string,
   attempts: AIRoutingAttempt[],
-  startedAt: number
+  startedAt: number,
+  fellBack: boolean
 ): AIRouting {
-  return { task, provider, model, attempts, fellBack: attempts.length > 1, latencyMs: Date.now() - startedAt }
+  return { task, provider, model, attempts, fellBack, latencyMs: Date.now() - startedAt }
 }
 
 /** Provider error text can echo request content; keep log lines bounded. */
