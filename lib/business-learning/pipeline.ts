@@ -40,6 +40,8 @@ interface ObservationRow {
 }
 
 function authorityFor(row: ObservationRow): LearningAuthority {
+  if (row.source_kind === 'owner_correction') return 'owner_correction'
+  if (row.source_kind === 'owner_instruction') return 'owner_instruction'
   if (row.source_kind === 'operator_message') {
     const text = row.content.toLowerCase()
     const correction = /\b(no[, ]|actually|instead|changed|moved|not anymore|from now on|correction|wrong)\b/.test(text)
