@@ -38,3 +38,6 @@ skills-lock.json
 # and generated report output must never be committed accidentally.
 .caye-bench-export-tmp/
 lib/caye-bench/replay/corpus/__output__/
+
+# Caye Employee Eval generated reports
+lib/caye-employee-eval/__output__/

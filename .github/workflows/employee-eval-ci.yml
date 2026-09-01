@@ -1,0 +1,40 @@
+name: Caye Employee Eval
+
+on:
+  push:
+    branches:
+      - main
+      - employee-eval-v1
+    paths:
+      - 'lib/caye-employee-eval/**'
+      - 'scripts/caye-employee-eval.mjs'
+      - 'package.json'
+      - '.github/workflows/employee-eval-ci.yml'
+  pull_request:
+    paths:
+      - 'lib/caye-employee-eval/**'
+      - 'scripts/caye-employee-eval.mjs'
+      - 'package.json'
+      - '.github/workflows/employee-eval-ci.yml'
+  workflow_dispatch:
+
+jobs:
+  employee-eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Evaluator regression tests
+        run: npx vitest run lib/caye-employee-eval/evaluator.test.ts --reporter=verbose
+      - name: Generate frozen baseline scorecard
+        run: npm run caye:employee:eval
+      - name: Upload evaluation evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: caye-employee-eval
+          path: lib/caye-employee-eval/__output__/

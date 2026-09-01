@@ -17,7 +17,8 @@
     "generate:icons": "node scripts/generate-caye-mark.js",
     "caye:bench:replay": "node scripts/caye-bench-replay.mjs",
     "caye:bench:corpus": "node scripts/caye-bench-corpus.mjs",
-    "caye:bench:export": "node scripts/caye-bench-export.mjs"
+    "caye:bench:export": "node scripts/caye-bench-export.mjs",
+    "caye:employee:eval": "node scripts/caye-employee-eval.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.96.0",
