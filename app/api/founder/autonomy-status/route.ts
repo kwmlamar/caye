@@ -48,6 +48,7 @@ type RecommendationDecision = {
   stale: boolean
   requestedAt: string | null
   expiresAt: string | null
+  decidedAt: string | null
 }
 
 type RecommendationItem = {
@@ -86,21 +87,19 @@ function stringValue(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null
 }
 
-function recommendationLink(evidence: unknown): { id: string | null; fingerprint: string | null; executionState: string | null; authorityDisposition: string | null } {
+function recommendationLink(evidence: unknown): { id: string | null; fingerprint: string | null } {
   const value = objectValue(evidence)
   return {
     id: stringValue(value.recommendationId) ?? stringValue(value.recommendation_id),
     fingerprint: stringValue(value.recommendationFingerprint) ?? stringValue(value.recommendation_fingerprint),
-    executionState: stringValue(value.recommendationExecutionState) ?? stringValue(value.execution_state),
-    authorityDisposition: stringValue(value.recommendationAuthorityDisposition) ?? stringValue(value.authority_disposition),
   }
 }
 
 function decisionState(value: unknown): RecommendationDecision['state'] {
   const normalized = stringValue(value)?.toLowerCase()
-  if (normalized === 'approve' || normalized === 'approved' || normalized === 'accept' || normalized === 'accepted') return 'approved'
-  if (normalized === 'reject' || normalized === 'rejected' || normalized === 'deny' || normalized === 'denied') return 'rejected'
-  if (normalized === 'defer' || normalized === 'deferred') return 'deferred'
+  if (normalized === 'accepted') return 'approved'
+  if (normalized === 'rejected' || normalized === 'cancelled') return 'rejected'
+  if (normalized === 'deferred') return 'deferred'
   return 'pending'
 }
 
@@ -119,6 +118,27 @@ function authorityLabel(value: unknown): RecommendationAuthority {
           ? 'Authority unresolved'
           : principalRef ?? 'Authority required'
   return { principalType, principalRef, resolvedBy, label }
+}
+
+function founderCanDecide(value: unknown): boolean {
+  const authority = objectValue(value)
+  const principalType = stringValue(authority.principalType) ?? stringValue(authority.principal_type)
+  const resolvedBy = stringValue(authority.resolvedBy) ?? stringValue(authority.resolved_by)
+  return principalType === 'personal' && resolvedBy !== 'unresolved'
+}
+
+function executionFromAuthorityProvenance(value: unknown): { executionState: string | null; authorityDisposition: string | null } {
+  const provenance = objectValue(value)
+  return {
+    executionState: stringValue(provenance.recommendationExecutionState)
+      ?? stringValue(provenance.recommendation_execution_state)
+      ?? stringValue(provenance.executionState)
+      ?? stringValue(provenance.execution_state),
+    authorityDisposition: stringValue(provenance.recommendationAuthorityDisposition)
+      ?? stringValue(provenance.recommendation_authority_disposition)
+      ?? stringValue(provenance.authorityDisposition)
+      ?? stringValue(provenance.authority_disposition),
+  }
 }
 
 export async function GET(req: NextRequest) {
@@ -155,9 +175,9 @@ export async function GET(req: NextRequest) {
       .order('created_at', { ascending: false })
       .limit(12),
     db.from('caye_owner_attention')
-      .select('id,subject_type,title,priority,status,next_action,required_authority,blocked_on_operator,last_changed_at,decision,decided_at,decision_requested_at,decision_expires_at,decision_evidence')
+      .select('id,subject_type,title,priority,status,next_action,required_authority,blocked_on_operator,last_changed_at,decision_evidence')
       .eq('workspace_id', workspaceId)
-      .in('status', ['open', 'acknowledged', 'decided'])
+      .in('status', ['open', 'acknowledged'])
       .order('last_changed_at', { ascending: false })
       .limit(30),
     db.from('caye_coding_sessions')
@@ -224,25 +244,17 @@ export async function GET(req: NextRequest) {
       }
     })
 
-  const attentionRows = attention.data ?? []
-  const decisionRowsByRecommendation = new Map<string, any>()
-  for (const row of attentionRows) {
-    if (row.subject_type !== 'decision') continue
-    const link = recommendationLink(row.decision_evidence)
-    if (link.id) decisionRowsByRecommendation.set(link.id, row)
-  }
-
   let recommendationRows: any[] = []
   const recommendationsResult = await db.from('caye_recommendations')
     .select('id,scope,workspace_id,goal_id,title,recommendation,rationale,status,confidence,expected_impact,urgency,reversibility,risk_classification,required_authority,fingerprint,provenance,updated_at,superseded_at,caye_goals!inner(title,status,superseded_at)')
     .or(`workspace_id.eq.${workspaceId},scope.eq.operator`)
     .is('superseded_at', null)
-    .in('status', ['proposed', 'accepted', 'deferred'])
+    .in('status', ['proposed', 'accepted', 'rejected', 'deferred'])
     .order('updated_at', { ascending: false })
     .limit(20)
 
   if (recommendationsResult.error) {
-    // Direction is a mission-control read model. A recommendation deployment
+    // Direction is a mission-control read model. Recommendation deployment
     // drift must not erase the existing research/attention surface.
     console.error('[autonomy-status] recommendation read failed', recommendationsResult.error)
   } else {
@@ -253,11 +265,19 @@ export async function GET(req: NextRequest) {
   }
 
   const evidenceByRecommendation = new Map<string, RecommendationEvidence[]>()
+  const decisionsByRecommendation = new Map<string, any>()
   if (recommendationRows.length > 0) {
     const ids = recommendationRows.map((row) => row.id)
-    const evidenceResult = await db.from('caye_recommendation_claims')
-      .select('recommendation_id,research_claims!inner(statement,confidence,source_quality,status)')
-      .in('recommendation_id', ids)
+    const [evidenceResult, decisionsResult] = await Promise.all([
+      db.from('caye_recommendation_claims')
+        .select('recommendation_id,research_claims!inner(statement,confidence,source_quality,status)')
+        .in('recommendation_id', ids),
+      db.from('caye_recommendation_decisions')
+        .select('id,recommendation_id,recommendation_fingerprint,decision,actor_kind,authority_provenance,decided_at')
+        .in('recommendation_id', ids)
+        .order('decided_at', { ascending: false }),
+    ])
+
     if (evidenceResult.error) {
       console.error('[autonomy-status] recommendation evidence read failed', evidenceResult.error)
     } else {
@@ -274,24 +294,53 @@ export async function GET(req: NextRequest) {
         evidenceByRecommendation.set((row as any).recommendation_id, list)
       }
     }
+
+    if (decisionsResult.error) {
+      // A deploy where the decision migration has not landed yet should render
+      // recommendations as undecided rather than erasing Direction entirely.
+      console.error('[autonomy-status] recommendation decision read failed', decisionsResult.error)
+    } else {
+      for (const row of decisionsResult.data ?? []) {
+        if (!decisionsByRecommendation.has((row as any).recommendation_id)) {
+          decisionsByRecommendation.set((row as any).recommendation_id, row)
+        }
+      }
+    }
   }
 
   const recommendations: RecommendationItem[] = recommendationRows.map((row: any) => {
     const goal = Array.isArray(row.caye_goals) ? row.caye_goals[0] : row.caye_goals
-    const linkedDecision = decisionRowsByRecommendation.get(row.id)
-    const link = recommendationLink(linkedDecision?.decision_evidence)
-    const fingerprintMatches = !!linkedDecision && link.fingerprint === row.fingerprint
-    const stale = !!linkedDecision && !fingerprintMatches
-    const decided = !!linkedDecision?.decided_at
-    const state = stale ? 'stale' : decided ? decisionState(linkedDecision.decision) : 'pending'
-    const decision: RecommendationDecision | null = linkedDecision ? {
-      id: linkedDecision.id,
-      state,
-      canRespond: !stale && !decided && linkedDecision.blocked_on_operator !== false && ['open', 'acknowledged'].includes(linkedDecision.status),
-      stale,
-      requestedAt: linkedDecision.decision_requested_at ?? null,
-      expiresAt: linkedDecision.decision_expires_at ?? null,
-    } : null
+    const latestDecision = decisionsByRecommendation.get(row.id)
+    const stale = !!latestDecision && latestDecision.recommendation_fingerprint !== row.fingerprint
+    const currentDecision = latestDecision && !stale ? latestDecision : null
+    const canRespond = row.status === 'proposed' && founderCanDecide(row.required_authority) && !currentDecision
+
+    let decision: RecommendationDecision | null = null
+    if (currentDecision) {
+      decision = {
+        id: currentDecision.id,
+        state: decisionState(currentDecision.decision),
+        canRespond: false,
+        stale: false,
+        requestedAt: null,
+        expiresAt: null,
+        decidedAt: currentDecision.decided_at ?? null,
+      }
+    } else if (canRespond || stale) {
+      decision = {
+        id: stale ? latestDecision.id : `pending:${row.id}`,
+        state: canRespond ? 'pending' : 'stale',
+        canRespond,
+        stale,
+        requestedAt: null,
+        expiresAt: null,
+        decidedAt: stale ? latestDecision.decided_at ?? null : null,
+      }
+    }
+
+    const execution = currentDecision
+      ? executionFromAuthorityProvenance(currentDecision.authority_provenance)
+      : { executionState: null, authorityDisposition: null }
 
     return {
       id: row.id,
@@ -310,18 +359,20 @@ export async function GET(req: NextRequest) {
       updatedAt: row.updated_at,
       evidence: (evidenceByRecommendation.get(row.id) ?? []).slice(0, 6),
       decision,
-      executionState: link.executionState,
-      authorityDisposition: link.authorityDisposition,
+      executionState: execution.executionState,
+      authorityDisposition: execution.authorityDisposition,
     }
   })
 
-  const recommendationDecisionIds = new Set(
-    recommendations.map((item) => item.decision?.id).filter((id): id is string => !!id)
-  )
+  const recommendationIds = new Set(recommendations.map((item) => item.id))
+  const attentionRows = attention.data ?? []
   const needsYou = attentionRows
     .filter((row: any) => row.blocked_on_operator !== false)
-    .filter((row: any) => !recommendationDecisionIds.has(row.id))
-    .filter((row: any) => ['open', 'acknowledged'].includes(row.status))
+    .filter((row: any) => {
+      if (row.subject_type !== 'decision') return true
+      const link = recommendationLink(row.decision_evidence)
+      return !link.id || !recommendationIds.has(link.id)
+    })
     .map((row: any) => ({
       title: cleanText(row.title) ?? 'Founder judgment needed',
       detail: cleanText(row.next_action),
