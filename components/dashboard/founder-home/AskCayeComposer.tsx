@@ -60,16 +60,43 @@ export function CayeComposerSurface({ children, active, maxWidth = 600, style }:
       textarea.props.onChange?.({ target: { value: nextValue }, currentTarget: { value: nextValue } })
     }
 
-    const primaryAction = busy ? originalSend : canSend ? originalSend : (
+    // The primary action is intentionally visually decisive. Voice when the
+    // composer is empty and send when it has content share one solid control,
+    // rather than becoming another faint glass circle inside a glass pill.
+    const primaryAction = canSend ? (
+      <button
+        key="send-primary"
+        type="submit"
+        disabled={busy}
+        title="Send"
+        aria-label="Send message"
+        style={{
+          flexShrink: 0, width: 34, height: 34, borderRadius: '50%', border: 'none',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: AQUA, cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.5 : 1,
+          transition: 'opacity .15s ease, transform .08s ease',
+        }}
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#0a0a0b" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+          <line x1="12" y1="19" x2="12" y2="5" /><polyline points="5 12 12 5 19 12" />
+        </svg>
+      </button>
+    ) : (
       <button
         key="live-voice-primary"
         type="button"
         onClick={() => originalLiveVoice.props.onClick?.()}
+        disabled={busy}
         title="Start live voice"
         aria-label="Start live voice"
-        className="caye-direct-send is-ready"
+        style={{
+          flexShrink: 0, width: 34, height: 34, borderRadius: '50%', border: 'none',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: AQUA, cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.5 : 1,
+          transition: 'opacity .15s ease, transform .08s ease',
+        }}
       >
-        <svg aria-hidden width="17" height="17" viewBox="0 0 24 24" fill="none" stroke={AQUA} strokeWidth="2.2" strokeLinecap="round">
+        <svg aria-hidden width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#0a0a0b" strokeWidth="2.2" strokeLinecap="round">
           <path d="M5 10v4M9 7v10M13 5v14M17 8v8M21 10v4" />
         </svg>
       </button>
@@ -101,6 +128,12 @@ export function CayeComposerSurface({ children, active, maxWidth = 600, style }:
           ? `0 1px 0 rgba(255,255,255,0.06) inset, 0 0 0 1px rgba(78,190,206,0.3), 0 0 28px rgba(78,190,206,0.18), 0 14px 32px rgba(0,0,0,0.35)`
           : `0 1px 0 rgba(255,255,255,0.04) inset, 0 10px 26px rgba(0,0,0,0.3)`,
         transition: 'background 0.2s ease, box-shadow 0.25s ease', ...style,
+        ...(isDirectComposer ? {
+          border: '1px solid rgba(255,255,255,0.07)',
+          boxShadow: active
+            ? '0 1px 0 rgba(255,255,255,0.04) inset, 0 10px 24px -12px rgba(0,0,0,0.5)'
+            : '0 1px 0 rgba(255,255,255,0.03) inset, 0 8px 18px -10px rgba(0,0,0,0.45)',
+        } : {}),
       }}
     >
       {renderedChildren}
