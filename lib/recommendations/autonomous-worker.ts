@@ -62,6 +62,7 @@ function executionStateFromProvenance(value: unknown): RecommendationExecutionSt
   const row = value as Record<string, unknown>
   const raw = row.recommendationExecutionState ?? row.recommendation_execution_state ?? row.executionState ?? row.execution_state
   if (raw === 'approved_queued' || raw === 'acting_now' || raw === 'completed' || raw === 'failed_needs_attention') return raw
+  if (raw === 'acting') return 'acting_now'
   return null
 }
 
@@ -177,15 +178,7 @@ async function waitForFounderPersonalDecision(candidate: RecommendationWakeCandi
 
 async function decideProductionCandidate(candidate: RecommendationWakeCandidate): Promise<DecisionOutcome> {
   if (!candidate.actionPlan) return { kind: 'blocked' }
-
-  // Personal authority means an actual founder judgment is required. Do not
-  // manufacture a system `pending` decision first: Direction already exposes
-  // proposed personal-authority recommendations as actionable Needs You items,
-  // and a synthetic current decision would suppress those controls. The owner-
-  // attention ledger is the durable blocked state until the founder acts.
-  if (candidate.requiredAuthority.principalType === 'personal') {
-    return waitForFounderPersonalDecision(candidate)
-  }
+  if (candidate.requiredAuthority.principalType === 'personal') return waitForFounderPersonalDecision(candidate)
 
   const hasExistingAuthorization = await currentAuthorityExists(candidate)
   const result = await decideRecommendationForExecution({
@@ -203,14 +196,45 @@ async function decideProductionCandidate(candidate: RecommendationWakeCandidate)
     : { kind: 'blocked' }
 }
 
+async function projectApprovedQueued(candidate: RecommendationWakeCandidate): Promise<void> {
+  if (!candidate.latestDecisionId) return
+  const db = createServiceClient()
+  const { data: decision } = await db
+    .from('caye_recommendation_decisions')
+    .select('id,decision,recommendation_version,authority_provenance')
+    .eq('id', candidate.latestDecisionId)
+    .eq('recommendation_id', candidate.id)
+    .eq('workspace_id', candidate.workspaceId)
+    .maybeSingle()
+  if (!decision || decision.decision !== 'accepted' || decision.recommendation_version !== candidate.version) return
+  const provenance = decision.authority_provenance && typeof decision.authority_provenance === 'object' && !Array.isArray(decision.authority_provenance)
+    ? decision.authority_provenance as Record<string, unknown>
+    : {}
+  await db
+    .from('caye_recommendation_decisions')
+    .update({
+      authority_provenance: {
+        ...provenance,
+        recommendationExecutionState: 'approved_queued',
+        recommendationAuthorityDisposition: 'granted',
+        recommendationExecutionUpdatedAt: new Date().toISOString(),
+      },
+    })
+    .eq('id', decision.id)
+    .eq('decision', 'accepted')
+    .eq('recommendation_version', candidate.version)
+}
+
 async function enqueueProductionCandidate(candidate: RecommendationWakeCandidate) {
-  return enqueueOperation({
+  const result = await enqueueOperation({
     workspaceId: candidate.workspaceId,
     operation: 'recommendation_action',
     payload: { recommendation_id: candidate.id, recommendation_version: candidate.version, decision_id: candidate.latestDecisionId },
     idempotencyKey: recommendationWakeIdempotencyKey(candidate),
     delayMs: 0,
   })
+  if (result.queued) await projectApprovedQueued(candidate)
+  return result
 }
 
 /** Bounded wake pass. Prose never becomes executable input. */
