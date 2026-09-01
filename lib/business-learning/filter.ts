@@ -42,6 +42,9 @@ export function evaluateObservationEligibility(input: LearningObservationInput):
   const content = input.content.trim()
   if (!content) return { eligible: false, reason: 'empty content' }
 
+  const generatedBy = String(input.sourceMetadata.generated_by ?? '').toLowerCase()
+  if (generatedBy === 'caye') return { eligible: false, reason: 'Caye-generated output is not learning evidence' }
+
   const semanticScope = String(input.semanticScope ?? input.sourceMetadata.semantic_scope ?? '').toLowerCase()
   if (semanticScope && !['customer_business', 'customer_operator'].includes(semanticScope)) {
     return { eligible: false, reason: `semantic scope ${semanticScope} is not customer-business eligible` }
