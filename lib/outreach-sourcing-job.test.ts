@@ -34,6 +34,7 @@ function makeDb(opts: {
 }) {
   const updateCalls: string[] = []
   const upsertCalls: Array<{ vertical: string; count: number }> = []
+  const upsertedRows: Array<{ lead_email: string; business_name: string | null; business_evidence?: string | null }> = []
   const targets = opts.targets ?? ACTIVE_TARGETS
 
   const from = vi.fn((table: string) => {
@@ -43,9 +44,10 @@ function makeDb(opts: {
           if (selectOpts?.head) return chain({ count: opts.unsentSupply, error: null })
           return chain({ data: [], error: null })
         },
-        upsert: (rows: Array<{ lead_email: string; business_name: string | null }>) => {
+        upsert: (rows: Array<{ lead_email: string; business_name: string | null; business_evidence?: string | null }>) => {
           const inserted = opts.upsertInsertedCount ? opts.upsertInsertedCount(rows) : rows.length
           upsertCalls.push({ vertical: rows[0]?.business_name ?? '', count: inserted })
+          upsertedRows.push(...rows)
           return { select: () => chain({ data: Array.from({ length: inserted }, (_, i) => ({ id: `lead-${i}` })), error: null }) }
         },
       }
@@ -64,7 +66,7 @@ function makeDb(opts: {
     throw new Error(`unexpected table ${table}`)
   })
 
-  return { from, updateCalls, upsertCalls }
+  return { from, updateCalls, upsertCalls, upsertedRows }
 }
 
 vi.mock('./supabase-server', () => ({ createServiceClient: () => dbRef.current }))
@@ -138,5 +140,31 @@ describe('runOutreachSourcingJob', () => {
     sourceLeadsMock.mockRejectedValue(new Error('GOOGLE_MAPS_API_KEY not set'))
     const { runOutreachSourcingJob } = await import('./outreach-sourcing-job')
     await expect(runOutreachSourcingJob('ws-1')).rejects.toThrow('all 3 sourcing targets failed')
+  })
+
+  it('carries a sourced lead\'s scraped evidence through to the outreach_leads upsert', async () => {
+    dbRef = { current: makeDb({ unsentSupply: 1 }) }
+    sourceLeadsMock.mockImplementation(async (vertical: string, region: string) => [
+      {
+        business_name: `${vertical} in ${region}`, phone: null, website: 'https://example.com',
+        email: `lead-${region}@example.com`, address: null,
+        evidence: 'Family-run snorkeling and reef tours out of Freeport since 1998.',
+      },
+    ])
+    const { runOutreachSourcingJob } = await import('./outreach-sourcing-job')
+    await runOutreachSourcingJob('ws-1')
+    expect(dbRef.current.upsertedRows).toContainEqual(
+      expect.objectContaining({ business_evidence: 'Family-run snorkeling and reef tours out of Freeport since 1998.' })
+    )
+  })
+
+  it('inserts a null business_evidence when nothing was scraped, rather than an empty string', async () => {
+    dbRef = { current: makeDb({ unsentSupply: 1 }) }
+    sourceLeadsMock.mockImplementation(async (vertical: string, region: string) => [
+      { business_name: `${vertical} in ${region}`, phone: null, website: null, email: `lead-${region}@example.com`, address: null, evidence: null },
+    ])
+    const { runOutreachSourcingJob } = await import('./outreach-sourcing-job')
+    await runOutreachSourcingJob('ws-1')
+    expect(dbRef.current.upsertedRows).toContainEqual(expect.objectContaining({ business_evidence: null }))
   })
 })

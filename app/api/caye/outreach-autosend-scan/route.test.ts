@@ -43,7 +43,7 @@ describe('outreach autosend parked-draft recovery', () => {
     const consumed = await processLead({
       lead: {
         id: 'lead-1', lead_email: 'owner@example.com', business_name: 'Example Tours', contact_name: 'Ari',
-        demo_token: 'demo-1', stage: 'sourced', first_touch_sent_at: null, touches_sent: 0,
+        business_evidence: null, demo_token: 'demo-1', stage: 'sourced', first_touch_sent_at: null, touches_sent: 0,
         last_touch_sent_at: null, opted_out_at: null, last_inbound_kind: null, outreach_deferred_at: null,
         disqualified_reason: null, created_at: '2026-08-20T00:00:00Z',
       },
@@ -140,7 +140,7 @@ function emptySummary() {
 }
 
 function sourcedLead() {
-  return { id: 'lead-1', lead_email: 'owner@example.com', business_name: 'Example Tours', contact_name: 'Ari', demo_token: 'demo-1', stage: 'sourced' as const, first_touch_sent_at: null, touches_sent: 0, last_touch_sent_at: null, opted_out_at: null, last_inbound_kind: null, outreach_deferred_at: null, disqualified_reason: null, created_at: '2026-08-20T00:00:00Z' }
+  return { id: 'lead-1', lead_email: 'owner@example.com', business_name: 'Example Tours', contact_name: 'Ari', business_evidence: null, demo_token: 'demo-1', stage: 'sourced' as const, first_touch_sent_at: null, touches_sent: 0, last_touch_sent_at: null, opted_out_at: null, last_inbound_kind: null, outreach_deferred_at: null, disqualified_reason: null, created_at: '2026-08-20T00:00:00Z' }
 }
 
 function conversation() {
