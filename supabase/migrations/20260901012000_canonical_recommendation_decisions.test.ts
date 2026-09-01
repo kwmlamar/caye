@@ -9,8 +9,10 @@ const migration = readFileSync(
 const service = readFileSync(join(process.cwd(), 'lib', 'recommendations', 'decisions.ts'), 'utf8')
 
 describe('canonical recommendation decision contracts', () => {
-  it('references exactly one canonical recommendation', () => {
+  it('references exactly one canonical recommendation and snapshots its version', () => {
     expect(migration).toMatch(/recommendation_id uuid not null references public\.caye_recommendations\(id\)/i)
+    expect(migration).toMatch(/recommendation_fingerprint text not null/i)
+    expect(migration).toMatch(/v_rec\.fingerprint/i)
     expect(migration).toMatch(/decision text not null check \(decision in \('accepted','rejected','deferred','cancelled'\)\)/i)
   })
 
@@ -45,6 +47,7 @@ describe('canonical recommendation decision contracts', () => {
     expect(migration).toMatch(/security definer[\s\S]*set search_path = public/i)
     expect(migration).toMatch(/grant execute on function public\.record_caye_recommendation_decision[\s\S]*to service_role/i)
     expect(service).toMatch(/import 'server-only'/)
+    expect(service).toMatch(/@\/lib\/supabase-server/)
     expect(service).toMatch(/\.rpc\('record_caye_recommendation_decision'/)
   })
 })
