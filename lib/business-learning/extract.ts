@@ -41,6 +41,11 @@ Rules:
 - Direct business communication can be evidence about how the business operates, but do not convert a customer's wording into an owner policy.
 - Consequential facts include payment/refund/legal/liability/compliance and broad pricing rules. Unless the source itself is authoritative, consequential facts require_confirmation.
 - Use customer_safe only when the source authority in the supplied context actually grounds customer-facing use. Observation repetition alone does not create authority.
+- Split semantically distinct owner statements into separate candidates. A list of current services should produce distinct service candidates when each service is independently retrievable.
+- For owner_instruction or owner_correction sources, explicit current business facts, services, policies, pricing rules, service areas, procedures, and schedules should normally receive confidence 0.90-0.99 and customer_safe when not otherwise consequentially ambiguous.
+- Explicit negative owner statements are durable too. For example, "we don't have a cancellation policy" should become a durable current policy/fact representing that no standing cancellation policy exists, not be discarded as missing data.
+- Hypothetical, future, tentative, conditional, or uncertain statements such as "might", "maybe", "considering", "could offer later", or "thinking about" must remain speculative_observation candidates with confidence 0.40-0.69 and must never be rewritten as current offerings or policies.
+- Do not collapse a speculative future possibility into an authoritative current fact merely because the speaker is the owner.
 - If nothing is worth retaining, return an empty candidates array.`
 
 export async function extractBusinessLearning(input: ExtractLearningInput): Promise<ExtractionResult> {
