@@ -1,17 +1,6 @@
 /**
  * GET  /api/founder/ai-providers  — provider status + recent routing reality
  * POST /api/founder/ai-providers  — enable/disable, priority, clear circuit, test
- *
- * Internal operator infrastructure. Deliberately founder-only and NOT
- * workspace-scoped: Caye's customers hired an employee, not a model-vendor
- * console, and nothing here should ever appear in a customer workspace.
- *
- * The default posture is "Routing: Auto" — the founder should not have to
- * think about providers at all until one breaks. Everything below exists for
- * the moment it does.
- *
- * Auth: Bearer JWT, checked against FOUNDER_USER_IDS (same gate as the rest
- * of the founder rail).
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -36,6 +25,24 @@ import {
 
 const ROUTING_LOOKBACK_HOURS = 24
 
+type Attempt = {
+  provider?: AIProviderId
+  model?: string
+  outcome?: string
+  detail?: string
+  latencyMs?: number
+}
+
+type Row = {
+  provider: AIProviderId
+  task: string | null
+  outcome: string | null
+  failure_category: string | null
+  fallback_used: boolean | null
+  latency_ms: number | null
+  attempts: Attempt[] | null
+}
+
 export async function GET(req: NextRequest) {
   const user = await requireFounder(req)
   if (!user) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
@@ -46,19 +53,11 @@ export async function GET(req: NextRequest) {
   const supabase = createServiceClient()
   const { data: rows } = await supabase
     .from('llm_call_log')
-    .select('provider, task, outcome, failure_category, fallback_used, latency_ms, input_tokens, output_tokens, called_at')
+    .select('provider, task, outcome, failure_category, fallback_used, latency_ms, input_tokens, output_tokens, called_at, attempts')
     .gte('called_at', since)
     .not('provider', 'is', null)
     .limit(20000)
 
-  type Row = {
-    provider: AIProviderId
-    task: string | null
-    outcome: string | null
-    failure_category: string | null
-    fallback_used: boolean | null
-    latency_ms: number | null
-  }
   const calls = (rows ?? []) as Row[]
 
   const providers = AI_PROVIDER_IDS.map((id) => {
@@ -68,7 +67,25 @@ export async function GET(req: NextRequest) {
     const hasKey = adapter?.hasCredentials() ?? false
     const open = isCircuitOpen(h)
     const mine = calls.filter((c) => c.provider === id)
-    const failures = mine.filter((c) => c.outcome === 'failure')
+
+    // The top-level row records the final serving provider. Failed providers
+    // during a successful failover live in attempts[], so historical provider
+    // health must aggregate the trail rather than pretending the failure
+    // never happened because OpenAI eventually succeeded.
+    const attemptFailures = calls.flatMap((call) => {
+      const attempts = Array.isArray(call.attempts) ? call.attempts : []
+      return attempts.filter((attempt) =>
+        attempt.provider === id &&
+        typeof attempt.outcome === 'string' &&
+        attempt.outcome !== 'success' &&
+        !attempt.outcome.startsWith('skipped_')
+      )
+    })
+    const legacyFailures = calls.filter((c) => !Array.isArray(c.attempts) && c.provider === id && c.outcome === 'failure')
+    const failureKinds = [
+      ...attemptFailures.map((a) => a.outcome ?? 'unknown'),
+      ...legacyFailures.map((c) => c.failure_category ?? 'unknown'),
+    ]
 
     return {
       id,
@@ -77,8 +94,6 @@ export async function GET(req: NextRequest) {
       priority: s?.priority ?? null,
       hasCredentials: hasKey,
       envVar: ENV_VARS[id],
-      // "unavailable" is a real, explainable state, not a boolean. The point
-      // of this surface is answering *why* a provider is not being used.
       status: !hasKey ? 'no_credentials' : s?.enabled === false ? 'disabled' : open ? 'unavailable' : 'healthy',
       reason: open ? h?.reason ?? null : null,
       detail: open ? h?.detail ?? null : null,
@@ -89,17 +104,15 @@ export async function GET(req: NextRequest) {
       models: Object.values(MODELS).filter((m) => m.provider === id).map((m) => ({ id: m.id, tier: m.tier })),
       last24h: {
         calls: mine.length,
-        failures: failures.length,
+        failures: failureKinds.length,
         servedAfterFallback: mine.filter((c) => c.fallback_used).length,
         medianLatencyMs: median(mine.map((c) => c.latency_ms ?? 0).filter(Boolean)),
-        topFailure: topValue(failures.map((c) => c.failure_category ?? 'unknown')),
+        topFailure: topValue(failureKinds),
       },
     }
   })
 
   return NextResponse.json({
-    // "Auto" unless someone has actually pinned an order. Surfaced so the UI
-    // never claims Auto while an env var is quietly overriding it.
     routingMode: providerPriorityOverride() || providers.some((p) => p.priority !== null) ? 'manual' : 'auto',
     priorityOverrideSource: providerPriorityOverride() ? 'CAYE_AI_PROVIDER_ORDER' : null,
     providers,
@@ -147,28 +160,19 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true })
 
     case 'test': {
-      // A real, minimal round trip pinned to this provider. Cheapest model,
-      // a handful of tokens: enough to prove credentials and reachability
-      // without being a meaningful line on the bill.
       const started = Date.now()
       try {
         const result = await generate({
           params: { model: 'auto', max_tokens: 16, messages: [{ role: 'user', content: 'Reply with the single word: ok' }] },
           ctx: { source: 'app/api/founder/ai-providers/route.ts:test', task: 'classification', pinProvider: provider, callerRole: 'founder' },
         })
-        return NextResponse.json({
-          ok: true,
-          provider,
-          model: result.routing.model,
-          latencyMs: Date.now() - started,
-        })
+        return NextResponse.json({ ok: true, provider, model: result.routing.model, latencyMs: Date.now() - started })
       } catch (error) {
         const e = error as { category?: string; message?: string }
         return NextResponse.json({
           ok: false,
           provider,
           category: e.category ?? 'unknown',
-          // Provider messages can echo request content; keep it short.
           detail: (e.message ?? String(error)).slice(0, 300),
           latencyMs: Date.now() - started,
         })
