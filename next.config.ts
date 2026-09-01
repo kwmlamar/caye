@@ -18,6 +18,14 @@ const nextConfig: NextConfig = {
     // job-search browser executor itself. Keep this scoped to founder routes.
     '/api/founder/admin-shell': browserRuntimeFiles,
     '/api/founder/caye-direct/**': browserRuntimeFiles,
+    // The autonomous application worker runs the same browser executor without
+    // a founder in the loop. Omitting it reproduced exactly the failure this
+    // config exists to prevent: the route 500'd on module initialization in
+    // production, before its CRON_SECRET check, while every other cron route
+    // returned 401. Any route that can reach executeApplication needs these
+    // files traced — see the contract test in lib/job-search/execution/
+    // browser-runtime-tracing.test.ts.
+    '/api/caye/job-search-apply': browserRuntimeFiles,
   },
 }
 
