@@ -74,7 +74,6 @@ export function investigationFollowUpCanonicalKey(rootId: string, child: Investi
 export function planInvestigationFollowUps(brief: LatestBrief | null, limit = MAX_CHILDREN_PER_ADVANCE): InvestigationFollowUp[] {
   const cap = Math.max(0, Math.min(limit, MAX_CHILDREN_PER_ADVANCE))
   if (!cap) return []
-
   const conflicts = nonEmptyArray(brief?.conflicting_evidence).map(sourceText).filter(Boolean)
   const unknowns = nonEmptyArray(brief?.unknowns).map(sourceText).filter(Boolean)
   const candidates: InvestigationFollowUp[] = []
@@ -89,7 +88,6 @@ export function planInvestigationFollowUps(brief: LatestBrief | null, limit = MA
     })
     seen.add(`autonomous_cross_check:${contradiction.trim().toLowerCase()}`)
   }
-
   for (const unknown of unknowns) {
     if (candidates.length >= cap) break
     const dedupeKey = `autonomous_followup:${unknown.trim().toLowerCase()}`
@@ -101,15 +99,10 @@ export function planInvestigationFollowUps(brief: LatestBrief | null, limit = MA
       question: `Resolve this material unknown from the parent investigation with evidence: ${unknown}`,
     })
   }
-
   return candidates.slice(0, cap)
 }
 
-export function decideInvestigationLifecycle(args: {
-  question: LifecycleQuestion
-  brief: LatestBrief | null
-  now?: Date
-}): LifecycleDecision {
+export function decideInvestigationLifecycle(args: { question: LifecycleQuestion; brief: LatestBrief | null; now?: Date }): LifecycleDecision {
   const { question, brief } = args
   const now = args.now ?? new Date()
   const runCount = question.autonomous_run_count + 1
@@ -118,47 +111,44 @@ export function decideInvestigationLifecycle(args: {
   const materialChanges = nonEmptyArray(brief?.material_changes)
   const unresolved = conflicts.length > 0 || unknowns.length > 0
   const materialChanged = materialChanges.length > 0 || conflicts.length > 0
+  const noChangeStreak = materialChanged ? 0 : question.no_change_streak + 1
   const baseHours = question.refresh_interval_hours ?? (question.investigation_mode === 'monitor' ? 24 : 6)
 
   if (question.investigation_mode === 'one_shot') {
     return {
-      lifecycleStatus: 'resolved', nextReviewAt: null, runCount,
-      noChangeStreak: materialChanged ? 0 : question.no_change_streak + 1,
-      materialChanged, reason: unresolved ? 'one_shot_complete_with_open_questions' : 'one_shot_complete',
+      lifecycleStatus: unresolved ? 'paused' : 'resolved',
+      nextReviewAt: null,
+      runCount,
+      noChangeStreak,
+      materialChanged,
+      reason: unresolved ? 'one_shot_incomplete_with_open_questions' : 'one_shot_complete',
     }
   }
 
   if (runCount >= question.max_autonomous_runs) {
-    return {
-      lifecycleStatus: 'paused', nextReviewAt: null, runCount,
-      noChangeStreak: materialChanged ? 0 : question.no_change_streak + 1,
-      materialChanged, reason: 'autonomy_budget_exhausted',
-    }
+    return { lifecycleStatus: 'paused', nextReviewAt: null, runCount, noChangeStreak, materialChanged, reason: 'autonomy_budget_exhausted' }
   }
 
   if (question.investigation_mode === 'follow_until_resolved') {
     if (!unresolved) {
-      return {
-        lifecycleStatus: 'resolved', nextReviewAt: null, runCount,
-        noChangeStreak: materialChanged ? 0 : question.no_change_streak + 1,
-        materialChanged, reason: 'evidence_resolved',
-      }
+      return { lifecycleStatus: 'resolved', nextReviewAt: null, runCount, noChangeStreak, materialChanged, reason: 'evidence_resolved' }
     }
-
     const reviewHours = conflicts.length > 0 ? Math.max(1, Math.min(6, Math.floor(baseHours / 2) || 1)) : baseHours
     return {
-      lifecycleStatus: 'active', nextReviewAt: addHours(now, reviewHours), runCount,
-      noChangeStreak: materialChanged ? 0 : question.no_change_streak + 1,
-      materialChanged, reason: conflicts.length > 0 ? 'contradictory_evidence_requires_recheck' : 'material_unknowns_remain',
+      lifecycleStatus: 'active',
+      nextReviewAt: addHours(now, reviewHours),
+      runCount,
+      noChangeStreak,
+      materialChanged,
+      reason: conflicts.length > 0 ? 'contradictory_evidence_requires_recheck' : 'material_unknowns_remain',
     }
   }
 
-  const noChangeStreak = materialChanged ? 0 : question.no_change_streak + 1
   const multiplier = materialChanged ? 0.5 : Math.pow(2, Math.min(noChangeStreak, 4))
   const reviewHours = Math.max(1, Math.min(168, Math.round(baseHours * multiplier)))
   return {
-    lifecycleStatus: 'active', nextReviewAt: addHours(now, reviewHours), runCount, noChangeStreak,
-    materialChanged, reason: materialChanged ? 'monitor_material_change' : 'monitor_unchanged_backoff',
+    lifecycleStatus: 'active', nextReviewAt: addHours(now, reviewHours), runCount, noChangeStreak, materialChanged,
+    reason: materialChanged ? 'monitor_material_change' : 'monitor_unchanged_backoff',
   }
 }
 
@@ -171,17 +161,14 @@ async function createBoundedFollowUps(question: LifecycleQuestion, brief: Latest
   const rootId = question.root_question_id ?? question.id
   const rootCap = Math.max(0, Number(question.max_autonomous_followups ?? 6))
   if (!rootCap) return 0
-
   const db = createServiceClient()
   const { count, error: countError } = await db.from('research_questions')
     .select('id', { count: 'exact', head: true })
     .eq('root_question_id', rootId)
     .in('investigation_origin', ['autonomous_followup', 'autonomous_cross_check'])
   if (countError) throw countError
-
   const remaining = Math.max(0, rootCap - Number(count ?? 0))
   if (!remaining) return 0
-
   const candidates = planInvestigationFollowUps(brief, Math.min(remaining, MAX_CHILDREN_PER_ADVANCE))
   let queued = 0
   for (const child of candidates) {
@@ -238,7 +225,6 @@ export async function advanceResearchInvestigationLifecycle(questionId: string):
     resolution_reason: decision.reason,
   }).eq('id', questionId).eq('lifecycle_status', 'active').neq('status', 'archived')
   if (update.error) throw update.error
-
   if (decision.lifecycleStatus === 'active') await createBoundedFollowUps(question, brief)
   return decision
 }
@@ -252,7 +238,6 @@ export async function queueDueResearchInvestigations(limit = 3): Promise<number>
     .not('next_review_at', 'is', null).lte('next_review_at', now)
     .order('next_review_at', { ascending: true }).limit(Math.max(1, Math.min(limit, 5)))
   if (error) throw error
-
   let queued = 0
   for (const question of data ?? []) {
     await queueResearchRun(question.id, 'investigation_revisit')
@@ -271,7 +256,6 @@ export async function recordResearchInvestigationFailure(questionId: string): Pr
     .eq('id', questionId).maybeSingle()
   if (error) throw error
   if (!data || !canAdvanceResearchInvestigation(data as LifecycleQuestion)) return
-
   const nextCount = Number(data.autonomous_run_count ?? 0) + 1
   const exhausted = nextCount >= Number(data.max_autonomous_runs ?? 8)
   const retryHours = Math.min(24, Math.max(2, Number(data.refresh_interval_hours ?? 6)))
