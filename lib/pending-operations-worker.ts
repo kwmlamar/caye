@@ -14,6 +14,8 @@ import { recordCronRun } from './cron-run-log'
 import { processArtifact } from './artifacts/process'
 import { runRecommendationActionOperation } from './recommendations/action-operation'
 import { createProductionRecommendationActionRuntime } from './recommendations/action-runtime-production'
+import { validateRecommendationActionPlan } from './recommendations/action-plan'
+import { recordExecutedRecommendationAction } from './recommendations/observations'
 
 /**
  * Drains caye_pending_operations — the durable outbox for external effects
@@ -58,6 +60,69 @@ export async function drainPendingOperationsSafely(limit = BATCH_LIMIT): Promise
 
 type Outcome = 'synced' | 'retrying' | 'dead_letter'
 
+function payloadString(row: PendingOperationRow, key: string): string | null {
+  const value = row.payload[key]
+  return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+/**
+ * #378 integration. The operation row is already durably `synced` when this is
+ * called, so the evidence source is the canonical existing execution/outbox
+ * record rather than a model assertion or a second recommendation ledger.
+ */
+async function recordRecommendationExecutionOutcome(row: PendingOperationRow, executionRef?: string | null): Promise<void> {
+  const recommendationId = payloadString(row, 'recommendation_id')
+  const recommendationVersion = payloadString(row, 'recommendation_version')
+  const decisionId = payloadString(row, 'decision_id')
+  if (!recommendationId || !recommendationVersion || !decisionId) return
+
+  const db = createServiceClient()
+  const [{ data: recommendation, error: recommendationError }, { data: decision, error: decisionError }] = await Promise.all([
+    db.from('caye_recommendations')
+      .select('id,workspace_id,provenance')
+      .eq('id', recommendationId)
+      .eq('workspace_id', row.workspace_id)
+      .maybeSingle(),
+    db.from('caye_recommendation_decisions')
+      .select('id,recommendation_id,recommendation_version,actor_kind,authority_provenance')
+      .eq('id', decisionId)
+      .eq('recommendation_id', recommendationId)
+      .maybeSingle(),
+  ])
+  if (recommendationError || decisionError) throw recommendationError ?? decisionError
+  if (!recommendation || !decision || decision.recommendation_version !== recommendationVersion) return
+
+  const provenance = recommendation.provenance && typeof recommendation.provenance === 'object' && !Array.isArray(recommendation.provenance)
+    ? recommendation.provenance as Record<string, unknown>
+    : {}
+  const plan = validateRecommendationActionPlan(provenance.actionPlan)
+
+  await recordExecutedRecommendationAction({
+    recommendationId,
+    decisionId,
+    workspaceId: row.workspace_id,
+    executionKey: row.idempotency_key,
+    executionSourceTable: 'caye_pending_operations',
+    executionSourceId: row.id,
+    executionProvenance: {
+      recommendationVersion,
+      capabilityKey: plan.capabilityKey,
+      operation: plan.operation,
+      decisionActorKind: decision.actor_kind,
+      authorityProvenance: decision.authority_provenance ?? {},
+      executionRef: executionRef ?? `caye_pending_operations:${row.id}`,
+    },
+    observationPlan: {
+      kind: 'unknown',
+      expectedEffect: {
+        description: plan.expectedEffect,
+        capabilityKey: plan.capabilityKey,
+        operation: plan.operation,
+      },
+    },
+  })
+}
+
 async function processOperation(row: PendingOperationRow): Promise<Outcome> {
   try {
     switch (row.operation) {
@@ -65,6 +130,13 @@ async function processOperation(row: PendingOperationRow): Promise<Outcome> {
         const result = await runRecommendationActionOperation(row, createProductionRecommendationActionRuntime())
         if (result.disposition === 'synced') {
           await markSynced(row)
+          if (result.reason === 'completed') {
+            await recordRecommendationExecutionOutcome(row, result.executionRef).catch((error) => {
+              // Never replay a successfully executed capability just because
+              // downstream outcome observation had a transient problem.
+              console.error('[recommendation-action] outcome handoff failed:', error)
+            })
+          }
           return 'synced'
         }
         return await fail(row, result.error, result.disposition === 'retry')
