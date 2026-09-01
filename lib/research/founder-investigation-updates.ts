@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import type { createServiceClient } from '@/lib/supabase-server'
 import { resolveFounderOperator } from '@/lib/operator-identity'
 import { linkMessageToThread, touchThread } from '@/lib/caye-direct-threads'
+import { sanitizeHumanFacingText } from '@/lib/human-facing-voice'
 
 type SupabaseClient = ReturnType<typeof createServiceClient>
 
@@ -48,20 +49,48 @@ function classify(synthesis: FounderInvestigationSynthesis, firstSurface: boolea
   return null
 }
 
-function messageFor(kind: UpdateKind, question: string, synthesis: FounderInvestigationSynthesis): string {
-  const label: Record<UpdateKind, string> = {
-    initial_answer: 'Research update',
-    new_evidence: 'New evidence',
-    contradiction: 'Research correction',
-    belief_revision: 'I changed my mind',
-    urgent_implication: 'Urgent research implication',
+function plainBrief(value: string): string {
+  const simplified = value
+    .replace(/\s+/g, ' ')
+    .replace(/\bcurrent evidence identifies\b/gi, 'I found')
+    .replace(/\ba competitive landscape composed of\b/gi, 'a mix of')
+    .replace(/\bcompetitive landscape composed of\b/gi, 'main competitors include')
+    .replace(/\bsupplied evidence\b/gi, 'sources I checked')
+    .replace(/\bincompletely documented\b/gi, 'not fully published')
+    .replace(/\bprimary competitors\b/gi, 'main competitors')
+    .trim()
+
+  const sentences = simplified.match(/[^.!?]+(?:[.!?]+|$)/g) ?? [simplified]
+  return sentences.slice(0, 4).join(' ').trim().slice(0, 1400)
+}
+
+function bulletLines(values: string[] | undefined, limit = 2): string {
+  const items = (values ?? []).map((item) => item.trim()).filter(Boolean).slice(0, limit)
+  return items.length ? items.map((item) => `- ${item}`).join('\n') : ''
+}
+
+export function messageFor(kind: UpdateKind, _question: string, synthesis: FounderInvestigationSynthesis): string {
+  const opening: Record<UpdateKind, string> = {
+    initial_answer: 'I finished the research. Here is the short version:',
+    new_evidence: 'I found something new in the research:',
+    contradiction: 'I found a conflict in the research:',
+    belief_revision: 'I need to update my earlier answer:',
+    urgent_implication: 'I found something important:',
   }
-  const extra = kind === 'belief_revision' && synthesis.materialChanges?.length
-    ? `\n\nWhat changed: ${synthesis.materialChanges.slice(0, 3).join('; ')}`
-    : kind === 'contradiction' && synthesis.conflictingEvidence?.length
-      ? '\n\nI found evidence that conflicts with the earlier picture.'
-      : ''
-  return `${label[kind]} on “${question}”:\n\n${synthesis.brief}${extra}`.slice(0, 6000)
+
+  const sections = [opening[kind], plainBrief(synthesis.brief)]
+
+  if (kind === 'belief_revision') {
+    const changes = bulletLines(synthesis.materialChanges, 3)
+    if (changes) sections.push(`What changed:\n${changes}`)
+  } else if (kind === 'contradiction' && synthesis.conflictingEvidence?.length) {
+    sections.push('Some sources disagree, so I would not treat that part as settled yet.')
+  }
+
+  const recommendations = bulletLines(synthesis.recommendations, 2)
+  if (recommendations) sections.push(`What I would do next:\n${recommendations}`)
+
+  return sanitizeHumanFacingText(sections.filter(Boolean).join('\n\n')).slice(0, 3200)
 }
 
 async function upsertOwnerAttention(
