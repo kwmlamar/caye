@@ -49,6 +49,7 @@ function deriveProvider(applyUrl: string): ExecutionProvider {
     return 'generic'
   }
   if (isAllowedAtsHost('greenhouse', hostname)) return 'greenhouse'
+  if (isAllowedAtsHost('lever', hostname)) return 'lever'
   return 'generic'
 }
 
@@ -118,8 +119,8 @@ export async function runPreflight(applicationId: string): Promise<PreflightResu
   if (!destinationCheck.allowed) return { outcome: 'blocked', checks, reason: destinationCheck.reason }
 
   const provider = deriveProvider(candidate.apply_url)
-  const providerSupported = provider === 'greenhouse'
-  checks.push(check('provider_supported', providerSupported, providerSupported ? 'Provider (Greenhouse) has an automated executor.' : `Provider derived from apply URL ("${provider}") has no automated executor yet — human review required.`))
+  const providerSupported = provider === 'greenhouse' || provider === 'lever'
+  checks.push(check('provider_supported', providerSupported, providerSupported ? `Provider (${provider}) has an automated executor.` : `Provider derived from apply URL ("${provider}") has no automated executor yet — human review required.`))
   if (!providerSupported) return { outcome: 'blocked', checks, reason: checks[checks.length - 1].detail }
 
   // 3 — job-search not paused (PREPARE-phase pause) + execution rollout

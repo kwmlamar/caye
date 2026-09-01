@@ -19,6 +19,13 @@ export const ALLOWED_ATS_HOSTS: Record<string, readonly string[]> = {
     'job-boards.eu.greenhouse.io',
     'boards-api.greenhouse.io',
   ],
+  // Lever's hosted application form lives entirely on this one host across
+  // every employer (verified against live jobs.lever.co apply pages for two
+  // unrelated employers on 2026-08-31) — there is no separate API host
+  // analogous to Greenhouse's boards-api.greenhouse.io, because Lever's
+  // hosted form has no public field-discovery API at all (see
+  // providers/lever-form-session.ts).
+  lever: ['jobs.lever.co'],
 }
 
 export function isAllowedAtsHost(provider: string, hostname: string): boolean {

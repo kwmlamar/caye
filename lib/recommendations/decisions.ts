@@ -7,7 +7,7 @@ import {
   type WorkspaceAutonomyPolicy,
 } from '@/lib/action-autonomy'
 import { resolveWorkspaceDecisionAuthority } from '@/lib/decision-authority'
-import { observeAttentionItem, setAttentionStatus } from '@/lib/owner-attention'
+import { observeAttentionItem } from '@/lib/owner-attention'
 import type { RecommendationAuthority, RecommendationReversibility, RecommendationRisk } from './service'
 
 export type RecommendationDecision = 'pending' | 'accepted' | 'rejected' | 'deferred' | 'cancelled'
@@ -97,10 +97,21 @@ function authorityAlreadyGranted(authority: RecommendationAuthority, context: Ac
 export function evaluateRecommendationDecisionPolicy(input: RecommendationDecisionPolicyInput): RecommendationDecisionPolicyVerdict {
   const { recommendation, actionKind, actionContext, workspacePolicy } = input
   const authorityGranted = authorityAlreadyGranted(recommendation.required_authority, actionContext)
-  if (actionKind === 'authority_policy_change') return { disposition: 'founder_required', reasons: ['authority_system_self_modification'], authorityGranted }
-  if (actionRequiresFounderApproval(actionKind, actionContext, recommendation.risk_classification)) return { disposition: 'founder_required', reasons: ['consequential_action_requires_founder'], authorityGranted }
-  if (!authorityGranted) return { disposition: 'founder_required', reasons: ['required_authority_not_already_granted'], authorityGranted: false }
-  if (recommendation.risk_classification !== 'low' || recommendation.reversibility !== 'easy') return { disposition: 'founder_required', reasons: ['recommendation_not_low_risk_and_reversible'], authorityGranted }
+
+  // Caye can never bootstrap permission to rewrite the policy that grants Caye permission.
+  if (actionKind === 'authority_policy_change') {
+    return { disposition: 'founder_required', reasons: ['authority_system_self_modification'], authorityGranted }
+  }
+  if (actionRequiresFounderApproval(actionKind, actionContext, recommendation.risk_classification)) {
+    return { disposition: 'founder_required', reasons: ['consequential_action_requires_founder'], authorityGranted }
+  }
+  if (!authorityGranted) {
+    return { disposition: 'founder_required', reasons: ['required_authority_not_already_granted'], authorityGranted: false }
+  }
+  if (recommendation.risk_classification !== 'low' || recommendation.reversibility !== 'easy') {
+    return { disposition: 'founder_required', reasons: ['recommendation_not_low_risk_and_reversible'], authorityGranted }
+  }
+
   const autonomy = decideActionAutonomy(actionContext, workspacePolicy)
   if (autonomy.decision === 'block') return { disposition: 'blocked', reasons: autonomy.reasons, authorityGranted }
   if (autonomy.decision === 'require_approval') return { disposition: 'founder_required', reasons: autonomy.reasons, authorityGranted }
@@ -138,7 +149,9 @@ async function loadRecommendation(id: string): Promise<RecommendationRow> {
 }
 
 function scopeMatches(row: RecommendationRow, workspaceId: string | null): boolean {
-  return row.scope === 'workspace' ? workspaceId !== null && row.workspace_id === workspaceId : workspaceId === null && row.workspace_id === null
+  return row.scope === 'workspace'
+    ? workspaceId !== null && row.workspace_id === workspaceId
+    : workspaceId === null && row.workspace_id === null
 }
 
 async function requireFounderAttention(row: RecommendationRow, reasons: string[]): Promise<void> {
@@ -156,19 +169,11 @@ async function requireFounderAttention(row: RecommendationRow, reasons: string[]
   })
 }
 
-async function resolveRecommendationAttention(row: RecommendationRow, decision: Exclude<RecommendationDecision, 'pending'>): Promise<void> {
-  if (row.scope !== 'workspace' || !row.workspace_id) return
-  await setAttentionStatus({
-    workspaceId: row.workspace_id,
-    subjectType: 'recommendation_decision',
-    subjectId: row.id,
-    status: 'resolved',
-    decision,
-    completed: true,
-  })
-}
-
-/** Canonical recommendation decision and execution-time revalidation boundary. */
+/**
+ * Agent 3 integration point: canonical recommendation -> durable decision ->
+ * recommendation-level execution eligibility. Existing action/tool gates still
+ * own execution and must run after an accepted result.
+ */
 export async function decideRecommendationForExecution(input: {
   recommendationId: string
   workspaceId: string | null
@@ -176,35 +181,51 @@ export async function decideRecommendationForExecution(input: {
   actionContext: ActionAutonomyContext
   workspacePolicy: WorkspaceAutonomyPolicy
   idempotencyKey: string
-  acceptedDecision?: { id: string; actorKind: RecommendationDecisionActor } | null
 }) {
   const row = await loadRecommendation(input.recommendationId)
-  if (!scopeMatches(row, input.workspaceId)) return { executionEligible: false, disposition: 'blocked' as const, reasons: ['recommendation_workspace_mismatch'], decision: null }
-  if (row.status === 'superseded' || row.status === 'withdrawn') return { executionEligible: false, disposition: 'blocked' as const, reasons: ['recommendation_stale_or_withdrawn'], decision: null }
-
-  const verdict = evaluateRecommendationDecisionPolicy({ recommendation: row, actionKind: input.actionKind, actionContext: input.actionContext, workspacePolicy: input.workspacePolicy })
-  if (input.acceptedDecision) {
-    if (verdict.disposition === 'blocked') return { executionEligible: false, disposition: verdict.disposition, reasons: verdict.reasons, decision: input.acceptedDecision }
-    if (!verdict.authorityGranted) return { executionEligible: false, disposition: verdict.disposition, reasons: [...verdict.reasons, 'current_authority_not_granted'], decision: input.acceptedDecision }
-    if (input.acceptedDecision.actorKind === 'system') return { executionEligible: verdict.disposition === 'auto_accept', disposition: verdict.disposition, reasons: verdict.reasons, decision: input.acceptedDecision }
-    if (verdict.disposition === 'auto_accept' || (verdict.disposition === 'founder_required' && input.acceptedDecision.actorKind === 'founder')) return { executionEligible: true, disposition: verdict.disposition, reasons: verdict.reasons, decision: input.acceptedDecision }
-    return { executionEligible: false, disposition: verdict.disposition, reasons: verdict.reasons, decision: input.acceptedDecision }
+  if (!scopeMatches(row, input.workspaceId)) {
+    return { executionEligible: false, disposition: 'blocked' as const, reasons: ['recommendation_workspace_mismatch'], decision: null }
+  }
+  if (row.status === 'superseded' || row.status === 'withdrawn') {
+    return { executionEligible: false, disposition: 'blocked' as const, reasons: ['recommendation_stale_or_withdrawn'], decision: null }
   }
 
-  const authorityProvenance = { requiredAuthority: row.required_authority, action: input.actionContext.action, deterministicPolicy: 'decideActionAutonomy', verdictReasons: verdict.reasons }
+  const verdict = evaluateRecommendationDecisionPolicy({
+    recommendation: row,
+    actionKind: input.actionKind,
+    actionContext: input.actionContext,
+    workspacePolicy: input.workspacePolicy,
+  })
+  const authorityProvenance = {
+    requiredAuthority: row.required_authority,
+    action: input.actionContext.action,
+    deterministicPolicy: 'decideActionAutonomy',
+    verdictReasons: verdict.reasons,
+  }
+
   if (verdict.disposition === 'auto_accept') {
     const decision = await recordRecommendationDecision({
-      recommendationId: row.id, decision: 'accepted', actorKind: 'system', actorId: 'caye',
+      recommendationId: row.id,
+      decision: 'accepted',
+      actorKind: 'system',
+      actorId: 'caye',
       rationale: `Autonomously accepted within granted low-risk reversible authority${verdict.reasons.length ? `: ${verdict.reasons.join(', ')}` : ''}`,
-      authorityProvenance, workspaceId: input.workspaceId, idempotencyKey: input.idempotencyKey,
+      authorityProvenance,
+      workspaceId: input.workspaceId,
+      idempotencyKey: input.idempotencyKey,
     })
     return { executionEligible: true, disposition: verdict.disposition, reasons: verdict.reasons, decision }
   }
 
   const decision = await recordRecommendationDecision({
-    recommendationId: row.id, decision: 'pending', actorKind: 'system', actorId: 'caye',
-    rationale: verdict.reasons.join(', ') || 'founder judgment required', authorityProvenance,
-    workspaceId: input.workspaceId, idempotencyKey: input.idempotencyKey,
+    recommendationId: row.id,
+    decision: 'pending',
+    actorKind: 'system',
+    actorId: 'caye',
+    rationale: verdict.reasons.join(', ') || 'founder judgment required',
+    authorityProvenance,
+    workspaceId: input.workspaceId,
+    idempotencyKey: input.idempotencyKey,
   })
   await requireFounderAttention(row, verdict.reasons)
   return { executionEligible: false, disposition: verdict.disposition, reasons: verdict.reasons, decision }
@@ -225,19 +246,25 @@ export async function recordHumanRecommendationDecision(input: {
   const row = await loadRecommendation(input.recommendationId)
   if (!scopeMatches(row, input.workspaceId)) throw new Error('recommendation workspace mismatch')
   if (row.status === 'superseded' || row.status === 'withdrawn') throw new Error('stale recommendation cannot be decided')
-  if (FOUNDER_ONLY_ACTIONS.has(input.actionKind) && input.actorKind !== 'founder') throw new Error('this recommendation requires explicit founder approval')
+  if (FOUNDER_ONLY_ACTIONS.has(input.actionKind) && input.actorKind !== 'founder') {
+    throw new Error('this recommendation requires explicit founder approval')
+  }
 
   let authorityProvenance: Record<string, unknown> = { requiredAuthority: row.required_authority }
   if (row.scope === 'workspace' && input.decision === 'accepted') {
     const requiredAuthority = row.required_authority.principalRef?.trim()
     if (!requiredAuthority || row.required_authority.resolvedBy !== 'canonical_authority') throw new Error('required recommendation authority is unresolved')
     if (input.actorOperatorId == null) throw new Error('workspace decision actor identity is unavailable')
-    const authority = await resolveWorkspaceDecisionAuthority({ workspaceId: row.workspace_id!, actorOperatorId: input.actorOperatorId, requiredAuthority })
+    const authority = await resolveWorkspaceDecisionAuthority({
+      workspaceId: row.workspace_id!,
+      actorOperatorId: input.actorOperatorId,
+      requiredAuthority,
+    })
     if (!authority.actorAuthorized) throw new Error('decision actor does not hold required authority')
     authorityProvenance = { requiredAuthority, resolution: authority.evidence }
   }
 
-  const decision = await recordRecommendationDecision({
+  return recordRecommendationDecision({
     recommendationId: row.id,
     decision: input.decision,
     actorKind: input.actorKind,
@@ -247,13 +274,14 @@ export async function recordHumanRecommendationDecision(input: {
     workspaceId: input.workspaceId,
     idempotencyKey: input.idempotencyKey,
   })
-  await resolveRecommendationAttention(row, input.decision)
-  return decision
 }
 
 export async function recommendationExecutionEligible(recommendationId: string, workspaceId: string | null): Promise<boolean> {
   const supabase = createServiceClient()
-  const { data, error } = await supabase.rpc('caye_recommendation_execution_eligible', { p_recommendation_id: recommendationId, p_workspace_id: workspaceId })
+  const { data, error } = await supabase.rpc('caye_recommendation_execution_eligible', {
+    p_recommendation_id: recommendationId,
+    p_workspace_id: workspaceId,
+  })
   if (error) return false
   return data === true
 }

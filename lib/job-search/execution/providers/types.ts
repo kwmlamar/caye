@@ -1,6 +1,6 @@
 /**
  * Job-search operator (CAY-194 / #194) — provider-neutral executor
- * interface. Every ATS provider (Greenhouse today; Lever/Ashby/Workday/
+ * interface. Every ATS provider (Greenhouse and Lever today; Ashby/Workday/
  * generic-forms conceptually, via unsupported.ts, until each gets its own
  * implementation) implements exactly this shape. executor.ts never branches
  * on provider identity outside of `selectProvider` — no provider-specific
@@ -17,8 +17,11 @@ export interface AtsExecutorProvider {
    * to submit. This is a compile-time-visible property of the provider
    * itself, NOT a runtime setting — the executor refuses to call submit()
    * unless it is true, so "can we submit at all" can never be turned on by
-   * flipping a database flag. No provider sets it to true today; see
-   * greenhouse.ts for why Greenhouse's public API cannot.
+   * flipping a database flag. Greenhouse sets this true (see greenhouse.ts,
+   * submitLive). Lever sets it false — not a gap, but the verified state of
+   * Lever's own hosted form: it requires solving an hCaptcha challenge
+   * before it will accept a submission, and this operator never solves or
+   * bypasses a CAPTCHA (see providers/lever-form-session.ts).
    */
   readonly canSubmit: boolean
   /** Optional live browser readiness pass. It may navigate/fill/upload, but must never click Submit. */

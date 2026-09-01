@@ -55,7 +55,7 @@ const POLARITY_SENSITIVE = new Set<string>([
   'willingness_to_travel',
 ])
 
-const PATTERNS: [HighRiskSemanticKey | 'first_name' | 'last_name' | 'email' | 'phone' | 'resume' | 'cover_letter' | 'linkedin', RegExp][] = [
+const PATTERNS: [HighRiskSemanticKey | 'first_name' | 'last_name' | 'full_name' | 'email' | 'phone' | 'resume' | 'cover_letter' | 'linkedin', RegExp][] = [
   // work_authorization is tested BEFORE sponsorship on purpose. "Are you
   // legally authorized to work in the United States?" is a work-authorization
   // question even when it goes on to mention sponsorship; the original order
@@ -82,6 +82,10 @@ const PATTERNS: [HighRiskSemanticKey | 'first_name' | 'last_name' | 'email' | 'p
   ['background_check_acknowledgment', /background\s+check/i],
   ['arbitration_acknowledgment', /arbitrat/i],
   ['linkedin', /linked\s*in/i],
+  // Tested BEFORE first_name/last_name: a single-field "Full name" input
+  // (Lever's native identity field) must never be classified first_name —
+  // that would fill it with only the founder's first name.
+  ['full_name', /\bfull\s*name\b/i],
   ['first_name', /first\s*name/i],
   ['last_name', /last\s*name/i],
   ['email', /e-?mail/i],

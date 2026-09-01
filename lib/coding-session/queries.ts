@@ -12,7 +12,6 @@ export interface CodingSessionRow {
   execution_evidence:Record<string,unknown>; observed_outcome:string|null; prediction_comparison:PredictionComparison|null;
   engineering_verdict:EngineeringVerdict|null; outcome_environment:'branch'|'production'|null; production_verified:boolean;
   merge_authorized:boolean; deploy_authorized:boolean; objective_run_id:string|null; workspace_id:string|null; learning_key:string|null;
-  recommendation_id:string|null; recommendation_fingerprint:string|null; recommendation_provenance:Record<string,unknown>; self_improvement_session:boolean;
 }
 export async function getLatestCodingSession():Promise<CodingSessionRow|null>{const s=createServiceClient();const{data}=await s.from('caye_coding_sessions').select('*').order('created_at',{ascending:false}).limit(1).maybeSingle();return(data as CodingSessionRow|null)??null}
 export async function getCodingSession(id:string):Promise<CodingSessionRow|null>{const s=createServiceClient();const{data}=await s.from('caye_coding_sessions').select('*').eq('id',id).maybeSingle();return(data as CodingSessionRow|null)??null}
