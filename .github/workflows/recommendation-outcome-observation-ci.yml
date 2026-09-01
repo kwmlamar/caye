@@ -1,0 +1,33 @@
+name: Recommendation outcome observation
+
+on:
+  pull_request:
+    paths:
+      - 'app/api/caye/research-worker/route.ts'
+      - 'lib/recommendations/observation-policy.ts'
+      - 'lib/recommendations/observation-policy.test.ts'
+      - 'lib/recommendations/observation-worker.ts'
+      - 'lib/recommendations/observations.ts'
+      - 'lib/recommendations/outcome-policy.ts'
+      - 'lib/recommendations/outcomes.ts'
+      - 'supabase/migrations/20260901021500_recommendation_outcome_observations.sql'
+      - '.github/workflows/recommendation-outcome-observation-ci.yml'
+  push:
+    branches:
+      - feat/recommendation-outcome-observation
+
+jobs:
+  outcome-observation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Recommendation outcome observation tests
+        run: npx vitest run lib/recommendations/observation-policy.test.ts lib/recommendations/outcome-policy.test.ts supabase/migrations/20260901012000_canonical_recommendation_decisions.test.ts
+      - name: Production build
+        run: npm run build
