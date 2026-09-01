@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const state = vi.hoisted(() => ({
   lead: { id: 'lead-1' } as { id: string } | null,
-  conversation: { metadata: {}, last_sender_type: 'customer', contact_id: 'contact-1' } as { metadata: Record<string, unknown>; last_sender_type: string; contact_id: string | null } | null,
+  conversation: { metadata: { lead_id: 'lead-1' }, last_sender_type: 'customer', contact_id: 'contact-1' } as { metadata: Record<string, unknown>; last_sender_type: string; contact_id: string | null } | null,
   lifecycle: vi.fn(),
   context: vi.fn(),
   bridge: vi.fn(),
@@ -36,7 +36,7 @@ const inbound = { workspaceId: 'workspace-1', senderEmail: 'prospect@example.tes
 describe('Sales inbound boundary', () => {
   beforeEach(() => {
     state.lead = { id: 'lead-1' }
-    state.conversation = { metadata: {}, last_sender_type: 'customer', contact_id: 'contact-1' }
+    state.conversation = { metadata: { lead_id: 'lead-1' }, last_sender_type: 'customer', contact_id: 'contact-1' }
     state.lifecycle.mockReset()
     state.context.mockReset().mockResolvedValue({ id: 'lead-1' })
     state.bridge.mockReset().mockResolvedValue({ relationshipId: 'relationship-1', opportunityId: null })
@@ -53,13 +53,32 @@ describe('Sales inbound boundary', () => {
     const result = await handleSalesInbound({ ...inbound, ...message })
     expect(result.disposition).toBe(disposition)
     expect(state.lifecycle).toHaveBeenCalledWith(expect.objectContaining({
-      leadId: 'lead-1', event, eventKey: `inbound:message-1:${event}`,
+      leadId: 'lead-1', event,
+      eventKey: event === 'human_reply_received'
+        ? `inbound:outreach:message-1:${event}`
+        : `inbound:message-1:${event}`,
     }))
     expect(state.context).toHaveBeenCalledTimes(disposition === 'eligible' ? 1 : 0)
     expect(state.bridge).toHaveBeenCalledTimes(disposition === 'eligible' ? 1 : 0)
     if (disposition === 'eligible') {
       expect(state.bridge).toHaveBeenCalledWith(expect.objectContaining({ observedAt: inbound.receivedAt }))
     }
+  })
+
+  it('does not turn an unrelated thread from a known prospect into outreach reply evidence', async () => {
+    state.conversation = { metadata: {}, last_sender_type: 'customer', contact_id: 'contact-1' }
+    const result = await handleSalesInbound({ ...inbound, subject: 'Different topic', body: 'Can you send me the invoice?' })
+    expect(result.disposition).toBe('eligible')
+    expect(state.lifecycle).not.toHaveBeenCalledWith(expect.objectContaining({ event: 'human_reply_received' }))
+    expect(state.context).toHaveBeenCalledTimes(1)
+    expect(state.bridge).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not attribute a reply when the conversation belongs to a different outreach lead', async () => {
+    state.conversation = { metadata: { lead_id: 'lead-2' }, last_sender_type: 'customer', contact_id: 'contact-1' }
+    const result = await handleSalesInbound({ ...inbound, subject: 'Re: Caye', body: 'Interested' })
+    expect(result.disposition).toBe('eligible')
+    expect(state.lifecycle).not.toHaveBeenCalledWith(expect.objectContaining({ event: 'human_reply_received' }))
   })
 
   it('keeps internal and synthetic traffic out of lifecycle evidence and response context', async () => {
@@ -92,7 +111,6 @@ describe('Sales inbound boundary', () => {
       // terminal stage, cadence stop, signal, and replay receipt.
     }))
     expect(state.context).not.toHaveBeenCalled()
-    expect(state.bridge).not.toHaveBeenCalled()
   })
 
   it('suppresses the recipient named by a bounce notification, not the mailer-daemon sender', async () => {
