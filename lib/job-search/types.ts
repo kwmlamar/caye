@@ -71,11 +71,37 @@ export type WorkAuthSignals = {
   evidence: string[]
 }
 
+export type RoleFamily =
+  | 'software_engineer'
+  | 'support_engineer'
+  | 'help_desk'
+  | 'devops_infrastructure'
+  | 'qa_test'
+  | 'unknown'
+
 export type HardBlockReason =
   | 'opt_excluded'
   | 'citizenship_required'
   | 'clearance_required'
   | 'experience_gap_too_large'
+  | 'location_mismatch'
+
+export type RejectionReason =
+  | 'hard_blocker_opt_excluded'
+  | 'hard_blocker_citizenship_required'
+  | 'hard_blocker_clearance_required'
+  | 'hard_blocker_experience_gap'
+  | 'hard_blocker_location_mismatch'
+  | 'policy_gate_ambiguous_work_auth'
+  | 'score_title_mismatch'
+  | 'score_stack_mismatch'
+  | 'score_seniority_mismatch'
+  | 'score_degree_required_not_held'
+  | 'score_location_not_preferred'
+  | 'score_salary_below_minimum'
+  | 'score_too_old'
+  | 'score_too_complex'
+  | 'score_below_threshold'
 
 export type PolicyGateResult =
   | { outcome: 'blocked'; reason: HardBlockReason; detail: string }
@@ -92,6 +118,12 @@ export type ScoreBreakdown = {
   compensationFit: number
   recency: number
   complexityPenalty: number
+  familyBonus: number
+}
+
+export type ScoringContext = {
+  roleFamily: RoleFamily
+  titleFamilyMatch: boolean
 }
 
 export type ScoringResult = {

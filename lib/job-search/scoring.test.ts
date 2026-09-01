@@ -81,3 +81,74 @@ describe('scoreCandidate — support-family calibration', () => {
     expect(r.breakdown.titleFit).toBe(5)
   })
 })
+
+describe('scoreCandidate — role family bonus', () => {
+  const backendBase: ScoringInput = {...strongFitBase, title: 'Backend Engineer (Entry Level)', targetTitles: ['Junior Software Engineer', 'Backend Engineer I', 'Junior Backend Engineer']}
+
+  it('awards family bonus when title family matches targets', () => {
+    const r = scoreCandidate(backendBase)
+    expect(r.breakdown.familyBonus).toBe(3)
+  })
+
+  it('does not award family bonus when family is unknown', () => {
+    const r = scoreCandidate({...strongFitBase, title: 'Mythical Role', targetTitles: ['Software Engineer']})
+    expect(r.breakdown.familyBonus).toBe(0)
+  })
+
+  it('increments score when family bonus applies', () => {
+    const withFamily = scoreCandidate(backendBase)
+    const withoutFamily = scoreCandidate({...backendBase, targetTitles: ['DevOps Engineer', 'Site Reliability Engineer']})
+    expect(withFamily.score).toBeGreaterThan(withoutFamily.score)
+  })
+})
+
+describe('scoreCandidate — portfolio strategy (help desk bucket)', () => {
+  const helpDeskBase: ScoringInput = {
+    ...strongFitBase,
+    title: 'Help Desk Technician',
+    targetTitles: ['Help Desk Technician', 'IT Support Specialist', 'Desktop Support Technician'],
+    candidateSkills: ['Active Directory', 'Windows', 'Ticketing Systems'],
+    founderSkills: ['TypeScript', 'Windows', 'Troubleshooting'],
+    requiresDegree: 'none',
+    minYearsExperienceRequired: null,
+    founderYearsExperience: 0,
+    salaryMin: 50000,
+    founderMinAcceptableSalary: 45000,
+    location: 'Remote - United States',
+    remoteType: 'remote',
+  }
+
+  it('routes help desk role to queue when title matches', () => {
+    const r = scoreCandidate(helpDeskBase)
+    expect(r.breakdown.titleFit).toBe(20)
+    expect(r.score).toBeGreaterThanOrEqual(60)
+  })
+
+  it('penalizes region-locked help desk roles', () => {
+    const us = scoreCandidate(helpDeskBase)
+    const eu = scoreCandidate({...helpDeskBase, location: 'Remote - London', founderOpenToRelocation: false})
+    expect(us.score).toBeGreaterThan(eu.score)
+  })
+})
+
+describe('scoreCandidate — freshness penalty', () => {
+  const now = new Date()
+  const old30days = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString()
+  const old60days = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000).toISOString()
+
+  it('gives full recency credit to <72h old postings', () => {
+    const r = scoreCandidate({...strongFitBase, postedAt: now.toISOString(), discoveredAt: now.toISOString()})
+    expect(r.breakdown.recency).toBe(10)
+  })
+
+  it('reduces recency score for week-old postings', () => {
+    const weekOld = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString()
+    const r = scoreCandidate({...strongFitBase, postedAt: weekOld, discoveredAt: now.toISOString()})
+    expect(r.breakdown.recency).toBe(6)
+  })
+
+  it('penalizes month-old postings', () => {
+    const r = scoreCandidate({...strongFitBase, postedAt: old30days, discoveredAt: now.toISOString()})
+    expect(r.breakdown.recency).toBe(2)
+  })
+})

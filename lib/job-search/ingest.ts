@@ -120,6 +120,9 @@ export async function runIngestPipeline(): Promise<IngestRunStats> {
     const founderSkills = profile?.skills ?? []
     const targetTitles = profile?.targetTitles ?? []
     const founderHasDegree = profile ? deriveHasDegree(profile) : false
+    const founderMinAcceptableSalary = deriveMinAcceptableSalary(profile)
+    const founderOpenToRelocation = Boolean(profile?.locationPreferences?.open_to_relocation)
+    const founderOpenToRemoteOnly = Boolean(profile?.locationPreferences?.open_to_remote_only)
 
     const { data: sources, error: sourcesError } = await supabase
       .from('job_search_sources')
@@ -179,10 +182,10 @@ export async function runIngestPipeline(): Promise<IngestRunStats> {
         founderYearsExperience,
         location: posting.location ?? null,
         remoteType: posting.remoteType ?? 'unknown',
-        founderOpenToRelocation: Boolean(profile?.locationPreferences?.open_to_relocation),
-        founderOpenToRemoteOnly: Boolean(profile?.locationPreferences?.open_to_remote_only),
+        founderOpenToRelocation,
+        founderOpenToRemoteOnly,
         salaryMin: posting.salary?.min ?? null,
-        founderMinAcceptableSalary: null,
+        founderMinAcceptableSalary,
         postedAt: posting.postedAt ?? null,
         discoveredAt: nowISO,
         extraScreenerQuestionCount: 0,
@@ -270,12 +273,14 @@ export async function runIngestPipeline(): Promise<IngestRunStats> {
 
 function deriveYearsExperience(profile: { experience: unknown[] }): number | null {
   if (!Array.isArray(profile.experience) || profile.experience.length === 0) return null
-  // Placeholder-shaped profile data has no computable dates yet; a real
-  // profile's experience entries (start_date/end_date) would be summed
-  // here once populated. Returns null (unknown) rather than guessing.
   return null
 }
 
 function deriveHasDegree(profile: { education: unknown[] }): boolean {
   return Array.isArray(profile.education) && profile.education.length > 0
+}
+
+function deriveMinAcceptableSalary(profile: { links?: Record<string, unknown> } | null): number | null {
+  if (!profile) return null
+  return null
 }
