@@ -5,7 +5,9 @@ on:
     paths:
       - 'lib/semantic-scope.ts'
       - 'lib/semantic-scope.test.ts'
+      - 'lib/semantic-scope-parent.test.ts'
       - 'supabase/migrations/20260901141500_semantic_scope_foundation.sql'
+      - 'supabase/migrations/20260901142500_semantic_scope_parent_binding.sql'
       - '.github/workflows/semantic-isolation-foundation-ci.yml'
 
 permissions:
@@ -24,7 +26,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Semantic scope unit and migration tests
-        run: npx vitest run lib/semantic-scope.test.ts --reporter=verbose
+        run: npx vitest run lib/semantic-scope.test.ts lib/semantic-scope-parent.test.ts --reporter=verbose
       - name: Full unit/integration suite
         id: full_suite
         continue-on-error: true
