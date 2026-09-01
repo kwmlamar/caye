@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { runMaterialIntelligenceRecommendations } from '@/lib/recommendations/production'
+import { stageEligibleRecommendationActions } from '@/lib/recommendations/autonomous-worker'
 import { runCrossDomainSynthesisIfDue } from '@/lib/research/cross-domain-production'
 import { runNextProductionResearchDesk } from '@/lib/research/desks/production'
 import {
@@ -47,22 +48,37 @@ async function runRecommendationsSafely() {
   }
 }
 
+async function wakeRecommendationActionsSafely() {
+  try {
+    return { status: 'completed' as const, ...(await stageEligibleRecommendationActions()) }
+  } catch (error) {
+    // Recommendation execution is downstream of both research and canonical
+    // recommendation persistence. A queueing failure must remain observable but
+    // must not erase an otherwise successful research cycle.
+    return { status: 'failed' as const, error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
 /**
  * One existing worker carries the complete autonomous research loop:
- * cross-domain reassessment, grounded recommendation proposal, standing desks,
- * due durable investigations, then the canonical queued-run executor. No second
- * cron or shadow research queue.
+ * cross-domain reassessment, grounded recommendation proposal + bounded action
+ * wake, standing desks, due durable investigations, then the canonical queued-
+ * run executor. No second cron or shadow recommendation scheduler.
  */
 export async function runResearchWorker(): Promise<Record<string, unknown>> {
   const crossDomain = await runCrossDomainSynthesisIfDue()
   const recommendations = await runRecommendationsSafely()
+  // Always perform the bounded wake pass after recommendation generation, even
+  // when another research phase returns early below. This is what removes the
+  // old requirement for a founder message to advance an eligible recommendation.
+  const recommendationActions = await wakeRecommendationActionsSafely()
   if (crossDomain.status !== 'idle') {
-    return { kind: 'cross-domain-synthesis', recommendations, ...crossDomain }
+    return { kind: 'cross-domain-synthesis', recommendations, recommendationActions, ...crossDomain }
   }
 
   const workerId = `research-worker:${process.env.VERCEL_REGION || 'unknown'}`
   const desk = await runNextProductionResearchDesk(workerId)
-  if (desk.status !== 'idle') return { kind: 'research-desk', recommendations, ...desk }
+  if (desk.status !== 'idle') return { kind: 'research-desk', recommendations, recommendationActions, ...desk }
 
   // A due investigation becomes an ordinary canonical research_run. The queue's
   // existing active-run uniqueness guard converges concurrent worker ticks.
@@ -88,5 +104,5 @@ export async function runResearchWorker(): Promise<Record<string, unknown>> {
     }
   }
 
-  return { kind: 'queued-research', provider: binding.provider.name, dueQueued, lifecycle, recommendations, ...job }
+  return { kind: 'queued-research', provider: binding.provider.name, dueQueued, lifecycle, recommendations, recommendationActions, ...job }
 }
