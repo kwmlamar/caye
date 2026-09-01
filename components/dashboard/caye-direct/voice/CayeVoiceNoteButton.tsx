@@ -143,7 +143,15 @@ export default function CayeVoiceNoteButton({ disabled, onTranscript }: { disabl
   }
 
   return (
-    <button type="button" onClick={start} disabled={disabled || isTranscribing} title={error || label} aria-label={label} className="caye-direct-send">
+    <button
+      type="button"
+      onClick={start}
+      disabled={disabled || isTranscribing}
+      title={error || label}
+      aria-label={label}
+      className="caye-direct-send"
+      style={{ background: 'transparent', border: 'none', boxShadow: 'none' }}
+    >
       {isTranscribing ? <span aria-hidden style={{ width: 13, height: 13, border: '2px solid rgba(244,244,245,0.25)', borderTopColor: '#4EBECE', borderRadius: '50%', animation: 'caye-attachment-spin .7s linear infinite' }} /> : <svg aria-hidden width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(244,244,245,0.6)" strokeWidth="2.2" strokeLinecap="round"><rect x="9" y="2" width="6" height="12" rx="3" /><path d="M5 10a7 7 0 0 0 14 0M12 19v3" /></svg>}
     </button>
   )
