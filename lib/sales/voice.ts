@@ -71,17 +71,51 @@ export function renderCallToAction(trackedLink: string): string {
   ].join('\n')
 }
 
-/** The cold-open structure. One definition, used by every first-touch path. */
-export const FIRST_TOUCH_STRUCTURE = [
-  'STRUCTURE, exactly four beats in this order:',
-  '1. HOOK. One sentence, specific to this business. Name it, then state a confident true thing about their situation. Never hedge with "probably" or "I\'d guess" — that invites "actually, no". Never pad it into a truism that would read identically for any business in their industry; that is not personalisation.',
-  '2. WHO AND WHAT. "I\'m Lamar, founder of TropiTech, a Bahamian tech company. I built Caye." Then what she does, in one short visual sentence about the job she holds.',
-  '3. PROOF. One real business already using her. Never imply more customers than actually exist.',
-  '4. CLOSE. One short question, then the link.',
-  '',
-  'LENGTH: 50 to 70 words. Hard cap 90. Count words, not sentences.',
-  'PERSONALISATION: exactly one sentence, the hook, is specific to this lead. Beats 2 to 4 stay consistent between prospects. That sameness is intentional, not laziness.',
-].join('\n')
+/**
+ * Which first-touch framing generated this email. The two options mirror
+ * the two openers that were being compared by hand in the outreach tracker
+ * (decisions-log 2026-07-29, "direct pitch vs pain-point question") with no
+ * way to attribute a reply back to which one was used. assignFirstTouchVariant
+ * plus outreach_leads.first_touch_variant closes that instrumentation gap;
+ * this type is the vocabulary both sides share.
+ */
+export type FirstTouchVariant = 'direct_pitch' | 'pain_point_question'
+
+/**
+ * Deterministic ~50/50 split from the lead id — no assignment table to keep
+ * in sync, and a retried/resent draft for the same lead always lands in the
+ * same bucket instead of flapping between variants on every cron tick.
+ */
+export function assignFirstTouchVariant(leadId: string): FirstTouchVariant {
+  let hash = 0
+  for (let i = 0; i < leadId.length; i++) hash = (hash * 31 + leadId.charCodeAt(i)) | 0
+  return Math.abs(hash) % 2 === 0 ? 'direct_pitch' : 'pain_point_question'
+}
+
+/**
+ * The cold-open structure. One definition, used by every first-touch path.
+ * Only the CLOSE beat varies by `variant` — HOOK, WHO AND WHAT, and PROOF
+ * stay exactly as documented ("that sameness is intentional, not
+ * laziness"). Varying only the CLOSE keeps the variant split additive
+ * rather than touching the parts of the structure earlier incidents
+ * already converged on.
+ */
+export function renderFirstTouchStructure(variant: FirstTouchVariant): string {
+  const close =
+    variant === 'direct_pitch'
+      ? '4. CLOSE. State plainly, in one short sentence, that Caye can show them. Then one demo-inviting question, then the link. Example shape: "Want to see her answer one of your own customer messages?"'
+      : '4. CLOSE. One short question that surfaces the cost of a missed message, before mentioning Caye by name. Then the link. Example shape: "What happens to a message that comes in after you have closed up for the night?"'
+  return [
+    'STRUCTURE, exactly four beats in this order:',
+    '1. HOOK. One sentence, specific to this business. Name it, then state a confident true thing about their situation. Never hedge with "probably" or "I\'d guess" — that invites "actually, no". Never pad it into a truism that would read identically for any business in their industry; that is not personalisation.',
+    '2. WHO AND WHAT. "I\'m Lamar, founder of TropiTech, a Bahamian tech company. I built Caye." Then what she does, in one short visual sentence about the job she holds.',
+    '3. PROOF. One real business already using her. Never imply more customers than actually exist.',
+    close,
+    '',
+    'LENGTH: 50 to 70 words. Hard cap 90. Count words, not sentences.',
+    'PERSONALISATION: exactly one sentence, the hook, is specific to this lead. Beats 2 to 4 stay consistent between prospects sent the same variant. That sameness is intentional, not laziness.',
+  ].join('\n')
+}
 
 /** Assembled system prompt for a first-touch cold open. */
 export function buildFirstTouchSystem(args: {
@@ -89,7 +123,13 @@ export function buildFirstTouchSystem(args: {
   leadName: string
   businessName: string
   trackedLink: string
+  variant: FirstTouchVariant
+  /** Real excerpt scraped from the lead's own site (outreach_leads.business_evidence), if one was found. */
+  evidence?: string | null
 }): string {
+  const evidenceBlock = args.evidence
+    ? `OBSERVED ABOUT THIS BUSINESS: scraped from their own website: "${args.evidence}". Use it only if it is genuinely specific to them — restate it in your own words for the HOOK beat, never quote it verbatim. If it is generic boilerplate that could describe any business in their industry, ignore it and fall back to a general true thing about their situation instead.`
+    : 'No specific detail about this business was found beyond its name and industry. Write the HOOK honestly within that limit: a confident true thing about their general situation (for example, messages piling up while they run the business day to day). Never invent a specific detail about them you do not have.'
   return [
     SALES_IDENTITY,
     '',
@@ -104,7 +144,8 @@ export function buildFirstTouchSystem(args: {
     args.workspaceVoice.trim(),
     '',
     `TASK: write a first-touch cold email to ${args.leadName} at ${args.businessName}, who has never heard from us.`,
-    FIRST_TOUCH_STRUCTURE,
+    evidenceBlock,
+    renderFirstTouchStructure(args.variant),
     'Do not invent details about their business you do not already know.',
     '',
     'Respond in exactly this format and nothing else:',
