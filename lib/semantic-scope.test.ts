@@ -182,7 +182,7 @@ describe('semantic provenance migration and deterministic backfill', () => {
         ) values ('${W1}', 'workspace_events', '${id}', '${scope}', 'test', 'test_actor', 'test:${id}');`)
         id += 1
       }
-      expect(await scalar<number>(db, `select count(*)::int from public.semantic_provenance where record_id::int between 100 and 107`)).toBe(8)
+      expect(await scalar<number>(db, `select count(*)::int from public.semantic_provenance where record_table='workspace_events' and record_id in ('100','101','102','103','104','105','106','107')`)).toBe(8)
 
       await db.exec(`insert into public.workspace_events(id, workspace_id, actor_kind, origin)
         values (108, '${W1}', 'test_actor', 'manual');`)
