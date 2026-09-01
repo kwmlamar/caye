@@ -102,4 +102,4 @@ export function resolveDiscoveredField(field: DiscoveredField, facts: ProfileFac
 }
 
 /** Structural fields the executor fills directly rather than through canonical-fact resolution. */
-export const STRUCTURAL_SEMANTIC_KEYS = ['first_name', 'last_name', 'email', 'phone', 'resume', 'cover_letter'] as const
+export const STRUCTURAL_SEMANTIC_KEYS = ['first_name', 'last_name', 'full_name', 'email', 'phone', 'resume', 'cover_letter'] as const

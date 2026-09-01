@@ -23,6 +23,7 @@ import { runPreflight, type PreflightContext } from './preflight'
 import { getExecutionRolloutSettings } from './rollout'
 import { claimApplicationForExecution, releaseExecutionClaim, type ApplicationClaim } from './claim'
 import { greenhouseAtsProvider } from './providers/greenhouse'
+import { leverAtsProvider } from './providers/lever'
 import { unsupportedProvider } from './providers/unsupported'
 import type { AtsExecutorProvider } from './providers/types'
 import { resolveDiscoveredField, STRUCTURAL_SEMANTIC_KEYS } from './answers'
@@ -41,6 +42,7 @@ export type ExecuteApplicationResult =
 
 function selectProvider(provider: ExecutionProvider): AtsExecutorProvider {
   if (provider === 'greenhouse') return greenhouseAtsProvider
+  if (provider === 'lever') return leverAtsProvider
   return unsupportedProvider(provider)
 }
 
@@ -302,6 +304,8 @@ async function runClaimedExecution(claim: ApplicationClaim, providerKey: Executi
           return { status: 'resolved', field, value: profile.fullName?.split(/\s+/)[0] ?? '', source: 'application_specific', reusable: false }
         case 'last_name':
           return { status: 'resolved', field, value: profile.fullName?.split(/\s+/).slice(1).join(' ') ?? '', source: 'application_specific', reusable: false }
+        case 'full_name':
+          return profile.fullName ? { status: 'resolved', field, value: profile.fullName, source: 'application_specific', reusable: false } : { status: 'unresolved', field, reason: 'No founder full name on profile.' }
         case 'email':
           return profile.contactEmail ? { status: 'resolved', field, value: profile.contactEmail, source: 'application_specific', reusable: false } : { status: 'unresolved', field, reason: 'No contact email on founder profile.' }
         case 'phone':
