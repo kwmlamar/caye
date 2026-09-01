@@ -173,6 +173,12 @@ async function requireFounderAttention(row: RecommendationRow, reasons: string[]
  * Agent 3 integration point: canonical recommendation -> durable decision ->
  * recommendation-level execution eligibility. Existing action/tool gates still
  * own execution and must run after an accepted result.
+ *
+ * When `acceptedDecision` is supplied this function is being used as the final
+ * execution-time authorization check. It re-evaluates current policy/authority
+ * without manufacturing another decision. A founder-approved recommendation may
+ * satisfy a current `founder_required` verdict only while the required authority
+ * is still granted. A system decision remains eligible only for `auto_accept`.
  */
 export async function decideRecommendationForExecution(input: {
   recommendationId: string
@@ -181,6 +187,7 @@ export async function decideRecommendationForExecution(input: {
   actionContext: ActionAutonomyContext
   workspacePolicy: WorkspaceAutonomyPolicy
   idempotencyKey: string
+  acceptedDecision?: { id: string; actorKind: RecommendationDecisionActor } | null
 }) {
   const row = await loadRecommendation(input.recommendationId)
   if (!scopeMatches(row, input.workspaceId)) {
@@ -196,6 +203,28 @@ export async function decideRecommendationForExecution(input: {
     actionContext: input.actionContext,
     workspacePolicy: input.workspacePolicy,
   })
+
+  if (input.acceptedDecision) {
+    if (verdict.disposition === 'blocked') {
+      return { executionEligible: false, disposition: verdict.disposition, reasons: verdict.reasons, decision: input.acceptedDecision }
+    }
+    if (!verdict.authorityGranted) {
+      return { executionEligible: false, disposition: verdict.disposition, reasons: [...verdict.reasons, 'current_authority_not_granted'], decision: input.acceptedDecision }
+    }
+    if (input.acceptedDecision.actorKind === 'system') {
+      return {
+        executionEligible: verdict.disposition === 'auto_accept',
+        disposition: verdict.disposition,
+        reasons: verdict.reasons,
+        decision: input.acceptedDecision,
+      }
+    }
+    if (verdict.disposition === 'auto_accept' || (verdict.disposition === 'founder_required' && input.acceptedDecision.actorKind === 'founder')) {
+      return { executionEligible: true, disposition: verdict.disposition, reasons: verdict.reasons, decision: input.acceptedDecision }
+    }
+    return { executionEligible: false, disposition: verdict.disposition, reasons: verdict.reasons, decision: input.acceptedDecision }
+  }
+
   const authorityProvenance = {
     requiredAuthority: row.required_authority,
     action: input.actionContext.action,
