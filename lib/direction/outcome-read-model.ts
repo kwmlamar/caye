@@ -5,12 +5,17 @@ import { findPrimaryBottleneck, metric, type DirectionOutcomeReadModel, type Out
 type Candidate = { id: string; status: string | null }
 type Application = { id: string; status: string | null; prepared_at: string | null; submitted_at: string | null }
 type Followup = { application_id: string; followup_type: string | null }
-type Lead = { id: string; qualified_at: string | null; first_touch_sent_at: string | null; tried_at: string | null; stage: string | null; last_inbound_kind: string | null }
-type Receipt = { lead_id: string | null; event: string | null }
+type Lead = { id: string; qualified_at: string | null; first_touch_sent_at: string | null; tried_at: string | null; stage: string | null }
+type Receipt = { lead_id: string | null; event: string | null; event_key: string | null }
 type Engagement = { workspace_id: string; engagement_type: string | null; status: string | null; amount: number | string | null; currency: string | null; ended_at: string | null }
 
 function ids(values: Array<string | null | undefined>) { return new Set(values.filter((value): value is string => Boolean(value))) }
 function value(metrics: OutcomeMetric[], key: OutcomeMetric['key']) { return metrics.find((item) => item.key === key)?.value ?? null }
+
+/** Only receipts written by the correlated outreach-thread seam qualify as reply evidence. */
+export function isAttributedOutreachReplyReceipt(row: Receipt): boolean {
+  return row.event === 'human_reply_received' && Boolean(row.event_key?.startsWith('inbound:outreach:'))
+}
 
 export async function readDirectionOutcomes(): Promise<DirectionOutcomeReadModel> {
   const db = createServiceClient()
@@ -18,8 +23,8 @@ export async function readDirectionOutcomes(): Promise<DirectionOutcomeReadModel
     db.from('job_search_candidates').select('id,status'),
     db.from('job_search_applications').select('id,status,prepared_at,submitted_at'),
     db.from('job_search_followups').select('application_id,followup_type'),
-    db.from('outreach_leads').select('id,qualified_at,first_touch_sent_at,tried_at,stage,last_inbound_kind'),
-    db.from('sales_lifecycle_event_receipts').select('lead_id,event'),
+    db.from('outreach_leads').select('id,qualified_at,first_touch_sent_at,tried_at,stage'),
+    db.from('sales_lifecycle_event_receipts').select('lead_id,event,event_key'),
     db.from('caye_commercial_engagements').select('workspace_id,engagement_type,status,amount,currency,ended_at'),
   ])
   for (const result of [candidateResult, applicationResult, followupResult, leadResult, receiptResult, engagementResult]) {
@@ -48,9 +53,9 @@ export async function readDirectionOutcomes(): Promise<DirectionOutcomeReadModel
   ]
 
   const contacted = ids([...leads.filter((row) => row.first_touch_sent_at).map((row) => row.id), ...receipts.filter((row) => row.event === 'first_touch_sent').map((row) => row.lead_id)])
-  const replies = ids([...leads.filter((row) => row.last_inbound_kind === 'human_reply').map((row) => row.id), ...receipts.filter((row) => row.event === 'human_reply_received').map((row) => row.lead_id)])
-  const positiveReplies = ids(leads.filter((row) => replies.has(row.id) && (row.stage === 'engaged' || row.stage === 'demo_started' || Boolean(row.tried_at))).map((row) => row.id))
-  const demos = ids(leads.filter((row) => row.stage === 'demo_started' || Boolean(row.tried_at)).map((row) => row.id))
+  const replies = ids(receipts.filter(isAttributedOutreachReplyReceipt).map((row) => row.lead_id))
+  const positiveReplies = ids(leads.filter((row) => replies.has(row.id) && (Boolean(row.qualified_at) || row.stage === 'engaged' || row.stage === 'demo_started')).map((row) => row.id))
+  const demos = ids(leads.filter((row) => replies.has(row.id) && (row.stage === 'demo_started' || Boolean(row.tried_at))).map((row) => row.id))
   const active = engagements.filter((row) => row.status === 'active' && !row.ended_at)
   const recurring = active.filter((row) => row.engagement_type === 'subscription')
   const currencies = ids(recurring.map((row) => row.currency?.toUpperCase()))
@@ -62,9 +67,9 @@ export async function readDirectionOutcomes(): Promise<DirectionOutcomeReadModel
     metric('prospects_discovered', 'prospects discovered', leads.length, 'Canonical outreach_leads rows.'),
     metric('prospects_qualified', 'qualified', leads.filter((row) => Boolean(row.qualified_at)).length, 'Leads with qualified_at recorded.'),
     metric('prospects_contacted', 'contacted', contacted.size, 'Distinct first-touch evidence from outreach_leads and durable sales lifecycle receipts.'),
-    metric('prospect_replies', 'replies', replies.size, 'Distinct human-reply evidence. Opt-outs and automated traffic are excluded.'),
-    metric('prospect_positive_replies', 'positive replies', positiveReplies.size, 'Human-reply leads that subsequently reached engaged/demo evidence.'),
-    metric('prospect_demo_conversations', 'demo / conversations', demos.size, 'Distinct leads with tried_at or demo_started stage.'),
+    metric('prospect_replies', 'replies', replies.size, 'Distinct human replies durably correlated to the canonical outreach conversation. Unattributed historical inbound is excluded.'),
+    metric('prospect_positive_replies', 'positive replies', positiveReplies.size, 'Attributed outreach replies that subsequently reached qualified, engaged, or demo evidence.'),
+    metric('prospect_demo_conversations', 'demo / conversations', demos.size, 'Attributed outreach replies that subsequently reached tried_at or demo_started evidence.'),
     metric('customers', 'verified customers', active.length ? ids(active.map((row) => row.workspace_id)).size : null, active.length ? 'Distinct workspaces with active canonical commercial engagements.' : 'Insufficient revenue evidence: operational customer rows are not proof of a paying customer.'),
     metric('mrr', 'MRR', mrr, canComputeMrr ? 'Sum of active USD subscription engagement amounts.' : 'Insufficient revenue evidence: no complete active USD subscription engagement amounts are recorded.', 'usd_monthly'),
   ]
