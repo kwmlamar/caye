@@ -27,6 +27,17 @@ export interface ModelSpec {
   contextWindow: number
   /** Default ceiling when a caller does not specify max_tokens. */
   defaultMaxOutputTokens: number
+  /**
+   * Hard cap on the number of tool definitions the provider accepts in one
+   * request, when it has one. Omitted means "no cap we know of".
+   *
+   * OpenAI rejects a 129-tool request with HTTP 400 `array_above_max_length`.
+   * That is a provider limit, not a broken request: on 2026-09-01 the founder
+   * back-office surface (129 tools) was served fine by Anthropic, refused by
+   * OpenAI, and — verified against the live API — accepted by OpenRouter. So
+   * this is modelled per-model and routed around, never treated as a Caye bug.
+   */
+  maxTools?: number
 }
 
 const FULL: readonly AICapability[] = ['tool_use', 'structured_output', 'vision', 'streaming', 'long_context'] as const
@@ -37,6 +48,12 @@ const FULL: readonly AICapability[] = ['tool_use', 'structured_output', 'vision'
  * used (`openai/gpt-4.1-mini`, lib/model-router/backends/openai-compatible.ts)
  * so nothing about the existing fallback changes silently.
  */
+/**
+ * OpenAI's documented/observed ceiling on the `tools` array. Kept as a named
+ * constant so raising it is a one-line, reviewable change if OpenAI does.
+ */
+const OPENAI_MAX_TOOLS = 128
+
 const OPENROUTER_STRONG = process.env.OPENROUTER_STRONG_MODEL || process.env.OPENROUTER_MODEL || 'openai/gpt-4.1'
 const OPENROUTER_CHEAP = process.env.OPENROUTER_MODEL || 'openai/gpt-4.1-mini'
 
@@ -64,6 +81,7 @@ export const MODELS = {
     capabilities: ['tool_use', 'structured_output', 'vision', 'streaming', 'long_context'],
     contextWindow: 400_000,
     defaultMaxOutputTokens: 4096,
+    maxTools: OPENAI_MAX_TOOLS,
   },
   openai_cheap: {
     id: process.env.OPENAI_API_MODEL || process.env.OPENAI_CHEAP_MODEL || 'gpt-5-mini',
@@ -72,6 +90,7 @@ export const MODELS = {
     capabilities: ['tool_use', 'structured_output', 'vision', 'streaming', 'long_context'],
     contextWindow: 400_000,
     defaultMaxOutputTokens: 4096,
+    maxTools: OPENAI_MAX_TOOLS,
   },
   openrouter_strong: {
     id: OPENROUTER_STRONG,

@@ -95,6 +95,13 @@ export type AICapability =
   | 'vision'
   | 'streaming'
   | 'long_context'
+  /**
+   * Not a model feature flag like the others — a routing *reason*, reported
+   * when a model cannot accept the number of tool definitions in the request.
+   * Providers cap the tools array (OpenAI: 128, observed 2026-09-01), and a
+   * cap is per-provider, so a request one provider rejects another can serve.
+   */
+  | 'tool_capacity'
 
 /**
  * Canonical message/params shape. Anthropic-schema'd — see the file header.
