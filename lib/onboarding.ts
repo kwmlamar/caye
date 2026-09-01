@@ -3,6 +3,7 @@ import { createServiceClient } from '@/lib/supabase-server'
 import type { VoiceProfile } from '@/lib/voice-profile'
 import { loggedMessagesCreate } from '@/lib/llm-telemetry'
 import { splitInlineExample, unwrapExample } from '@/lib/onboarding-question-example'
+import { submitOwnerOnboardingLearning } from '@/lib/business-learning/onboarding'
 
 export interface DiscoveryTurn {
   question: string
@@ -138,6 +139,7 @@ export async function saveBusinessProfile(
   rawAnswers: DiscoveryTurn[]
 ): Promise<{ error: string | null }> {
   const supabase = createServiceClient()
+  const onboardingEventTime = new Date().toISOString()
 
   const { error } = await supabase
     .from('workspace_ai_config')
@@ -152,7 +154,7 @@ export async function saveBusinessProfile(
         escalation_rules: profile.escalation_rules,
         never_say: profile.never_say,
         raw_onboarding_answers: rawAnswers,
-        updated_at: new Date().toISOString(),
+        updated_at: onboardingEventTime,
       },
       { onConflict: 'workspace_id' }
     )
@@ -170,6 +172,26 @@ export async function saveBusinessProfile(
     .from('customers')
     .update({ has_onboarded: true })
     .eq('id', workspaceId)
+
+  const { data: owner } = await supabase
+    .from('customers')
+    .select('id, full_name')
+    .eq('id', workspaceId)
+    .maybeSingle()
+
+  const learning = await submitOwnerOnboardingLearning({
+    workspaceId,
+    profile: profile as unknown as Record<string, unknown>,
+    rawAnswers,
+    eventTime: onboardingEventTime,
+    actorId: owner?.id ? String(owner.id) : workspaceId,
+    actorName: owner?.full_name ? String(owner.full_name) : null,
+  })
+
+  if (!learning.ok) {
+    console.error('[onboarding] durable learning failed:', learning.error)
+    return { error: `Onboarding saved, but durable learning failed: ${learning.error ?? 'unknown error'}` }
+  }
 
   return { error: null }
 }
