@@ -51,13 +51,20 @@ jobs:
         run: npm run caye:employee:eval -- --candidate=lib/caye-employee-eval/__output__/candidate-report.json
 
       - name: Report score delta and hard-failure changes
-        if: github.event_name == 'pull_request' && steps.scope.outputs.requires_eval == 'true'
+        if: always() && github.event_name == 'pull_request' && steps.scope.outputs.requires_eval == 'true'
         run: |
-          test -s lib/caye-employee-eval/__output__/candidate-comparison.md
-          cat lib/caye-employee-eval/__output__/candidate-comparison.md >> "$GITHUB_STEP_SUMMARY"
-          echo ""
-          echo "Employee Eval v1 comparison:" 
-          cat lib/caye-employee-eval/__output__/candidate-comparison.md
+          if [ -s lib/caye-employee-eval/__output__/candidate-comparison.md ]; then
+            cat lib/caye-employee-eval/__output__/candidate-comparison.md >> "$GITHUB_STEP_SUMMARY"
+            echo ""
+            echo "Employee Eval v1 comparison:"
+            cat lib/caye-employee-eval/__output__/candidate-comparison.md
+          else
+            echo "## Caye Employee Eval Comparison" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "**UNEVALUABLE:** this behavior-sensitive PR did not produce a candidate comparison." >> "$GITHUB_STEP_SUMMARY"
+            echo "Employee Eval candidate comparison missing; behavior-sensitive PR cannot be called successful." >&2
+            exit 1
+          fi
 
       - name: Generate frozen baseline scorecard
         if: github.event_name != 'pull_request'
