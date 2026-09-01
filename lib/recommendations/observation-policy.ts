@@ -45,14 +45,22 @@ export function isOutcomeStillUnknown(evidence: RecommendationOutcomeEvidence[])
   return classifyMeasurableOutcome(evidence) === 'unknown'
 }
 
+/**
+ * Sufficiency and terminality are deliberately separate. A plan asking for more
+ * than one bounded observation remains live after the first measurable point so
+ * later contradictory evidence can revise #372. The final scheduled attempt is
+ * satisfied when it measured anything objective, otherwise expired/unknown.
+ */
 export function observationStateAfterAttempt(input: {
   observation: RecommendationObservationWindow
   evidence: RecommendationOutcomeEvidence[]
   now?: Date
 }): ObservationState {
-  if (isEvidenceSufficient(input.evidence)) return 'satisfied'
+  const now = input.now ?? new Date()
   const nextCount = input.observation.observationCount + 1
-  return isObservationExpired({ ...input.observation, observationCount: nextCount }, input.now) ? 'expired' : 'pending'
+  const terminal = nextCount >= input.observation.maxObservations || now.getTime() >= Date.parse(input.observation.expiresAt)
+  if (!terminal) return 'pending'
+  return isEvidenceSufficient(input.evidence) ? 'satisfied' : 'expired'
 }
 
 export function measurableOutcomeToRecommendationStatus(outcome: MeasurableOutcome): RecommendationOutcomeStatus {
