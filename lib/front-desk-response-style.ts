@@ -1,9 +1,12 @@
+import { HUMAN_FACING_VOICE_INSTRUCTIONS } from './human-facing-voice'
+
 /**
  * The guest-facing answer shape shared by Caye's live front desk and the
  * operator demo. Kept tool-free and data-free so a demo can use it without
  * inheriting any production action path.
  */
 export const FRONT_DESK_RESPONSE_STYLE = `
+${HUMAN_FACING_VOICE_INSTRUCTIONS}
 CONVERSATION STYLE:
 - Answer the guest's actual question first. Lead with the one fact, price, policy, or next step that resolves it; add only the one or two supporting details that make that answer useful.
 - Use progressive disclosure. Do not turn a broad question into a catalogue dump: do not volunteer every service, rate tier, policy, location, promotion, or booking step unless the guest asks for it or it is necessary to answer their question.
