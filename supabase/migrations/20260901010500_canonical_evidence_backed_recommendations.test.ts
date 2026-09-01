@@ -6,6 +6,10 @@ const migration = readFileSync(
   join(process.cwd(), 'supabase', 'migrations', '20260901010500_canonical_evidence_backed_recommendations.sql'),
   'utf8'
 )
+const service = readFileSync(
+  join(process.cwd(), 'lib', 'recommendations', 'service.ts'),
+  'utf8'
+)
 
 describe('canonical evidence-backed recommendation contracts', () => {
   it('models a valid grounded recommendation on canonical intelligence and goals', () => {
@@ -63,6 +67,10 @@ describe('canonical evidence-backed recommendation contracts', () => {
   it('permits mutation only through the service-role security-definer writer', () => {
     expect(migration).toMatch(/create or replace function public\.upsert_grounded_caye_recommendation[\s\S]*language plpgsql[\s\S]*security definer[\s\S]*set search_path = public/i)
     expect(migration).toMatch(/grant execute on function public\.upsert_grounded_caye_recommendation[\s\S]*to service_role/i)
+    expect(service).toMatch(/import 'server-only'/)
+    expect(service).toMatch(/createServiceClient\(\)/)
+    expect(service).toMatch(/\.rpc\('upsert_grounded_caye_recommendation'/)
+    expect(service).not.toMatch(/createServerClient|NEXT_PUBLIC_SUPABASE_ANON_KEY/)
   })
 
   it('supports multiple intelligence items and optional belief revisions', () => {
