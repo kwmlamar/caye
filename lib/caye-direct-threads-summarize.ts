@@ -26,8 +26,9 @@ function record(value: unknown): Record<string, unknown> | null {
 function extractOpenAiText(payload: unknown): string {
   const root = record(payload)
   if (typeof root?.output_text === 'string' && root.output_text.trim()) return root.output_text.trim()
-  if (!Array.isArray(root?.output)) return ''
-  return root.output
+  const output = root?.output
+  if (!Array.isArray(output)) return ''
+  return output
     .map((item) => record(item))
     .filter((item): item is Record<string, unknown> => item?.type === 'message' && Array.isArray(item.content))
     .flatMap((item) => (item.content as unknown[])
@@ -106,7 +107,7 @@ export async function maybeGenerateThreadTitle(workspaceId: string, threadId: st
 }
 
 async function generateThreadTitleWithOpenAi(transcript: string): Promise<string | null> {
-  const text = await generateWithOpenAi({ system: FRONTIER_TITLE_SYSTEM, input: transcript, maxOutputTokens: 80 })
+  const text = await generateWithOpenAi({ system: FRONTIER_TITLE_SYSTEM, input: transcript, maxOutputTokens: 512 })
   return text.replace(/^["']|["']$/g, '').trim().slice(0, 80) || null
 }
 
@@ -150,7 +151,7 @@ export async function maybeRefreshThreadSummary(workspaceId: string, threadId: s
     const summary = await generateWithOpenAi({
       system: 'Condense this conversation thread into a compact briefing for someone resuming it later. Cover: current topic/objective, important facts, decisions made, unresolved questions, actions taken or planned. 3-6 short sentences, plain prose, no headers or bullet points. This is a working summary, not a transcript. Omit pleasantries and small talk.',
       input: transcript,
-      maxOutputTokens: 500,
+      maxOutputTokens: 800,
     })
     if (summary) {
       await supabase.from('caye_direct_threads')

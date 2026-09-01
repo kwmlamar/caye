@@ -1,40 +1,79 @@
 name: Caye Employee Eval
 
 on:
+  pull_request:
   push:
     branches:
       - main
-      - employee-eval-v1
     paths:
       - 'lib/caye-employee-eval/**'
-      - 'scripts/caye-employee-eval.mjs'
-      - 'package.json'
-      - '.github/workflows/employee-eval-ci.yml'
-  pull_request:
-    paths:
-      - 'lib/caye-employee-eval/**'
-      - 'scripts/caye-employee-eval.mjs'
-      - 'package.json'
+      - 'scripts/caye-employee-eval*.mjs'
       - '.github/workflows/employee-eval-ci.yml'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   employee-eval:
+    name: Employee Eval v1 gate
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
       - run: npm ci
+
       - name: Evaluator regression tests
         run: npx vitest run lib/caye-employee-eval/evaluator.test.ts --reporter=verbose
+
+      - name: Determine whether PR touches employee behavior
+        id: scope
+        if: github.event_name == 'pull_request'
+        env:
+          CAYE_EMPLOYEE_EVAL_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          CAYE_EMPLOYEE_EVAL_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node scripts/caye-employee-eval-pr-scope.mjs
+
+      - name: Run Employee Eval v1 against PR implementation
+        if: github.event_name == 'pull_request' && steps.scope.outputs.requires_eval == 'true'
+        env:
+          CAYE_EMPLOYEE_CODE_REVISION: ${{ github.event.pull_request.head.sha }}
+        run: npx vitest run lib/caye-employee-eval/candidate-runner.test.ts --reporter=verbose
+
+      - name: Compare PR score against frozen v1 baseline
+        if: github.event_name == 'pull_request' && steps.scope.outputs.requires_eval == 'true'
+        run: npm run caye:employee:eval -- --candidate=lib/caye-employee-eval/__output__/candidate-report.json
+
+      - name: Report score delta and hard-failure changes
+        if: always() && github.event_name == 'pull_request' && steps.scope.outputs.requires_eval == 'true'
+        run: |
+          if [ -s lib/caye-employee-eval/__output__/candidate-comparison.md ]; then
+            cat lib/caye-employee-eval/__output__/candidate-comparison.md >> "$GITHUB_STEP_SUMMARY"
+            echo ""
+            echo "Employee Eval v1 comparison:"
+            cat lib/caye-employee-eval/__output__/candidate-comparison.md
+          else
+            echo "## Caye Employee Eval Comparison" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "**UNEVALUABLE:** this behavior-sensitive PR did not produce a candidate comparison." >> "$GITHUB_STEP_SUMMARY"
+            echo "Employee Eval candidate comparison missing; behavior-sensitive PR cannot be called successful." >&2
+            exit 1
+          fi
+
       - name: Generate frozen baseline scorecard
+        if: github.event_name != 'pull_request'
         run: npm run caye:employee:eval
+
       - name: Upload evaluation evidence
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: caye-employee-eval
+          name: caye-employee-eval-${{ github.run_id }}
           path: lib/caye-employee-eval/__output__/
+          if-no-files-found: ignore
