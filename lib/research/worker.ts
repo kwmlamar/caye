@@ -1,6 +1,7 @@
 import 'server-only'
 
 import { createServiceClient } from '@/lib/supabase-server'
+import { syncDirectRunForResearchRun } from '@/lib/caye-direct-runs'
 import { surfaceFounderInvestigationUpdate } from './founder-investigation-updates'
 import {
   claimResearchRun,
@@ -80,6 +81,14 @@ async function projectFounderInvestigationUpdate(questionId: string): Promise<vo
   })
 }
 
+async function syncDirectRun(runId: string, status: 'completed' | 'failed'): Promise<void> {
+  try {
+    await syncDirectRunForResearchRun(createServiceClient(), runId, status)
+  } catch (error) {
+    console.error('[research-worker] Direct run sync failed', error)
+  }
+}
+
 const DEFAULT_DEPENDENCIES: ResearchWorkerDependencies = {
   claimRun: claimResearchRun as (workerId: string) => Promise<ClaimedResearchRun | null>,
   loadQuestion: loadResearchQuestion,
@@ -87,13 +96,7 @@ const DEFAULT_DEPENDENCIES: ResearchWorkerDependencies = {
   failRun: failClaimedResearchRun,
 }
 
-/**
- * Execute at most one queued research run.
- *
- * Scheduling is intentionally outside this module. A cron route, queue consumer,
- * or manual operator can invoke the same worker with a concrete search provider
- * and synthesizer. No run is claimed until both dependencies are supplied.
- */
+/** Execute at most one queued research run. */
 export async function runNextResearchJob(
   input: {
     workerId: string
@@ -117,22 +120,18 @@ export async function runNextResearchJob(
       synthesize: input.synthesize,
     })
 
-    // Founder-facing projection is deliberately post-commit. A Direct/attention
-    // failure must never turn a successfully persisted research run into a failed run.
     try {
       await projectFounderInvestigationUpdate(question.id)
     } catch (projectionError) {
       console.error('[research-worker] founder investigation projection failed', projectionError)
     }
+    await syncDirectRun(run.id, 'completed')
 
     return { ...result, runId: run.id, questionId: question.id }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-
-    // executeResearchRun already marks failures/partials. This update is mainly
-    // for failures that happen after claim but before execution begins. The
-    // status predicate makes it harmless once executeResearchRun changed state.
     await dependencies.failRun(run.id, message, input.provider.name)
+    await syncDirectRun(run.id, 'failed')
     return { status: 'failed' as const, runId: run.id, questionId: run.question_id, error: message }
   }
 }

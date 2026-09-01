@@ -15,6 +15,8 @@ export interface DirectRun {
   stage_label: string | null
   control_requested: DirectRunControl | null
   pending_steering: string | null
+  linked_research_question_id: string | null
+  linked_research_run_id: string | null
   started_at: string
   completed_at: string | null
   updated_at: string
@@ -46,8 +48,49 @@ export function founderRunLabel(run: Pick<DirectRun, 'status' | 'stage_label' | 
   return run.stage_label || 'Working…'
 }
 
+export function researchRunStage(status: string | null): string | null {
+  if (status === 'queued') return 'Research queued…'
+  if (status === 'running') return 'Researching sources…'
+  if (status === 'completed') return 'Research complete'
+  if (status === 'partial') return 'Research finished with gaps'
+  if (status === 'failed') return 'Research stopped before completion'
+  return null
+}
+
+async function linkedResearchStatus(supabase: SupabaseClient, run: Pick<DirectRun, 'linked_research_run_id'>): Promise<string | null> {
+  if (!run.linked_research_run_id) return null
+  const { data, error } = await supabase.from('research_runs').select('status').eq('id', run.linked_research_run_id).maybeSingle()
+  if (error) throw new Error(`[caye-direct-runs] linked research lookup failed: ${error.message}`)
+  return typeof data?.status === 'string' ? data.status : null
+}
+
 async function markStaleRunningFailed(supabase: SupabaseClient, run: DirectRun): Promise<boolean> {
   if (!['queued', 'planning', 'running'].includes(run.status)) return false
+
+  const researchStatus = await linkedResearchStatus(supabase, run)
+  if (researchStatus === 'queued' || researchStatus === 'running') {
+    const stage = researchRunStage(researchStatus)!
+    if (run.stage_label !== stage) {
+      const now = new Date().toISOString()
+      await supabase.from('caye_direct_runs').update({ stage_label: stage, updated_at: now }).eq('id', run.id).eq('status', 'running')
+      await addEvent(supabase, run.id, 'activity', stage)
+    }
+    return false
+  }
+  if (researchStatus === 'completed') {
+    const now = new Date().toISOString()
+    const { data } = await supabase.from('caye_direct_runs').update({ status: 'completed', stage_label: 'Research complete', completed_at: now, updated_at: now }).eq('id', run.id).in('status', ['queued','planning','running']).select('id').maybeSingle()
+    if (data) await addEvent(supabase, run.id, 'status', 'Research complete')
+    return !!data
+  }
+  if (researchStatus === 'partial' || researchStatus === 'failed') {
+    const now = new Date().toISOString()
+    const stage = researchRunStage(researchStatus)!
+    const { data } = await supabase.from('caye_direct_runs').update({ status: 'failed', stage_label: stage, completed_at: now, updated_at: now }).eq('id', run.id).in('status', ['queued','planning','running']).select('id').maybeSingle()
+    if (data) await addEvent(supabase, run.id, 'status', stage)
+    return !!data
+  }
+
   if (Date.now() - new Date(run.updated_at).getTime() <= STALE_RUNNING_MS) return false
   const now = new Date().toISOString()
   const { data } = await supabase.from('caye_direct_runs').update({
@@ -92,6 +135,47 @@ export async function beginDirectRun(supabase: SupabaseClient, args: { workspace
   const run = data as DirectRun
   await addEvent(supabase, run.id, 'status', 'Started work')
   return run
+}
+
+export async function linkDirectRunToResearch(supabase: SupabaseClient, args: { directRunId: string; questionId: string; researchRunId: string }): Promise<void> {
+  const now = new Date().toISOString()
+  const { data, error } = await supabase.from('caye_direct_runs').update({
+    linked_research_question_id: args.questionId,
+    linked_research_run_id: args.researchRunId,
+    status: 'running',
+    stage_label: 'Research queued…',
+    completed_at: null,
+    updated_at: now,
+  }).eq('id', args.directRunId).in('status', ['queued','planning','running']).select('id').maybeSingle()
+  if (error) throw new Error(`[caye-direct-runs] research link failed: ${error.message}`)
+  if (!data) throw new Error('[caye-direct-runs] active Direct run was unavailable for research linkage')
+  await addEvent(supabase, args.directRunId, 'activity', 'Research queued')
+}
+
+export async function syncDirectRunForResearchRun(supabase: SupabaseClient, researchRunId: string, researchStatus: 'completed' | 'failed'): Promise<void> {
+  const { data, error } = await supabase.from('caye_direct_runs').select('id,status,control_requested')
+    .eq('linked_research_run_id', researchRunId).in('status', ['queued','planning','running'])
+  if (error) throw new Error(`[caye-direct-runs] research sync lookup failed: ${error.message}`)
+  for (const direct of data ?? []) {
+    const now = new Date().toISOString()
+    if (direct.control_requested === 'cancel') {
+      await supabase.from('caye_direct_runs').update({ status: 'cancelled', stage_label: 'Stopped', control_requested: null, completed_at: now, updated_at: now }).eq('id', direct.id)
+      await addEvent(supabase, direct.id, 'status', 'Stopped after the current research step')
+      continue
+    }
+    if (direct.control_requested === 'pause') {
+      await supabase.from('caye_direct_runs').update({ status: 'paused', stage_label: 'Paused', control_requested: null, completed_at: null, updated_at: now }).eq('id', direct.id)
+      await addEvent(supabase, direct.id, 'status', 'Paused after the current research step')
+      continue
+    }
+    if (researchStatus === 'completed') {
+      await supabase.from('caye_direct_runs').update({ status: 'completed', stage_label: 'Research complete', completed_at: now, updated_at: now }).eq('id', direct.id)
+      await addEvent(supabase, direct.id, 'status', 'Research complete')
+    } else {
+      await supabase.from('caye_direct_runs').update({ status: 'failed', stage_label: 'Research stopped before completion', completed_at: now, updated_at: now }).eq('id', direct.id)
+      await addEvent(supabase, direct.id, 'status', 'Research stopped before completion')
+    }
+  }
 }
 
 export async function setRunStage(supabase: SupabaseClient, runId: string, label: string): Promise<void> {
@@ -158,6 +242,24 @@ export async function checkpointDirectRun(supabase: SupabaseClient, runId: strin
 }
 
 export async function finishDirectRun(supabase: SupabaseClient, runId: string): Promise<DirectRunStatus> {
+  const { data: current, error } = await supabase.from('caye_direct_runs').select('linked_research_run_id').eq('id', runId).maybeSingle()
+  if (error) throw new Error(`[caye-direct-runs] finish lookup failed: ${error.message}`)
+  if (current?.linked_research_run_id) {
+    const { data: research, error: researchError } = await supabase.from('research_runs').select('status').eq('id', current.linked_research_run_id).maybeSingle()
+    if (researchError) throw new Error(`[caye-direct-runs] finish research lookup failed: ${researchError.message}`)
+    if (research?.status === 'queued' || research?.status === 'running') {
+      const stage = researchRunStage(research.status)!
+      await supabase.from('caye_direct_runs').update({ stage_label: stage, updated_at: new Date().toISOString() }).eq('id', runId).eq('status', 'running')
+      return 'running'
+    }
+    if (research?.status === 'failed' || research?.status === 'partial') {
+      const now = new Date().toISOString()
+      await supabase.from('caye_direct_runs').update({ status: 'failed', stage_label: researchRunStage(research.status), completed_at: now, updated_at: now }).eq('id', runId).eq('status', 'running')
+      await addEvent(supabase, runId, 'status', researchRunStage(research.status)!)
+      return 'failed'
+    }
+  }
+
   const checkpoint = await checkpointDirectRun(supabase, runId)
   if (checkpoint.decision === 'cancel') return 'cancelled'
   if (checkpoint.decision === 'pause') return 'paused'
@@ -170,6 +272,14 @@ export async function finishDirectRun(supabase: SupabaseClient, runId: string): 
 }
 
 export async function failDirectRun(supabase: SupabaseClient, runId: string): Promise<void> {
+  const { data: current } = await supabase.from('caye_direct_runs').select('linked_research_run_id').eq('id', runId).maybeSingle()
+  if (current?.linked_research_run_id) {
+    const { data: research } = await supabase.from('research_runs').select('status').eq('id', current.linked_research_run_id).maybeSingle()
+    if (research?.status === 'queued' || research?.status === 'running') {
+      await supabase.from('caye_direct_runs').update({ stage_label: researchRunStage(research.status), updated_at: new Date().toISOString() }).eq('id', runId).eq('status', 'running')
+      return
+    }
+  }
   const now = new Date().toISOString()
   const { data } = await supabase.from('caye_direct_runs').update({
     status: 'failed', stage_label: 'Work stopped unexpectedly', completed_at: now, updated_at: now,
