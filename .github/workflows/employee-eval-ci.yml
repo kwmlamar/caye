@@ -3,6 +3,7 @@ name: Caye Employee Eval
 on:
   push:
     branches:
+      - main
       - employee-eval-v1
     paths:
       - 'lib/caye-employee-eval/**'
