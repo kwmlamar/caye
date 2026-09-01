@@ -13,6 +13,15 @@ import {
 } from './action-operation'
 import type { PendingOperationRow } from '@/lib/pending-operations'
 
+const actionPlan = {
+  capabilityKey: 'add_internal_note',
+  operation: 'execute' as const,
+  arguments: { conversation_id: 'conversation-1', note: 'Follow up on the grounded recommendation.' },
+  expectedEffect: 'Record the bounded internal follow-up note.',
+  preconditions: ['The recommendation remains current.'],
+  materiality: 'quiet' as const,
+}
+
 function candidate(overrides: Partial<RecommendationWakeCandidate> = {}): RecommendationWakeCandidate {
   return {
     id: 'rec-1',
@@ -23,6 +32,10 @@ function candidate(overrides: Partial<RecommendationWakeCandidate> = {}): Recomm
     latestDecision: null,
     latestDecisionVersion: null,
     executionState: null,
+    actionPlan,
+    riskClassification: 'low',
+    reversibility: 'easy',
+    requiredAuthority: { principalType: 'workspace', principalRef: 'business.policy', resolvedBy: 'canonical_authority' },
     ...overrides,
   }
 }
@@ -65,6 +78,7 @@ describe('autonomous recommendation wake', () => {
     const result = await stageEligibleRecommendationActions(5, {
       listCandidates: async () => [candidate()],
       enqueue,
+      decideUndecided: async () => ({ kind: 'accepted', decisionId: 'decision-auto' }),
     })
 
     expect(result.queued).toBe(1)
@@ -113,15 +127,24 @@ describe('autonomous recommendation wake', () => {
     expect(shouldWakeRecommendation(candidate({ executionState: 'completed' }))).toBe('terminal')
   })
 
+  it('fails closed when no structured executable plan exists', () => {
+    expect(shouldWakeRecommendation(candidate({ actionPlan: null }))).toBe('no_plan')
+  })
+
   it('hard caps work per invocation', async () => {
-    const candidates = Array.from({ length: 12 }, (_, index) => candidate({ id: `rec-${index}` }))
+    const candidates = Array.from({ length: 12 }, (_, index) => candidate({
+      id: `rec-${index}`,
+      latestDecision: 'accepted',
+      latestDecisionId: `decision-${index}`,
+      latestDecisionVersion: 'version-1',
+    }))
     const enqueue = vi.fn(async () => ({ queued: true, alreadyQueued: false }))
     const result = await stageEligibleRecommendationActions(99, {
       listCandidates: async () => candidates,
       enqueue,
     })
 
-    expect(result.scanned).toBe(12)
+    expect(result.scanned).toBe(RECOMMENDATION_WAKE_LIMIT)
     expect(enqueue).toHaveBeenCalledTimes(RECOMMENDATION_WAKE_LIMIT)
   })
 
@@ -133,7 +156,8 @@ describe('autonomous recommendation wake', () => {
       seen.add(key)
       return { queued: true, alreadyQueued: duplicate }
     })
-    const deps = { listCandidates: async () => [candidate()], enqueue }
+    const approved = candidate({ latestDecision: 'accepted', latestDecisionId: 'decision-approved', latestDecisionVersion: 'version-1' })
+    const deps = { listCandidates: async () => [approved], enqueue }
 
     const first = await stageEligibleRecommendationActions(5, deps)
     const second = await stageEligibleRecommendationActions(5, deps)
