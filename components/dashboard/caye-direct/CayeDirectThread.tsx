@@ -5,11 +5,13 @@ import { getSession } from '@/lib/supabase'
 import CayeDirectThreadBase from './CayeDirectThreadBase'
 
 export default function CayeDirectThread(props: ComponentProps<typeof CayeDirectThreadBase>) {
+  const [workPanelOpen, setWorkPanelOpen] = useState(true)
   if (props.mode !== 'thread') return <CayeDirectThreadBase {...props} />
   return (
     <div style={{ position: 'relative', display: 'flex', height: '100%', flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden' }}>
       <div style={{ flex: 1, minWidth: 0, minHeight: 0 }}><CayeDirectThreadBase {...props} /></div>
-      <LiveWorkRail threadId={props.threadId} />
+      <WorkPanelToggle open={workPanelOpen} onClick={() => setWorkPanelOpen((value) => !value)} />
+      <LiveWorkRail threadId={props.threadId} open={workPanelOpen} />
     </div>
   )
 }
@@ -36,7 +38,30 @@ function useCompactWorkRail() {
   return compact
 }
 
-function LiveWorkRail({ threadId }: { threadId: string }) {
+function WorkPanelToggle({ open, onClick }: { open: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-label={open ? 'Close work panel' : 'Open work panel'}
+      title={open ? 'Close work panel' : 'Open work panel'}
+      onClick={onClick}
+      style={{
+        position: 'absolute', zIndex: 60, top: 13, right: 13, width: 32, height: 32,
+        display: 'grid', placeItems: 'center', border: 0, padding: 0,
+        borderRadius: 8, background: 'transparent',
+        color: open ? '#dedee1' : '#9a9ba1', cursor: 'pointer',
+        transition: 'color 140ms ease, background 140ms ease',
+      }}
+    >
+      <span aria-hidden style={{ position: 'relative', display: 'block', width: 16, height: 14, border: '1.5px solid currentColor', borderRadius: 4, boxSizing: 'border-box' }}>
+        <span style={{ position: 'absolute', top: 0, bottom: 0, right: 4, width: 1, background: 'currentColor', opacity: .72 }} />
+        <span style={{ position: 'absolute', top: 2.5, right: 1.5, width: 1.5, height: 7, borderRadius: 2, background: open ? '#55c7d8' : 'currentColor', opacity: open ? 1 : .55 }} />
+      </span>
+    </button>
+  )
+}
+
+function LiveWorkRail({ threadId, open }: { threadId: string; open: boolean }) {
   const [run, setRun] = useState<Run | null>(null)
   const [events, setEvents] = useState<RunEvent[]>([])
   const [steer, setSteer] = useState('')
@@ -97,7 +122,36 @@ function LiveWorkRail({ threadId }: { threadId: string }) {
     } finally { setBusy(false) }
   }
 
-  if (!run) return null
+  if (!open) return null
+
+  const shell: CSSProperties = compact ? {
+    position: 'absolute', zIndex: 30, left: 12, right: 12, bottom: 12, maxHeight: '62%',
+    border: '1px solid rgba(255,255,255,.10)', borderRadius: 18, boxShadow: '0 20px 65px rgba(0,0,0,.48)',
+  } : {
+    width: 'clamp(350px, 29vw, 420px)', minWidth: 350, height: '100%', flexShrink: 0,
+    borderLeft: '1px solid rgba(255,255,255,.075)',
+  }
+
+  if (!run) {
+    return (
+      <aside aria-label="Caye work panel" style={{ ...shell, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden', background: 'rgba(13,13,14,.985)', backdropFilter: 'blur(18px)' }}>
+        <div style={{ padding: compact ? '16px 56px 14px 16px' : '22px 58px 18px 20px', borderBottom: '1px solid rgba(255,255,255,.055)' }}>
+          <div style={{ fontSize: 13, fontWeight: 650, color: '#f1f1f3', letterSpacing: '-.01em' }}>Work</div>
+        </div>
+        <div style={{ flex: 1, display: 'grid', placeItems: 'center', padding: 28 }}>
+          <div style={{ maxWidth: 230, textAlign: 'center' }}>
+            <div aria-hidden style={{ width: 34, height: 34, margin: '0 auto 14px', display: 'grid', placeItems: 'center', color: '#65666d' }}>
+              <span style={{ position: 'relative', display: 'block', width: 20, height: 17, border: '1.5px solid currentColor', borderRadius: 5, boxSizing: 'border-box' }}>
+                <span style={{ position: 'absolute', top: 0, bottom: 0, right: 5, width: 1, background: 'currentColor', opacity: .65 }} />
+              </span>
+            </div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: '#b8b8bd' }}>Nothing running right now</div>
+            <div style={{ marginTop: 7, fontSize: 11.5, lineHeight: 1.5, color: '#67686e' }}>When Caye starts a longer task, its progress and controls will show up here.</div>
+          </div>
+        </div>
+      </aside>
+    )
+  }
 
   const status = run.control_requested === 'pause' ? 'Pausing after this step'
     : run.control_requested === 'cancel' ? 'Stopping after this step'
@@ -108,20 +162,12 @@ function LiveWorkRail({ threadId }: { threadId: string }) {
   const latestEvents = events.slice(-7)
   const attention = run.status === 'paused' || run.status === 'waiting_user'
 
-  const shell: CSSProperties = compact ? {
-    position: 'absolute', zIndex: 30, left: 12, right: 12, bottom: 12, maxHeight: '62%',
-    border: '1px solid rgba(255,255,255,.10)', borderRadius: 18, boxShadow: '0 20px 65px rgba(0,0,0,.48)',
-  } : {
-    width: 'clamp(350px, 29vw, 420px)', minWidth: 350, height: '100%', flexShrink: 0,
-    borderLeft: '1px solid rgba(255,255,255,.075)',
-  }
-
   return (
-    <aside aria-label="Key live work" style={{ ...shell, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden', background: 'rgba(13,13,14,.985)', backdropFilter: 'blur(18px)' }}>
-      <div style={{ padding: compact ? '16px 16px 12px' : '22px 20px 16px', borderBottom: '1px solid rgba(255,255,255,.055)' }}>
+    <aside aria-label="Caye live work" style={{ ...shell, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden', background: 'rgba(13,13,14,.985)', backdropFilter: 'blur(18px)' }}>
+      <div style={{ padding: compact ? '16px 56px 12px 16px' : '22px 58px 16px 20px', borderBottom: '1px solid rgba(255,255,255,.055)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
           <span aria-hidden style={{ width: 8, height: 8, borderRadius: '50%', background: attention ? '#f3ba63' : '#55c7d8', boxShadow: attention ? '0 0 0 4px rgba(243,186,99,.08)' : '0 0 0 4px rgba(85,199,216,.08)' }} />
-          <div style={{ fontSize: 13, fontWeight: 650, color: '#f1f1f3', letterSpacing: '-.01em' }}>Key is working</div>
+          <div style={{ fontSize: 13, fontWeight: 650, color: '#f1f1f3', letterSpacing: '-.01em' }}>Caye is working</div>
           <span style={{ marginLeft: 'auto', fontSize: 10.5, color: '#69696f', fontFamily: 'var(--font-mono)' }}>{elapsed}</span>
         </div>
         <div style={{ marginTop: 13, display: 'inline-flex', alignItems: 'center', maxWidth: '100%', border: '1px solid rgba(255,255,255,.07)', borderRadius: 999, padding: '5px 9px', background: 'rgba(255,255,255,.025)', fontSize: 10.5, color: attention ? '#d8b879' : '#9fa0a6' }}>
