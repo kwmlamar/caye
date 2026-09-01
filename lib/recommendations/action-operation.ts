@@ -65,8 +65,6 @@ export async function runRecommendationActionOperation(
   if (current.latestDecision !== 'accepted') return { disposition: 'synced', reason: 'recommendation_not_accepted' }
   if (current.executionState === 'completed' || current.executionState === 'failed_needs_attention') return { disposition: 'synced', reason: 'terminal_execution_state' }
 
-  // Only a claimed worker operation may publish this state. Accepted/queued is
-  // deliberately not called acting until immediately before the canonical bridge.
   await runtime.setExecutionState({
     recommendationId,
     workspaceId: row.workspace_id,
@@ -104,5 +102,8 @@ export async function runRecommendationActionOperation(
     executionRef: outcome.executionRef ?? null,
   })
   if (outcome.material) await runtime.surfaceMaterialCompletion({ recommendationId, workspaceId: row.workspace_id, executionRef: outcome.executionRef ?? null })
-  return { disposition: 'synced', reason: 'completed', executionRef: outcome.executionRef ?? null }
+  // The durable worker/outcome path uses the canonical pending-operation row as
+  // the execution source. Do not make downstream correctness depend on an
+  // optional provider/tool-specific reference being present here.
+  return { disposition: 'synced', reason: 'completed' }
 }
