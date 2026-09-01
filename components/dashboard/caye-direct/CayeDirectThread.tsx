@@ -46,13 +46,11 @@ function WorkPanelToggle({ open, onClick }: { open: boolean; onClick: () => void
       title={open ? 'Close work panel' : 'Open work panel'}
       onClick={onClick}
       style={{
-        position: 'absolute', zIndex: 60, top: 12, right: 12, width: 34, height: 34,
-        display: 'grid', placeItems: 'center', borderRadius: 10,
-        border: '1px solid rgba(255,255,255,.085)',
-        background: open ? 'rgba(255,255,255,.055)' : 'rgba(18,18,19,.88)',
-        color: open ? '#e4e4e7' : '#a2a2a8',
-        boxShadow: '0 8px 24px rgba(0,0,0,.18)', backdropFilter: 'blur(14px)',
-        cursor: 'pointer', transition: 'background 140ms ease, color 140ms ease, border-color 140ms ease',
+        position: 'absolute', zIndex: 60, top: 13, right: 13, width: 32, height: 32,
+        display: 'grid', placeItems: 'center', border: 0, padding: 0,
+        borderRadius: 8, background: 'transparent',
+        color: open ? '#dedee1' : '#9a9ba1', cursor: 'pointer',
+        transition: 'color 140ms ease, background 140ms ease',
       }}
     >
       <span aria-hidden style={{ position: 'relative', display: 'block', width: 16, height: 14, border: '1.5px solid currentColor', borderRadius: 4, boxSizing: 'border-box' }}>
@@ -124,7 +122,36 @@ function LiveWorkRail({ threadId, open }: { threadId: string; open: boolean }) {
     } finally { setBusy(false) }
   }
 
-  if (!run || !open) return null
+  if (!open) return null
+
+  const shell: CSSProperties = compact ? {
+    position: 'absolute', zIndex: 30, left: 12, right: 12, bottom: 12, maxHeight: '62%',
+    border: '1px solid rgba(255,255,255,.10)', borderRadius: 18, boxShadow: '0 20px 65px rgba(0,0,0,.48)',
+  } : {
+    width: 'clamp(350px, 29vw, 420px)', minWidth: 350, height: '100%', flexShrink: 0,
+    borderLeft: '1px solid rgba(255,255,255,.075)',
+  }
+
+  if (!run) {
+    return (
+      <aside aria-label="Caye work panel" style={{ ...shell, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden', background: 'rgba(13,13,14,.985)', backdropFilter: 'blur(18px)' }}>
+        <div style={{ padding: compact ? '16px 56px 14px 16px' : '22px 58px 18px 20px', borderBottom: '1px solid rgba(255,255,255,.055)' }}>
+          <div style={{ fontSize: 13, fontWeight: 650, color: '#f1f1f3', letterSpacing: '-.01em' }}>Work</div>
+        </div>
+        <div style={{ flex: 1, display: 'grid', placeItems: 'center', padding: 28 }}>
+          <div style={{ maxWidth: 230, textAlign: 'center' }}>
+            <div aria-hidden style={{ width: 34, height: 34, margin: '0 auto 14px', display: 'grid', placeItems: 'center', color: '#65666d' }}>
+              <span style={{ position: 'relative', display: 'block', width: 20, height: 17, border: '1.5px solid currentColor', borderRadius: 5, boxSizing: 'border-box' }}>
+                <span style={{ position: 'absolute', top: 0, bottom: 0, right: 5, width: 1, background: 'currentColor', opacity: .65 }} />
+              </span>
+            </div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: '#b8b8bd' }}>Nothing running right now</div>
+            <div style={{ marginTop: 7, fontSize: 11.5, lineHeight: 1.5, color: '#67686e' }}>When Caye starts a longer task, its progress and controls will show up here.</div>
+          </div>
+        </div>
+      </aside>
+    )
+  }
 
   const status = run.control_requested === 'pause' ? 'Pausing after this step'
     : run.control_requested === 'cancel' ? 'Stopping after this step'
@@ -134,14 +161,6 @@ function LiveWorkRail({ threadId, open }: { threadId: string; open: boolean }) {
   const controlsEnabled = ['queued','planning','running'].includes(run.status) && !run.control_requested
   const latestEvents = events.slice(-7)
   const attention = run.status === 'paused' || run.status === 'waiting_user'
-
-  const shell: CSSProperties = compact ? {
-    position: 'absolute', zIndex: 30, left: 12, right: 12, bottom: 12, maxHeight: '62%',
-    border: '1px solid rgba(255,255,255,.10)', borderRadius: 18, boxShadow: '0 20px 65px rgba(0,0,0,.48)',
-  } : {
-    width: 'clamp(350px, 29vw, 420px)', minWidth: 350, height: '100%', flexShrink: 0,
-    borderLeft: '1px solid rgba(255,255,255,.075)',
-  }
 
   return (
     <aside aria-label="Caye live work" style={{ ...shell, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden', background: 'rgba(13,13,14,.985)', backdropFilter: 'blur(18px)' }}>
