@@ -125,6 +125,11 @@ function provenanceKind(candidate: RecommendationCandidate): string {
   return typeof value === 'string' ? value : ''
 }
 
+function hasProvenanceContradiction(candidate: RecommendationCandidate): boolean {
+  const ids = candidate.intelligence.provenance.contradictoryEvidenceIds
+  return Array.isArray(ids) && ids.length > 0
+}
+
 function materialRevisions(candidate: RecommendationCandidate): RecommendationBeliefRevisionSnapshot[] {
   return candidate.beliefRevisions.filter((revision) => {
     const delta = Math.abs(numeric(revision.revisedConfidence) - numeric(revision.priorConfidence))
@@ -141,9 +146,15 @@ export function classifyRecommendationTrigger(candidate: RecommendationCandidate
   if (!normalized(candidate.goalImpact.mechanism) || !normalized(candidate.goalImpact.impact)) return null
   if (!candidate.goalImpact.evidenceClaimIds.length) return null
 
+  const kind = connectionKind(candidate)
+  // Weak-signal patterns are useful monitoring context, not a recommendation
+  // trigger. They must first be promoted by stronger intelligence machinery.
+  if (kind === 'weak-signal-pattern') return null
+
   const materiality = numeric(candidate.intelligence.materiality)
   const revisions = materialRevisions(candidate)
   const contradictory = candidate.intelligence.status === 'contested'
+    || hasProvenanceContradiction(candidate)
     || revisions.some((revision) => ['contradicts', 'supersedes'].includes(revision.evidenceRole))
 
   if (revisions.some((revision) => ['contradicts', 'supersedes'].includes(revision.evidenceRole)) && materiality >= MATERIAL_RECOMMENDATION_THRESHOLD) {
@@ -154,20 +165,16 @@ export function classifyRecommendationTrigger(candidate: RecommendationCandidate
     return { kind: 'material-belief-revision', rank: 4, materialRevisionIds: revisions.map((revision) => revision.id), contradictory }
   }
 
-  const kind = connectionKind(candidate)
   if (['constraint', 'opportunity'].includes(kind) && materiality >= MATERIAL_RECOMMENDATION_THRESHOLD) {
     return { kind: 'material-constraint-or-opportunity', rank: 4, materialRevisionIds: [], contradictory }
   }
 
-  if (provenanceKind(candidate) === 'cross-domain-synthesis'
-    && kind !== 'weak-signal-pattern'
-    && materiality >= 0.8) {
+  if (provenanceKind(candidate) === 'cross-domain-synthesis' && materiality >= 0.8) {
     return { kind: 'cross-domain-synthesis', rank: 3, materialRevisionIds: [], contradictory }
   }
 
   if (candidate.goalImpact.confidence >= HIGH_OBJECTIVE_IMPACT_CONFIDENCE
-    && materiality >= MATERIAL_RECOMMENDATION_THRESHOLD
-    && kind !== 'weak-signal-pattern') {
+    && materiality >= MATERIAL_RECOMMENDATION_THRESHOLD) {
     return { kind: 'high-confidence-objective-impact', rank: 2, materialRevisionIds: [], contradictory }
   }
 
@@ -238,7 +245,10 @@ export function validateRecommendationProposal(
   }
 
   const allowedRevisionIds = new Set(candidate.beliefRevisions.map((revision) => revision.id))
-  const revisionIds = [...new Set(proposal.supportingBeliefRevisionIds ?? decision.materialRevisionIds)]
+  const revisionIds = [...new Set([
+    ...decision.materialRevisionIds,
+    ...(proposal.supportingBeliefRevisionIds ?? []),
+  ])]
   if (revisionIds.some((id) => !allowedRevisionIds.has(id))) throw new Error('recommendation cites an unrelated belief revision')
 
   const evidenceBounds = [
@@ -250,8 +260,8 @@ export function validateRecommendationProposal(
   ].filter((value): value is number => typeof value === 'number' && Number.isFinite(value))
   let confidence = Math.min(proposal.confidence, ...(evidenceBounds.length ? evidenceBounds : [proposal.confidence]))
 
-  const contradictory = decision.contradictory || candidate.intelligence.status === 'contested'
-  let rationale = normalized(proposal.rationale)
+  const contradictory = decision.contradictory || candidate.intelligence.status === 'contested' || hasProvenanceContradiction(candidate)
+  let rationale = `Mechanism: ${normalized(candidate.goalImpact.mechanism)} Goal impact: ${normalized(candidate.goalImpact.impact)} Proposed action: ${normalized(proposal.proposedAction)} Rationale: ${normalized(proposal.rationale)}`
   if (contradictory) {
     confidence = Math.min(confidence, CONTESTED_RECOMMENDATION_CONFIDENCE_CAP)
     if (!/(contradict|uncertain|contested|counter-evidence|counterevidence)/i.test(rationale)) {
