@@ -9,6 +9,16 @@ type Filter =
   | { kind: 'in'; column: string; value: unknown[] }
   | { kind: 'ilike'; column: string; value: string }
 
+type ParameterCast = 'jsonb' | undefined
+
+const JSONB_COLUMNS = new Set([
+  'metadata',
+  'source_metadata',
+  'provenance',
+  'details',
+  'conversation_ids',
+])
+
 function identifier(value: string): string {
   if (!/^[a-z_][a-z0-9_]*$/i.test(value)) throw new Error(`Unsafe SQL identifier: ${value}`)
   return `"${value}"`
@@ -19,10 +29,14 @@ function selectList(value: string): string {
   return value.split(',').map((part) => identifier(part.trim())).join(', ')
 }
 
-function parameter(value: unknown, params: unknown[]): string {
-  params.push(Array.isArray(value) || (value != null && typeof value === 'object') ? JSON.stringify(value) : value)
+function parameter(value: unknown, params: unknown[], cast?: ParameterCast): string {
+  params.push(cast === 'jsonb' ? JSON.stringify(value ?? null) : value)
   const slot = `$${params.length}`
-  return Array.isArray(value) || (value != null && typeof value === 'object') ? `${slot}::jsonb` : slot
+  return cast === 'jsonb' ? `${slot}::jsonb` : slot
+}
+
+function columnParameter(column: string, value: unknown, params: unknown[]): string {
+  return parameter(value, params, JSONB_COLUMNS.has(column) ? 'jsonb' : undefined)
 }
 
 export class PGliteSupabaseClient {
@@ -146,15 +160,14 @@ class QueryBuilder implements PromiseLike<QueryResult<any>> {
         if (this.orderBy) sql += ` order by ${identifier(this.orderBy.column)} ${this.orderBy.ascending ? 'asc' : 'desc'}`
         if (this.rowLimit != null) sql += ` limit ${this.rowLimit}`
       } else if (this.operation === 'insert') {
-        const values = this.payload ?? {}
-        const entries = Object.entries(values)
+        const entries = Object.entries(this.payload ?? {})
         const columns = entries.map(([key]) => identifier(key)).join(', ')
-        const slots = entries.map(([, value]) => parameter(value, params)).join(', ')
+        const slots = entries.map(([key, value]) => columnParameter(key, value, params)).join(', ')
         sql = `insert into ${table} (${columns}) values (${slots})`
         if (this.returning) sql += ` returning ${selectList(this.returning)}`
       } else {
         const entries = Object.entries(this.payload ?? {})
-        const assignments = entries.map(([key, value]) => `${identifier(key)} = ${parameter(value, params)}`).join(', ')
+        const assignments = entries.map(([key, value]) => `${identifier(key)} = ${columnParameter(key, value, params)}`).join(', ')
         sql = `update ${table} set ${assignments}${this.where(params)}`
         if (this.returning) sql += ` returning ${selectList(this.returning)}`
       }
@@ -182,7 +195,7 @@ class RpcBuilder {
         'p_provenance','p_contradicts_fact_id','p_correction_of_fact_id',
       ]
       const params: unknown[] = []
-      const slots = ordered.map((key) => parameter(this.args[key] ?? null, params))
+      const slots = ordered.map((key) => parameter(this.args[key] ?? null, params, key === 'p_provenance' ? 'jsonb' : undefined))
       const result = await this.db.query(
         `select * from ${identifier(this.name)}(${slots.join(', ')})`,
         params as never[],
