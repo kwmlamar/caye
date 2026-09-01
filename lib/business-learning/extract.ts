@@ -1,5 +1,4 @@
 import 'server-only'
-import Anthropic from '@anthropic-ai/sdk'
 import { loggedMessagesCreate } from '@/lib/llm-telemetry'
 import type { ExtractedLearningCandidate, LearningAuthority } from './model'
 
@@ -46,11 +45,10 @@ Rules:
 
 export async function extractBusinessLearning(input: ExtractLearningInput): Promise<ExtractionResult> {
   try {
-    const client = new Anthropic()
     const response = await loggedMessagesCreate(
-      client,
+      null,
       {
-        model: 'claude-sonnet-4-6',
+        model: 'auto',
         max_tokens: 1200,
         system: SYSTEM,
         messages: [{
@@ -63,7 +61,7 @@ export async function extractBusinessLearning(input: ExtractLearningInput): Prom
             `Observation:\n${input.content.slice(0, 12000)}`,
         }],
       },
-      { source: 'lib/business-learning/extract.ts:extractBusinessLearning', workspaceId: input.workspaceId }
+      { source: 'lib/business-learning/extract.ts:extractBusinessLearning', task: 'fact_extraction', workspaceId: input.workspaceId }
     )
 
     const raw = response.content[0]?.type === 'text' ? response.content[0].text : ''
