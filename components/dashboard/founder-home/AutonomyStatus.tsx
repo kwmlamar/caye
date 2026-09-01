@@ -119,6 +119,7 @@ export default function AutonomyStatus({ workspaceId }: { workspaceId: string })
   const activeCoding = data.selfImprovement.filter((item) => ['queued', 'starting', 'running', 'testing', 'building'].includes(item.status))
   const actingRecommendations = data.recommendations.filter(explicitAutonomousExecution)
   const judgmentRecommendations = data.recommendations.filter((item) => item.decision?.canRespond === true)
+  const decidedRecommendations = data.recommendations.filter((item) => item.decision?.state === 'approved' || item.decision?.state === 'rejected')
   const quietRecommendations = data.recommendations.filter((item) => {
     if (explicitAutonomousExecution(item) || item.decision?.canRespond) return false
     if (item.decision?.state === 'approved' || item.decision?.state === 'rejected') return false
@@ -126,6 +127,7 @@ export default function AutonomyStatus({ workspaceId }: { workspaceId: string })
   })
   const workingCount = data.investigating.length + activeCoding.length + actingRecommendations.length
   const judgmentCount = judgmentRecommendations.length + data.needsYou.length
+  const changedCount = meaningfulChanges.length + completedCoding.length + decidedRecommendations.length
   const operating = s.monitoring > 0 || workingCount > 0
 
   return <section style={{ marginBottom: 30 }}>
@@ -159,7 +161,8 @@ export default function AutonomyStatus({ workspaceId }: { workspaceId: string })
           </WorkPanel>}
         </div>
 
-        {(meaningfulChanges.length > 0 || completedCoding.length > 0) && <div style={{ marginTop: 12 }}><WorkPanel title="What changed" count={meaningfulChanges.length + completedCoding.length} color={GOLD} empty="No material change yet.">
+        {changedCount > 0 && <div style={{ marginTop: 12 }}><WorkPanel title="What changed" count={changedCount} color={GOLD} empty="No material change yet.">
+          {decidedRecommendations.slice(0, 3).map((item) => <RecommendationCard key={`decision-${item.id}`} item={item} mode="consider" />)}
           {meaningfulChanges.map((item, index) => <Row key={`${item.claim}-${index}`} title={item.claim} detail={item.rationale} meta={`${item.priorConfidence == null ? '?' : Math.round(item.priorConfidence * 100)}% → ${Math.round(item.revisedConfidence * 100)}%`} color={GOLD} />)}
           {completedCoding.slice(0, 2).map((item, index) => <Row key={`${item.task}-${index}`} title={`Self-improvement completed · ${item.task}`} detail={item.commitSha ? `Commit ${item.commitSha.slice(0, 8)} · tests ${item.testsPassed ? 'passed' : 'unverified'} · build ${item.buildPassed ? 'passed' : 'unverified'}` : null} meta={relativeTime(item.at)} color={EMERALD} />)}
         </WorkPanel></div>}
