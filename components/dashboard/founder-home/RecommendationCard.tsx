@@ -31,6 +31,21 @@ function Detail({ label, value }: { label: string; value: string }) {
   return <span style={{ whiteSpace: 'nowrap' }}><span style={{ color: TEXT_QUIET }}>{label}</span> <span style={{ color: TEXT_MUTED }}>{value}</span></span>
 }
 
+function recommendationStateLabel(item: DirectionRecommendation, mode: 'working' | 'decision' | 'consider'): string {
+  const execution = item.executionState?.toLowerCase()
+  if (execution === 'failed_needs_attention') return 'FAILED · NEEDS ATTENTION'
+  if (execution === 'completed') return 'COMPLETED'
+  if (execution === 'acting_now' || execution === 'acting' || execution === 'executing' || execution === 'in_progress' || execution === 'running') return 'ACTING NOW'
+  if (execution === 'approved_queued') return 'APPROVED · QUEUED'
+  if (item.decision?.stale) return 'RECOMMENDATION UPDATED'
+  if (item.decision?.state === 'pending' && item.decision.canRespond) return 'WAITING FOR YOU'
+  if (item.decision?.state === 'approved') return 'APPROVED'
+  if (item.decision?.state === 'rejected') return 'DECISION · REJECTED'
+  if (item.decision?.state === 'deferred') return 'DEFERRED'
+  if (mode === 'working') return 'ACTING NOW'
+  return 'RECOMMENDATION PROPOSED'
+}
+
 export default function RecommendationCard({
   item,
   mode,
@@ -45,19 +60,7 @@ export default function RecommendationCard({
   onDecision?: (item: DirectionRecommendation, action: 'approve' | 'reject' | 'defer') => void
 }) {
   const accent = mode === 'working' ? EMERALD : mode === 'decision' ? ROSE : GOLD
-  const eyebrow = item.decision?.stale
-    ? 'RECOMMENDATION UPDATED'
-    : item.decision?.state === 'approved'
-      ? 'DECISION · APPROVED'
-      : item.decision?.state === 'rejected'
-        ? 'DECISION · REJECTED'
-        : item.decision?.state === 'deferred'
-          ? 'DEFERRED'
-          : mode === 'working'
-            ? 'ACTING ON RECOMMENDATION'
-            : mode === 'decision'
-              ? 'RECOMMENDATION'
-              : 'WORTH CONSIDERING'
+  const eyebrow = recommendationStateLabel(item, mode)
 
   return <div style={{ padding: '12px 0', borderBottom: '1px solid rgba(255,255,255,0.045)' }}>
     <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 5 }}>

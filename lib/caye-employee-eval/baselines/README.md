@@ -1,0 +1,1 @@
+Committed baseline reports in this directory are immutable evidence for a specific Caye code revision and benchmark version. A later candidate must be compared against the exact same `benchmarkVersion`; changing frozen events, expectations, thresholds, or hard gates requires a new benchmark version rather than rewriting an older baseline.

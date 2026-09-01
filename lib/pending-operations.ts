@@ -24,6 +24,10 @@ export type OperationKind =
   // business_artifacts row. Payload: { artifact_id, processing_version }.
   // Idempotency key: `artifact_process:${artifact_id}:v${processing_version}`.
   | 'artifact_process'
+  // Recommendation wake operation. The payload intentionally contains only
+  // canonical identity/version pins; the execution bridge reloads the current
+  // structured action plan and authority before crossing an effect boundary.
+  | 'recommendation_action'
 
 export interface EnqueueArgs {
   workspaceId: string

@@ -1,6 +1,8 @@
 import 'server-only'
 
 import { createServiceClient } from '@/lib/supabase-server'
+import { currentDirectRunId } from '@/lib/caye-direct-run-context'
+import { linkDirectRunToResearch } from '@/lib/caye-direct-runs'
 import { queueResearchRun } from '@/lib/research/runtime'
 import type { InvestigationMode } from '@/lib/research/investigation-lifecycle'
 import type { RegisteredCapability } from './types'
@@ -66,7 +68,6 @@ export const researchInvestigateCapability: RegisteredCapability<FounderResearch
   },
   async execute(args, context) {
     if (context.actor.kind !== 'founder') return failed('not_authorized', 'Research investigations can only be created by the founder.')
-    if (context.scope.workspaceId !== null) return failed('invalid_scope', 'Founder research investigations are operator-scoped, not customer-workspace scoped.')
 
     const lead = args?.lead?.trim()
     const verificationQuestion = args?.verificationQuestion?.trim()
@@ -75,6 +76,9 @@ export const researchInvestigateCapability: RegisteredCapability<FounderResearch
     const explicitMode = args.mode && MODES.includes(args.mode) ? args.mode : null
     if (!lead || !verificationQuestion || !canonicalKey || !origin?.workspaceId || !origin.threadId || !origin.messageId) {
       return failed('invalid_args', 'lead, verificationQuestion, canonicalKey, and trusted Direct origin are required.')
+    }
+    if (context.scope.workspaceId !== null && context.scope.workspaceId !== origin.workspaceId) {
+      return failed('invalid_scope', 'Founder research origin does not match the active Direct workspace.')
     }
     if (!(args.program in FOUNDER_RESEARCH_PROGRAMS)) return failed('invalid_args', 'Unknown canonical research program.')
     if (args.refreshIntervalHours != null && (args.refreshIntervalHours < 1 || args.refreshIntervalHours > 720)) {
@@ -137,6 +141,11 @@ export const researchInvestigateCapability: RegisteredCapability<FounderResearch
       if (originInsert.error && originInsert.error.code !== '23505') throw originInsert.error
 
       const run = await queueResearchRun(question.id, 'founder_direct')
+      const directRunId = currentDirectRunId()
+      if (directRunId) {
+        await linkDirectRunToResearch(db, { directRunId, questionId: question.id, researchRunId: run.id })
+      }
+
       const effectiveMode = (question.investigation_mode ?? mode) as InvestigationMode
       return {
         status: 'staged',

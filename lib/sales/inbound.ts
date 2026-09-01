@@ -54,8 +54,18 @@ export async function handleSalesInbound(input: {
     (policy.kind === 'bounce_or_delivery_failure' && typeof linkedLeadId === 'string' ? linkedLeadId : null)
   const event = lifecycleEventFor(policy)
   const eventRoot = input.currentChannelMessageId ?? `${input.conversationId}:${policy.kind}`
-  if (leadId && event) await recordSalesLifecycleEvent({
-    workspaceId: input.workspaceId, leadId, event, eventKey: `inbound:${eventRoot}:${event}`,
+  // Human inbound is only canonical outreach-reply evidence when the actual
+  // conversation is durably linked to the same lead. Matching an email
+  // address alone is insufficient: a prospect can start an unrelated thread.
+  const attributedOutreachReply = event === 'human_reply_received' &&
+    leadId !== null && typeof linkedLeadId === 'string' && linkedLeadId === leadId
+  if (leadId && event && (event !== 'human_reply_received' || attributedOutreachReply)) await recordSalesLifecycleEvent({
+    workspaceId: input.workspaceId,
+    leadId,
+    event,
+    eventKey: attributedOutreachReply
+      ? `inbound:outreach:${eventRoot}:${event}`
+      : `inbound:${eventRoot}:${event}`,
   })
   if (policy.kind === 'internal' || policy.kind === 'automated_ooo' || policy.kind === 'opt_out' || policy.kind === 'bounce_or_delivery_failure') {
     return { disposition: 'ignore', reason: policy.kind, context: null }

@@ -1,0 +1,40 @@
+name: Autonomous recommendation actions
+
+on:
+  pull_request:
+    paths:
+      - 'app/api/caye/research-worker/route.ts'
+      - 'components/dashboard/founder-home/RecommendationCard.tsx'
+      - 'lib/pending-operations.ts'
+      - 'lib/pending-operations-worker.ts'
+      - 'lib/recommendations/action-operation.ts'
+      - 'lib/recommendations/action-plan.ts'
+      - 'lib/recommendations/action-plan-production.ts'
+      - 'lib/recommendations/action-runtime-production.ts'
+      - 'lib/recommendations/autonomous-worker.ts'
+      - 'lib/recommendations/autonomous-worker.test.ts'
+      - 'lib/recommendations/action-plan.test.ts'
+      - 'lib/recommendations/action-execution.contract.test.ts'
+      - 'lib/recommendations/decisions.ts'
+      - 'supabase/migrations/20260901022000_recommendation_action_plan_version.sql'
+      - '.github/workflows/autonomous-recommendation-actions-ci.yml'
+
+jobs:
+  recommendation-actions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Recommendation execution bridge
+        run: >-
+          npx vitest run
+          lib/recommendations/autonomous-worker.test.ts
+          lib/recommendations/action-plan.test.ts
+          lib/recommendations/action-execution.contract.test.ts
+          lib/recommendations/decisions.test.ts
+          lib/direction-recommendations.contract.test.ts

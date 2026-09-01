@@ -58,24 +58,27 @@ export default function WorkspaceSwitcher({
   }, [open])
 
   return (
-    <div ref={rootRef} style={{ position: 'relative' }}>
+    <div ref={rootRef} style={{ position: 'relative', width: '100%', minWidth: 0 }}>
       <button
         onClick={() => setOpen((o) => !o)}
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-label={`Current workspace: ${businessName}, ${STATUS_LABEL[status]}. Click to switch.`}
         style={{
+          width: '100%', minWidth: 0, overflow: 'hidden', boxSizing: 'border-box',
           display: 'flex', alignItems: 'center', gap: 10, padding: '6px 10px 6px 6px',
           borderRadius: 12, border: 'none', cursor: 'pointer',
           background: open ? 'rgba(255,255,255,0.06)' : 'transparent',
           transition: 'background 0.15s ease',
         }}
       >
-        <CayeMark size={30} />
-        <div style={{ textAlign: 'left', minWidth: 0 }}>
+        <span style={{ display: 'flex', flexShrink: 0 }}>
+          <CayeMark size={30} />
+        </span>
+        <div style={{ textAlign: 'left', flex: 1, minWidth: 0, overflow: 'hidden' }}>
           <div style={{
             fontSize: 13.5, fontWeight: 600, color: '#f4f4f5', letterSpacing: '-0.01em',
-            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 200,
+            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', width: '100%',
           }}>
             {businessName}
           </div>
