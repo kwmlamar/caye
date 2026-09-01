@@ -1,5 +1,4 @@
 import 'server-only'
-import Anthropic from '@anthropic-ai/sdk'
 import type { VoiceProfile } from '@/lib/voice-profile'
 import type { ContactStyleProfile } from '@/types/database'
 import { detectIdentityLeak } from './caye-identity-guard'
@@ -98,7 +97,6 @@ function buildNudgeSystem(ctx: NudgeContext): string {
 }
 
 export async function generateCayeNudge(ctx: NudgeContext): Promise<NudgeResult> {
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
   const system = buildNudgeSystem(ctx)
 
   const userPrompt =
@@ -106,12 +104,12 @@ export async function generateCayeNudge(ctx: NudgeContext): Promise<NudgeResult>
       ? `Write the post-tour follow-up to ${ctx.customerName}.`
       : `Write the friendly check-in to ${ctx.customerName}.`
 
-  const response = await loggedMessagesCreate(client, {
+  const response = await loggedMessagesCreate(null, {
     model: 'claude-sonnet-4-6',
     max_tokens: 512,
     system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
     messages: [{ role: 'user', content: userPrompt }],
-  }, { source: 'lib/caye-nudge.ts:generateCayeNudge' })
+  }, { source: 'lib/caye-nudge.ts:generateCayeNudge', task: 'business_analysis' })
 
   const textBlock = response.content.find(b => b.type === 'text')
   const text = textBlock && textBlock.type === 'text' ? textBlock.text.trim() : ''

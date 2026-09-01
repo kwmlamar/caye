@@ -1,5 +1,5 @@
 import 'server-only'
-import Anthropic from '@anthropic-ai/sdk'
+import type Anthropic from '@anthropic-ai/sdk'
 import { loggedMessagesCreate } from '@/lib/llm-telemetry'
 import { normalizeDigest, type InboundDigest } from '@/lib/inbound-digest'
 
@@ -167,9 +167,8 @@ export async function extractInboundDigest(args: {
     .join('\n')
 
   try {
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
     const response = await loggedMessagesCreate(
-      client,
+      null,
       {
         model: MODEL,
         max_tokens: MAX_OUTPUT_TOKENS,
@@ -178,7 +177,7 @@ export async function extractInboundDigest(args: {
         tools: [EXTRACTION_TOOL],
         tool_choice: { type: 'tool', name: EXTRACTION_TOOL.name },
       },
-      { source: 'lib/inbound-digest-extract.ts:extractInboundDigest', workspaceId: args.workspaceId }
+      { source: 'lib/inbound-digest-extract.ts:extractInboundDigest', task: 'fact_extraction', workspaceId: args.workspaceId }
     )
 
     const block = response.content.find(

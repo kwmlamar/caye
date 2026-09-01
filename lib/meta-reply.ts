@@ -1,5 +1,4 @@
 import 'server-only'
-import Anthropic from '@anthropic-ai/sdk'
 import type { VoiceProfile } from '@/lib/voice-profile'
 import { loggedMessagesCreate } from '@/lib/llm-telemetry'
 
@@ -8,7 +7,6 @@ export async function generateMetaReply(
   inbound: { senderName: string; body: string },
   voiceProfile?: VoiceProfile
 ): Promise<string> {
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
   let fullSystem = systemPrompt
 
@@ -27,7 +25,7 @@ export async function generateMetaReply(
     '\n\nWrite only the reply body. Plain conversational prose — no markdown, no bullet points, no headers. ' +
     'Keep it brief and conversational. No emoji by default; at most one only when directly matching the customer\'s own style. Sign off naturally.'
 
-  const response = await loggedMessagesCreate(client, {
+  const response = await loggedMessagesCreate(null, {
     model: 'claude-sonnet-4-6',
     max_tokens: 500,
     system: fullSystem,
@@ -37,7 +35,7 @@ export async function generateMetaReply(
         content: `Reply to this message:\n\nFrom: ${inbound.senderName}\n\n${inbound.body}`,
       },
     ],
-  }, { source: 'lib/meta-reply.ts:generateMetaReply' })
+  }, { source: 'lib/meta-reply.ts:generateMetaReply', task: 'customer_response' })
 
   const block = response.content[0]
   if (block.type !== 'text') {

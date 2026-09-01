@@ -1,21 +1,46 @@
 import 'server-only'
 import type Anthropic from '@anthropic-ai/sdk'
 import { createServiceClient } from './supabase-server'
+import { generate } from './ai/gateway'
+import type { AIProviderId, AITask } from './ai/types'
 
 /**
- * Per-call-site LLM spend attribution (#49). Thin wrapper around
- * client.messages.create that records source, model, and token usage
- * to `llm_call_log` for spend-by-file aggregation.
+ * Anthropic-shaped facade over the Caye AI Gateway (lib/ai).
  *
- * Log writes are fire-and-forget — a logging failure must never block
- * the reply. Errors are surfaced via console only.
+ * HISTORY, because the name no longer matches the job. This started as a
+ * per-call-site spend wrapper around `client.messages.create` (#49). It was
+ * already the one place ~40 call sites funnelled through, so when Caye had to
+ * stop treating Claude as infrastructure, this was the correct seam: it kept
+ * every call site, prompt, and test mock intact while the thing underneath
+ * changed from "the Anthropic SDK" to "route this task to whichever provider
+ * can serve it".
  *
- * Source string convention: `file/path.ts:function` (e.g.
- * `lib/caye-reply.ts:replyLoop`). Distinguishes call sites within a
- * file when more than one exists.
+ * What that means now:
+ *   - This function no longer talks to Anthropic. It calls lib/ai/gateway.
+ *   - `params.model` is advisory. The gateway picks the model from the task
+ *     route (lib/ai/routes.ts). A call site cannot pin Caye to one vendor.
+ *   - The first argument is vestigial and ignored. It is retained so the
+ *     existing call sites and the ~30 suites that mock this module by
+ *     argument position did not have to be rewritten during a migration
+ *     whose whole point was to preserve behaviour. Pass `null`.
+ *
+ * Spend logging moved into lib/ai/telemetry.ts, which writes the same
+ * `llm_call_log` table plus provider/task/routing columns — so
+ * /api/admin/llm-spend keeps working and now also sees who served the call.
  */
 export interface LoggedCallContext {
+  /**
+   * `file/path.ts:function` (e.g. `lib/caye-reply.ts:replyLoop`).
+   * Distinguishes call sites within a file when more than one exists.
+   */
   source: string
+  /**
+   * The AI capability being requested. Drives routing and cost tier. When
+   * omitted it is inferred from `source` (lib/ai/routes.ts) so untagged
+   * legacy call sites still route sensibly rather than defaulting to the
+   * most expensive profile.
+   */
+  task?: AITask
   workspaceId?: string | null
   /** Stable top-level request id when the caller has one. Metadata only. */
   requestId?: string | null
@@ -23,6 +48,19 @@ export interface LoggedCallContext {
   callerRole?: 'owner' | 'staff' | 'founder' | 'driver' | null
   /** 1-based model turn within a bounded loop. */
   loopIteration?: number | null
+  /**
+   * Set when a tool with an external side effect may already have run in
+   * this turn. Suppresses provider failover — a duplicated customer message
+   * or booking write is worse than a surfaced error.
+   */
+  sideEffectMayHaveOccurred?: boolean
+  /**
+   * Restrict routing to one provider. Only for surfaces where a vendor was
+   * explicitly chosen (Caye Direct's founder model picker) or where the call
+   * site genuinely represents that vendor (the research provider adapters).
+   * Never on an ordinary product path.
+   */
+  pinProvider?: AIProviderId
 }
 
 export interface GenericLlmUsage {
@@ -33,20 +71,25 @@ export interface GenericLlmUsage {
   cacheCreationTokens?: number
 }
 
+/**
+ * @param _provider Ignored. See the module doc comment. Pass `null`.
+ */
 export async function loggedMessagesCreate(
-  client: Anthropic,
+  _provider: unknown,
   params: Anthropic.MessageCreateParamsNonStreaming,
   ctx: LoggedCallContext,
-  options?: Anthropic.RequestOptions
+  options?: { signal?: AbortSignal }
 ): Promise<Anthropic.Message> {
-  const response = await client.messages.create(params, options)
-  void logCallUsage(response, ctx).catch((err) => {
-    console.error('[llm-telemetry] log write failed:', err)
-  })
-  return response
+  const result = await generate({ params, ctx, signal: options?.signal })
+  return result.output
 }
 
-/** Shared telemetry sink for non-Anthropic backends so cloud spend stays visible. */
+/**
+ * Shared telemetry sink for callers that reach a model outside the gateway
+ * (today: lib/research/providers/*, which owns provider-native web search and
+ * durable source fetch that the gateway's chat-completion contract does not
+ * model). Keeps their spend in the same ledger.
+ */
 export async function logGenericLlmUsage(usage: GenericLlmUsage, ctx: LoggedCallContext): Promise<void> {
   const supabase = createServiceClient()
   await supabase.from('llm_call_log').insert({
@@ -61,21 +104,4 @@ export async function logGenericLlmUsage(usage: GenericLlmUsage, ctx: LoggedCall
     caller_role: ctx.callerRole ?? null,
     loop_iteration: ctx.loopIteration ?? null,
   })
-}
-
-async function logCallUsage(
-  response: Anthropic.Message,
-  ctx: LoggedCallContext
-): Promise<void> {
-  const usage = response.usage
-  await logGenericLlmUsage(
-    {
-      model: response.model,
-      inputTokens: usage.input_tokens,
-      outputTokens: usage.output_tokens,
-      cacheReadTokens: usage.cache_read_input_tokens ?? undefined,
-      cacheCreationTokens: usage.cache_creation_input_tokens ?? undefined,
-    },
-    ctx
-  )
 }

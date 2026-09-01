@@ -1,5 +1,4 @@
 import 'server-only'
-import Anthropic from '@anthropic-ai/sdk'
 import { createServiceClient } from '@/lib/supabase-server'
 import { resolveItemRef, type PendingHeldItem } from '../pending'
 import type { ActionContext, ActionResult } from './types'
@@ -172,13 +171,12 @@ async function composeRevisedReply(
     `Write the revised reply.`
 
   try {
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
-    const response = await loggedMessagesCreate(client, {
+    const response = await loggedMessagesCreate(null, {
       model: 'claude-sonnet-4-6',
       max_tokens: 500,
       system,
       messages: [{ role: 'user', content: userPrompt }],
-    }, { source: 'lib/whatsapp/actions/edit.ts:composeRevisedReply', workspaceId })
+    }, { source: 'lib/whatsapp/actions/edit.ts:composeRevisedReply', task: 'operator_response', workspaceId })
     const block = response.content[0]
     if (block?.type !== 'text') return null
     return block.text.trim()

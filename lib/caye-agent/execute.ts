@@ -21,7 +21,17 @@ import { detectToolNameLeak } from '@/lib/operator-text-guard'
 const MAX_TOOL_ITERATIONS = 5
 
 export interface ToolLoopArgs {
-  client: Anthropic
+  /**
+   * @deprecated Vestigial. Provider selection moved to the Caye AI Gateway
+   * (lib/ai) — this loop no longer holds a vendor client, and the value is
+   * ignored. Retained as optional so the replay/bench harnesses and existing
+   * suites that build ToolLoopArgs keep compiling.
+   */
+  client?: unknown
+  /**
+   * Advisory only. The gateway routes by `task`, not by this string; it is
+   * still threaded through for spend attribution continuity.
+   */
   model: string
   maxTokens: number
   systemPrompt: string
@@ -259,7 +269,7 @@ export async function runToolLoop(args: ToolLoopArgs): Promise<ToolLoopResult> {
   const forceToolUse = mode === 'front-desk' && tools.length > 0
 
   for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
-    const response = await loggedMessagesCreate(args.client, {
+    const response = await loggedMessagesCreate(null, {
       model: args.model,
       max_tokens: args.maxTokens,
       system: [
@@ -274,6 +284,9 @@ export async function runToolLoop(args: ToolLoopArgs): Promise<ToolLoopResult> {
       ...(forceToolUse ? { tool_choice: { type: 'any' as const } } : {}),
     }, {
       source: 'lib/caye-agent/execute.ts:runToolLoop',
+      // The bounded tool loop is Caye's planning surface: it needs tool
+      // calling and real reasoning, so it routes on the strong tier.
+      task: 'agent_planning',
       workspaceId: args.ctx.workspaceId,
       requestId: args.ctx.requestId,
       callerRole: args.ctx.callerRole,

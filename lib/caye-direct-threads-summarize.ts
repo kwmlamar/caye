@@ -1,14 +1,9 @@
 import 'server-only'
 import { createServiceClient } from '@/lib/supabase-server'
 import { createRoutineInferenceLogger, runInference, type RoutineParseResult } from '@/lib/routine-inference'
+import { loggedMessagesCreate } from '@/lib/llm-telemetry'
 import { getThread, getThreadMessages, type ThreadMessageRow } from '@/lib/caye-direct-threads'
 import { isInternalTurnBody, visibleBody } from '@/lib/caye-operator-messages'
-
-// Direct's auxiliary text work should follow the provider that is actually
-// available in production. Anthropic is intentionally not a hidden fallback:
-// an empty Claude balance must not break thread titles or rolling summaries.
-const OPENAI_AUX_MODEL = process.env.OPENAI_DIRECT_AUX_MODEL || process.env.OPENAI_RESEARCH_MODEL || 'gpt-5-mini'
-const OPENAI_BASE_URL = (process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/+$/, '')
 
 const SUMMARY_TRIGGER_MESSAGE_COUNT = 20
 const TITLE_WORKLOAD = 'caye_direct_thread_title'
@@ -19,46 +14,29 @@ const FRONTIER_TITLE_SYSTEM =
 const ROUTINE_TITLE_SYSTEM =
   'Classify a founder-only conversation snippet into a sidebar title. Return ONLY JSON matching exactly {"kind":"title","title":"2-6 word subject"} or {"kind":"escalate"}. Use escalate when the subject is ambiguous. A title must be 2-6 plain words, at most 80 characters, without quotes or ending punctuation. It is display-only and must describe the subject, not that this is a conversation.'
 
-function record(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null
-}
-
-function extractOpenAiText(payload: unknown): string {
-  const root = record(payload)
-  if (typeof root?.output_text === 'string' && root.output_text.trim()) return root.output_text.trim()
-  const output = root?.output
-  if (!Array.isArray(output)) return ''
-  return output
-    .map((item) => record(item))
-    .filter((item): item is Record<string, unknown> => item?.type === 'message' && Array.isArray(item.content))
-    .flatMap((item) => (item.content as unknown[])
-      .map((part) => record(part))
-      .filter((part): part is Record<string, unknown> => part?.type === 'output_text' && typeof part.text === 'string')
-      .map((part) => part.text as string))
+async function generateWithGateway(args: {
+  workspaceId: string
+  system: string
+  input: string
+  maxOutputTokens: number
+  source: string
+}): Promise<string> {
+  const response = await loggedMessagesCreate(
+    null,
+    {
+      model: 'auto',
+      system: args.system,
+      max_tokens: args.maxOutputTokens,
+      messages: [{ role: 'user', content: args.input }],
+    },
+    { source: args.source, task: 'summarization', workspaceId: args.workspaceId }
+  )
+  const text = response.content
+    .filter((block) => block.type === 'text')
+    .map((block) => block.type === 'text' ? block.text : '')
     .join('\n')
     .trim()
-}
-
-async function generateWithOpenAi(args: { system: string; input: string; maxOutputTokens: number }): Promise<string> {
-  const apiKey = process.env.OPENAI_API_KEY
-  if (!apiKey) throw new Error('OPENAI_API_KEY is not set')
-  const response = await fetch(`${OPENAI_BASE_URL}/responses`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({
-      model: OPENAI_AUX_MODEL,
-      instructions: args.system,
-      input: args.input,
-      reasoning: { effort: 'low' },
-      max_output_tokens: args.maxOutputTokens,
-    }),
-  })
-  const raw = await response.text()
-  if (!response.ok) throw new Error(`OpenAI auxiliary inference failed (${response.status}): ${raw.slice(0, 500)}`)
-  let payload: unknown
-  try { payload = JSON.parse(raw) } catch { throw new Error('OpenAI auxiliary inference returned non-JSON') }
-  const text = extractOpenAiText(payload)
-  if (!text) throw new Error('OpenAI auxiliary inference returned no text')
+  if (!text) throw new Error('AI gateway returned no text')
   return text
 }
 
@@ -85,8 +63,8 @@ export async function maybeGenerateThreadTitle(workspaceId: string, threadId: st
   try {
     const title = await runInference({
       tier: 'routine',
-      frontierModel: OPENAI_AUX_MODEL,
-      frontier: () => generateThreadTitleWithOpenAi(transcript),
+      frontierModel: 'auto',
+      frontier: () => generateThreadTitleWithGateway(workspaceId, transcript),
       routine: {
         system: ROUTINE_TITLE_SYSTEM,
         messages: [{ role: 'user', content: transcript }],
@@ -106,8 +84,14 @@ export async function maybeGenerateThreadTitle(workspaceId: string, threadId: st
   }
 }
 
-async function generateThreadTitleWithOpenAi(transcript: string): Promise<string | null> {
-  const text = await generateWithOpenAi({ system: FRONTIER_TITLE_SYSTEM, input: transcript, maxOutputTokens: 512 })
+async function generateThreadTitleWithGateway(workspaceId: string, transcript: string): Promise<string | null> {
+  const text = await generateWithGateway({
+    workspaceId,
+    system: FRONTIER_TITLE_SYSTEM,
+    input: transcript,
+    maxOutputTokens: 512,
+    source: 'lib/caye-direct-threads-summarize.ts:title',
+  })
   return text.replace(/^["']|["']$/g, '').trim().slice(0, 80) || null
 }
 
@@ -148,10 +132,12 @@ export async function maybeRefreshThreadSummary(workspaceId: string, threadId: s
     .slice(0, 12000)
 
   try {
-    const summary = await generateWithOpenAi({
+    const summary = await generateWithGateway({
+      workspaceId,
       system: 'Condense this conversation thread into a compact briefing for someone resuming it later. Cover: current topic/objective, important facts, decisions made, unresolved questions, actions taken or planned. 3-6 short sentences, plain prose, no headers or bullet points. This is a working summary, not a transcript. Omit pleasantries and small talk.',
       input: transcript,
       maxOutputTokens: 800,
+      source: 'lib/caye-direct-threads-summarize.ts:summary',
     })
     if (summary) {
       await supabase.from('caye_direct_threads')

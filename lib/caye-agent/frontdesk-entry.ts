@@ -1,6 +1,6 @@
 import 'server-only'
 import { randomUUID } from 'node:crypto'
-import Anthropic from '@anthropic-ai/sdk'
+import type Anthropic from '@anthropic-ai/sdk'
 import { createServiceClient } from '@/lib/supabase-server'
 import { runToolLoop } from './execute'
 import { loadFrontDeskConversationContext } from './context'
@@ -186,9 +186,7 @@ export async function runConvergedFrontDeskTurn(
       evidenceCollected: [],
     }
 
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
     const loopResult = await runToolLoop({
-      client,
       model: 'claude-sonnet-4-6',
       maxTokens: 1536,
       systemPrompt,

@@ -76,7 +76,18 @@ export function createAnthropicResearchAdapter(
     },
 
     complete(request: ResearchCompletionRequest): Promise<ResearchCompletionResult> {
-      return createAnthropicResearchCompletion({ client: client(), model, onUsage: options.onUsage })(request)
+      // No client injected: synthesis routes through the Caye AI Gateway
+      // (pinned to Anthropic, since this adapter *is* the Anthropic entry in
+      // the research router). That buys shared circuit-breaking, so an
+      // exhausted balance stops costing a failed round trip per research
+      // cycle before the router falls through to OpenAI. `search`/`fetch`
+      // above still use the SDK directly — they need Anthropic's
+      // server-side web tools, which the gateway does not model.
+      return createAnthropicResearchCompletion({
+        client: options.client,
+        model,
+        onUsage: options.onUsage,
+      })(request)
     },
   }
 }

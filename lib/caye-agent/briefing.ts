@@ -1,6 +1,6 @@
 import 'server-only'
 import { randomUUID } from 'crypto'
-import Anthropic from '@anthropic-ai/sdk'
+import type Anthropic from '@anthropic-ai/sdk'
 import { createServiceClient } from '@/lib/supabase-server'
 import { loadAttentionDelta, renderAttentionContext } from '@/lib/owner-attention'
 import { syncOwnerAttention } from '@/lib/owner-attention-sync'
@@ -103,9 +103,7 @@ export async function composeEodSummary(args: {
     },
   ]
 
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
   const { replyText } = await runToolLoop({
-    client,
     model: MODEL,
     maxTokens: MAX_OUTPUT_TOKENS,
     systemPrompt,
@@ -209,9 +207,7 @@ export async function composeMorningBriefing(args: {
     },
   ]
 
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
   const { replyText } = await runToolLoop({
-    client,
     model: MODEL,
     maxTokens: MAX_OUTPUT_TOKENS,
     systemPrompt,

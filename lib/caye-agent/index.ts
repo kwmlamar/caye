@@ -1,6 +1,6 @@
 import 'server-only'
 import { randomUUID } from 'crypto'
-import Anthropic from '@anthropic-ai/sdk'
+import type Anthropic from '@anthropic-ai/sdk'
 import { createServiceClient } from '@/lib/supabase-server'
 import type { VoiceProfile } from '@/lib/voice-profile'
 import { loadAttentionDelta, renderAttentionContext } from '@/lib/owner-attention'
@@ -291,13 +291,11 @@ export async function cayeAgent(input: CayeAgentInput): Promise<CayeAgentResult>
 
   const { systemPrompt, initialMessages, workspaceTimezone, activeWork } = await buildBackOfficeTurnContext(input)
 
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
   const directThreadLinks: string[] = []
   const engineeringArtifactIds: string[] = []
   const engineeringAnalysisIds: string[] = []
   const businessArtifactIds: string[] = []
   const { replyText, newTurns, ranOutOfIterations } = await runToolLoop({
-    client,
     model: MODEL,
     maxTokens: MAX_OUTPUT_TOKENS,
     systemPrompt,
@@ -354,10 +352,8 @@ async function runDriverAgent(input: CayeAgentInput): Promise<CayeAgentResult> {
     ...history,
     { role: 'user', content: input.userMessage },
   ]
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
   const { replyText, newTurns } = await runToolLoop({
-    client,
     model: MODEL,
     maxTokens: MAX_OUTPUT_TOKENS,
     systemPrompt,
@@ -383,10 +379,8 @@ async function runAdminShellAgent(input: CayeAgentInput): Promise<CayeAgentResul
     ...history,
     { role: 'user', content: input.userMessage },
   ]
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
   const { replyText, newTurns } = await runToolLoop({
-    client,
     model: MODEL,
     maxTokens: MAX_OUTPUT_TOKENS,
     systemPrompt,

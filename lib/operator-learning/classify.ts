@@ -1,5 +1,4 @@
 import 'server-only'
-import Anthropic from '@anthropic-ai/sdk'
 import { loggedMessagesCreate } from '@/lib/llm-telemetry'
 import { validateClassification, type ClassificationResult, CLASSIFIER_VERSION } from './schema'
 import type { PrefilterResult } from './prefilter'
@@ -84,9 +83,8 @@ export async function classifyOperatorMessage(args: {
   workspaceId: string
 }): Promise<ClassifyResult> {
   try {
-    const client = new Anthropic()
     const message = await loggedMessagesCreate(
-      client,
+      null,
       {
         model: 'claude-sonnet-4-6',
         max_tokens: 700,
@@ -104,7 +102,7 @@ export async function classifyOperatorMessage(args: {
           },
         ],
       },
-      { source: 'lib/operator-learning/classify.ts:classifyOperatorMessage', workspaceId: args.workspaceId }
+      { source: 'lib/operator-learning/classify.ts:classifyOperatorMessage', task: 'classification', workspaceId: args.workspaceId }
     )
 
     const raw = message.content[0]?.type === 'text' ? message.content[0].text : ''

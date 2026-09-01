@@ -1,5 +1,4 @@
 import 'server-only'
-import Anthropic from '@anthropic-ai/sdk'
 import { createServiceClient } from '@/lib/supabase-server'
 import type { VoiceProfile } from '@/lib/voice-profile'
 import { loggedMessagesCreate } from '@/lib/llm-telemetry'
@@ -54,10 +53,9 @@ export async function decideNextDiscoveryStep(
   turns: DiscoveryTurn[]
 ): Promise<DiscoveryStep> {
   try {
-    const client = new Anthropic()
     const transcript = turns.map((t) => `${t.question}\nAnswer: ${t.answer}`).join('\n\n')
 
-    const message = await loggedMessagesCreate(client, {
+    const message = await loggedMessagesCreate(null, {
       model: 'claude-sonnet-4-6',
       max_tokens: 512,
       system: `You are Caye, an AI receptionist, interviewing a small-business owner over WhatsApp to learn how to represent their business. You need enough to: know what the business does and its tone, answer common customer questions, explain pricing/booking, know the cancellation policy, and know when to hand off to a human.
@@ -76,7 +74,7 @@ Return ONLY valid JSON, no markdown, no explanation:
           content: `Business name: ${businessName}\n\nConversation so far:\n\n${transcript}`,
         },
       ],
-    }, { source: 'lib/onboarding.ts:decideNextDiscoveryStep' })
+    }, { source: 'lib/onboarding.ts:decideNextDiscoveryStep', task: 'onboarding' })
 
     const raw = message.content[0].type === 'text' ? message.content[0].text : ''
     const text = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim()
@@ -103,11 +101,10 @@ export async function buildBusinessProfile(
   turns: DiscoveryTurn[],
   businessName: string
 ): Promise<BusinessProfile> {
-  const client = new Anthropic()
 
   const answersText = turns.map((t) => `${t.question}\nAnswer: ${t.answer}`).join('\n\n')
 
-  const message = await loggedMessagesCreate(client, {
+  const message = await loggedMessagesCreate(null, {
     model: 'claude-sonnet-4-6',
     max_tokens: 2048,
     system: `You are building an AI configuration profile for a service business's AI receptionist named Caye.
@@ -128,7 +125,7 @@ Return ONLY valid JSON matching this exact shape — no markdown, no explanation
         content: `Business name: ${businessName}\n\nOnboarding answers:\n\n${answersText}`,
       },
     ],
-  }, { source: 'lib/onboarding.ts:buildBusinessProfile' })
+  }, { source: 'lib/onboarding.ts:buildBusinessProfile', task: 'onboarding' })
 
   const raw = message.content[0].type === 'text' ? message.content[0].text : ''
   const text = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim()

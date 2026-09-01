@@ -7,6 +7,7 @@ import SettingsCard from './SettingsCard'
 import CostPage from './CostPage'
 import HealthPage from './HealthPage'
 import ToolsPage from './ToolsPage'
+import AiProvidersPage from './AiProvidersPage'
 import AdminShell from '@/components/dashboard/admin-shell/AdminShell'
 import GlobalPerformance from '@/components/dashboard/global-performance/GlobalPerformance'
 
@@ -14,7 +15,7 @@ const CARD_BORDER = '#28282d'
 const LABEL_COLOR = '#71717a'
 
 type WorkspaceTab = 'caye' | 'channels'
-type OperationsTab = 'performance' | 'cost' | 'health' | 'tools' | 'admin'
+type OperationsTab = 'performance' | 'cost' | 'health' | 'ai' | 'tools' | 'admin'
 type Tab = WorkspaceTab | OperationsTab
 
 const WORKSPACE_TABS: { id: WorkspaceTab; label: string }[] = [
@@ -25,6 +26,10 @@ const OPERATIONS_TABS: { id: OperationsTab; label: string }[] = [
   { id: 'performance', label: 'Performance' },
   { id: 'cost', label: 'Cost' },
   { id: 'health', label: 'Health' },
+  // Internal AI-provider infrastructure. Sits under Operations, next to
+  // Health and Cost, because that is where the founder already goes when
+  // something is wrong — not a customer-visible setting.
+  { id: 'ai', label: 'AI providers' },
   { id: 'tools', label: 'Tools' },
   { id: 'admin', label: 'Admin' },
 ]
@@ -63,6 +68,7 @@ export default function SettingsPage({ workspaceId }: { workspaceId: string }) {
     case 'performance': body = <GlobalPerformance />; break
     case 'cost': body = <CostPage />; break
     case 'health': body = <HealthPage />; break
+    case 'ai': body = <AiProvidersPage />; break
     case 'tools': body = <ToolsPage />; break
     case 'admin': body = <AdminShell />; break
   }

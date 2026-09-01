@@ -1,6 +1,6 @@
 import 'server-only'
 import { randomUUID } from 'crypto'
-import Anthropic from '@anthropic-ai/sdk'
+import type Anthropic from '@anthropic-ai/sdk'
 import type { VoiceProfile } from '@/lib/voice-profile'
 import { stripWrappingQuotes } from '@/lib/voice-profile'
 import type { ContactStyleProfile } from '@/types/database'
@@ -2020,7 +2020,6 @@ async function generateCayeAutoReplyCore(
   inbound: CayeAutoReplyInput,
   voiceProfile?: VoiceProfile
 ): Promise<CayeAutoReply> {
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
   const isEmail = inbound.channel === 'email'
 
   // Pull services up front so Caye can reference them in the same turn.
@@ -2460,7 +2459,7 @@ async function generateCayeAutoReplyCore(
   const frontDeskRequestId = randomUUID()
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-    const response = await loggedMessagesCreate(client, {
+    const response = await loggedMessagesCreate(null, {
       model: 'claude-sonnet-4-6',
       max_tokens: 1024,
       // Two-block system: stable prefix cached at 1h TTL, dynamic suffix
@@ -2478,7 +2477,7 @@ async function generateCayeAutoReplyCore(
         : TOOLS,
       tool_choice: { type: 'any' },
       messages,
-    }, { source: 'lib/caye-reply.ts:generateCayeAutoReply', workspaceId: inbound.workspaceId })
+    }, { source: 'lib/caye-reply.ts:generateCayeAutoReply', task: 'customer_response', workspaceId: inbound.workspaceId })
 
     messages.push({ role: 'assistant', content: response.content })
 

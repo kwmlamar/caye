@@ -15,6 +15,11 @@ export const LLM_PRICING: Record<
   // OpenAI GPT-5: $1.25/M input, $0.125/M cached input, $10/M output. Used as
   // the default continuous-research model (lib/research/providers/openai.ts).
   'gpt-5': { input: 1.25, output: 10, cache_read: 0.125, cache_write_1h: 0 },
+  // OpenAI GPT-4.1 family — the OpenRouter fallback route's default models
+  // (lib/ai/models.ts). Priced from OpenAI's own list; OpenRouter adds a
+  // small margin, so these are a floor, not an exact invoice.
+  'gpt-4.1': { input: 2, output: 8, cache_read: 0.5, cache_write_1h: 0 },
+  'gpt-4.1-mini': { input: 0.4, output: 1.6, cache_read: 0.1, cache_write_1h: 0 },
 }
 
 /**
@@ -28,6 +33,13 @@ export const LLM_PRICING: Record<
  */
 export function pricingKeyFor(model: string): string | null {
   if (LLM_PRICING[model]) return model
+  // OpenRouter returns vendor-prefixed ids ('openai/gpt-4.1-mini'). Without
+  // this, every failover-served call priced at $0 — which reads as free
+  // rather than as unpriced, and quietly understates the cost of an outage.
+  if (model.includes('/')) {
+    const unprefixed = pricingKeyFor(model.slice(model.indexOf('/') + 1))
+    if (unprefixed) return unprefixed
+  }
   // OpenAI style: -YYYY-MM-DD. Anthropic style: -YYYYMMDD.
   const base = model.replace(/-\d{4}-\d{2}-\d{2}$/, '').replace(/-\d{8}$/, '')
   return base !== model && LLM_PRICING[base] ? base : null

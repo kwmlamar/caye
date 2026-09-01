@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server'
-import Anthropic from '@anthropic-ai/sdk'
 import { createServiceClient } from '@/lib/supabase-server'
 import { getGmailContext } from '@/lib/gmail-token'
 import { loggedMessagesCreate } from '@/lib/llm-telemetry'
@@ -90,7 +89,6 @@ async function fetchDiscoverySample(workspaceId: string): Promise<{ messages: Di
 }
 
 async function synthesizeBusinessContext(businessName: string, messages: DiscoveryMail[]): Promise<DiscoveryResult> {
-  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
   const sample = messages.map((m, index) =>
     `[${index + 1}] ${m.direction.toUpperCase()}\nSubject: ${m.subject}\nFrom: ${m.from}\nTo: ${m.to}\nExcerpt: ${m.snippet}`
   ).join('\n\n')
@@ -115,11 +113,11 @@ Return JSON only with this exact shape:
   "confidence_notes": ["state uncertainty, sparse evidence, or likely-but-unverified patterns here"]
 }`
 
-  const response = await loggedMessagesCreate(anthropic, {
+  const response = await loggedMessagesCreate(null, {
     model: 'claude-sonnet-4-5',
     max_tokens: 1800,
     messages: [{ role: 'user', content: prompt }],
-  }, { source: 'app/api/caye/gmail-observation-discovery/route.ts:synthesizeBusinessContext' })
+  }, { source: 'app/api/caye/gmail-observation-discovery/route.ts:synthesizeBusinessContext', task: 'fact_extraction' })
 
   const text = response.content
     .filter(block => block.type === 'text')

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import Anthropic from '@anthropic-ai/sdk'
+import type Anthropic from '@anthropic-ai/sdk'
 import { createServiceClient, createServerClient } from '@/lib/supabase-server'
 import { loggedMessagesCreate } from '@/lib/llm-telemetry'
 import { syncBookingToCalendar } from '@/lib/calendar-sync'
@@ -1079,13 +1079,12 @@ export async function POST(req: NextRequest) {
 
     let summarizerError: string | null = null
     try {
-      const summarizer = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
-      const response = await loggedMessagesCreate(summarizer, {
+      const response = await loggedMessagesCreate(null, {
         model: 'claude-sonnet-4-6',
         max_tokens: 1800,
         system: summarizerSystem,
         messages: [{ role: 'user', content: summarizerUser }],
-      }, { source: 'app/api/caye/chat/route.ts:summarizer', workspaceId })
+      }, { source: 'app/api/caye/chat/route.ts:summarizer', task: 'summarization', workspaceId })
       const text = response.content
         .filter(b => b.type === 'text')
         .map(b => (b as { type: 'text'; text: string }).text)
@@ -1132,7 +1131,6 @@ export async function POST(req: NextRequest) {
   }))
   messages.push({ role: 'user', content: message })
 
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
   let reply = ''
   const configUpdates: { field: string; summary: string }[] = []
@@ -1141,7 +1139,7 @@ export async function POST(req: NextRequest) {
 
   try {
     for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
-      const response = await loggedMessagesCreate(client, {
+      const response = await loggedMessagesCreate(null, {
         model: 'claude-sonnet-4-6',
         max_tokens: 2000,
         system: [
@@ -1153,7 +1151,7 @@ export async function POST(req: NextRequest) {
         ],
         tools: TOOLS,
         messages,
-      }, { source: 'app/api/caye/chat/route.ts:chatLoop', workspaceId })
+      }, { source: 'app/api/caye/chat/route.ts:chatLoop', task: 'operator_response', workspaceId })
 
       if (response.stop_reason === 'end_turn') {
         const textBlock = response.content.find((b) => b.type === 'text')
