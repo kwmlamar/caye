@@ -11,6 +11,8 @@ on:
 
 permissions:
   contents: read
+  pull-requests: write
+  issues: write
 
 jobs:
   recommendation-decisions:
@@ -30,13 +32,27 @@ jobs:
           cat > tsconfig.recommendation-decisions.ci.json <<'EOF'
           {
             "extends": "./tsconfig.json",
-            "compilerOptions": {
-              "incremental": false
-            },
-            "files": [
-              "lib/recommendations/decisions.ts"
-            ],
+            "compilerOptions": { "incremental": false },
+            "files": ["lib/recommendations/decisions.ts"],
             "include": []
           }
           EOF
           npx tsc --noEmit -p tsconfig.recommendation-decisions.ci.json
+      - name: Production build diagnostic
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          npm run build > /tmp/build.txt 2>&1
+          status=$?
+          if [ "$status" -ne 0 ]; then
+            {
+              echo 'Production build diagnostic:'
+              echo '```text'
+              tail -100 /tmp/build.txt
+              echo '```'
+            } > /tmp/build-comment.txt
+            gh pr comment "${{ github.event.pull_request.number }}" --body-file /tmp/build-comment.txt || true
+            cat /tmp/build.txt
+            exit "$status"
+          fi
