@@ -58,6 +58,14 @@ export function modelCanServe(
   for (const capability of requiredCapabilities(params)) {
     if (!modelSupports(spec, capability)) return { ok: false, missing: capability }
   }
+  // Provider tool-array caps. Checked before spending a request: OpenAI
+  // answers an over-cap tools array with a 400, which costs a round-trip and
+  // (before this was modelled) looked like a malformed request rather than a
+  // provider limit. Skipping here routes straight to a provider that can.
+  const toolCount = Array.isArray(params.tools) ? params.tools.length : 0
+  if (spec.maxTools !== undefined && toolCount > spec.maxTools) {
+    return { ok: false, missing: 'tool_capacity' }
+  }
   const needed = estimateRequestTokens(params) + (params.max_tokens ?? spec.defaultMaxOutputTokens)
   if (needed > spec.contextWindow) return { ok: false, missing: 'long_context' }
   return { ok: true }

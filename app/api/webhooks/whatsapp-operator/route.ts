@@ -49,6 +49,7 @@ import { alertFounderOfDeliveryFailure } from '@/lib/whatsapp/founder-alert'
 import { emailFallbackForFailedPing } from '@/lib/whatsapp/email-fallback'
 import { OPERATOR_LOGGABLE_KINDS, EMAIL_FALLBACK_KINDS, UNREACHABLE_STREAK_THRESHOLD } from '@/app/api/caye/outbound-worker/route'
 import { cayeAgent } from '@/lib/caye-agent'
+import { parseWorkspaceSwitchCommand, resolveWorkspaceSwitch } from '@/lib/whatsapp/operator-controls'
 import { persistAgentTurns } from '@/lib/caye-operator-messages'
 import { linkInsertedMessagesToThreads } from '@/lib/caye-direct-threads'
 import {
@@ -1136,6 +1137,60 @@ async function handleOneInbound(
     return
   }
 
+  // ── Deterministic operator controls ────────────────────────────────
+  //
+  // "Switch to ods" names a state change Caye can resolve from its own data.
+  // Running it through the tool loop made basic operator control depend on a
+  // free-form model call; on 2026-09-01 that dependency turned one vendor's
+  // billing outage into three consecutive "I hit a snag" replies. Resolved
+  // here when — and only when — the target is unambiguous and already
+  // authorized. Authorization is the existing switch_workspace tool, not a
+  // second implementation of the allowlist gate.
+  if (callerRole === 'founder') {
+    const switchTarget = parseWorkspaceSwitchCommand(body)
+    if (switchTarget) {
+      const controlResult = await resolveWorkspaceSwitch(switchTarget, workspaceId, callerRole, operatorId)
+      if (controlResult) {
+        let controlSendResult: SendResult | undefined
+        if (replyTo) {
+          controlSendResult = await sendFreeFormWhatsApp(
+            replyTo,
+            controlResult.reply,
+            `operator-control-${message.id}`
+          )
+          if (controlSendResult.status === 'failed') {
+            console.error(
+              `[whatsapp-operator] operator-control send failed for ${workspaceId}:`,
+              controlSendResult.error
+            )
+          }
+        }
+        await supabase.from('caye_operator_messages').insert({
+          workspace_id: workspaceId,
+          direction: 'outbound',
+          ...(controlSendResult
+            ? deliveryFieldsFromResult(controlSendResult)
+            : { wa_message_id: null, wa_delivery_status: null, wa_delivery_error: null }),
+          body: controlResult.reply,
+          intent: null,
+          claude_format: { role: 'assistant', content: controlResult.reply },
+          operator_allowlist_id: operator.id,
+          operator_name: operator.name,
+          operator_role: operator.role,
+        })
+        console.info('[whatsapp-operator] operator control resolved deterministically', {
+          control: 'switch_workspace',
+          messageId: message.id,
+          fromWorkspaceId: workspaceId,
+          outcome: controlResult.outcome,
+        })
+        return
+      }
+      // Unresolvable (no match / ambiguous): fall through so the agent can
+      // ask a better question than a regex can.
+    }
+  }
+
   // ── Back-office agent path ─────────────────────────────────────────
   try {
     // Only the FINAL assistant turn is sent over WhatsApp, so a turn that
@@ -1241,10 +1296,29 @@ async function handleOneInbound(
     const insertedBackOffice = await persistAgentTurns(supabase, workspaceId, agentResult.newTurns, operator, backOfficeSendResult)
     await linkInsertedMessagesToThreads(supabase, insertedBackOffice.map((r) => r.id), agentResult.linkedThreadIds)
   } catch (err) {
-    console.error(
-      `[whatsapp-operator] back-office agent failed for ${workspaceId}:`,
-      err
-    )
+    // Structured, because the generic operator-facing sentence is
+    // deliberately uninformative and used to be the ONLY signal: the
+    // 2026-09-01 outage had to be diagnosed from a screenshot plus
+    // llm_call_log forensics. The provider attempt trail is the part that
+    // actually identifies a gateway failure, so it is logged here even
+    // though the operator never sees it.
+    const failure = err as {
+      category?: string
+      message?: string
+      routing?: { provider?: string; model?: string; attempts?: unknown[]; fellBack?: boolean }
+    }
+    console.error('[whatsapp-operator] back-office agent failed', {
+      workspaceId,
+      messageId: message.id,
+      operatorId,
+      callerRole,
+      errorCategory: failure.category ?? 'unclassified',
+      errorMessage: (failure.message ?? String(err)).slice(0, 400),
+      provider: failure.routing?.provider ?? null,
+      model: failure.routing?.model ?? null,
+      fellBack: failure.routing?.fellBack ?? null,
+      attempts: failure.routing?.attempts ?? null,
+    })
     // A thrown error here previously left the operator with silence — no
     // way to tell "Caye is thinking" from "Caye is broken" from "Caye
     // ignored me." Always surface something, even on hard failure.

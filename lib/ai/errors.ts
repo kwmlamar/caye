@@ -81,6 +81,25 @@ const QUOTA_PATTERN = /usage limit|quota|rate of requests|too many requests|capa
 const CONTEXT_PATTERN =
   /context[_ ]length|maximum context|prompt is too long|too many tokens|reduce the length|input length and `max_tokens` exceed/i
 const TOOL_SCHEMA_PATTERN = /tools\.\d|tool_use|input_schema|invalid schema|function.{0,20}parameters|json_schema/i
+/**
+ * Provider-specific *limits* that another provider may not have. These arrive
+ * as HTTP 400s and read like "your request is broken", but they are not:
+ *
+ *   - `Invalid 'tools': array too long. Expected an array with maximum length
+ *     128, but got an array with length 129` (OpenAI, observed in production
+ *     2026-09-01 — the founder back-office surface is 129 tools). OpenRouter
+ *     served the identical request; Anthropic had been serving it for months.
+ *   - `Could not finish the message because max_tokens or model output limit
+ *     was reached` (OpenAI reasoning models treat a small max_tokens as an
+ *     error; Anthropic simply truncates).
+ *
+ * Classifying these as `malformed_request` made them terminal and killed the
+ * whole failover chain on the first non-Anthropic provider, which is exactly
+ * how a billing outage at one vendor took down Caye's operator path.
+ */
+const PROVIDER_LIMIT_PATTERN =
+  /array too long|array_above_max_length|maximum length \d+|max_tokens or model output limit|too many (tools|functions)|number of (tools|functions)/i
+
 const CONTENT_POLICY_PATTERN = /content[_ ]policy|safety|refus(al|ed)|moderation|flagged/i
 const TIMEOUT_PATTERN = /timed? ?out|deadline exceeded|aborted/i
 const NETWORK_PATTERN = /fetch failed|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|socket hang up|network|terminated/i
@@ -139,6 +158,9 @@ export function classifyAIError(error: unknown, provider?: AIProviderId, model?:
   if (facts.httpStatus === 408 || facts.httpStatus === 504) return as('timeout')
   if (facts.httpStatus && facts.httpStatus >= 500) return as('upstream_5xx')
   if (facts.httpStatus && facts.httpStatus >= 400) {
+    // Before the tool-schema branch: an over-cap tools array mentions "tools"
+    // but is a capacity limit, not a schema defect, and must fail over.
+    if (PROVIDER_LIMIT_PATTERN.test(facts.message)) return as('unsupported_capability')
     if (TOOL_SCHEMA_PATTERN.test(facts.message)) return as('invalid_tool_or_schema')
     if (CONTENT_POLICY_PATTERN.test(facts.message)) return as('content_policy')
     return as('malformed_request')
