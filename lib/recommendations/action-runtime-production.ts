@@ -89,7 +89,9 @@ export function createProductionRecommendationActionRuntime(): RecommendationAct
         latestDecision: (decision?.decision as RecommendationOperationInspection['latestDecision']) ?? null,
         executionState: (projected === 'approved_queued' || projected === 'acting_now' || projected === 'completed' || projected === 'failed_needs_attention')
           ? projected
-          : executionState(operation?.status),
+          : projected === 'acting'
+            ? 'acting_now'
+            : executionState(operation?.status),
       }
     },
 
@@ -131,9 +133,6 @@ export function createProductionRecommendationActionRuntime(): RecommendationAct
         decisionProvenance: objectValue(decision.authority_provenance),
       })
 
-      // Mandatory final recommendation-level authorization check. This reuses the
-      // canonical decision lifecycle without writing a second decision. Founder
-      // approval is evidence of a decision, never a frozen authority snapshot.
       const finalAuthorization = await decideRecommendationForExecution({
         recommendationId: input.recommendationId,
         workspaceId: input.workspaceId,
@@ -141,10 +140,7 @@ export function createProductionRecommendationActionRuntime(): RecommendationAct
         actionContext: actionContextForRecommendationPlan(plan, authorizationStillExists),
         workspacePolicy: workspacePolicyForRecommendationPlan(plan),
         idempotencyKey: `recommendation-execution-revalidate:${input.recommendationId}:${input.recommendationVersion}:${decision.id}`,
-        acceptedDecision: {
-          id: decision.id,
-          actorKind: decision.actor_kind as RecommendationDecisionActor,
-        },
+        acceptedDecision: { id: decision.id, actorKind: decision.actor_kind as RecommendationDecisionActor },
       })
       if (!finalAuthorization.executionEligible) {
         return {
@@ -201,12 +197,14 @@ export function createProductionRecommendationActionRuntime(): RecommendationAct
         .maybeSingle()
       if (error || !decision || decision.decision !== 'accepted' || decision.recommendation_version !== input.recommendationVersion) return false
       const provenance = objectValue(decision.authority_provenance)
+      const directionState = input.state === 'acting_now' ? 'acting' : input.state
       const { error: updateError } = await db
         .from('caye_recommendation_decisions')
         .update({
           authority_provenance: {
             ...provenance,
-            recommendationExecutionState: input.state,
+            recommendationExecutionState: directionState,
+            recommendationAuthorityDisposition: 'granted',
             recommendationExecutionRef: input.executionRef ?? null,
             recommendationExecutionError: input.error ?? null,
             recommendationExecutionUpdatedAt: new Date().toISOString(),
