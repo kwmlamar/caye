@@ -46,51 +46,35 @@ export function glass(alpha = 0.04): CSSProperties {
 }
 
 /** LEVEL 3 of the surface hierarchy — temporary foreground overlays
- *  (popovers, dropdowns, menus, command palettes) that MUST read as a
- *  physical layer sitting above the application, not a tint over it.
- *  Readability wins over glass purity here: high opacity (0.96, inside
- *  the 0.94-0.98 "clearly foreground" band) with just enough blur left
- *  to keep some material character at the edges.
+ *  (popovers, dropdowns, menus, command palettes). These should read as a
+ *  clearly separate layer from the near-black environment, similar to the
+ *  tonal lift used by modern command/chat interfaces, while still keeping
+ *  Caye's cooler, restrained material language. High opacity preserves
+ *  legibility; a small amount of blur keeps the surface from feeling flat.
  *
- *  `isolation: isolate` still matters even with the paint-order bug
- *  fixed at its actual source (the header now has an explicit z-index —
- *  see FounderHome's header comment): it guarantees this panel composites
- *  independently of whatever ancestor/sibling glass surfaces are doing,
- *  so a future layout change nearby can't reopen the same class of bug. */
+ *  `isolation: isolate` guarantees the panel composites independently of
+ *  surrounding glass surfaces so future layout changes cannot collapse the
+ *  intended foreground/background separation. */
 export function popoverSurface(): CSSProperties {
   return {
-    background: 'rgba(15,15,18,0.96)',
-    backdropFilter: 'blur(14px) saturate(140%)',
-    WebkitBackdropFilter: 'blur(14px) saturate(140%)',
+    background: 'rgba(28,29,33,0.98)',
+    backdropFilter: 'blur(16px) saturate(125%)',
+    WebkitBackdropFilter: 'blur(16px) saturate(125%)',
     isolation: 'isolate',
   }
 }
 
-/** A popover that opens INSIDE an already-dark, controlled surface (the
- *  Command sidebar) rather than floating over arbitrary page content.
- *  popoverSurface() above is tuned for the latter — max legibility over any
- *  possible background, which is why it reads as a hard foreground "card."
- *  Inside the sidebar there's no arbitrary content to guard against (it's
- *  the same near-black tone throughout), so that same treatment instead
- *  reads as a mismatched slab of a different material dropped onto a
- *  surface that's deliberately flat and shadow-free everywhere else. Same
- *  opacity (legibility is unchanged) — just matched to the sidebar's own
- *  near-black rather than a generic one, with the softer ambient shadow
- *  (paneShadowSoft) instead of popoverSurface's heavy drop shadow. Used by
- *  WorkspaceSwitcher and FounderProfile's account menu.
- *
- *  Background is ENV_BG itself (not a nearby-but-different near-black) —
- *  literally the app's own root tone, so "consistent with the rest of the
- *  app" is true by construction rather than by eyeballing a close color.
- *  No saturate() boost, unlike glass()/popoverSurface() above: at this
- *  opacity almost nothing behind the panel shows through anyway, so
- *  saturate had no job to do here except add a faint, unintended color
- *  cast. */
+/** A popover that opens inside the Command sidebar. It uses the same lifted
+ *  foreground idea as popoverSurface(), but one step brighter so workspace,
+ *  account, and thread menus are immediately distinguishable from the rail
+ *  beneath them. This keeps the app's near-black foundation intact while
+ *  making transient menus feel intentional instead of disappearing into the
+ *  background. */
 export function sidebarPopoverSurface(): CSSProperties {
   return {
-    background: `${ENV_BG}f7`,
-    backdropFilter: 'blur(16px)',
-    WebkitBackdropFilter: 'blur(16px)',
+    background: 'rgba(38,39,43,0.98)',
+    backdropFilter: 'blur(18px) saturate(120%)',
+    WebkitBackdropFilter: 'blur(18px) saturate(120%)',
     isolation: 'isolate',
   }
 }
