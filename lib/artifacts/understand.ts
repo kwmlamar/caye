@@ -1,5 +1,4 @@
 import 'server-only'
-import Anthropic from '@anthropic-ai/sdk'
 import { loggedMessagesCreate } from '@/lib/llm-telemetry'
 
 /**
@@ -50,9 +49,8 @@ export async function describeImage(params: {
   workspaceId: string
 }): Promise<UnderstandResult<ImageObservation>> {
   try {
-    const client = new Anthropic()
     const message = await loggedMessagesCreate(
-      client,
+      null,
       {
         model: 'claude-sonnet-4-6',
         max_tokens: 800,
@@ -72,7 +70,7 @@ export async function describeImage(params: {
           },
         ],
       },
-      { source: 'lib/artifacts/understand.ts:describeImage', workspaceId: params.workspaceId }
+      { source: 'lib/artifacts/understand.ts:describeImage', task: 'fact_extraction', workspaceId: params.workspaceId }
     )
 
     const raw = message.content[0]?.type === 'text' ? message.content[0].text : ''
@@ -132,9 +130,8 @@ export async function extractDocument(params: {
   workspaceId: string
 }): Promise<UnderstandResult<DocumentObservation>> {
   try {
-    const client = new Anthropic()
     const message = await loggedMessagesCreate(
-      client,
+      null,
       {
         model: 'claude-sonnet-4-6',
         max_tokens: 4096,
@@ -149,7 +146,7 @@ export async function extractDocument(params: {
           },
         ],
       },
-      { source: 'lib/artifacts/understand.ts:extractDocument', workspaceId: params.workspaceId }
+      { source: 'lib/artifacts/understand.ts:extractDocument', task: 'fact_extraction', workspaceId: params.workspaceId }
     )
 
     const raw = message.content[0]?.type === 'text' ? message.content[0].text : ''

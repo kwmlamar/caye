@@ -1,6 +1,7 @@
 import 'server-only'
 
 import Anthropic from '@anthropic-ai/sdk'
+import { loggedMessagesCreate } from '@/lib/llm-telemetry'
 import type {
   ResearchFetchedSource,
   ResearchProvider,
@@ -153,24 +154,57 @@ export function createAnthropicResearchProvider(options: {
 }
 
 /**
- * Anthropic's raw completion call, in the shape the shared synthesis contract
- * drives. Kept here so Anthropic-native request syntax never leaks upward.
+ * The plain text-in/text-out completion the shared synthesis contract drives.
+ *
+ * Routed through the Caye AI Gateway pinned to Anthropic: research already
+ * has its own provider router (./providers/router.ts) that owns the
+ * cross-vendor fallback, so this must stay honest about which vendor it
+ * represents. What the gateway adds here is the circuit breaker — when the
+ * Anthropic balance is exhausted, this stops paying a failed round trip
+ * before the research router falls through to OpenAI.
+ *
+ * The web search / fetch calls below still use the Anthropic SDK directly:
+ * they depend on Anthropic's *server-side* tools, which have no equivalent in
+ * the gateway's chat-completion contract. That is an adapter, not a coupling
+ * — OpenAI and OpenRouter research adapters exist alongside it.
  */
 export function createAnthropicResearchCompletion(options: {
+  /**
+   * Explicit provider override. Bypasses the gateway entirely — used by
+   * tests to drive the synthesis-recovery logic against scripted responses.
+   * Production callers leave this unset so the call is routed and
+   * circuit-broken like every other AI call.
+   */
   client?: Anthropic
   model?: string
   onUsage?: (usage: { model: string; inputTokens?: number; outputTokens?: number }) => void
 } = {}) {
-  const client = options.client ?? new Anthropic()
   const model = options.model ?? DEFAULT_RESEARCH_MODEL
+  const injected = options.client
 
   return async (request: ResearchCompletionRequest): Promise<ResearchCompletionResult> => {
-    const response = await client.messages.create({
-      model,
-      max_tokens: request.maxOutputTokens,
-      system: request.system,
-      messages: [{ role: 'user', content: request.user }],
-    })
+    const response = injected
+      ? await injected.messages.create({
+          model,
+          max_tokens: request.maxOutputTokens,
+          system: request.system,
+          messages: [{ role: 'user', content: request.user }],
+        })
+      : await loggedMessagesCreate(
+          null,
+          {
+            model,
+            max_tokens: request.maxOutputTokens,
+            system: request.system,
+            messages: [{ role: 'user', content: request.user }],
+          },
+          {
+            source: 'lib/research/anthropic.ts:createAnthropicResearchCompletion',
+            task: 'research',
+            pinProvider: 'anthropic',
+            callerRole: 'founder',
+          }
+        )
 
     if (options.onUsage) {
       options.onUsage({

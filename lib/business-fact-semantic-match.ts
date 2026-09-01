@@ -1,5 +1,4 @@
 import 'server-only'
-import Anthropic from '@anthropic-ai/sdk'
 import { loggedMessagesCreate } from '@/lib/llm-telemetry'
 import { normalizeSentence } from '@/lib/business-fact-candidate-detection'
 
@@ -69,11 +68,10 @@ export async function findSemanticFactMatch(
   if (plausible.length === 0) return { matchId: null }
 
   try {
-    const client = new Anthropic()
     const list = plausible.map((k, i) => `${i + 1}. [${k.id}] ${k.text}`).join('\n')
 
     const message = await loggedMessagesCreate(
-      client,
+      null,
       {
         model: 'claude-sonnet-4-6',
         max_tokens: 200,
@@ -93,7 +91,7 @@ export async function findSemanticFactMatch(
           },
         ],
       },
-      { source: ctx.source, workspaceId: ctx.workspaceId }
+      { source: ctx.source, task: 'fact_extraction', workspaceId: ctx.workspaceId }
     )
 
     const raw = message.content[0].type === 'text' ? message.content[0].text : ''

@@ -1,5 +1,4 @@
 import 'server-only'
-import Anthropic from '@anthropic-ai/sdk'
 import { loggedMessagesCreate } from '@/lib/llm-telemetry'
 import { sharesAnyWord } from '@/lib/business-fact-semantic-match'
 
@@ -115,14 +114,13 @@ export async function findConflictingFact(
   if (plausible.length === 0) return NO_CONFLICT
 
   try {
-    const client = new Anthropic()
     const list = plausible
       .map((f, i) => `${i + 1}. [${f.id}]${f.scopeLabel ? ` (${f.scopeLabel})` : ''} ${f.text}`)
       .join('\n')
     const newFactLine = ctx.newFactScopeLabel ? `New fact (${ctx.newFactScopeLabel}): "${newFact}"` : `New fact: "${newFact}"`
 
     const message = await loggedMessagesCreate(
-      client,
+      null,
       {
         model: 'claude-sonnet-4-6',
         max_tokens: 200,
@@ -161,7 +159,7 @@ export async function findConflictingFact(
           },
         ],
       },
-      { source: ctx.source, workspaceId: ctx.workspaceId }
+      { source: ctx.source, task: 'fact_extraction', workspaceId: ctx.workspaceId }
     )
 
     const raw = message.content[0].type === 'text' ? message.content[0].text : ''

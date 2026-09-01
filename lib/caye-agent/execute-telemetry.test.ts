@@ -51,6 +51,9 @@ describe('runToolLoop request-level LLM telemetry', () => {
     expect(loggedMessagesCreate).toHaveBeenCalledTimes(2)
     expect(loggedMessagesCreate.mock.calls[0][2]).toEqual({
       source: 'lib/caye-agent/execute.ts:runToolLoop',
+      // Routing tag added with the AI Gateway migration: the bounded tool
+      // loop is Caye's planning surface, so it routes on the strong tier.
+      task: 'agent_planning',
       workspaceId: 'ws-test',
       requestId: 'req-stable-123',
       callerRole: 'owner',
@@ -58,6 +61,9 @@ describe('runToolLoop request-level LLM telemetry', () => {
     })
     expect(loggedMessagesCreate.mock.calls[1][2]).toEqual({
       source: 'lib/caye-agent/execute.ts:runToolLoop',
+      // Routing tag added with the AI Gateway migration: the bounded tool
+      // loop is Caye's planning surface, so it routes on the strong tier.
+      task: 'agent_planning',
       workspaceId: 'ws-test',
       requestId: 'req-stable-123',
       callerRole: 'owner',

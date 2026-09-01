@@ -83,6 +83,7 @@ import { getMyAssignments } from './read/get-my-assignments'
 import { getLogisticsFacts } from './read/get-logistics-facts'
 import { escalateDriverQuestion } from './write-low/escalate-driver-question'
 import { getCronHealth } from './admin/read/get-cron-health'
+import { getAiProviderStatus } from './admin/read/get-ai-provider-status'
 import { getWorkspaceAutonomy } from './admin/read/get-workspace-autonomy'
 import { triggerCron } from './admin/write-high/trigger-cron'
 import { setWorkspaceAutonomy } from './admin/write-high/set-workspace-autonomy'
@@ -272,6 +273,7 @@ export const TOOL_REGISTRY: AnyTool[] = [
   findBookingsTool as AnyTool,
   sendCustomerReply as AnyTool,
   getCronHealth as AnyTool,
+  getAiProviderStatus as AnyTool,
   getWorkspaceAutonomy as AnyTool,
   gateAdminHighRisk(triggerCron) as AnyTool,
   gateAdminHighRisk(setWorkspaceAutonomy) as AnyTool,

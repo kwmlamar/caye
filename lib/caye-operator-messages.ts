@@ -1,5 +1,5 @@
 import 'server-only'
-import Anthropic from '@anthropic-ai/sdk'
+import type Anthropic from '@anthropic-ai/sdk'
 import { createServiceClient } from '@/lib/supabase-server'
 import type { OperatorIdentity } from '@/lib/operator-identity'
 import { deliveryFieldsFromResult, type SendResult } from '@/lib/whatsapp/outbound'

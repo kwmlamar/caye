@@ -1,5 +1,4 @@
 import 'server-only'
-import Anthropic from '@anthropic-ai/sdk'
 import { detectIdentityLeak } from './caye-identity-guard'
 import { sanitizeDashes } from './sanitize-dashes'
 import { loggedMessagesCreate } from '@/lib/llm-telemetry'
@@ -35,7 +34,6 @@ export type OutreachFirstTouchResult =
 export async function generateOutreachFirstTouchDraft(
   ctx: OutreachFirstTouchContext
 ): Promise<OutreachFirstTouchResult> {
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
   const system = buildFirstTouchSystem({
     workspaceVoice: ctx.workspaceVoice,
     leadName: ctx.leadName,
@@ -44,7 +42,7 @@ export async function generateOutreachFirstTouchDraft(
   })
 
   const response = await loggedMessagesCreate(
-    client,
+    null,
     {
       model: 'claude-sonnet-4-6',
       max_tokens: 400,
@@ -53,7 +51,7 @@ export async function generateOutreachFirstTouchDraft(
         { role: 'user', content: `Write the first-touch email to ${ctx.leadName} at ${ctx.businessName}.` },
       ],
     },
-    { source: 'lib/outreach-first-touch.ts:generateOutreachFirstTouchDraft' }
+    { source: 'lib/outreach-first-touch.ts:generateOutreachFirstTouchDraft', task: 'outreach' }
   )
 
   const textBlock = response.content.find((b) => b.type === 'text')

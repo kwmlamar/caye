@@ -1,5 +1,6 @@
 import 'server-only'
 import type Anthropic from '@anthropic-ai/sdk'
+import { loggedMessagesCreate } from '@/lib/llm-telemetry'
 import type { ReplayReviewerJudgment, ReplayTurnResult } from './types'
 
 /**
@@ -38,12 +39,12 @@ Given the situation Caye was shown and the reply/actions she produced, judge:
 Return your judgment via the grade_turn tool. Be honest about uncertainty — omit a field rather than guess.`
 
 export async function gradeReplayTurn(
-  client: Anthropic,
+  _provider: unknown,
   model: string,
   situationSummary: string,
   result: ReplayTurnResult
 ): Promise<ReplayReviewerJudgment> {
-  const response = await client.messages.create({
+  const response = await loggedMessagesCreate(null, {
     model,
     max_tokens: 512,
     system: GRADER_SYSTEM,
@@ -78,7 +79,7 @@ export async function gradeReplayTurn(
           }`,
       },
     ],
-  })
+  }, { source: 'lib/caye-agent/replay/grader.ts:gradeReplayTurn', task: 'classification', callerRole: 'founder' })
 
   const block = response.content.find((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use')
   if (!block) return {}

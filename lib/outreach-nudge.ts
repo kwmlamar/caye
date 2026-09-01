@@ -1,5 +1,4 @@
 import 'server-only'
-import Anthropic from '@anthropic-ai/sdk'
 import { detectIdentityLeak } from './caye-identity-guard'
 import { sanitizeDashes } from './sanitize-dashes'
 import { loggedMessagesCreate } from '@/lib/llm-telemetry'
@@ -35,7 +34,6 @@ export type OutreachFollowupResult =
 export async function generateOutreachFollowupDraft(
   ctx: OutreachFollowupContext
 ): Promise<OutreachFollowupResult> {
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
   const system = buildFollowupSystem({
     workspaceVoice: ctx.workspaceVoice,
     leadName: ctx.leadName,
@@ -45,14 +43,14 @@ export async function generateOutreachFollowupDraft(
   })
 
   const response = await loggedMessagesCreate(
-    client,
+    null,
     {
       model: 'claude-sonnet-4-6',
       max_tokens: 400,
       system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
       messages: [{ role: 'user', content: `Write the follow-up to ${ctx.leadName}.` }],
     },
-    { source: 'lib/outreach-nudge.ts:generateOutreachFollowupDraft' }
+    { source: 'lib/outreach-nudge.ts:generateOutreachFollowupDraft', task: 'outreach' }
   )
 
   const textBlock = response.content.find((b) => b.type === 'text')

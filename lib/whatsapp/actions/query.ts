@@ -1,5 +1,4 @@
 import 'server-only'
-import Anthropic from '@anthropic-ai/sdk'
 import { createServiceClient } from '@/lib/supabase-server'
 import type { ActionContext, ActionResult } from './types'
 import type { PendingHeldItem } from '../pending'
@@ -56,23 +55,22 @@ Keep it under 3 sentences. If state is empty, say so plainly.`
 
   const userContent = `WORKSPACE STATE:\n${stateBlock}\n\nOPERATOR ASKED:\n"${intent.question}"\n\nAnswer.`
 
-  async function tryModel(client: Anthropic, model: string): Promise<string> {
-    const response = await loggedMessagesCreate(client, {
+  async function tryModel(model: string): Promise<string> {
+    const response = await loggedMessagesCreate(null, {
       model,
       max_tokens: 300,
       system,
       messages: [{ role: 'user', content: userContent }],
-    }, { source: 'lib/whatsapp/actions/query.ts:actionQuery', workspaceId: ctx.workspaceId })
+    }, { source: 'lib/whatsapp/actions/query.ts:actionQuery', task: 'classification', workspaceId: ctx.workspaceId })
     const block = response.content[0]
     return block?.type === 'text' ? block.text.trim() : ''
   }
 
   try {
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
-    let text = await tryModel(client, QUERY_MODEL)
+    let text = await tryModel(QUERY_MODEL)
     if (!text) {
       console.warn('[actions/query] Haiku returned empty; falling back to Sonnet for this call')
-      text = await tryModel(client, QUERY_FALLBACK_MODEL)
+      text = await tryModel(QUERY_FALLBACK_MODEL)
     }
     return {
       ackBody: text || "Nothing to report.",

@@ -35,7 +35,6 @@
  */
 
 import 'server-only'
-import Anthropic from '@anthropic-ai/sdk'
 import type { InboundCategory } from './inbound-classifier'
 import { loggedMessagesCreate } from './llm-telemetry'
 import { buildCustomerRecap } from './operator-brief'
@@ -227,7 +226,6 @@ export async function detectSubtleComplaint(
   if (!SOFT_SIGNAL_PATTERN.test(body)) return false
   if (body.trim().length < 50) return false
 
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
   const userContent =
     "Is the following customer message expressing a complaint, dissatisfaction, frustration, or " +
     "an unresolved problem with our business? Answer with one word: YES or NO. Borderline " +
@@ -238,14 +236,14 @@ export async function detectSubtleComplaint(
   const ask = async (model: string): Promise<string | null> => {
     try {
       const response = await loggedMessagesCreate(
-        client,
+        null,
         {
           model,
           max_tokens: 8,
           system: 'You are a binary classifier. Reply with exactly YES or NO. Nothing else.',
           messages: [{ role: 'user', content: userContent }],
         },
-        { source: 'lib/forced-escalation.ts:detectSubtleComplaint', workspaceId }
+        { source: 'lib/forced-escalation.ts:detectSubtleComplaint', task: 'classification', workspaceId }
       )
       const text = response.content.find((b) => b.type === 'text')
       return text && text.type === 'text' ? text.text.trim().toUpperCase() : null

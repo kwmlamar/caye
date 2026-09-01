@@ -1,5 +1,4 @@
 import 'server-only'
-import Anthropic from '@anthropic-ai/sdk'
 import { createServiceClient } from '@/lib/supabase-server'
 import { loggedMessagesCreate } from '@/lib/llm-telemetry'
 import type { ContactStyleProfile } from '@/types/database'
@@ -35,13 +34,12 @@ const SAMPLE_SIZE = 20
 export async function extractContactStyleAndFacts(
   samples: string[]
 ): Promise<ContactStyleAndFacts> {
-  const client = new Anthropic()
 
   const samplesText = samples
     .map((s, i) => `--- Message ${i + 1} ---\n${s.trim()}`)
     .join('\n\n')
 
-  const message = await loggedMessagesCreate(client, {
+  const message = await loggedMessagesCreate(null, {
     model: 'claude-sonnet-4-6',
     max_tokens: 768,
     system: `Analyze these inbound messages from a single customer.
@@ -79,7 +77,7 @@ Do NOT invent or infer. Empty arrays / null are fine and preferred when nothing 
         content: `Analyze these customer messages and extract their style profile + operational facts:\n\n${samplesText}`,
       },
     ],
-  }, { source: 'lib/contact-profile.ts:extractContactStyleAndFacts' })
+  }, { source: 'lib/contact-profile.ts:extractContactStyleAndFacts', task: 'fact_extraction' })
 
   const raw = message.content[0].type === 'text' ? message.content[0].text : ''
   const text = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim()

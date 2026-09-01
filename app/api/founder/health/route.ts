@@ -37,6 +37,7 @@ import { ClaudeSubscriptionBackend } from '@/lib/model-router/backends/claude-su
 import { OpenAICodexSubscriptionBackend } from '@/lib/model-router/backends/openai-codex-subscription'
 import { AnthropicApiBackend } from '@/lib/model-router/backends/anthropic-api'
 import { OpenAIApiBackend, OpenRouterBackend } from '@/lib/model-router/backends/openai-compatible'
+import { loadProviderHealth, isCircuitOpen, validateAiConfiguration, AI_PROVIDER_IDS, providerAdapter } from '@/lib/ai'
 
 const WHATSAPP_LOOKBACK_HOURS = 48
 const LLM_ACTIVITY_STALE_MINUTES = 30
@@ -50,6 +51,8 @@ export async function GET(req: NextRequest) {
     ['Claude subscription', new ClaudeSubscriptionBackend()], ['Codex subscription', new OpenAICodexSubscriptionBackend()],
     ['Anthropic API', new AnthropicApiBackend()], ['OpenAI API', new OpenAIApiBackend()], ['OpenRouter', new OpenRouterBackend()],
   ].map(async ([name, backend]) => ({ name: name as string, ...(await (backend as any).checkHealth()) })))
+
+  const aiGateway = await buildAiGatewayHealth()
 
   const [
     { data: cronRows, error: cronErr },
@@ -149,5 +152,38 @@ export async function GET(req: NextRequest) {
     migrations: { healthy: migrationDrift.ok, ...migrationDrift },
     llm_activity: { healthy: !llmActivity.stale, ...llmActivity },
     model_backends: modelHealth,
+    // Caye AI Gateway: which providers can actually serve a request right
+    // now, and whether there is anywhere to fail over to. This is the check
+    // that answers "is Caye's brain reachable", as opposed to model_backends
+    // above, which describes the founder's Caye Direct model picker.
+    ai_gateway: aiGateway,
   })
+}
+
+
+/**
+ * Provider eligibility as the gateway itself sees it — configured key,
+ * founder toggle, and circuit-breaker state — so the Health page and the
+ * routing layer can never disagree about who is available.
+ */
+async function buildAiGatewayHealth() {
+  const config = validateAiConfiguration()
+  const health = await loadProviderHealth(true)
+  return {
+    healthy: config.valid,
+    message: config.message,
+    single_provider: config.singleProviderTasks.length > 0,
+    providers: AI_PROVIDER_IDS.map((id) => {
+      const row = health.get(id)
+      const open = isCircuitOpen(row)
+      return {
+        provider: id,
+        has_credentials: providerAdapter(id)?.hasCredentials() ?? false,
+        state: open ? 'unavailable' : 'available',
+        reason: open ? row?.reason ?? null : null,
+        cooldown_until: open ? row?.cooldownUntil ?? null : null,
+        last_success_at: row?.lastSuccessAt ?? null,
+      }
+    }),
+  }
 }

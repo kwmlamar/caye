@@ -1,5 +1,5 @@
 import 'server-only'
-import Anthropic from '@anthropic-ai/sdk'
+import type Anthropic from '@anthropic-ai/sdk'
 import { createServiceClient } from '@/lib/supabase-server'
 import { loggedMessagesCreate } from '@/lib/llm-telemetry'
 import { sendFreeFormWhatsApp, sendTemplateWhatsApp, deliveryFieldsFromResult } from '@/lib/whatsapp/outbound'
@@ -187,7 +187,6 @@ export async function generateDemoReply(
   businessFactsBlock = ''
 ): Promise<string> {
   try {
-    const client = new Anthropic()
     const messages: Anthropic.MessageParam[] = [
       ...history.map((t) => ({
         role: (t.role === 'guest' ? 'user' : 'assistant') as 'user' | 'assistant',
@@ -199,9 +198,9 @@ export async function generateDemoReply(
 
     const complete = async (system: string): Promise<string> => {
       const response = await loggedMessagesCreate(
-        client,
+        null,
         { model: 'claude-sonnet-4-6', max_tokens: 512, system, messages },
-        { source: 'lib/caye-demo.ts:generateDemoReply' }
+        { source: 'lib/caye-demo.ts:generateDemoReply', task: 'customer_response' }
       )
       const block = response.content[0]
       return block?.type === 'text' ? block.text.trim() : ''

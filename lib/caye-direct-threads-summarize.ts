@@ -1,5 +1,5 @@
 import 'server-only'
-import Anthropic from '@anthropic-ai/sdk'
+import type Anthropic from '@anthropic-ai/sdk'
 import { createServiceClient } from '@/lib/supabase-server'
 import { loggedMessagesCreate } from '@/lib/llm-telemetry'
 import { createRoutineInferenceLogger, runInference, type RoutineParseResult } from '@/lib/routine-inference'
@@ -97,16 +97,15 @@ export async function maybeGenerateThreadTitle(workspaceId: string, threadId: st
 
 /** The original title generation path, retained verbatim as routine fallback. */
 async function generateThreadTitleWithFrontier(transcript: string, workspaceId: string): Promise<string | null> {
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
   const response = await loggedMessagesCreate(
-    client,
+    null,
     {
       model: CHEAP_MODEL,
       max_tokens: 20,
       system: FRONTIER_TITLE_SYSTEM,
       messages: [{ role: 'user', content: transcript }],
     },
-    { source: 'lib/caye-direct-threads-summarize.ts:maybeGenerateThreadTitle', workspaceId }
+    { source: 'lib/caye-direct-threads-summarize.ts:maybeGenerateThreadTitle', task: 'summarization', workspaceId }
   )
   const text = response.content.find((b): b is Anthropic.TextBlock => b.type === 'text')?.text?.trim()
   return text?.replace(/^["']|["']$/g, '').slice(0, 80) ?? null
@@ -172,9 +171,8 @@ export async function maybeRefreshThreadSummary(workspaceId: string, threadId: s
     .slice(0, 12000)
 
   try {
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
     const response = await loggedMessagesCreate(
-      client,
+      null,
       {
         model: CHEAP_MODEL,
         max_tokens: 300,
@@ -182,7 +180,7 @@ export async function maybeRefreshThreadSummary(workspaceId: string, threadId: s
           'Condense this conversation thread into a compact briefing for someone resuming it later. Cover: current topic/objective, important facts, decisions made, unresolved questions, actions taken or planned. 3-6 short sentences, plain prose, no headers or bullet points. This is a working summary, not a transcript — omit pleasantries and small talk.',
         messages: [{ role: 'user', content: transcript }],
       },
-      { source: 'lib/caye-direct-threads-summarize.ts:maybeRefreshThreadSummary', workspaceId }
+      { source: 'lib/caye-direct-threads-summarize.ts:maybeRefreshThreadSummary', task: 'summarization', workspaceId }
     )
     const summary = response.content.find((b): b is Anthropic.TextBlock => b.type === 'text')?.text?.trim()
     if (summary) {

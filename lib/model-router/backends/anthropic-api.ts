@@ -1,5 +1,5 @@
 import 'server-only'
-import Anthropic from '@anthropic-ai/sdk'
+import type Anthropic from '@anthropic-ai/sdk'
 import { loggedMessagesCreate } from '@/lib/llm-telemetry'
 import { asAnthropicTool } from '@/lib/caye-agent/tools/types'
 import type { BackendHealth, ModelInvokeRequest, ModelInvokeResult } from '../types'
@@ -40,18 +40,26 @@ export class AnthropicApiBackend implements ToolCapableBackend {
   }
 
   async invoke(req: ModelInvokeRequest, signal: AbortSignal): Promise<ModelInvokeResult> {
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
     const start = Date.now()
 
     const response = await loggedMessagesCreate(
-      client,
+      null,
       {
         model: MODEL,
         max_tokens: req.maxOutputTokens ?? MAX_TOKENS,
         system: req.system,
         messages: req.messages.map((m) => ({ role: m.role, content: m.text })),
       },
-      { source: 'lib/model-router/backends/anthropic-api.ts:invoke', workspaceId: req.ctx.workspaceId },
+      {
+        source: 'lib/model-router/backends/anthropic-api.ts:invoke',
+        task: 'operator_response',
+        // This backend exists so Caye Direct's founder-facing router can pick
+        // Anthropic *specifically*. Pin it: the outer router owns fallback
+        // here, and silently answering an explicit vendor choice with a
+        // different vendor would make that surface lie.
+        pinProvider: 'anthropic',
+        workspaceId: req.ctx.workspaceId,
+      },
       { signal }
     )
 
@@ -79,7 +87,6 @@ export class AnthropicApiBackend implements ToolCapableBackend {
    * human turns.
    */
   async invokeTurn(req: ToolTurnRequest, signal: AbortSignal): Promise<ToolTurnResult> {
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
     const start = Date.now()
 
     const tools = req.tools.map(asAnthropicTool)
@@ -91,7 +98,7 @@ export class AnthropicApiBackend implements ToolCapableBackend {
     }
 
     const response = await loggedMessagesCreate(
-      client,
+      null,
       {
         model: MODEL,
         max_tokens: req.maxOutputTokens,
@@ -99,7 +106,12 @@ export class AnthropicApiBackend implements ToolCapableBackend {
         messages: req.messages,
         tools,
       },
-      { source: 'lib/model-router/backends/anthropic-api.ts:invokeTurn', workspaceId: req.ctx.workspaceId },
+      {
+        source: 'lib/model-router/backends/anthropic-api.ts:invokeTurn',
+        task: 'agent_planning',
+        pinProvider: 'anthropic',
+        workspaceId: req.ctx.workspaceId,
+      },
       { signal }
     )
 

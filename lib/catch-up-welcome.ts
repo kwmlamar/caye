@@ -15,7 +15,6 @@
  */
 
 import 'server-only'
-import Anthropic from '@anthropic-ai/sdk'
 import { createServiceClient } from './supabase-server'
 import { classifyInbound, type InboundCategory } from './inbound-classifier'
 import { loggedMessagesCreate } from './llm-telemetry'
@@ -392,13 +391,12 @@ STRICT RULES:
     `Write your briefing.`
 
   try {
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
-    const response = await loggedMessagesCreate(client, {
+    const response = await loggedMessagesCreate(null, {
       model: 'claude-sonnet-4-6',
       max_tokens: 600,
       system: systemPrompt,
       messages: [{ role: 'user', content: userPrompt }],
-    }, { source: 'lib/catch-up-welcome.ts:generateBriefingNarrative' })
+    }, { source: 'lib/catch-up-welcome.ts:generateBriefingNarrative', task: 'business_analysis' })
     const text = response.content
       .filter(b => b.type === 'text')
       .map(b => (b as { type: 'text'; text: string }).text)

@@ -1,5 +1,5 @@
 import 'server-only'
-import Anthropic from '@anthropic-ai/sdk'
+import type Anthropic from '@anthropic-ai/sdk'
 import type { PendingHeldItem } from './pending'
 import { loggedMessagesCreate } from '@/lib/llm-telemetry'
 
@@ -137,18 +137,17 @@ const CLASSIFIER_MODEL = 'claude-haiku-4-5-20251001'
 const CLASSIFIER_FALLBACK_MODEL = 'claude-sonnet-4-6'
 
 async function callClassifier(
-  client: Anthropic,
   model: string,
   userContent: string
 ): Promise<OperatorIntent | null> {
-  const response = await loggedMessagesCreate(client, {
+  const response = await loggedMessagesCreate(null, {
     model,
     max_tokens: 600,
     system: SYSTEM,
     tools: [TOOL],
     tool_choice: { type: 'tool', name: 'classify_intent' },
     messages: [{ role: 'user', content: userContent }],
-  }, { source: 'lib/whatsapp/intent.ts:callClassifier' })
+  }, { source: 'lib/whatsapp/intent.ts:callClassifier', task: 'classification' })
 
   const toolUse = response.content.find(
     (b): b is Anthropic.ToolUseBlock => b.type === 'tool_use' && b.name === 'classify_intent'
@@ -162,8 +161,6 @@ async function callClassifier(
 }
 
 export async function classifyOperatorIntent(input: ClassifyInput): Promise<OperatorIntent> {
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
-
   const pendingBlock = input.pending.length
     ? 'PENDING HELD ITEMS:\n' +
       input.pending
@@ -189,13 +186,13 @@ export async function classifyOperatorIntent(input: ClassifyInput): Promise<Oper
       : '') +
     `\n\nOPERATOR REPLY:\n"${input.operatorText}"`
 
-  const haikuResult = await callClassifier(client, CLASSIFIER_MODEL, userContent)
+  const haikuResult = await callClassifier(CLASSIFIER_MODEL, userContent)
   if (haikuResult) return haikuResult
 
   console.warn(
     '[intent] Haiku classifier returned no valid tool_use; falling back to Sonnet for this call'
   )
-  const sonnetResult = await callClassifier(client, CLASSIFIER_FALLBACK_MODEL, userContent)
+  const sonnetResult = await callClassifier(CLASSIFIER_FALLBACK_MODEL, userContent)
   if (sonnetResult) return sonnetResult
 
   return { kind: 'unclear', ask_back: '' }
