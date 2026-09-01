@@ -81,6 +81,53 @@ export async function resolveSingleControl(page: Page, field: DiscoveredField): 
   return { reason: `Greenhouse did not expose a control for required field "${field.label}" by provider identifier or accessible label.` }
 }
 
+/**
+ * Resolve the exact human-visible option label for a stored select answer.
+ * Greenhouse discovery can persist either the provider option value or the
+ * visible label depending on where the answer originated. We accept only an
+ * exact unique match and otherwise fail closed rather than guessing.
+ */
+function resolvedSelectLabel(field: DiscoveredField, value: string): { label: string } | { reason: string } {
+  const options = field.allowedOptions ?? []
+  if (options.length === 0) return { label: value }
+
+  const matches = options.filter((option) => option.value === value || option.label === value)
+  if (matches.length === 1) return { label: matches[0].label }
+  if (matches.length > 1) return { reason: `Greenhouse select field "${field.label}" has an ambiguous stored option value.` }
+  return { reason: `Greenhouse select field "${field.label}" no longer exposes the stored option.` }
+}
+
+/**
+ * Fill one resolved select without assuming Greenhouse renders a native
+ * <select>. Current hosted forms also use accessible custom comboboxes for
+ * fields such as Country. Native selects keep the provider value path; custom
+ * controls are allowed only when they explicitly expose role="combobox" and
+ * exactly one role="option" matches the verified human-visible label.
+ */
+async function fillSelectControl(page: Page, control: Locator, field: DiscoveredField, value: string): Promise<{ ok: true } | { reason: string }> {
+  const explicitRole = await control.getAttribute('role')
+  if (explicitRole !== 'combobox') {
+    await control.selectOption(value)
+    return { ok: true }
+  }
+
+  const resolved = resolvedSelectLabel(field, value)
+  if ('reason' in resolved) return resolved
+
+  await control.click()
+  const option = page.getByRole('option', { name: resolved.label, exact: true })
+  const optionCount = await option.count()
+  if (optionCount !== 1) {
+    return {
+      reason: optionCount === 0
+        ? `Greenhouse combobox for "${field.label}" did not expose the exact option "${resolved.label}".`
+        : `Greenhouse combobox for "${field.label}" exposed ${optionCount} exact options named "${resolved.label}".`,
+    }
+  }
+  await option.click()
+  return { ok: true }
+}
+
 export function makeResumePdf(text: string): Buffer {
   const escaped = text.replace(/[\\()]/g, '\\$&').replace(/\r?\n/g, ') Tj 0 -14 Td (')
   const stream = `BT /F1 10 Tf 54 760 Td (${escaped}) Tj ET`
@@ -196,8 +243,15 @@ export async function prepareGreenhouseForm(request: SubmissionRequest, _fields:
         await close()
         return { outcome: 'needs_human', reason: 'Browser action limit reached before submission.' }
       }
-      if (answer.field.inputType === 'select') await control.selectOption(answer.value)
-      else await control.fill(answer.value)
+      if (answer.field.inputType === 'select') {
+        const selected = await fillSelectControl(page, control, answer.field, answer.value)
+        if ('reason' in selected) {
+          await close()
+          return { outcome: 'needs_human', reason: selected.reason }
+        }
+      } else {
+        await control.fill(answer.value)
+      }
     }
 
     const resumeControl = page.locator('input[type="file"]').first()
