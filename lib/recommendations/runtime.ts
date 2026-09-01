@@ -330,20 +330,23 @@ export async function runMaterialRecommendationRuntime(input: {
     if (!proposal) continue
     proposed += 1
 
+    let validated: CreateGroundedRecommendationInput
     try {
-      const validated = validateRecommendationProposal(candidate, decision, proposal)
-      await input.store.persist({
-        ...validated,
-        provenance: {
-          ...(validated.provenance ?? {}),
-          proposalFingerprint,
-          goalImpactFingerprint: candidate.goalImpact.synthesisFingerprint,
-        },
-      })
-      persisted += 1
+      validated = validateRecommendationProposal(candidate, decision, proposal)
     } catch {
       rejected += 1
+      continue
     }
+
+    await input.store.persist({
+      ...validated,
+      provenance: {
+        ...(validated.provenance ?? {}),
+        proposalFingerprint,
+        goalImpactFingerprint: candidate.goalImpact.synthesisFingerprint,
+      },
+    })
+    persisted += 1
   }
 
   return { candidates: bounded.length, proposed, persisted, duplicateSuppressed, rejected }
