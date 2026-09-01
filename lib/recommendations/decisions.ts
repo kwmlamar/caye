@@ -28,7 +28,7 @@ export interface RecordRecommendationDecisionInput {
   decision: RecommendationDecision
   actorKind: RecommendationDecisionActor
   actorId?: string | null
-  rationale: string
+  rationale?: string | null
   authorityProvenance?: Record<string, unknown>
   workspaceId?: string | null
   idempotencyKey?: string | null
@@ -119,13 +119,14 @@ export function evaluateRecommendationDecisionPolicy(input: RecommendationDecisi
 }
 
 export async function recordRecommendationDecision(input: RecordRecommendationDecisionInput) {
+  const rationale = input.rationale?.trim() || `${input.actorKind} ${input.decision} recommendation`
   const supabase = createServiceClient()
   const { data, error } = await supabase.rpc('record_caye_recommendation_decision', {
     p_recommendation_id: input.recommendationId,
     p_decision: input.decision,
     p_actor_kind: input.actorKind,
     p_actor_id: input.actorId ?? null,
-    p_rationale: input.rationale,
+    p_rationale: rationale,
     p_authority_provenance: input.authorityProvenance ?? {},
     p_workspace_id: input.workspaceId ?? null,
     p_idempotency_key: input.idempotencyKey ?? null,
