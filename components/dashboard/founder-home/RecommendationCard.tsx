@@ -18,7 +18,7 @@ export type DirectionRecommendation = {
   authority: { principalType: string | null; principalRef: string | null; resolvedBy: string | null; label: string }
   updatedAt: string
   evidence: Array<{ statement: string; confidence: number | null; sourceQuality: string | null; status: string }>
-  decision: { id: string; state: 'pending' | 'approved' | 'rejected' | 'deferred' | 'stale'; canRespond: boolean; stale: boolean; requestedAt: string | null; expiresAt: string | null } | null
+  decision: { id: string; state: 'pending' | 'approved' | 'rejected' | 'deferred' | 'stale'; canRespond: boolean; stale: boolean; requestedAt: string | null; expiresAt: string | null; decidedAt: string | null } | null
   executionState: string | null
   authorityDisposition: string | null
 }
@@ -45,7 +45,19 @@ export default function RecommendationCard({
   onDecision?: (item: DirectionRecommendation, action: 'approve' | 'reject' | 'defer') => void
 }) {
   const accent = mode === 'working' ? EMERALD : mode === 'decision' ? ROSE : GOLD
-  const eyebrow = mode === 'working' ? 'ACTING ON RECOMMENDATION' : mode === 'decision' ? 'RECOMMENDATION' : item.decision?.stale ? 'RECOMMENDATION UPDATED' : 'WORTH CONSIDERING'
+  const eyebrow = item.decision?.stale
+    ? 'RECOMMENDATION UPDATED'
+    : item.decision?.state === 'approved'
+      ? 'DECISION · APPROVED'
+      : item.decision?.state === 'rejected'
+        ? 'DECISION · REJECTED'
+        : item.decision?.state === 'deferred'
+          ? 'DEFERRED'
+          : mode === 'working'
+            ? 'ACTING ON RECOMMENDATION'
+            : mode === 'decision'
+              ? 'RECOMMENDATION'
+              : 'WORTH CONSIDERING'
 
   return <div style={{ padding: '12px 0', borderBottom: '1px solid rgba(255,255,255,0.045)' }}>
     <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 5 }}>
@@ -67,7 +79,7 @@ export default function RecommendationCard({
     </div>
 
     {mode === 'working' && item.authorityDisposition && <div style={{ marginTop: 6, fontSize: 9.5, color: EMERALD }}>Authority: {item.authorityDisposition.replace(/_/g, ' ')}</div>}
-    {item.decision?.stale && <div style={{ marginTop: 7, fontSize: 9.5, lineHeight: 1.45, color: GOLD }}>The recommendation changed after this decision was requested. The old approval controls are disabled.</div>}
+    {item.decision?.stale && <div style={{ marginTop: 7, fontSize: 9.5, lineHeight: 1.45, color: GOLD }}>{item.decision.canRespond ? 'A prior decision belongs to an older recommendation fingerprint. These controls apply only to the current version.' : 'A prior decision belongs to an older recommendation fingerprint. No stale approval is being reused.'}</div>}
 
     {item.evidence.length > 0 && <details style={{ marginTop: 7 }}>
       <summary style={{ width: 'fit-content', cursor: 'pointer', fontSize: 9.5, color: AQUA }}>Evidence · {item.evidence.length}</summary>
