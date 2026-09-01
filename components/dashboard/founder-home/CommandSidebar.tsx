@@ -28,19 +28,22 @@ export interface LiveOperator {
   role: 'owner' | 'staff' | 'founder'
 }
 
-const NAV_ITEMS: { id: FounderRailId; label: string; icon: ReactNode }[] = [
+const PRIMARY_NAV_ITEMS: { id: FounderRailId; label: string; icon: ReactNode }[] = [
   { id: 'inbox', label: 'Inbox', icon: <><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 7l9 6 9-6" /></> },
-  { id: 'people', label: 'People', icon: (
-    <><circle cx="9" cy="8" r="3" /><path d="M2 21c0-3.5 3-6 7-6s7 2.5 7 6" /><circle cx="17" cy="8" r="2.5" /><path d="M17 13.5c2.5.3 4 2.3 4 5.5" /></>
-  ) },
   { id: 'work', label: 'Work', icon: <><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M3 10h18M8 3v4M16 3v4" /></> },
-  { id: 'memory', label: 'Memory', icon: <><path d="M12 4.5c-2-1.6-5-1.6-7 0v13c2-1.6 5-1.6 7 0" /><path d="M12 4.5c2-1.6 5-1.6 7 0v13c-2-1.6-5-1.6-7 0" /></> },
   { id: 'direction', label: 'Direction', icon: <><circle cx="12" cy="12" r="8.5" /><circle cx="12" cy="12" r="4" /><path d="M12 3.5v3M12 17.5v3M3.5 12h3M17.5 12h3" /></> },
+]
+
+const SECONDARY_NAV_ITEMS: { id: FounderRailId; label: string; icon: ReactNode }[] = [
+  { id: 'people', label: 'People', icon: <><circle cx="9" cy="8" r="3" /><path d="M2 21c0-3.5 3-6 7-6s7 2.5 7 6" /><circle cx="17" cy="8" r="2.5" /><path d="M17 13.5c2.5.3 4 2.3 4 5.5" /></> },
+  { id: 'memory', label: 'Memory', icon: <><path d="M12 4.5c-2-1.6-5-1.6-7 0v13c2-1.6 5-1.6 7 0" /><path d="M12 4.5c2-1.6 5-1.6 7 0v13c-2-1.6-5-1.6-7 0" /></> },
 ]
 
 const TOGGLE_ICON = <><rect x="3" y="3" width="18" height="18" rx="4" /><path d="M9 3v18" /></>
 const NEW_CHAT_ICON = <path d="M12 5v14M5 12h14" />
-const MORE_ICON = <><circle cx="12" cy="5" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="12" cy="19" r="1.6" /></>
+const MORE_DOTS_ICON = <><circle cx="5" cy="12" r="1.4" /><circle cx="12" cy="12" r="1.4" /><circle cx="19" cy="12" r="1.4" /></>
+const CHEVRON_ICON = <path d="m8 10 4 4 4-4" />
+const THREAD_MORE_ICON = <><circle cx="12" cy="5" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="12" cy="19" r="1.6" /></>
 const PIN_ICON = <><path d="M12 2 9.5 9 4 11l6 3 1 7 1-7 6-3-5.5-2z" /></>
 const UNPIN_ICON = <><path d="M12 2 9.5 9 4 11l6 3 1 7 1-7 6-3-5.5-2z" /><line x1="3" y1="3" x2="21" y2="21" /></>
 const RENAME_ICON = <><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></>
@@ -55,9 +58,6 @@ function Icon({ path, size = 16, stroke = 'currentColor' }: { path: ReactNode; s
   )
 }
 
-/** ChatGPT-style per-chat "more" menu — Rename, Pin/Unpin, Archive, Delete.
- *  No Share item: Caye Direct threads are founder-only business history,
- *  not something meant to leave the dashboard. */
 function ThreadRowMenu({
   pinned, onRename, onTogglePin, onArchive, onDelete, onClose,
 }: {
@@ -100,8 +100,7 @@ function ThreadRowMenu({
       style={{
         position: 'absolute', top: '100%', right: 4, zIndex: 100,
         width: 176, borderRadius: 12, padding: 5,
-        ...sidebarPopoverSurface(),
-        boxShadow: paneShadowSoft,
+        ...sidebarPopoverSurface(), boxShadow: paneShadowSoft,
       }}
     >
       {items.map((item) => (
@@ -113,8 +112,8 @@ function ThreadRowMenu({
           style={{
             width: '100%', display: 'flex', alignItems: 'center', gap: 9, padding: '7px 9px',
             border: 0, borderRadius: 8, background: 'transparent',
-            color: item.danger ? '#f87171' : '#e4e4e7',
-            cursor: 'pointer', textAlign: 'left', font: '500 12px inherit',
+            color: item.danger ? '#f87171' : '#e4e4e7', cursor: 'pointer',
+            textAlign: 'left', font: '500 12px inherit',
           }}
           onMouseEnter={(e) => { e.currentTarget.style.background = item.danger ? 'rgba(248,113,113,0.1)' : 'rgba(255,255,255,0.05)' }}
           onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
@@ -139,59 +138,58 @@ function ToggleButton({ collapsed, onToggle, floating }: { collapsed: boolean; o
       onMouseLeave={() => setHover(false)}
       style={{
         ...(floating ? { position: 'absolute', top: 14, left: 14, zIndex: 30 } : { flexShrink: 0 }),
-        width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center',
-        border: 0, borderRadius: 9, cursor: 'pointer',
+        width: 30, height: 30, display: 'flex', alignItems: 'center', justifyContent: 'center',
+        border: 0, borderRadius: 8, cursor: 'pointer',
         background: hover ? 'rgba(255,255,255,0.08)' : 'transparent',
         color: hover ? '#f4f4f5' : '#8f8f97',
         transition: 'background 0.14s ease, color 0.14s ease',
       }}
     >
-      <Icon path={TOGGLE_ICON} />
+      <Icon path={TOGGLE_ICON} size={15} />
     </button>
   )
 }
 
-function NavRow({ label, icon, active, onClick }: { label: string; icon: ReactNode; active: boolean; onClick: () => void }) {
+function NavRow({ label, icon, active, onClick, trailing }: {
+  label: string
+  icon: ReactNode
+  active: boolean
+  onClick: () => void
+  trailing?: ReactNode
+}) {
   const [hover, setHover] = useState(false)
   return (
     <button
+      type="button"
       onClick={onClick}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       aria-current={active ? 'page' : undefined}
       style={{
-        width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '7px 10px',
-        border: 0, borderRadius: 10, textAlign: 'left', cursor: 'pointer',
+        width: '100%', display: 'flex', alignItems: 'center', gap: 9, padding: '6px 9px',
+        border: 0, borderRadius: 9, textAlign: 'left', cursor: 'pointer',
         background: active ? 'rgba(78,190,206,0.1)' : hover ? 'rgba(255,255,255,0.04)' : 'transparent',
         color: active ? '#7DD8E0' : hover ? '#e4e4e7' : '#9c9ca3',
         transition: 'background 0.14s ease, color 0.14s ease',
       }}
     >
-      <Icon path={icon} />
-      <span style={{ fontSize: 13, fontWeight: 500 }}>{label}</span>
+      <Icon path={icon} size={15} />
+      <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: 500 }}>{label}</span>
+      {trailing}
     </button>
   )
 }
 
-function SectionLabel({ children }: { children: ReactNode }) {
+function SectionLabel({ children, compact = false }: { children: ReactNode; compact?: boolean }) {
   return (
-    <div style={{ padding: '14px 8px 5px', color: '#5c5c64', fontSize: 10.5, fontWeight: 600, letterSpacing: '0.03em' }}>
+    <div style={{
+      padding: compact ? '9px 8px 4px' : '12px 8px 5px',
+      color: '#5c5c64', fontSize: 10, fontWeight: 600, letterSpacing: '0.025em',
+    }}>
       {children}
     </div>
   )
 }
-
-function bucketLabel(iso: string): string {
-  const d = new Date(iso)
-  const now = new Date()
-  const startOfDay = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate())
-  const days = Math.round((startOfDay(now).getTime() - startOfDay(d).getTime()) / 86400000)
-  if (days <= 0) return 'Today'
-  if (days === 1) return 'Yesterday'
-  if (days <= 7) return 'This week'
-  return 'Older'
-}
-const BUCKET_ORDER = ['Today', 'Yesterday', 'This week', 'Older']
 
 function livePriority(operator: LiveOperator): number {
   const name = operator.name?.trim().toLowerCase()
@@ -200,24 +198,6 @@ function livePriority(operator: LiveOperator): number {
   return 2
 }
 
-/**
- * The merged founder nav — one collapsible surface instead of the old icon
- * rail, a separate top header, and the Caye Direct overlay's own history
- * panel. Everything now-persistent chrome needed lives in one place:
- * the sidebar's own top row (collapse toggle + workspace switcher, inline
- * when open — matches the Claude app shell this was modeled on, where the
- * toggle floats over content only once the sidebar is hidden), New
- * conversation, destinations, search, conversations, and the account menu
- * (Settings folded in there, not a separate rail icon) at the bottom.
- *
- * Two conversation groups sit side by side with no mode toggle to find:
- * "Direct" (the founder's own threads with Caye, grouped by day) and
- * "Team" (read-only visibility into an operator's real WhatsApp
- * conversation with Caye — Mrs. Max, Max, etc.). The old overlay buried
- * Team behind a Chat/Live switch; putting both groups in view at once is
- * what actually restores "I can see what Caye and Mrs. Max are saying"
- * without adding a control to learn.
- */
 export default function CommandSidebar({
   collapsed, onToggleCollapsed,
   activeView, onSelectPage,
@@ -250,11 +230,18 @@ export default function CommandSidebar({
   const [openMenuId, setOpenMenuId] = useState<string | null>(null)
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
+  const [moreOpen, setMoreOpen] = useState(false)
   const renameInputRef = useRef<HTMLInputElement>(null)
+
+  const secondaryActive = activeView.type === 'page' && SECONDARY_NAV_ITEMS.some((item) => item.id === activeView.id)
 
   useEffect(() => {
     if (renamingId) renameInputRef.current?.focus()
   }, [renamingId])
+
+  useEffect(() => {
+    if (secondaryActive) setMoreOpen(true)
+  }, [secondaryActive])
 
   function startRename(thread: ThreadListItem) {
     setRenamingId(thread.id)
@@ -270,17 +257,19 @@ export default function CommandSidebar({
   }
 
   const pinnedThreads = (threads ?? [])
-    .filter((t) => t.pinned_at)
+    .filter((thread) => thread.pinned_at)
     .sort((a, b) => new Date(b.pinned_at as string).getTime() - new Date(a.pinned_at as string).getTime())
-  const unpinnedThreads = (threads ?? []).filter((t) => !t.pinned_at)
-  const groups = BUCKET_ORDER
-    .map((label) => ({ label, items: unpinnedThreads.filter((t) => bucketLabel(t.last_activity_at) === label) }))
-    .filter((group) => group.items.length > 0)
-  const sortedOperators = (operators ?? []).slice().sort((a, b) => livePriority(a) - livePriority(b) || (a.name || '').localeCompare(b.name || ''))
+  const recentThreads = (threads ?? [])
+    .filter((thread) => !thread.pinned_at)
+    .sort((a, b) => new Date(b.last_activity_at).getTime() - new Date(a.last_activity_at).getTime())
+  const sortedOperators = (operators ?? [])
+    .slice()
+    .sort((a, b) => livePriority(a) - livePriority(b) || (a.name || '').localeCompare(b.name || ''))
 
   function renderThreadRow(thread: ThreadListItem) {
     const active = activeView.type === 'thread' && activeView.id === thread.id
     const menuOpen = openMenuId === thread.id
+
     if (renamingId === thread.id) {
       return (
         <div key={thread.id} style={{ padding: '2px 8px' }}>
@@ -301,6 +290,7 @@ export default function CommandSidebar({
         </div>
       )
     }
+
     return (
       <div key={thread.id} className={`cs-thread-row ${menuOpen ? 'is-menu-open' : ''}`} style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
         <button
@@ -308,7 +298,7 @@ export default function CommandSidebar({
           onClick={() => onSelectThread(thread.id)}
           style={{
             position: 'relative', flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 6,
-            padding: '6px 26px 6px 8px', overflow: 'hidden', border: 0, borderRadius: 8,
+            padding: '5.5px 26px 5.5px 8px', overflow: 'hidden', border: 0, borderRadius: 8,
             background: active ? 'rgba(78,190,206,0.11)' : 'transparent',
             color: active ? '#f4f4f5' : '#b1b1b9', cursor: 'pointer', textAlign: 'left',
             font: '500 12px inherit', whiteSpace: 'nowrap',
@@ -328,13 +318,13 @@ export default function CommandSidebar({
           onClick={(e) => { e.stopPropagation(); setOpenMenuId((current) => current === thread.id ? null : thread.id) }}
           style={{
             position: 'absolute', right: 4, top: '50%', transform: 'translateY(-50%)',
-            width: 22, height: 22, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center',
             border: 0, borderRadius: 6, cursor: 'pointer',
             background: menuOpen ? 'rgba(255,255,255,0.09)' : 'transparent',
             color: menuOpen ? '#f4f4f5' : '#9c9ca3',
           }}
         >
-          <Icon path={MORE_ICON} size={13} />
+          <Icon path={THREAD_MORE_ICON} size={13} />
         </button>
         {menuOpen && (
           <ThreadRowMenu
@@ -362,21 +352,21 @@ export default function CommandSidebar({
         .cs-thread-row:hover .cs-thread-more, .cs-thread-row.is-menu-open .cs-thread-more { opacity: 1; pointer-events: auto; }
         @media (prefers-reduced-motion: reduce) { .cs-thread-menu { animation: none; } }
       `}</style>
+
       {collapsed && <ToggleButton collapsed={collapsed} onToggle={onToggleCollapsed} floating />}
 
       <nav
         aria-label="Caye Command navigation"
         style={{
-          width: collapsed ? 0 : 244, flexShrink: 0, overflow: 'hidden',
-          display: 'flex', flexDirection: 'column',
-          background: 'rgba(15,15,17,0.4)',
-          marginRight: collapsed ? 0 : 12,
+          width: collapsed ? 0 : 228, flexShrink: 0, overflow: 'hidden',
+          display: 'flex', flexDirection: 'column', background: 'rgba(15,15,17,0.4)',
+          marginRight: collapsed ? 0 : 10,
           transition: 'width 0.18s cubic-bezier(.2,.8,.2,1), margin-right 0.18s cubic-bezier(.2,.8,.2,1)',
           ...glass(0.02),
         }}
       >
-        <div style={{ width: 244, display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '10px 8px 6px', flexShrink: 0 }}>
+        <div style={{ width: 228, display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '8px 7px 4px', flexShrink: 0 }}>
             <div style={{ flex: 1, minWidth: 0 }}>
               <WorkspaceSwitcher
                 businessName={businessName}
@@ -385,31 +375,33 @@ export default function CommandSidebar({
                 activeWorkspaceId={activeWorkspaceId}
                 onSelect={onSelectWorkspace}
                 hasActivity={hasActivity}
-                menuWidth={216}
+                menuWidth={200}
               />
             </div>
             <ToggleButton collapsed={collapsed} onToggle={onToggleCollapsed} floating={false} />
           </div>
 
-          <div style={{ padding: '4px 10px 0', flexShrink: 0 }}>
+          <div style={{ padding: '3px 9px 0', flexShrink: 0 }}>
             <button
               type="button"
               onClick={onNewThread}
               disabled={creatingThread}
               style={{
-                width: '100%', display: 'flex', alignItems: 'center', gap: 7, padding: '8px 10px',
-                border: 0, borderRadius: 10, background: 'rgba(255,255,255,0.04)', color: '#e4e4e7',
-                cursor: creatingThread ? 'default' : 'pointer', textAlign: 'left', font: '600 12px inherit',
+                width: '100%', display: 'flex', alignItems: 'center', gap: 7, padding: '7px 9px',
+                border: 0, borderRadius: 9, background: 'transparent', color: '#d4d4d8',
+                cursor: creatingThread ? 'default' : 'pointer', textAlign: 'left', font: '550 12.5px inherit',
                 opacity: creatingThread ? 0.6 : 1,
               }}
+              onMouseEnter={(e) => { if (!creatingThread) e.currentTarget.style.background = 'rgba(255,255,255,0.045)' }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
             >
-              <Icon path={NEW_CHAT_ICON} size={13} stroke={AQUA} />
+              <Icon path={NEW_CHAT_ICON} size={14} stroke={AQUA} />
               New conversation
             </button>
           </div>
 
-          <div style={{ padding: '10px 11px 0', display: 'flex', flexDirection: 'column', gap: 1, flexShrink: 0 }}>
-            {NAV_ITEMS.map((item) => (
+          <div style={{ padding: '7px 9px 2px', display: 'flex', flexDirection: 'column', gap: 1, flexShrink: 0 }}>
+            {PRIMARY_NAV_ITEMS.map((item) => (
               <NavRow
                 key={item.id}
                 label={item.label}
@@ -418,9 +410,33 @@ export default function CommandSidebar({
                 onClick={() => onSelectPage(item.id)}
               />
             ))}
+            <NavRow
+              label="More"
+              icon={MORE_DOTS_ICON}
+              active={secondaryActive}
+              onClick={() => setMoreOpen((current) => !current)}
+              trailing={(
+                <span style={{ display: 'flex', transform: moreOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.14s ease' }}>
+                  <Icon path={CHEVRON_ICON} size={13} />
+                </span>
+              )}
+            />
+            {moreOpen && (
+              <div style={{ padding: '1px 0 2px 12px' }}>
+                {SECONDARY_NAV_ITEMS.map((item) => (
+                  <NavRow
+                    key={item.id}
+                    label={item.label}
+                    icon={item.icon}
+                    active={activeView.type === 'page' && activeView.id === item.id}
+                    onClick={() => onSelectPage(item.id)}
+                  />
+                ))}
+              </div>
+            )}
           </div>
 
-          <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '0 6px 8px' }}>
+          <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '0 6px 7px' }}>
             {sortedOperators.length > 0 && (
               <div>
                 <SectionLabel>Team</SectionLabel>
@@ -433,7 +449,7 @@ export default function CommandSidebar({
                       onClick={() => onSelectOperator(operator.id)}
                       style={{
                         position: 'relative', width: '100%', display: 'flex', alignItems: 'center', gap: 7,
-                        padding: '6px 8px', overflow: 'hidden', border: 0, borderRadius: 8,
+                        padding: '5.5px 8px', overflow: 'hidden', border: 0, borderRadius: 8,
                         background: active ? 'rgba(78,190,206,0.11)' : 'transparent',
                         color: active ? '#f4f4f5' : '#b1b1b9', cursor: 'pointer', textAlign: 'left',
                         font: '500 12px inherit', whiteSpace: 'nowrap',
@@ -450,29 +466,22 @@ export default function CommandSidebar({
 
             {pinnedThreads.length > 0 && (
               <div>
-                <div style={{ padding: '8px 8px 3px', color: '#5c5c64', fontSize: 9.5, letterSpacing: '0.03em' }}>Pinned</div>
+                <SectionLabel compact>Pinned</SectionLabel>
                 {pinnedThreads.map((thread) => renderThreadRow(thread))}
               </div>
             )}
 
-            <SectionLabel>Direct</SectionLabel>
+            <SectionLabel compact>Recent</SectionLabel>
             {threads === null ? (
               <div style={{ padding: '6px 8px', color: TEXT_QUIET, fontSize: 11 }}>Loading…</div>
-            ) : threads.length === 0 ? (
+            ) : recentThreads.length === 0 ? (
               <div style={{ padding: '6px 8px', color: TEXT_QUIET, fontSize: 11 }}>No conversations yet.</div>
             ) : (
-              groups.map((group) => (
-                <div key={group.label}>
-                  <div style={{ padding: '8px 8px 3px', color: '#5c5c64', fontSize: 9.5, letterSpacing: '0.03em' }}>
-                    {group.label}
-                  </div>
-                  {group.items.map((thread) => renderThreadRow(thread))}
-                </div>
-              ))
+              recentThreads.map((thread) => renderThreadRow(thread))
             )}
           </div>
 
-          <div style={{ padding: '8px 10px 12px', flexShrink: 0 }}>
+          <div style={{ padding: '6px 9px 9px', flexShrink: 0 }}>
             <FounderProfile onOpenSettings={() => onSelectPage('settings')} />
           </div>
         </div>
