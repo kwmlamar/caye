@@ -4,7 +4,7 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { resolveWorkspaceDecisionAuthority } from '@/lib/decision-authority'
 import { observeAttentionItem } from '@/lib/owner-attention'
 import { runToolWithRecovery } from '@/lib/caye-agent/orchestrator'
-import { evaluateRecommendationDecisionPolicy } from './decisions'
+import { decideRecommendationForExecution, type RecommendationDecisionActor } from './decisions'
 import {
   actionContextForRecommendationPlan,
   actionKindForRecommendationPlan,
@@ -13,7 +13,7 @@ import {
   workspacePolicyForRecommendationPlan,
 } from './action-plan'
 import type { RecommendationActionRuntime, RecommendationOperationInspection } from './action-operation'
-import type { RecommendationAuthority, RecommendationReversibility, RecommendationRisk } from './service'
+import type { RecommendationAuthority } from './service'
 
 function objectValue(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
@@ -130,22 +130,28 @@ export function createProductionRecommendationActionRuntime(): RecommendationAct
         decisionActorKind: decision.actor_kind,
         decisionProvenance: objectValue(decision.authority_provenance),
       })
-      const verdict = evaluateRecommendationDecisionPolicy({
-        recommendation: {
-          risk_classification: rec.risk_classification as RecommendationRisk,
-          reversibility: rec.reversibility as RecommendationReversibility,
-          required_authority: authority,
-        },
+
+      // Mandatory final recommendation-level authorization check. This reuses the
+      // canonical decision lifecycle without writing a second decision. Founder
+      // approval is evidence of a decision, never a frozen authority snapshot.
+      const finalAuthorization = await decideRecommendationForExecution({
+        recommendationId: input.recommendationId,
+        workspaceId: input.workspaceId,
         actionKind: actionKindForRecommendationPlan(plan),
         actionContext: actionContextForRecommendationPlan(plan, authorizationStillExists),
         workspacePolicy: workspacePolicyForRecommendationPlan(plan),
+        idempotencyKey: `recommendation-execution-revalidate:${input.recommendationId}:${input.recommendationVersion}:${decision.id}`,
+        acceptedDecision: {
+          id: decision.id,
+          actorKind: decision.actor_kind as RecommendationDecisionActor,
+        },
       })
-      if (verdict.disposition === 'blocked') return { status: 'failed_needs_attention', error: `current action policy blocks execution: ${verdict.reasons.join(', ')}`, consequential: true }
-      if (decision.actor_kind === 'system' && verdict.disposition !== 'auto_accept') {
-        return { status: 'failed_needs_attention', error: `autonomous authority no longer permits execution: ${verdict.reasons.join(', ')}`, consequential: true }
-      }
-      if (decision.actor_kind !== 'system' && !authorizationStillExists) {
-        return { status: 'failed_needs_attention', error: 'the authority that approved this recommendation is no longer current', consequential: true }
+      if (!finalAuthorization.executionEligible) {
+        return {
+          status: 'failed_needs_attention',
+          error: `current recommendation authority blocks execution: ${finalAuthorization.reasons.join(', ')}`,
+          consequential: true,
+        }
       }
 
       let tool
@@ -162,7 +168,17 @@ export function createProductionRecommendationActionRuntime(): RecommendationAct
       }, { mode: 'back-office', toolUseId: `recommendation:${input.recommendationId}` })
       const result = orchestrated.result
       if (result.ok) {
-        return { status: 'completed', material: plan.materiality !== 'quiet', executionRef: `caye_tool_calls:${requestId}` }
+        const { data: operation } = await db
+          .from('caye_pending_operations')
+          .select('id')
+          .eq('workspace_id', input.workspaceId)
+          .eq('idempotency_key', input.idempotencyKey)
+          .maybeSingle()
+        return {
+          status: 'completed',
+          material: plan.materiality !== 'quiet',
+          executionRef: operation?.id ? `caye_pending_operations:${operation.id}` : null,
+        }
       }
       if (result.status === 'FAILED_RETRYABLE') return { status: 'retryable_failure', error: result.error ?? 'registered capability failed retryably' }
       return {
