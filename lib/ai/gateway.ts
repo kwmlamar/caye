@@ -29,12 +29,7 @@ import {
 
 const RATE_LIMIT_RETRY_CAP_MS = 2_000
 
-/**
- * These categories describe the provider/account as a whole rather than the
- * selected model. Once observed, retrying a second model from the same vendor
- * in the same request is wasted latency (and for billing/auth, guaranteed to
- * fail). Cross-request suppression still lives in the shared circuit breaker.
- */
+/** Provider/account-wide failures that make another model from the same vendor pointless in this request. */
 const PROVIDER_WIDE_FAILURES = new Set<AIErrorCategory>([
   'billing_exhausted',
   'authentication',
@@ -70,7 +65,7 @@ export async function generate({ params, ctx, signal }: GenerateArgs): Promise<A
     const base = { provider: spec.provider, model: spec.id }
 
     if (failedProviders.has(spec.provider)) {
-      attempts.push({ ...base, outcome: 'skipped_provider_failed', detail: 'Provider already failed this request with a provider-wide availability error.' })
+      attempts.push({ ...base, outcome: 'skipped_circuit_open', detail: 'Provider already failed this request with a provider-wide availability error.' })
       continue
     }
     if (settings.get(spec.provider)?.enabled === false) {
@@ -104,8 +99,8 @@ export async function generate({ params, ctx, signal }: GenerateArgs): Promise<A
         model: outcome.response.model || spec.id,
         attempts,
         // Skipping an unavailable/unconfigured route is routing, not failover.
-        // This becomes true only after a real attempted model failed and a
-        // later route served the request.
+        // This is true only after a real attempted model failed and a later
+        // eligible route was attempted.
         fellBack: failoverOccurred,
         latencyMs: Date.now() - startedAt,
       }
@@ -122,7 +117,6 @@ export async function generate({ params, ctx, signal }: GenerateArgs): Promise<A
 
     if (PROVIDER_WIDE_FAILURES.has(error.category)) failedProviders.add(spec.provider)
 
-    // Deterministic, request-shaped failure (or a possible side effect): stop.
     const policy = policyFor(error.category)
     if (!policy.failover) {
       const routing = failedRouting(task, spec.provider, spec.id, attempts, startedAt, failoverOccurred)
