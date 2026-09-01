@@ -500,7 +500,7 @@ begin
           and existing.record_id = c.record_id
       )
         and (c.parent_record_table is null or p.id is not null)
-      on conflict (record_table, record_id) do nothing;
+      on conflict on constraint semantic_provenance_record_uidx do nothing;
     end loop;
 
     update public.business_learning_observations o
