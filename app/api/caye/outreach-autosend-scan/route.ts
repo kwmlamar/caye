@@ -32,6 +32,7 @@ import { recordCronRun } from '@/lib/cron-run-log'
 import { dispatchOperatorReply } from '@/lib/whatsapp/channel-dispatch'
 import { enqueueHoldPing } from '@/lib/whatsapp/triggers'
 import { generateOutreachFirstTouchDraft } from '@/lib/outreach-first-touch'
+import { assignFirstTouchVariant } from '@/lib/sales/voice'
 import { generateOutreachFollowupDraft } from '@/lib/outreach-nudge'
 import { findOutreachDraftIssues, describeDraftIssues } from '@/lib/outreach-draft-guard'
 import { findClaimIssues, describeClaimIssues } from '@/lib/sales/claims'
@@ -137,6 +138,7 @@ interface LeadRow {
   lead_email: string
   business_name: string | null
   contact_name: string | null
+  business_evidence: string | null
   demo_token: string | null
   stage: SalesStage
   first_touch_sent_at: string | null
@@ -193,7 +195,7 @@ async function processWorkspace(
   const { data: leads } = await supabase
     .from('outreach_leads')
     .select(
-      'id, lead_email, business_name, contact_name, demo_token, stage, first_touch_sent_at, touches_sent, last_touch_sent_at, opted_out_at, last_inbound_kind, outreach_deferred_at, disqualified_reason, created_at'
+      'id, lead_email, business_name, contact_name, business_evidence, demo_token, stage, first_touch_sent_at, touches_sent, last_touch_sent_at, opted_out_at, last_inbound_kind, outreach_deferred_at, disqualified_reason, created_at'
     )
     .eq('workspace_id', workspaceId)
     .not('stage', 'in', '("won","lost","disqualified")')
@@ -333,6 +335,9 @@ export async function processLead(args: {
   // ── DRAFT ──────────────────────────────────────────────────────────────
   const leadName = lead.contact_name || lead.lead_email
   const businessName = lead.business_name || lead.lead_email
+  // Deterministic from the lead id, so a retried/resent draft always lands
+  // in the same variant bucket instead of flapping between framings.
+  const variant = assignFirstTouchVariant(lead.id)
   let subject: string
   let body: string
   const parkedDraft = (action.kind === 'send_first_touch' || action.kind === 'send_followup')
@@ -353,6 +358,7 @@ export async function processLead(args: {
   } else if (action.kind === 'send_first_touch') {
     const drafted = await generateOutreachFirstTouchDraft({
       workspaceVoice, leadName, businessName, demoToken: lead.demo_token,
+      variant, evidence: lead.business_evidence,
     })
     if (!drafted.ok) {
       countReason(summary, `draft_failed:${drafted.reason}`)
@@ -508,6 +514,16 @@ export async function processLead(args: {
   // dispatchOperatorReply records the successful persisted outbound message
   // through the lifecycle seam, including manual and automatic sends.
   if (action.kind === 'send_first_touch') {
+    // Best-effort attribution write, separate from the lifecycle seam above
+    // (which owns stage/status): a failure here must never undo an already
+    // -dispatched send, so it is logged rather than thrown or retried.
+    const { error: variantError } = await supabase
+      .from('outreach_leads')
+      .update({ first_touch_variant: variant })
+      .eq('id', lead.id)
+    if (variantError) {
+      console.error(`[outreach-autosend-scan] variant write failed for ${lead.lead_email}:`, variantError.message)
+    }
     summary.first_touch_sent++
     return 1
   }
