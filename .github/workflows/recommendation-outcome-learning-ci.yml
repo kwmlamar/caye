@@ -1,0 +1,29 @@
+name: Recommendation outcome learning
+
+on:
+  pull_request:
+    paths:
+      - 'lib/recommendations/outcome-policy.ts'
+      - 'lib/recommendations/outcome-policy.test.ts'
+      - 'lib/recommendations/outcomes.ts'
+      - 'supabase/migrations/20260901013500_recommendation_outcome_learning.sql'
+      - '.github/workflows/recommendation-outcome-learning-ci.yml'
+  push:
+    branches:
+      - feat/recommendation-outcome-learning
+
+jobs:
+  outcome-learning:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Recommendation outcome policy tests
+        run: npx vitest run lib/recommendations/outcome-policy.test.ts supabase/migrations/20260901012000_canonical_recommendation_decisions.test.ts
+      - name: Production build
+        run: npm run build
