@@ -3,6 +3,7 @@ import 'server-only'
 import { createServiceClient } from '@/lib/supabase-server'
 import { enqueueOperation } from '@/lib/pending-operations'
 import { resolveWorkspaceDecisionAuthority } from '@/lib/decision-authority'
+import { observeAttentionItem } from '@/lib/owner-attention'
 import { decideRecommendationForExecution } from './decisions'
 import {
   actionContextForRecommendationPlan,
@@ -159,8 +160,33 @@ async function currentAuthorityExists(candidate: RecommendationWakeCandidate): P
   return resolution.authorizedPrincipals.length > 0
 }
 
+async function waitForFounderPersonalDecision(candidate: RecommendationWakeCandidate): Promise<DecisionOutcome> {
+  await observeAttentionItem({
+    workspaceId: candidate.workspaceId,
+    subjectType: 'recommendation_decision',
+    subjectId: candidate.id,
+    title: 'Recommendation needs founder judgment',
+    priority: 'decision',
+    nextAction: 'Review this recommendation in Direction, then approve, reject, or defer it.',
+    fingerprintParts: [candidate.id, candidate.version, candidate.riskClassification, candidate.reversibility, JSON.stringify(candidate.requiredAuthority)],
+    blockedOnOperator: true,
+    resolvableAutonomously: false,
+  })
+  return { kind: 'waiting' }
+}
+
 async function decideProductionCandidate(candidate: RecommendationWakeCandidate): Promise<DecisionOutcome> {
   if (!candidate.actionPlan) return { kind: 'blocked' }
+
+  // Personal authority means an actual founder judgment is required. Do not
+  // manufacture a system `pending` decision first: Direction already exposes
+  // proposed personal-authority recommendations as actionable Needs You items,
+  // and a synthetic current decision would suppress those controls. The owner-
+  // attention ledger is the durable blocked state until the founder acts.
+  if (candidate.requiredAuthority.principalType === 'personal') {
+    return waitForFounderPersonalDecision(candidate)
+  }
+
   const hasExistingAuthorization = await currentAuthorityExists(candidate)
   const result = await decideRecommendationForExecution({
     recommendationId: candidate.id,
@@ -171,8 +197,10 @@ async function decideProductionCandidate(candidate: RecommendationWakeCandidate)
     idempotencyKey: `recommendation-wake-decision:${candidate.id}:${candidate.version}`,
   })
   if (!result.executionEligible) return result.disposition === 'blocked' ? { kind: 'blocked' } : { kind: 'waiting' }
-  const raw = result.decision as { id?: unknown } | null
-  return typeof raw?.id === 'string' ? { kind: 'accepted', decisionId: raw.id } : { kind: 'blocked' }
+  const raw = Array.isArray(result.decision) ? result.decision[0] : result.decision
+  return raw && typeof raw === 'object' && typeof (raw as { id?: unknown }).id === 'string'
+    ? { kind: 'accepted', decisionId: (raw as { id: string }).id }
+    : { kind: 'blocked' }
 }
 
 async function enqueueProductionCandidate(candidate: RecommendationWakeCandidate) {
