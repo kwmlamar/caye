@@ -18,7 +18,6 @@ export const ALLOWED_ATS_HOSTS: Record<string, readonly string[]> = {
     'job-boards.greenhouse.io',
     'job-boards.eu.greenhouse.io',
     'boards-api.greenhouse.io',
-    'boards-api.eu.greenhouse.io',
   ],
 }
 
