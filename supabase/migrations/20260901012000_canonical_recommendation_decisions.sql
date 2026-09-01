@@ -7,6 +7,7 @@
 create table if not exists public.caye_recommendation_decisions (
   id uuid primary key default gen_random_uuid(),
   recommendation_id uuid not null references public.caye_recommendations(id) on delete restrict,
+  recommendation_fingerprint text not null,
   scope text not null check (scope in ('operator','workspace')),
   workspace_id uuid references public.customers(id) on delete cascade,
   decision text not null check (decision in ('accepted','rejected','deferred','cancelled')),
@@ -78,9 +79,13 @@ begin
 
   -- The caller must supply provenance from the existing authority path. This
   -- function records the result; it never interprets required_authority as a grant.
+  -- The canonical recommendation fingerprint is part of the immutable decision
+  -- identity and is snapshotted so stale approvals cannot silently apply to a
+  -- materially changed recommendation version.
   v_fingerprint := encode(digest(concat_ws('|',
     'caye-recommendation-decision-v1',
     p_recommendation_id::text,
+    v_rec.fingerprint,
     p_decision,
     p_actor_kind,
     coalesce(p_actor_id,''),
@@ -88,10 +93,12 @@ begin
   ), 'sha256'), 'hex');
 
   insert into public.caye_recommendation_decisions (
-    recommendation_id, scope, workspace_id, decision, actor_kind, actor_id,
-    rationale, authority_provenance, fingerprint, decided_at
+    recommendation_id, recommendation_fingerprint, scope, workspace_id,
+    decision, actor_kind, actor_id, rationale, authority_provenance,
+    fingerprint, decided_at
   ) values (
-    v_rec.id, v_rec.scope, v_rec.workspace_id, p_decision, p_actor_kind,
+    v_rec.id, v_rec.fingerprint, v_rec.scope, v_rec.workspace_id,
+    p_decision, p_actor_kind,
     nullif(btrim(coalesce(p_actor_id,'')),''), nullif(btrim(coalesce(p_rationale,'')),''),
     p_authority_provenance, v_fingerprint, coalesce(p_decided_at, now())
   )
@@ -129,4 +136,4 @@ grant execute on function public.record_caye_recommendation_decision(
 ) to service_role;
 
 comment on table public.caye_recommendation_decisions is
-  'Durable decisions on canonical recommendations. Authority is supplied as provenance from existing authority machinery; acceptance is not execution evidence.';
+  'Durable version-pinned decisions on canonical recommendations. Authority is supplied as provenance from existing authority machinery; acceptance is not execution evidence.';
