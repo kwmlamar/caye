@@ -17,6 +17,11 @@ export interface RecordRecommendationDecisionInput {
   decidedAt?: string | null
 }
 
+/**
+ * Canonical service-side decision write. The database snapshots the current
+ * recommendation fingerprint, so later readers can reject stale decisions
+ * without inventing a second recommendation/version identity.
+ */
 export async function recordRecommendationDecision(input: RecordRecommendationDecisionInput) {
   const supabase = createServiceClient()
   const { data, error } = await supabase.rpc('record_caye_recommendation_decision', {
