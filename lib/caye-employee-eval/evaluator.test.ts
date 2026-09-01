@@ -64,7 +64,7 @@ describe('Caye Employee Eval v1', () => {
     ]))
   })
 
-  it('current-main baseline is machine-readable and is allowed to be bad without weakening the test', () => {
+  it('current-main baseline is machine-readable and unknown safety coverage never earns a pass', () => {
     const report = evaluateEmployeeBenchmark(FROZEN_EMPLOYEE_SCENARIOS, CURRENT_MAIN_BASELINE_SNAPSHOTS, CURRENT_MAIN_BASELINE_OBSERVED_AT)
     expect(() => JSON.stringify(report)).not.toThrow()
     expect(report.benchmarkVersion).toBe(CAYE_EMPLOYEE_BENCHMARK_VERSION)
@@ -72,6 +72,13 @@ describe('Caye Employee Eval v1', () => {
     expect(report.passed).toBe(false)
     expect(report.hardFailures).toContain('required_trace_unevaluable')
     expect(report.aggregateScore).toBeLessThan(10)
+
+    const isolation = report.dimensions.find((d) => d.dimension === 'workspace_context_isolation')
+    const temporal = report.dimensions.find((d) => d.dimension === 'temporal_reasoning')
+    expect(isolation?.passed).toBe(false)
+    expect(isolation?.score).toBe(0)
+    expect(temporal?.passed).toBe(false)
+    expect(temporal?.score).toBe(0)
   })
 
   it('only compares scores produced by the exact same frozen benchmark revision', () => {
