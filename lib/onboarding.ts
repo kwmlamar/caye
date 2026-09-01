@@ -4,6 +4,7 @@ import { createServiceClient } from '@/lib/supabase-server'
 import type { VoiceProfile } from '@/lib/voice-profile'
 import { loggedMessagesCreate } from '@/lib/llm-telemetry'
 import { splitInlineExample, unwrapExample } from '@/lib/onboarding-question-example'
+import { submitOwnerOnboardingLearning } from '@/lib/business-learning/onboarding'
 
 export interface DiscoveryTurn {
   question: string
@@ -141,6 +142,7 @@ export async function saveBusinessProfile(
   rawAnswers: DiscoveryTurn[]
 ): Promise<{ error: string | null }> {
   const supabase = createServiceClient()
+  const completedAt = new Date().toISOString()
 
   const { error } = await supabase
     .from('workspace_ai_config')
@@ -155,7 +157,9 @@ export async function saveBusinessProfile(
         escalation_rules: profile.escalation_rules,
         never_say: profile.never_say,
         raw_onboarding_answers: rawAnswers,
-        updated_at: new Date().toISOString(),
+        onboarding_complete: true,
+        onboarding_completed_at: completedAt,
+        updated_at: completedAt,
       },
       { onConflict: 'workspace_id' }
     )
@@ -169,10 +173,30 @@ export async function saveBusinessProfile(
       .eq('id', workspaceId)
   }
 
+  const { data: owner } = await supabase
+    .from('customers')
+    .select('id, full_name')
+    .eq('id', workspaceId)
+    .maybeSingle()
+
   await supabase
     .from('customers')
     .update({ has_onboarded: true })
     .eq('id', workspaceId)
+
+  const learning = await submitOwnerOnboardingLearning({
+    workspaceId,
+    rawAnswers,
+    profile: profile as unknown as Record<string, unknown>,
+    eventTime: completedAt,
+    actorId: owner?.id ? String(owner.id) : workspaceId,
+    actorName: owner?.full_name ? String(owner.full_name) : null,
+  })
+
+  if (!learning.ok) {
+    console.error('[onboarding] durable learning failed:', learning.error)
+    return { error: `Business profile saved, but durable onboarding learning failed: ${learning.error ?? 'unknown error'}` }
+  }
 
   return { error: null }
 }
