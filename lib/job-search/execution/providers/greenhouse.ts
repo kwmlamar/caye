@@ -7,10 +7,9 @@ import { runGreenhouseBrowserReadiness } from './greenhouse-browser'
 import { submitGreenhouseApplication, type FinalAuthorityCheck, type LiveSubmissionTelemetry } from './greenhouse-submit'
 
 const GREENHOUSE_API_HOST = 'boards-api.greenhouse.io'
-const GREENHOUSE_EU_API_HOST = 'boards-api.eu.greenhouse.io'
 const REQUEST_TIMEOUT_MS = 15_000
 
-type ParsedGreenhouseUrl = { boardToken: string; jobId: string; apiHost: string }
+type ParsedGreenhouseUrl = { boardToken: string; jobId: string }
 
 function parseGreenhouseApplyUrl(applyUrl: string): ParsedGreenhouseUrl | null {
   let url: URL
@@ -22,14 +21,11 @@ function parseGreenhouseApplyUrl(applyUrl: string): ParsedGreenhouseUrl | null {
   if (!isAllowedAtsHost('greenhouse', url.hostname)) return null
   const match = url.pathname.match(/^\/([^/]+)\/jobs\/(\d+)/)
   if (!match) return null
-  const apiHost = url.hostname.toLowerCase().includes('.eu.greenhouse.io')
-    ? GREENHOUSE_EU_API_HOST
-    : GREENHOUSE_API_HOST
-  return { boardToken: match[1], jobId: match[2], apiHost }
+  return { boardToken: match[1], jobId: match[2] }
 }
 
 function isGreenhouseHost(hostname: string): boolean {
-  return isAllowedAtsHost('greenhouse', hostname)
+  return isAllowedAtsHost('greenhouse', hostname) || hostname === GREENHOUSE_API_HOST
 }
 
 type GreenhouseQuestionField = {
@@ -89,7 +85,9 @@ export const greenhouseAtsProvider: AtsExecutorProvider = {
       }
     }
 
-    const discoveryUrl = `https://${parsed.apiHost}/v1/boards/${encodeURIComponent(parsed.boardToken)}/jobs/${encodeURIComponent(parsed.jobId)}?questions=true`
+    // Greenhouse's public Job Board API uses the same boards-api.greenhouse.io
+    // host for jobs surfaced on both US and EU hosted application pages.
+    const discoveryUrl = `https://${GREENHOUSE_API_HOST}/v1/boards/${encodeURIComponent(parsed.boardToken)}/jobs/${encodeURIComponent(parsed.jobId)}?questions=true`
 
     let result
     try {
