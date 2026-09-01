@@ -89,9 +89,6 @@ export const researchInvestigateCapability: RegisteredCapability<FounderResearch
       if (inboundError) throw inboundError
       if (!inbound?.id || typeof inbound.body !== 'string' || !inbound.body.trim()) return failed('not_authorized', 'Trusted founder Direct provenance could not be verified.')
 
-      // The durable founder message is more authoritative than model paraphrase for
-      // determining whether this is standing monitoring. Ordinary “look into it”
-      // defaults to follow-until-resolved; explicit watch language stays alive.
       const mode: InvestigationMode = explicitMode ?? (MONITOR_LANGUAGE.test(inbound.body) ? 'monitor' : 'follow_until_resolved')
       const refreshIntervalHours = args.refreshIntervalHours == null ? (mode === 'monitor' ? 24 : 6) : Math.round(args.refreshIntervalHours)
 
@@ -104,8 +101,9 @@ export const researchInvestigateCapability: RegisteredCapability<FounderResearch
         programTitle = program.title
         const inserted = await db.from('research_questions').insert({
           program_id: program.id, question: verificationQuestion, status: 'open', canonical_key: canonicalKey,
-          investigation_mode: mode, lifecycle_status: 'active', refresh_interval_hours: refreshIntervalHours,
-          max_autonomous_runs: mode === 'monitor' ? 48 : 8,
+          investigation_mode: mode, lifecycle_status: 'active', investigation_origin: 'founder',
+          refresh_interval_hours: refreshIntervalHours, max_autonomous_runs: mode === 'monitor' ? 48 : 8,
+          max_autonomous_followups: mode === 'follow_until_resolved' ? 6 : 0,
         }).select('id,program_id,question,status,canonical_key,investigation_mode,lifecycle_status,refresh_interval_hours').single()
         if (inserted.error?.code === '23505') { question = await findCurrentQuestion(db, canonicalKey); reused = true }
         else if (inserted.error) throw inserted.error
@@ -118,6 +116,7 @@ export const researchInvestigateCapability: RegisteredCapability<FounderResearch
           investigation_mode: effectiveMode, lifecycle_status: 'active',
           refresh_interval_hours: effectiveMode === mode ? refreshIntervalHours : question.refresh_interval_hours,
           resolved_at: null, resolution_reason: null, max_autonomous_runs: effectiveMode === 'monitor' ? 48 : 8,
+          max_autonomous_followups: effectiveMode === 'follow_until_resolved' ? 6 : 0,
         }).eq('id', question.id)
         if (reactivated.error) throw reactivated.error
         question = { ...question, investigation_mode: effectiveMode, lifecycle_status: 'active' }
