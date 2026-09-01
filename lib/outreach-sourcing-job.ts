@@ -129,6 +129,7 @@ async function sourceFromTarget(db: Db, workspaceId: string, target: SourcingTar
             workspace_id: workspaceId,
             lead_email: lead.email!,
             business_name: lead.business_name,
+            business_evidence: lead.evidence,
             status: 'sourced',
           })),
           { onConflict: 'workspace_id,lead_email', ignoreDuplicates: true }

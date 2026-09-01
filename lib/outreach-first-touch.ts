@@ -3,7 +3,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { detectIdentityLeak } from './caye-identity-guard'
 import { sanitizeDashes } from './sanitize-dashes'
 import { loggedMessagesCreate } from '@/lib/llm-telemetry'
-import { buildFirstTouchSystem } from './sales/voice'
+import { buildFirstTouchSystem, type FirstTouchVariant } from './sales/voice'
 import { buildTrackedDemoLink } from './outreach-compliance'
 
 /**
@@ -26,6 +26,10 @@ export interface OutreachFirstTouchContext {
   leadName: string
   businessName: string
   demoToken: string
+  /** Which opener framing to write this draft in — see lib/sales/voice.ts. */
+  variant: FirstTouchVariant
+  /** Real excerpt scraped from the lead's own site, if one was found (outreach_leads.business_evidence). */
+  evidence?: string | null
 }
 
 export type OutreachFirstTouchResult =
@@ -41,6 +45,8 @@ export async function generateOutreachFirstTouchDraft(
     leadName: ctx.leadName,
     businessName: ctx.businessName,
     trackedLink: buildTrackedDemoLink(ctx.demoToken),
+    variant: ctx.variant,
+    evidence: ctx.evidence,
   })
 
   const response = await loggedMessagesCreate(
