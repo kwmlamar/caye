@@ -1,6 +1,7 @@
 -- Bounded observation ledger for executed recommendation actions.
--- This schedules observation only. It does not grade recommendations, execute actions,
--- poll arbitrary destinations, or modify authority. #372 remains the outcome evaluator.
+-- This schedules objective observation only. It does not grade recommendations,
+-- execute actions, poll arbitrary destinations, or modify authority. #372 remains
+-- the only recommendation outcome evaluator.
 
 create table if not exists public.caye_recommendation_outcome_observations (
   id uuid primary key default gen_random_uuid(),
@@ -20,6 +21,9 @@ create table if not exists public.caye_recommendation_outcome_observations (
   max_observations integer not null check (max_observations between 1 and 32),
   observation_count integer not null default 0 check (observation_count between 0 and 32),
   last_observed_at timestamptz,
+  claimed_by text,
+  claim_token uuid,
+  claim_expires_at timestamptz,
   fingerprint text not null unique,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
@@ -29,7 +33,30 @@ create table if not exists public.caye_recommendation_outcome_observations (
   ),
   constraint caye_recommendation_observation_bounded_horizon check (
     expires_at > registered_at and expires_at <= registered_at + interval '30 days'
+  ),
+  constraint caye_recommendation_observation_claim_pair check (
+    (claim_token is null and claimed_by is null and claim_expires_at is null) or
+    (claim_token is not null and claimed_by is not null and claim_expires_at is not null)
   )
+);
+
+-- Objective measurements produced by code-owned observers. These rows are the
+-- durable source references handed to #372 as system_metric / goal_metric evidence.
+create table if not exists public.caye_recommendation_outcome_observation_measurements (
+  id uuid primary key default gen_random_uuid(),
+  observation_id uuid not null references public.caye_recommendation_outcome_observations(id) on delete cascade,
+  metric_key text not null check (length(btrim(metric_key)) > 0),
+  baseline_value numeric,
+  observed_value numeric,
+  measured_delta numeric,
+  unit text,
+  direction text not null check (direction in ('positive','negative','neutral','unknown')),
+  measurable boolean not null default false,
+  observed_at timestamptz not null,
+  provenance jsonb not null,
+  fingerprint text not null unique,
+  created_at timestamptz not null default now(),
+  unique (observation_id, metric_key, observed_at)
 );
 
 create index if not exists caye_recommendation_observation_due_idx
@@ -37,9 +64,14 @@ create index if not exists caye_recommendation_observation_due_idx
   where state = 'pending';
 create index if not exists caye_recommendation_observation_rec_idx
   on public.caye_recommendation_outcome_observations(recommendation_id, created_at desc);
+create index if not exists caye_recommendation_observation_measurement_idx
+  on public.caye_recommendation_outcome_observation_measurements(observation_id, observed_at);
 
 alter table public.caye_recommendation_outcome_observations enable row level security;
-revoke all on public.caye_recommendation_outcome_observations from anon, authenticated;
+alter table public.caye_recommendation_outcome_observation_measurements enable row level security;
+revoke all on public.caye_recommendation_outcome_observations,
+              public.caye_recommendation_outcome_observation_measurements
+  from anon, authenticated;
 
 create or replace function public.register_caye_recommendation_outcome_observation(
   p_recommendation_id uuid,
@@ -89,7 +121,7 @@ begin
   end if;
 
   v_fingerprint := encode(digest(concat_ws('|',
-    'caye-recommendation-observation-v1', v_rec.id::text, v_decision.id::text,
+    'caye-recommendation-observation-v2', v_rec.id::text, v_decision.id::text,
     v_rec.fingerprint, btrim(p_execution_key), btrim(p_observer_key)
   ), 'sha256'), 'hex');
 
@@ -110,8 +142,106 @@ begin
 end;
 $$;
 
+-- Claim exactly one due observation. SKIP LOCKED plus a lease makes duplicate cron
+-- invocations converge without holding a database transaction across metric reads.
+create or replace function public.claim_due_caye_recommendation_outcome_observation(
+  p_worker text,
+  p_now timestamptz default now()
+)
+returns public.caye_recommendation_outcome_observations
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_row public.caye_recommendation_outcome_observations%rowtype;
+  v_token uuid := gen_random_uuid();
+begin
+  if length(btrim(coalesce(p_worker,''))) = 0 then raise exception 'observation worker required'; end if;
+
+  select * into v_row
+  from public.caye_recommendation_outcome_observations
+  where state = 'pending'
+    and next_observation_at is not null
+    and next_observation_at <= p_now
+    and observation_count < max_observations
+    and (claim_token is null or claim_expires_at <= p_now)
+  order by next_observation_at, created_at
+  for update skip locked
+  limit 1;
+
+  if v_row.id is null then return null; end if;
+
+  update public.caye_recommendation_outcome_observations
+  set claimed_by = btrim(p_worker), claim_token = v_token,
+      claim_expires_at = p_now + interval '5 minutes', updated_at = now()
+  where id = v_row.id
+  returning * into v_row;
+  return v_row;
+end;
+$$;
+
+create or replace function public.record_caye_recommendation_outcome_observation_measurement(
+  p_observation_id uuid,
+  p_claim_token uuid,
+  p_metric_key text,
+  p_baseline_value numeric,
+  p_observed_value numeric,
+  p_measured_delta numeric,
+  p_unit text,
+  p_direction text,
+  p_measurable boolean,
+  p_observed_at timestamptz,
+  p_provenance jsonb
+)
+returns public.caye_recommendation_outcome_observation_measurements
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_observation public.caye_recommendation_outcome_observations%rowtype;
+  v_row public.caye_recommendation_outcome_observation_measurements%rowtype;
+  v_fingerprint text;
+begin
+  select * into v_observation from public.caye_recommendation_outcome_observations where id = p_observation_id for share;
+  if not found then raise exception 'recommendation observation not found'; end if;
+  if v_observation.state <> 'pending' or v_observation.claim_token is distinct from p_claim_token
+     or v_observation.claim_expires_at <= now() then
+    raise exception 'recommendation observation claim invalid';
+  end if;
+  if length(btrim(coalesce(p_metric_key,''))) = 0 then raise exception 'observation metric key required'; end if;
+  if p_direction not in ('positive','negative','neutral','unknown') then raise exception 'unsupported observation metric direction'; end if;
+  if p_provenance is null or jsonb_typeof(p_provenance) <> 'object' or p_provenance = '{}'::jsonb then
+    raise exception 'observation measurement provenance required';
+  end if;
+
+  v_fingerprint := encode(digest(concat_ws('|',
+    'caye-recommendation-observation-measurement-v1', v_observation.id::text,
+    btrim(p_metric_key), coalesce(p_observed_at, now())::text,
+    coalesce(p_baseline_value::text,''), coalesce(p_observed_value::text,''),
+    coalesce(p_measured_delta::text,''), p_direction, p_measurable::text
+  ), 'sha256'), 'hex');
+
+  insert into public.caye_recommendation_outcome_observation_measurements (
+    observation_id, metric_key, baseline_value, observed_value, measured_delta,
+    unit, direction, measurable, observed_at, provenance, fingerprint
+  ) values (
+    v_observation.id, btrim(p_metric_key), p_baseline_value, p_observed_value,
+    p_measured_delta, nullif(btrim(coalesce(p_unit,'')),''), p_direction,
+    p_measurable, coalesce(p_observed_at, now()), p_provenance, v_fingerprint
+  ) on conflict (fingerprint) do nothing returning * into v_row;
+
+  if v_row.id is null then
+    select * into v_row from public.caye_recommendation_outcome_observation_measurements where fingerprint = v_fingerprint;
+  end if;
+  return v_row;
+end;
+$$;
+
 create or replace function public.advance_caye_recommendation_outcome_observation(
   p_observation_id uuid,
+  p_claim_token uuid,
   p_state text,
   p_next_observation_at timestamptz,
   p_observed_at timestamptz default now()
@@ -131,6 +261,9 @@ begin
   select * into v_row from public.caye_recommendation_outcome_observations where id = p_observation_id for update;
   if not found then raise exception 'recommendation observation not found'; end if;
   if v_row.state <> 'pending' then return v_row; end if;
+  if v_row.claim_token is distinct from p_claim_token or v_row.claim_expires_at <= now() then
+    raise exception 'recommendation observation claim invalid';
+  end if;
 
   v_row.observation_count := v_row.observation_count + 1;
   if p_state = 'pending' and (
@@ -146,6 +279,7 @@ begin
     observation_count = v_row.observation_count,
     last_observed_at = coalesce(p_observed_at, now()),
     next_observation_at = case when p_state = 'pending' then p_next_observation_at else null end,
+    claimed_by = null, claim_token = null, claim_expires_at = null,
     updated_at = now()
   where id = v_row.id
   returning * into v_row;
@@ -154,6 +288,10 @@ end;
 $$;
 
 revoke all on function public.register_caye_recommendation_outcome_observation(uuid,uuid,uuid,text,text,jsonb,timestamptz,timestamptz,integer,integer) from public, anon, authenticated;
-revoke all on function public.advance_caye_recommendation_outcome_observation(uuid,text,timestamptz,timestamptz) from public, anon, authenticated;
+revoke all on function public.claim_due_caye_recommendation_outcome_observation(text,timestamptz) from public, anon, authenticated;
+revoke all on function public.record_caye_recommendation_outcome_observation_measurement(uuid,uuid,text,numeric,numeric,numeric,text,text,boolean,timestamptz,jsonb) from public, anon, authenticated;
+revoke all on function public.advance_caye_recommendation_outcome_observation(uuid,uuid,text,timestamptz,timestamptz) from public, anon, authenticated;
 grant execute on function public.register_caye_recommendation_outcome_observation(uuid,uuid,uuid,text,text,jsonb,timestamptz,timestamptz,integer,integer) to service_role;
-grant execute on function public.advance_caye_recommendation_outcome_observation(uuid,text,timestamptz,timestamptz) to service_role;
+grant execute on function public.claim_due_caye_recommendation_outcome_observation(text,timestamptz) to service_role;
+grant execute on function public.record_caye_recommendation_outcome_observation_measurement(uuid,uuid,text,numeric,numeric,numeric,text,text,boolean,timestamptz,jsonb) to service_role;
+grant execute on function public.advance_caye_recommendation_outcome_observation(uuid,uuid,text,timestamptz,timestamptz) to service_role;
