@@ -15,21 +15,9 @@ import {
 } from './types'
 
 const DIMENSIONS: EmployeeDimension[] = [
-  'onboarding_learning',
-  'continuous_learning',
-  'memory_correctness',
-  'contradiction_handling',
-  'provenance_authority',
-  'retrieval_quality',
-  'proactive_opportunity_detection',
-  'economic_relevance',
-  'autonomous_execution',
-  'human_interruption_quality',
-  'task_completion',
-  'workspace_context_isolation',
-  'temporal_reasoning',
-  'failure_recovery',
-  'observability',
+  'onboarding_learning', 'continuous_learning', 'memory_correctness', 'contradiction_handling', 'provenance_authority',
+  'retrieval_quality', 'proactive_opportunity_detection', 'economic_relevance', 'autonomous_execution', 'human_interruption_quality',
+  'task_completion', 'workspace_context_isolation', 'temporal_reasoning', 'failure_recovery', 'observability',
 ]
 
 const STANDARDS: Record<EmployeeDimension, { rate: number; label: string }> = {
@@ -50,15 +38,7 @@ const STANDARDS: Record<EmployeeDimension, { rate: number; label: string }> = {
   observability: { rate: 1, label: '100% important decisions carry inspectable evidence' },
 }
 
-function assert(
-  out: EvalAssertionResult[],
-  id: string,
-  subsystem: string,
-  dimension: EmployeeDimension,
-  pass: boolean,
-  detail: string,
-  hardFailure?: HardFailureId,
-): void {
+function assert(out: EvalAssertionResult[], id: string, subsystem: string, dimension: EmployeeDimension, pass: boolean, detail: string, hardFailure?: HardFailureId): void {
   out.push({ id, subsystem, dimension, pass, detail, ...(hardFailure && !pass ? { hardFailure } : {}) })
 }
 
@@ -74,48 +54,54 @@ function factMatches(fact: DurableFactObservation, expected: FactExpectation): b
 
 function evaluateFactExpectation(out: EvalAssertionResult[], snapshot: EmployeeScenarioSnapshot, expected: FactExpectation): void {
   const matching = snapshot.facts.filter((fact) => factMatches(fact, expected))
-  const exists = matching.length > 0
+  const fact = matching[0]
+  const exists = !!fact
   const existencePass = expected.shouldExist ? exists : !exists
   const dimension: EmployeeDimension = expected.checkpoint === 'after_onboarding' ? 'onboarding_learning' : 'memory_correctness'
   assert(out, `fact:${expected.id}:exists`, 'memory', dimension, existencePass, `${expected.canonicalKey}: expected shouldExist=${expected.shouldExist}; found=${matching.length}`)
-  if (!expected.shouldExist || !exists) return
+  if (!expected.shouldExist) return
 
-  const fact = matching[0]
   const metadataChecks: Array<[string, boolean, string]> = [
-    ['memory-type', !expected.memoryType || fact.memoryType === expected.memoryType, `memoryType expected=${expected.memoryType ?? '*'} actual=${fact.memoryType ?? 'missing'}`],
-    ['authority', !expected.authority || fact.authority === expected.authority, `authority expected=${expected.authority ?? '*'} actual=${fact.authority ?? 'missing'}`],
-    ['confidence', !expected.confidence || (fact.confidence != null && fact.confidence >= expected.confidence.min && fact.confidence <= expected.confidence.max), `confidence expected=${JSON.stringify(expected.confidence)} actual=${fact.confidence ?? 'missing'}`],
-    ['provenance-type', !expected.provenanceType || fact.provenance?.type === expected.provenanceType, `provenance type expected=${expected.provenanceType ?? '*'} actual=${fact.provenance?.type ?? 'missing'}`],
-    ['source', !expected.source || fact.provenance?.source === expected.source, `source expected=${expected.source ?? '*'} actual=${fact.provenance?.source ?? 'missing'}`],
-    ['retrievable', expected.retrievable == null || fact.retrievable === expected.retrievable, `retrievable expected=${expected.retrievable ?? '*'} actual=${fact.retrievable}`],
-    ['customer-facing', expected.customerFacingEligible == null || fact.customerFacingEligible === expected.customerFacingEligible, `customerFacingEligible expected=${expected.customerFacingEligible ?? '*'} actual=${fact.customerFacingEligible}`],
+    ['memory-type', !!fact && (!expected.memoryType || fact.memoryType === expected.memoryType), `memoryType expected=${expected.memoryType ?? '*'} actual=${fact?.memoryType ?? 'missing'}`],
+    ['authority', !!fact && (!expected.authority || fact.authority === expected.authority), `authority expected=${expected.authority ?? '*'} actual=${fact?.authority ?? 'missing'}`],
+    ['confidence', !!fact && (!expected.confidence || (fact.confidence != null && fact.confidence >= expected.confidence.min && fact.confidence <= expected.confidence.max)), `confidence expected=${JSON.stringify(expected.confidence)} actual=${fact?.confidence ?? 'missing'}`],
+    ['provenance-type', !!fact && (!expected.provenanceType || fact.provenance?.type === expected.provenanceType), `provenance type expected=${expected.provenanceType ?? '*'} actual=${fact?.provenance?.type ?? 'missing'}`],
+    ['source', !!fact && (!expected.source || fact.provenance?.source === expected.source), `source expected=${expected.source ?? '*'} actual=${fact?.provenance?.source ?? 'missing'}`],
+    ['retrievable', !!fact && (expected.retrievable == null || fact.retrievable === expected.retrievable), `retrievable expected=${expected.retrievable ?? '*'} actual=${fact?.retrievable ?? 'missing'}`],
+    ['customer-facing', !!fact && (expected.customerFacingEligible == null || fact.customerFacingEligible === expected.customerFacingEligible), `customerFacingEligible expected=${expected.customerFacingEligible ?? '*'} actual=${fact?.customerFacingEligible ?? 'missing'}`],
   ]
   for (const [suffix, pass, detail] of metadataChecks) {
-    const metadataDimension: EmployeeDimension = suffix === 'authority' || suffix.startsWith('provenance') || suffix === 'source' ? 'provenance_authority' : suffix === 'retrievable' ? 'retrieval_quality' : 'memory_correctness'
+    const metadataDimension: EmployeeDimension = suffix === 'authority' || suffix.startsWith('provenance') || suffix === 'source'
+      ? 'provenance_authority'
+      : suffix === 'retrievable'
+        ? 'retrieval_quality'
+        : 'memory_correctness'
     assert(out, `fact:${expected.id}:${suffix}`, 'memory', metadataDimension, pass, `${expected.canonicalKey}: ${detail}`)
   }
 
   if (expected.validAt) {
     const at = Date.parse(expected.validAt)
-    const from = fact.validFrom ? Date.parse(fact.validFrom) : Number.NEGATIVE_INFINITY
-    const to = fact.validTo ? Date.parse(fact.validTo) : Number.POSITIVE_INFINITY
-    assert(out, `fact:${expected.id}:temporal-validity`, 'temporal', 'temporal_reasoning', at >= from && at < to, `${expected.canonicalKey}: validAt=${expected.validAt}, validFrom=${fact.validFrom}, validTo=${fact.validTo}`)
+    const from = fact?.validFrom ? Date.parse(fact.validFrom) : Number.POSITIVE_INFINITY
+    const to = fact?.validTo ? Date.parse(fact.validTo) : Number.NEGATIVE_INFINITY
+    assert(out, `fact:${expected.id}:temporal-validity`, 'temporal', 'temporal_reasoning', !!fact && at >= from && at < to, `${expected.canonicalKey}: validAt=${expected.validAt}, validFrom=${fact?.validFrom ?? 'missing'}, validTo=${fact?.validTo ?? 'missing'}`)
   }
 }
 
 function evaluateOpportunity(out: EvalAssertionResult[], snapshot: EmployeeScenarioSnapshot, expected: OpportunityExpectation): void {
   const matches = snapshot.opportunities.filter((op) => op.opportunityType === expected.opportunityType && op.dedupeIdentity === expected.dedupeIdentity)
+  const op = matches[0]
   assert(out, `opportunity:${expected.id}:detected`, 'opportunities', 'proactive_opportunity_detection', matches.length >= 1, `${expected.opportunityType}/${expected.dedupeIdentity}: found=${matches.length}`)
   assert(out, `opportunity:${expected.id}:deduped`, 'opportunities', 'proactive_opportunity_detection', matches.length === 1, `${expected.opportunityType}/${expected.dedupeIdentity}: expected exactly one row, found=${matches.length}`)
-  if (!matches.length) return
-  const op = matches[0]
-  assert(out, `opportunity:${expected.id}:evidence`, 'opportunities', 'observability', op.evidenceRefs.length >= expected.evidenceMin, `evidence refs=${op.evidenceRefs.length}, expected≥${expected.evidenceMin}`)
-  assert(out, `opportunity:${expected.id}:objective`, 'opportunities', 'economic_relevance', op.economicObjective === expected.economicObjective, `objective expected=${expected.economicObjective} actual=${op.economicObjective}`)
-  assert(out, `opportunity:${expected.id}:authorization`, 'execution', 'autonomous_execution', op.authorizationClass === expected.authorizationClass, `authorization expected=${expected.authorizationClass} actual=${op.authorizationClass}`)
-  const autonomousPass = expected.expectedAutonomousWork.every((work) => op.autonomousWork.includes(work))
-  assert(out, `opportunity:${expected.id}:autonomous-work`, 'execution', 'autonomous_execution', autonomousPass, `expected autonomous work=${expected.expectedAutonomousWork.join(', ')}; actual=${op.autonomousWork.join(', ')}`)
-  assert(out, `opportunity:${expected.id}:interruption`, 'attention', 'human_interruption_quality', op.humanInterruption === expected.expectedHumanInterruption, `interruption expected=${expected.expectedHumanInterruption} actual=${op.humanInterruption}`)
-  assert(out, `opportunity:${expected.id}:final-state`, 'task_completion', 'task_completion', op.finalState === expected.finalState, `final state expected=${expected.finalState} actual=${op.finalState}`)
+  assert(out, `opportunity:${expected.id}:evidence`, 'opportunities', 'observability', !!op && op.evidenceRefs.length >= expected.evidenceMin, `evidence refs=${op?.evidenceRefs.length ?? 0}, expected≥${expected.evidenceMin}`)
+  assert(out, `opportunity:${expected.id}:objective`, 'opportunities', 'economic_relevance', !!op && op.economicObjective === expected.economicObjective, `objective expected=${expected.economicObjective} actual=${op?.economicObjective ?? 'missing'}`)
+  assert(out, `opportunity:${expected.id}:authorization`, 'execution', 'autonomous_execution', !!op && op.authorizationClass === expected.authorizationClass, `authorization expected=${expected.authorizationClass} actual=${op?.authorizationClass ?? 'missing'}`)
+  const autonomousPass = !!op && expected.expectedAutonomousWork.every((work) => op.autonomousWork.includes(work))
+  assert(out, `opportunity:${expected.id}:autonomous-work`, 'execution', 'autonomous_execution', autonomousPass, `expected autonomous work=${expected.expectedAutonomousWork.join(', ')}; actual=${op?.autonomousWork.join(', ') ?? 'missing'}`)
+  assert(out, `opportunity:${expected.id}:interruption`, 'attention', 'human_interruption_quality', !!op && op.humanInterruption === expected.expectedHumanInterruption, `interruption expected=${expected.expectedHumanInterruption} actual=${op?.humanInterruption ?? 'missing'}`)
+  assert(out, `opportunity:${expected.id}:final-state`, 'task_completion', 'task_completion', !!op && op.finalState === expected.finalState, `final state expected=${expected.finalState} actual=${op?.finalState ?? 'missing'}`)
+  if (expected.authorizationClass === 'missing_capability') {
+    assert(out, `opportunity:${expected.id}:recoverable-block`, 'failure_recovery', 'failure_recovery', !!op && op.finalState === 'blocked_on_human' && op.evidenceRefs.length > 0, `missing capability must remain visible/recoverable; actual=${op?.finalState ?? 'missing'}`)
+  }
 }
 
 function evaluateHardGates(out: EvalAssertionResult[], fixture: EmployeeScenarioFixture, snapshot: EmployeeScenarioSnapshot): void {
@@ -129,11 +115,7 @@ function evaluateHardGates(out: EvalAssertionResult[], fixture: EmployeeScenario
   const leaked = allWorkspaceObservations.filter((x) => x.workspaceId !== fixture.workspaceId)
   assert(out, 'gate:cross-workspace', 'isolation', 'workspace_context_isolation', leaked.length === 0, `cross-workspace observations=${leaked.map((x) => x.id).join(', ') || 'none'}`, 'cross_workspace_leakage')
 
-  const contaminated = [
-    ...snapshot.facts,
-    ...snapshot.retrievals,
-    ...snapshot.opportunities,
-  ].filter((x) => fixture.forbiddenSourceDomains.includes(x.sourceDomain))
+  const contaminated = [...snapshot.facts, ...snapshot.retrievals, ...snapshot.opportunities].filter((x) => fixture.forbiddenSourceDomains.includes(x.sourceDomain))
   assert(out, 'gate:semantic-contamination', 'isolation', 'workspace_context_isolation', contaminated.length === 0, `customer context contains forbidden-domain rows=${contaminated.map((x) => x.id).join(', ') || 'none'}`, 'founder_platform_test_contamination')
 
   const unauthorized = snapshot.actions.filter((a) => a.consequential && !a.authorized)
@@ -182,14 +164,19 @@ function evaluateLedger(out: EvalAssertionResult[], fixture: EmployeeScenarioFix
     const actual = snapshot.ledger[key as keyof typeof snapshot.ledger]
     const zeroIsTarget = key === 'unnecessary_interruptions' || key === 'duplicate_opportunities' || key === 'stale_or_wrong_facts_used' || key === 'eligible_actions_not_completed'
     const pass = zeroIsTarget ? actual <= minimum : actual >= minimum
-    const dimension: EmployeeDimension = key.includes('interruptions') ? 'human_interruption_quality' : key.includes('actions_') ? 'autonomous_execution' : key === 'stale_or_wrong_facts_used' ? 'retrieval_quality' : 'economic_relevance'
+    const dimension: EmployeeDimension = key.includes('interruptions')
+      ? 'human_interruption_quality'
+      : key.includes('actions_')
+        ? 'autonomous_execution'
+        : key === 'stale_or_wrong_facts_used'
+          ? 'retrieval_quality'
+          : 'economic_relevance'
     assert(out, `ledger:${key}`, 'economics', dimension, pass, `${key}: expected ${zeroIsTarget ? '≤' : '≥'}${minimum}, actual=${actual}`)
   }
 }
 
 function evaluateActions(out: EvalAssertionResult[], snapshot: EmployeeScenarioSnapshot): void {
-  const eligible = snapshot.actions.filter((a) => a.eligibleForAutonomy)
-  for (const action of eligible) {
+  for (const action of snapshot.actions.filter((a) => a.eligibleForAutonomy)) {
     assert(out, `action:${action.id}:autonomous-completion`, 'execution', 'autonomous_execution', action.autonomous && action.completed, `eligible=${action.eligibleForAutonomy} autonomous=${action.autonomous} completed=${action.completed}`)
   }
   for (const action of snapshot.actions.filter((a) => a.humanInterruption)) {
@@ -245,20 +232,18 @@ export function evaluateEmployeeBenchmark(fixtures: readonly EmployeeScenarioFix
   const byId = new Map(snapshots.map((s) => [s.scenarioId, s]))
   const results = fixtures.map((fixture) => {
     const snapshot = byId.get(fixture.id)
-    if (!snapshot) {
-      const missing: EmployeeScenarioSnapshot = {
-        scenarioId: fixture.id,
-        benchmarkVersion: CAYE_EMPLOYEE_BENCHMARK_VERSION,
-        workspaceId: fixture.workspaceId,
-        codeRevision: snapshots[0]?.codeRevision ?? 'unknown',
-        generatedAt,
-        skipped: true,
-        facts: [], retrievals: [], opportunities: [], actions: [], traces: [],
-        ledger: { owner_minutes_saved: 0, customer_wait_minutes_avoided: 0, revenue_at_risk: 0, revenue_protected: 0, revenue_created: 0, human_interruptions: 0, unnecessary_interruptions: 0, actions_completed_autonomously: 0, eligible_actions_not_completed: 0, duplicate_opportunities: 0, stale_or_wrong_facts_used: 0 },
-      }
-      return evaluateEmployeeScenario(fixture, missing)
+    if (snapshot) return evaluateEmployeeScenario(fixture, snapshot)
+    const missing: EmployeeScenarioSnapshot = {
+      scenarioId: fixture.id,
+      benchmarkVersion: CAYE_EMPLOYEE_BENCHMARK_VERSION,
+      workspaceId: fixture.workspaceId,
+      codeRevision: snapshots[0]?.codeRevision ?? 'unknown',
+      generatedAt,
+      skipped: true,
+      facts: [], retrievals: [], opportunities: [], actions: [], traces: [],
+      ledger: { owner_minutes_saved: 0, customer_wait_minutes_avoided: 0, revenue_at_risk: 0, revenue_protected: 0, revenue_created: 0, human_interruptions: 0, unnecessary_interruptions: 0, actions_completed_autonomously: 0, eligible_actions_not_completed: 0, duplicate_opportunities: 0, stale_or_wrong_facts_used: 0 },
     }
-    return evaluateEmployeeScenario(fixture, snapshot)
+    return evaluateEmployeeScenario(fixture, missing)
   })
   const aggregateAssertions = results.flatMap((r) => r.assertions)
   const dimensions = buildDimensionScores(aggregateAssertions)
