@@ -37,7 +37,11 @@ Return ONLY JSON:
 Rules:
 - propertyKey names the PROPERTY, never its value. Example: propertyKey="meeting_point", valueText="Casino Tram Stop". Never emit "casino_tram_stop_pickup" or another value-bearing identity.
 - A customer request, invoice number, booking date, quote amount for one customer, proposal status, and one-off task are temporary/customer state, not standing policy.
-- A recurring vendor workflow, durable vendor relationship, repeated procedure, stated service offering, policy, preference, or stable logistics rule may be durable.
+- A recurring vendor workflow, durable vendor relationship, repeated procedure, stated current service offering, policy, preference, or stable logistics rule may be durable.
+- Explicit owner statements about CURRENT business facts may be durable immediately when authority is owner_instruction or owner_correction. One owner statement is sufficient evidence; do not require repetition just because it appeared during onboarding.
+- Future, tentative, conditional, hypothetical, aspirational, or uncertain statements are NOT current durable facts. Phrases like "might", "maybe", "considering", "planning to", "could offer later", or "we may" must become speculative_observation with durable=false and requires_confirmation unless the statement separately contains a clear current fact.
+- Split compound owner answers into separate candidates when they assert independent durable properties or services. For example, "we do kitchens, bathrooms, and additions" should yield independently addressable service knowledge, not one opaque sentence.
+- Explicit absence is meaningful when the owner states it as current policy state. For example, "we don't have a cancellation policy" is a durable current policy fact, not missing information.
 - A message merely showing something happened once can support an operational_pattern candidate, but it is observation evidence, not authoritative policy.
 - Direct business communication can be evidence about how the business operates, but do not convert a customer's wording into an owner policy.
 - Consequential facts include payment/refund/legal/liability/compliance and broad pricing rules. Unless the source itself is authoritative, consequential facts require_confirmation.
