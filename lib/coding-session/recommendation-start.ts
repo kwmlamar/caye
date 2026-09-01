@@ -1,21 +1,18 @@
 import 'server-only'
-import { createServiceClient } from '@/lib/supabase-server'
-import { recommendationExecutionEligible } from '@/lib/recommendations/decisions'
-import { startCanonicalCodingSession } from './start'
 
 type CanonicalRecommendationRow = {
-  id: string
-  scope: 'operator' | 'workspace'
-  workspace_id: string | null
   title: string
   recommendation: string
   rationale: string
-  status: 'proposed' | 'accepted' | 'rejected' | 'deferred' | 'withdrawn' | 'superseded'
-  fingerprint: string
-  provenance: Record<string, unknown>
 }
 
-export function deriveCanonicalCodingTask(row: Pick<CanonicalRecommendationRow, 'title' | 'recommendation' | 'rationale'>): string {
+/**
+ * Formatting helper retained only for audit/tests and future migration work.
+ * The returned prose is NOT an executable coding-session contract.
+ */
+export function deriveCanonicalCodingTask(
+  row: Pick<CanonicalRecommendationRow, 'title' | 'recommendation' | 'rationale'>,
+): string {
   return [
     `Implement canonical recommendation: ${row.title.trim()}`,
     `Required change: ${row.recommendation.trim()}`,
@@ -24,38 +21,24 @@ export function deriveCanonicalCodingTask(row: Pick<CanonicalRecommendationRow, 
   ].join('\n\n')
 }
 
-/** The only recommendation -> autonomous coding-session entry point. */
+/**
+ * Fail-closed kill switch for recommendation -> coding execution.
+ *
+ * A canonical recommendation is still natural-language intent. Acceptance and
+ * generic recommendation execution eligibility do not make that prose a safe
+ * coding-agent program. Re-enable this bridge only after self-improvement has:
+ *
+ * - a code-owned structured coding intent/classification before sandbox launch;
+ * - an immutable root/parent lineage and bounded recursion depth; and
+ * - founder-required handling for protected/self-protection changes before the
+ *   coding model receives executable instructions.
+ */
 export async function startCodingSessionForRecommendation(input: {
   recommendationId: string
   workspaceId: string | null
 }): Promise<{ sessionId: string }> {
-  const db = createServiceClient()
-  const { data, error } = await db
-    .from('caye_recommendations')
-    .select('id,scope,workspace_id,title,recommendation,rationale,status,fingerprint,provenance')
-    .eq('id', input.recommendationId)
-    .maybeSingle<CanonicalRecommendationRow>()
-  if (error) throw error
-  if (!data) throw new Error('Canonical recommendation not found')
-  if (data.status !== 'accepted') throw new Error('Canonical recommendation is not accepted')
-
-  const expectedWorkspace = data.scope === 'workspace' ? data.workspace_id : null
-  if (expectedWorkspace !== input.workspaceId) throw new Error('Canonical recommendation workspace mismatch')
-  if (!await recommendationExecutionEligible(data.id, input.workspaceId)) {
-    throw new Error('Canonical recommendation is not execution eligible')
-  }
-
-  return startCanonicalCodingSession({
-    recommendationId: data.id,
-    recommendationFingerprint: data.fingerprint,
-    workspaceId: input.workspaceId,
-    task: deriveCanonicalCodingTask(data),
-    provenance: {
-      source: 'canonical-recommendation-execution',
-      recommendationId: data.id,
-      recommendationFingerprint: data.fingerprint,
-      recommendationProvenance: data.provenance ?? {},
-      executionEligibility: 'caye_recommendation_execution_eligible',
-    },
-  })
+  void input
+  throw new Error(
+    'Recommendation-triggered coding is disabled until structured coding intent and bounded recursion controls are enforced',
+  )
 }
