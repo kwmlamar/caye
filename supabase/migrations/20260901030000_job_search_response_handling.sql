@@ -8,17 +8,23 @@ alter table public.job_search_applications
   add column if not exists offer_at timestamptz,
   add column if not exists priority_score integer not null default 0;
 
+-- Add direction without a default first so any legacy rows remain NULL/unknown
+-- instead of being silently reclassified as inbound. New rows default inbound,
+-- while all response-loop writes set direction explicitly.
 alter table public.job_search_followups
-  add column if not exists direction text not null default 'INBOUND',
+  add column if not exists direction text,
   add column if not exists response_classification text,
   add column if not exists subject text,
   add column if not exists body text;
 
 alter table public.job_search_followups
+  alter column direction set default 'INBOUND';
+
+alter table public.job_search_followups
   drop constraint if exists job_search_followups_direction_check;
 alter table public.job_search_followups
   add constraint job_search_followups_direction_check
-  check (direction in ('INBOUND', 'OUTBOUND'));
+  check (direction is null or direction in ('INBOUND', 'OUTBOUND'));
 
 alter table public.job_search_followups
   drop constraint if exists job_search_followups_response_classification_check;
