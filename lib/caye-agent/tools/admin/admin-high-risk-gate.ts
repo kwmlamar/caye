@@ -15,19 +15,24 @@ function describeAdminPendingAction(toolName: string, args: Record<string, unkno
   if (toolName === 'apply_to_qualified_jobs') {
     return `Submit REAL applications to up to ${args.max_applications} qualified Greenhouse job(s) scoring ${args.min_score ?? 70}+. This contacts real employers.`
   }
+  if (toolName === 'send_recruiter_reply') return `Send a real reply email for job-search application ${args.application_id}. This contacts a real recruiter.`
   return `Run ${toolName}`
 }
 
 /**
  * These founder job-search operations cannot submit or contact an employer:
  * sourcing reads public boards, preparation writes internal readiness state,
- * and inspection reads public ATS form metadata plus verified founder facts.
- * Consequential ATS execution remains behind the separate confirmation gate.
+ * inspection reads public ATS form metadata plus verified founder facts, and
+ * the follow-up sweep only writes an unsent internal marker row (see
+ * lib/job-search/followup-scheduler.ts's doc comment — deciding a follow-up
+ * is due is not the same as sending one). Consequential ATS execution and
+ * outbound recruiter mail (send_recruiter_reply) remain behind the separate
+ * confirmation gate.
  */
 function isNonConsequentialCron(toolName: string, args: unknown): boolean {
   if (toolName !== 'trigger_cron' || !args || typeof args !== 'object') return false
   const cronName = (args as { cron_name?: unknown }).cron_name
-  return cronName === 'job-search-sourcing' || cronName === 'job-search-prepare' || cronName === 'job-search-inspect'
+  return cronName === 'job-search-sourcing' || cronName === 'job-search-prepare' || cronName === 'job-search-inspect' || cronName === 'job-search-followup-sweep'
 }
 
 /**

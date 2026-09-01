@@ -1,6 +1,8 @@
 import 'server-only'
 
 import { createServiceClient } from '@/lib/supabase-server'
+import { classifyInboundEmail, type InboundClassification } from './response-classification'
+import { logJobSearchEvent } from './events'
 
 export type RecruiterEmailCorrelationInput = {
   provider: 'zoho' | 'gmail'
@@ -12,12 +14,29 @@ export type RecruiterEmailCorrelationInput = {
 }
 
 export type RecruiterEmailCorrelationResult =
-  | { status: 'correlated'; applicationId: string; followupType: 'confirmation_check' | 'recruiter_reply' | 'interview_request' }
+  | { status: 'correlated'; applicationId: string; followupType: InboundClassification }
   | { status: 'duplicate'; applicationId: string | null }
   | { status: 'no_match' }
 
-const INTERVIEW = /\b(interview|screen(?:ing)? call|phone screen|technical screen|schedule (?:a )?(?:call|meeting)|availability)\b/i
-const CONFIRMATION = /\b(application (?:was |has been )?(?:received|submitted)|thanks? for applying|application confirmation)\b/i
+/**
+ * followup_type -> application state effect. Reuses the EXISTING
+ * ApplicationStatus enum (no duplicate state) for the categories that map
+ * cleanly onto it; everything else lands on FOLLOWUP_DUE, the existing
+ * "a human/Caye action is pending" status, distinguished for funnel
+ * purposes by the followup row's own followup_type rather than a second
+ * status column. `unknown` and `confirmation_check` never change status —
+ * an unrecognized or autoresponder email is evidence, not a state change.
+ */
+const STATUS_BY_CLASSIFICATION: Partial<Record<InboundClassification, string>> = {
+  rejection: 'REJECTED',
+  offer: 'OFFER',
+  interview_request: 'INTERVIEW',
+  screen_request: 'FOLLOWUP_DUE',
+  assessment: 'FOLLOWUP_DUE',
+  scheduling: 'FOLLOWUP_DUE',
+  additional_information: 'FOLLOWUP_DUE',
+  recruiter_interest: 'FOLLOWUP_DUE',
+}
 
 function normalized(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
@@ -38,8 +57,8 @@ export async function correlateRecruiterEmail(
 
   const { data: rows, error } = await supabase
     .from('job_search_applications')
-    .select('id, status, submitted_at, candidate:job_search_candidates(company,title,requisition_id)')
-    .in('status', ['SUBMITTED', 'FOLLOWUP_DUE', 'SUBMISSION_UNCERTAIN'])
+    .select('id, status, submitted_at, first_response_at, candidate:job_search_candidates(company,title,requisition_id)')
+    .in('status', ['SUBMITTED', 'FOLLOWUP_DUE', 'SUBMISSION_UNCERTAIN', 'INTERVIEW'])
     .order('submitted_at', { ascending: false })
     .limit(250)
   if (error || !rows?.length) return { status: 'no_match' }
@@ -61,27 +80,48 @@ export async function correlateRecruiterEmail(
     return { status: 'no_match' }
   }
 
-  const applicationId = ranked[0].row.id
+  const matched = ranked[0].row
+  const applicationId = matched.id
   const combined = `${input.emailSubject}\n${input.emailSnippet}`
-  const followupType = INTERVIEW.test(combined)
-    ? 'interview_request'
-    : CONFIRMATION.test(combined)
-      ? 'confirmation_check'
-      : 'recruiter_reply'
+  const followupType = classifyInboundEmail(combined)
+  const receivedAt = input.receivedAt ?? new Date().toISOString()
 
   const { error: insertError } = await supabase.from('job_search_followups').insert({
     application_id: applicationId,
     followup_type: followupType,
     source_email_ref: sourceRef,
+    direction: 'inbound',
     note: `${input.emailFrom}: ${input.emailSubject}`.slice(0, 500),
   })
   if (insertError?.code === '23505') return { status: 'duplicate', applicationId }
   if (insertError) throw new Error(`Could not record recruiter email: ${insertError.message}`)
 
+  // A pure autoresponder ack is evidence, not a human response: no status
+  // change, no priority bump, no response-latency timestamp.
   if (followupType !== 'confirmation_check') {
-    await supabase.from('job_search_applications')
-      .update({ status: 'FOLLOWUP_DUE', updated_at: new Date().toISOString() })
-      .eq('id', applicationId)
+    const update: Record<string, unknown> = {
+      updated_at: new Date().toISOString(),
+      last_response_at: receivedAt,
+    }
+    if (!matched.first_response_at) update.first_response_at = receivedAt
+
+    const nextStatus = STATUS_BY_CLASSIFICATION[followupType]
+    if (nextStatus) update.status = nextStatus
+    if (nextStatus === 'REJECTED') update.rejected_at = receivedAt
+    if (nextStatus === 'OFFER') update.offer_at = receivedAt
+    // A recruiter reaching out with genuine interest and no concrete next
+    // step yet is the highest-leverage moment to not sit on — surface it.
+    if (followupType === 'recruiter_interest') update.priority = 'high'
+
+    await supabase.from('job_search_applications').update(update).eq('id', applicationId)
+
+    await logJobSearchEvent({
+      eventType: 'application_response_classified',
+      entityType: 'application',
+      entityId: applicationId,
+      payload: { followupType, previousStatus: matched.status, nextStatus: nextStatus ?? matched.status },
+    })
   }
+
   return { status: 'correlated', applicationId, followupType }
 }

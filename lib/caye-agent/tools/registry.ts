@@ -107,6 +107,11 @@ import { inspectJobSearchApplications } from './admin/read/inspect-job-search-ap
 import { explainApplicationStatus } from './admin/read/explain-application-status'
 import { getApplicationSubmissionEvidence } from './admin/read/get-application-submission-evidence'
 import { getExecutionDailySummary } from './admin/read/get-execution-daily-summary'
+import { listHighPriorityResponses } from './admin/read/list-high-priority-responses'
+import { getJobSearchFunnel } from './admin/read/get-job-search-funnel'
+import { draftRecruiterReplyTool } from './admin/write-low/draft-recruiter-reply'
+import { scheduleInterviewEventTool } from './admin/write-low/schedule-interview-event'
+import { sendRecruiterReplyTool } from './admin/write-high/send-recruiter-reply'
 import { pauseApplicationExecution } from './admin/write-low/pause-application-execution'
 import { resumeApplicationExecution } from './admin/write-low/resume-application-execution'
 import { enableDryRunMode } from './admin/write-low/enable-dry-run-mode'
@@ -292,6 +297,11 @@ export const TOOL_REGISTRY: AnyTool[] = [
   explainApplicationStatus as AnyTool,
   getApplicationSubmissionEvidence as AnyTool,
   getExecutionDailySummary as AnyTool,
+  listHighPriorityResponses as AnyTool,
+  getJobSearchFunnel as AnyTool,
+  draftRecruiterReplyTool as AnyTool,
+  scheduleInterviewEventTool as AnyTool,
+  gateAdminHighRisk(sendRecruiterReplyTool) as AnyTool,
   pauseApplicationExecution as AnyTool,
   resumeApplicationExecution as AnyTool,
   enableDryRunMode as AnyTool,
