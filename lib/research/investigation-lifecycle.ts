@@ -59,27 +59,18 @@ function nonEmptyArray(value: unknown): unknown[] {
 
 function sourceText(value: unknown): string {
   if (typeof value === 'string') return value.trim()
-  try {
-    return JSON.stringify(value)
-  } catch {
-    return String(value)
-  }
+  try { return JSON.stringify(value) } catch { return String(value) }
 }
 
 function addHours(now: Date, hours: number): string {
   return new Date(now.getTime() + Math.max(1, hours) * 60 * 60 * 1000).toISOString()
 }
 
-function childCanonicalKey(rootId: string, child: InvestigationFollowUp): string {
+export function investigationFollowUpCanonicalKey(rootId: string, child: InvestigationFollowUp): string {
   const digest = createHash('sha256').update(`${child.kind}\n${child.sourceText.trim().toLowerCase()}`).digest('hex').slice(0, 24)
   return `investigation:${rootId}:${child.kind}:${digest}`
 }
 
-/**
- * Deterministically turn brief gaps into a tiny candidate set. The model already
- * produced conflicting_evidence/unknowns; this layer does not invent another
- * result schema or recursively ask a model what to research next.
- */
 export function planInvestigationFollowUps(brief: LatestBrief | null, limit = MAX_CHILDREN_PER_ADVANCE): InvestigationFollowUp[] {
   const cap = Math.max(0, Math.min(limit, MAX_CHILDREN_PER_ADVANCE))
   if (!cap) return []
@@ -87,6 +78,7 @@ export function planInvestigationFollowUps(brief: LatestBrief | null, limit = MA
   const conflicts = nonEmptyArray(brief?.conflicting_evidence).map(sourceText).filter(Boolean)
   const unknowns = nonEmptyArray(brief?.unknowns).map(sourceText).filter(Boolean)
   const candidates: InvestigationFollowUp[] = []
+  const seen = new Set<string>()
 
   if (conflicts.length) {
     const contradiction = conflicts.slice(0, 3).join(' | ')
@@ -95,10 +87,14 @@ export function planInvestigationFollowUps(brief: LatestBrief | null, limit = MA
       sourceText: contradiction,
       question: `Independently cross-check this contradiction using primary or high-quality sources not already relied on by the parent investigation. Determine which account is best supported and what remains uncertain: ${contradiction}`,
     })
+    seen.add(`autonomous_cross_check:${contradiction.trim().toLowerCase()}`)
   }
 
   for (const unknown of unknowns) {
     if (candidates.length >= cap) break
+    const dedupeKey = `autonomous_followup:${unknown.trim().toLowerCase()}`
+    if (seen.has(dedupeKey)) continue
+    seen.add(dedupeKey)
     candidates.push({
       kind: 'autonomous_followup',
       sourceText: unknown,
@@ -109,12 +105,6 @@ export function planInvestigationFollowUps(brief: LatestBrief | null, limit = MA
   return candidates.slice(0, cap)
 }
 
-/**
- * Deterministic lifecycle policy over the canonical research brief. The model
- * produces the evidence/brief; code decides whether Caye stops, revisits, backs
- * off, or pauses at the hard autonomy budget. No model can grant itself more
- * research budget by wording a recommendation persuasively.
- */
 export function decideInvestigationLifecycle(args: {
   question: LifecycleQuestion
   brief: LatestBrief | null
@@ -132,46 +122,34 @@ export function decideInvestigationLifecycle(args: {
 
   if (question.investigation_mode === 'one_shot') {
     return {
-      lifecycleStatus: 'resolved',
-      nextReviewAt: null,
-      runCount,
+      lifecycleStatus: 'resolved', nextReviewAt: null, runCount,
       noChangeStreak: materialChanged ? 0 : question.no_change_streak + 1,
-      materialChanged,
-      reason: unresolved ? 'one_shot_complete_with_open_questions' : 'one_shot_complete',
+      materialChanged, reason: unresolved ? 'one_shot_complete_with_open_questions' : 'one_shot_complete',
     }
   }
 
   if (runCount >= question.max_autonomous_runs) {
     return {
-      lifecycleStatus: 'paused',
-      nextReviewAt: null,
-      runCount,
+      lifecycleStatus: 'paused', nextReviewAt: null, runCount,
       noChangeStreak: materialChanged ? 0 : question.no_change_streak + 1,
-      materialChanged,
-      reason: 'autonomy_budget_exhausted',
+      materialChanged, reason: 'autonomy_budget_exhausted',
     }
   }
 
   if (question.investigation_mode === 'follow_until_resolved') {
     if (!unresolved) {
       return {
-        lifecycleStatus: 'resolved',
-        nextReviewAt: null,
-        runCount,
+        lifecycleStatus: 'resolved', nextReviewAt: null, runCount,
         noChangeStreak: materialChanged ? 0 : question.no_change_streak + 1,
-        materialChanged,
-        reason: 'evidence_resolved',
+        materialChanged, reason: 'evidence_resolved',
       }
     }
 
     const reviewHours = conflicts.length > 0 ? Math.max(1, Math.min(6, Math.floor(baseHours / 2) || 1)) : baseHours
     return {
-      lifecycleStatus: 'active',
-      nextReviewAt: addHours(now, reviewHours),
-      runCount,
+      lifecycleStatus: 'active', nextReviewAt: addHours(now, reviewHours), runCount,
       noChangeStreak: materialChanged ? 0 : question.no_change_streak + 1,
-      materialChanged,
-      reason: conflicts.length > 0 ? 'contradictory_evidence_requires_recheck' : 'material_unknowns_remain',
+      materialChanged, reason: conflicts.length > 0 ? 'contradictory_evidence_requires_recheck' : 'material_unknowns_remain',
     }
   }
 
@@ -179,12 +157,8 @@ export function decideInvestigationLifecycle(args: {
   const multiplier = materialChanged ? 0.5 : Math.pow(2, Math.min(noChangeStreak, 4))
   const reviewHours = Math.max(1, Math.min(168, Math.round(baseHours * multiplier)))
   return {
-    lifecycleStatus: 'active',
-    nextReviewAt: addHours(now, reviewHours),
-    runCount,
-    noChangeStreak,
-    materialChanged,
-    reason: materialChanged ? 'monitor_material_change' : 'monitor_unchanged_backoff',
+    lifecycleStatus: 'active', nextReviewAt: addHours(now, reviewHours), runCount, noChangeStreak,
+    materialChanged, reason: materialChanged ? 'monitor_material_change' : 'monitor_unchanged_backoff',
   }
 }
 
@@ -194,7 +168,6 @@ export function canAdvanceResearchInvestigation(question: Pick<LifecycleQuestion
 
 async function createBoundedFollowUps(question: LifecycleQuestion, brief: LatestBrief | null): Promise<number> {
   if (question.investigation_mode !== 'follow_until_resolved' || !question.program_id) return 0
-
   const rootId = question.root_question_id ?? question.id
   const rootCap = Math.max(0, Number(question.max_autonomous_followups ?? 6))
   if (!rootCap) return 0
@@ -211,14 +184,12 @@ async function createBoundedFollowUps(question: LifecycleQuestion, brief: Latest
 
   const candidates = planInvestigationFollowUps(brief, Math.min(remaining, MAX_CHILDREN_PER_ADVANCE))
   let queued = 0
-
   for (const child of candidates) {
-    const canonicalKey = childCanonicalKey(rootId, child)
     const inserted = await db.from('research_questions').insert({
       program_id: question.program_id,
       question: child.question,
       status: 'open',
-      canonical_key: canonicalKey,
+      canonical_key: investigationFollowUpCanonicalKey(rootId, child),
       investigation_mode: 'one_shot',
       lifecycle_status: 'active',
       investigation_origin: child.kind,
@@ -230,14 +201,11 @@ async function createBoundedFollowUps(question: LifecycleQuestion, brief: Latest
       max_autonomous_followups: 0,
       no_change_streak: 0,
     }).select('id').single()
-
     if (inserted.error?.code === '23505') continue
     if (inserted.error) throw inserted.error
-
     await queueResearchRun(inserted.data.id, child.kind === 'autonomous_cross_check' ? 'investigation_cross_check' : 'investigation_followup')
     queued += 1
   }
-
   return queued
 }
 
@@ -246,14 +214,10 @@ export async function advanceResearchInvestigationLifecycle(questionId: string):
   const [questionResult, briefResult] = await Promise.all([
     db.from('research_questions')
       .select('id,program_id,canonical_key,status,investigation_mode,lifecycle_status,investigation_origin,parent_question_id,root_question_id,priority,next_review_at,refresh_interval_hours,autonomous_run_count,max_autonomous_runs,max_autonomous_followups,no_change_streak')
-      .eq('id', questionId)
-      .maybeSingle(),
+      .eq('id', questionId).maybeSingle(),
     db.from('research_briefs')
       .select('conflicting_evidence,unknowns,material_changes')
-      .eq('question_id', questionId)
-      .order('revision', { ascending: false })
-      .limit(1)
-      .maybeSingle(),
+      .eq('question_id', questionId).order('revision', { ascending: false }).limit(1).maybeSingle(),
   ])
   if (questionResult.error) throw questionResult.error
   if (briefResult.error) throw briefResult.error
@@ -279,34 +243,21 @@ export async function advanceResearchInvestigationLifecycle(questionId: string):
   return decision
 }
 
-/**
- * Make a small number of due questions eligible for the existing queue. This is
- * called by the existing research worker, so autonomous revisits do not require a
- * second cron or queueing system. queueResearchRun already converges concurrent
- * attempts on the canonical active-run uniqueness constraint.
- */
 export async function queueDueResearchInvestigations(limit = 3): Promise<number> {
   const db = createServiceClient()
   const now = new Date().toISOString()
   const { data, error } = await db.from('research_questions')
     .select('id,priority,next_review_at')
-    .eq('lifecycle_status', 'active')
-    .neq('status', 'archived')
-    .not('next_review_at', 'is', null)
-    .lte('next_review_at', now)
-    .order('next_review_at', { ascending: true })
-    .limit(Math.max(1, Math.min(limit, 5)))
+    .eq('lifecycle_status', 'active').neq('status', 'archived')
+    .not('next_review_at', 'is', null).lte('next_review_at', now)
+    .order('next_review_at', { ascending: true }).limit(Math.max(1, Math.min(limit, 5)))
   if (error) throw error
 
   let queued = 0
   for (const question of data ?? []) {
     await queueResearchRun(question.id, 'investigation_revisit')
-    const cleared = await db.from('research_questions')
-      .update({ next_review_at: null })
-      .eq('id', question.id)
-      .eq('lifecycle_status', 'active')
-      .neq('status', 'archived')
-      .lte('next_review_at', now)
+    const cleared = await db.from('research_questions').update({ next_review_at: null })
+      .eq('id', question.id).eq('lifecycle_status', 'active').neq('status', 'archived').lte('next_review_at', now)
     if (cleared.error) throw cleared.error
     queued += 1
   }
@@ -317,8 +268,7 @@ export async function recordResearchInvestigationFailure(questionId: string): Pr
   const db = createServiceClient()
   const { data, error } = await db.from('research_questions')
     .select('id,status,investigation_mode,lifecycle_status,refresh_interval_hours,autonomous_run_count,max_autonomous_runs,no_change_streak')
-    .eq('id', questionId)
-    .maybeSingle()
+    .eq('id', questionId).maybeSingle()
   if (error) throw error
   if (!data || !canAdvanceResearchInvestigation(data as LifecycleQuestion)) return
 
