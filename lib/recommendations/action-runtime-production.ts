@@ -66,7 +66,7 @@ export function createProductionRecommendationActionRuntime(): RecommendationAct
       const [{ data: version, error: versionError }, { data: decision, error: decisionError }, { data: operation, error: operationError }] = await Promise.all([
         db.rpc('caye_recommendation_version', { p_recommendation_id: recommendationId }),
         db.from('caye_recommendation_decisions')
-          .select('id,decision,recommendation_version')
+          .select('id,decision,recommendation_version,authority_provenance')
           .eq('recommendation_id', recommendationId)
           .order('decided_at', { ascending: false })
           .order('created_at', { ascending: false })
@@ -82,11 +82,14 @@ export function createProductionRecommendationActionRuntime(): RecommendationAct
           .maybeSingle(),
       ])
       if (versionError || decisionError || operationError || typeof version !== 'string') throw versionError ?? decisionError ?? operationError ?? new Error('recommendation version unavailable')
+      const projected = objectValue(decision?.authority_provenance).recommendationExecutionState
       return {
         recommendationVersion: version,
         latestDecisionId: decision?.id ?? null,
         latestDecision: (decision?.decision as RecommendationOperationInspection['latestDecision']) ?? null,
-        executionState: executionState(operation?.status),
+        executionState: (projected === 'approved_queued' || projected === 'acting_now' || projected === 'completed' || projected === 'failed_needs_attention')
+          ? projected
+          : executionState(operation?.status),
       }
     },
 
@@ -159,11 +162,7 @@ export function createProductionRecommendationActionRuntime(): RecommendationAct
       }, { mode: 'back-office', toolUseId: `recommendation:${input.recommendationId}` })
       const result = orchestrated.result
       if (result.ok) {
-        return {
-          status: 'completed',
-          material: plan.materiality !== 'quiet',
-          executionRef: `caye_tool_calls:${requestId}`,
-        }
+        return { status: 'completed', material: plan.materiality !== 'quiet', executionRef: `caye_tool_calls:${requestId}` }
       }
       if (result.status === 'FAILED_RETRYABLE') return { status: 'retryable_failure', error: result.error ?? 'registered capability failed retryably' }
       return {
@@ -173,10 +172,34 @@ export function createProductionRecommendationActionRuntime(): RecommendationAct
       }
     },
 
-    async setExecutionState() {
-      // Execution truth is projected from caye_pending_operations. Keeping one
-      // durable state owner prevents accepted/queued/acting/completed drift.
-      return true
+    async setExecutionState(input) {
+      const db = createServiceClient()
+      const { data: decision, error } = await db
+        .from('caye_recommendation_decisions')
+        .select('id,authority_provenance,recommendation_version,decision')
+        .eq('recommendation_id', input.recommendationId)
+        .eq('workspace_id', input.workspaceId)
+        .order('decided_at', { ascending: false })
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      if (error || !decision || decision.decision !== 'accepted' || decision.recommendation_version !== input.recommendationVersion) return false
+      const provenance = objectValue(decision.authority_provenance)
+      const { error: updateError } = await db
+        .from('caye_recommendation_decisions')
+        .update({
+          authority_provenance: {
+            ...provenance,
+            recommendationExecutionState: input.state,
+            recommendationExecutionRef: input.executionRef ?? null,
+            recommendationExecutionError: input.error ?? null,
+            recommendationExecutionUpdatedAt: new Date().toISOString(),
+          },
+        })
+        .eq('id', decision.id)
+        .eq('recommendation_version', input.recommendationVersion)
+        .eq('decision', 'accepted')
+      return !updateError
     },
 
     async requireFailureAttention(input) {
@@ -194,8 +217,8 @@ export function createProductionRecommendationActionRuntime(): RecommendationAct
     },
 
     async surfaceMaterialCompletion() {
-      // Direction projects material completion from the same durable outbox.
-      // Do not manufacture a new Founder Direct notification channel here.
+      // Direction reads the material completed state from the durable decision
+      // projection. No new Founder Direct notification system is created here.
     },
   }
 }
