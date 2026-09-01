@@ -42,7 +42,6 @@ const SECONDARY_NAV_ITEMS: { id: FounderRailId; label: string; icon: ReactNode }
 const TOGGLE_ICON = <><rect x="3" y="3" width="18" height="18" rx="4" /><path d="M9 3v18" /></>
 const NEW_CHAT_ICON = <path d="M12 5v14M5 12h14" />
 const MORE_DOTS_ICON = <><circle cx="5" cy="12" r="1.4" /><circle cx="12" cy="12" r="1.4" /><circle cx="19" cy="12" r="1.4" /></>
-const CHEVRON_ICON = <path d="m8 10 4 4 4-4" />
 const THREAD_MORE_ICON = <><circle cx="12" cy="5" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="12" cy="19" r="1.6" /></>
 const PIN_ICON = <><path d="M12 2 9.5 9 4 11l6 3 1 7 1-7 6-3-5.5-2z" /></>
 const UNPIN_ICON = <><path d="M12 2 9.5 9 4 11l6 3 1 7 1-7 6-3-5.5-2z" /><line x1="3" y1="3" x2="21" y2="21" /></>
@@ -415,11 +414,6 @@ export default function CommandSidebar({
               icon={MORE_DOTS_ICON}
               active={secondaryActive}
               onClick={() => setMoreOpen((current) => !current)}
-              trailing={(
-                <span style={{ display: 'flex', transform: moreOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.14s ease' }}>
-                  <Icon path={CHEVRON_ICON} size={13} />
-                </span>
-              )}
             />
             {moreOpen && (
               <div style={{ padding: '1px 0 2px 12px' }}>
