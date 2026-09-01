@@ -1,0 +1,26 @@
+name: Direction recommendation decisions
+
+on:
+  pull_request:
+    paths:
+      - 'app/api/founder/autonomy-status/route.ts'
+      - 'app/api/founder/recommendation-decision/route.ts'
+      - 'components/dashboard/founder-home/AutonomyStatus.tsx'
+      - 'components/dashboard/founder-home/RecommendationCard.tsx'
+      - 'lib/direction-recommendations.contract.test.ts'
+      - 'lib/recommendations/decisions.ts'
+      - '.github/workflows/direction-recommendations-ci.yml'
+
+jobs:
+  direction-recommendations:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Direction recommendation contract
+        run: npx vitest run lib/direction-recommendations.contract.test.ts
