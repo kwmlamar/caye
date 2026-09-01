@@ -7,7 +7,7 @@ on:
       - 'app/api/founder/recommendation-decision/route.ts'
       - 'components/dashboard/founder-home/AutonomyStatus.tsx'
       - 'components/dashboard/founder-home/RecommendationCard.tsx'
-      - 'components/dashboard/founder-home/direction-recommendations.contract.test.ts'
+      - 'lib/direction-recommendations.contract.test.ts'
       - 'lib/recommendations/decisions.ts'
       - '.github/workflows/direction-recommendations-ci.yml'
 
@@ -23,4 +23,4 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Direction recommendation contract
-        run: npx vitest run components/dashboard/founder-home/direction-recommendations.contract.test.ts
+        run: npx vitest run lib/direction-recommendations.contract.test.ts
