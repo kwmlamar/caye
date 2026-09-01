@@ -1,6 +1,6 @@
 import 'server-only'
 
-import { createServiceClient } from '@/lib/supabase/service'
+import { createServiceClient } from '@/lib/supabase-server'
 
 export type RecommendationDecision = 'accepted' | 'rejected' | 'deferred' | 'cancelled'
 export type RecommendationDecisionActor = 'founder' | 'operator' | 'system'
