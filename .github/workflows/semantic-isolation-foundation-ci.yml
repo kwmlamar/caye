@@ -26,8 +26,15 @@ jobs:
       - name: Semantic scope unit and migration tests
         run: npx vitest run lib/semantic-scope.test.ts --reporter=verbose
       - name: Full unit/integration suite
+        id: full_suite
+        continue-on-error: true
         run: npm test
       - name: Typecheck
+        if: always()
         run: npx tsc --noEmit
       - name: Build
+        if: always()
         run: npm run build
+      - name: Preserve full-suite failure
+        if: steps.full_suite.outcome == 'failure'
+        run: exit 1
