@@ -1,0 +1,26 @@
+name: Autonomous recommendation actions
+
+on:
+  pull_request:
+    paths:
+      - 'app/api/caye/research-worker/route.ts'
+      - 'components/dashboard/founder-home/RecommendationCard.tsx'
+      - 'lib/pending-operations.ts'
+      - 'lib/recommendations/action-operation.ts'
+      - 'lib/recommendations/autonomous-worker.ts'
+      - 'lib/recommendations/autonomous-worker.test.ts'
+      - '.github/workflows/autonomous-recommendation-actions-ci.yml'
+
+jobs:
+  recommendation-actions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Recommendation action lifecycle
+        run: npx vitest run lib/recommendations/autonomous-worker.test.ts
