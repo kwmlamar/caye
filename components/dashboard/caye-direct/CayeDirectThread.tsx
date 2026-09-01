@@ -22,20 +22,21 @@ export default function CayeDirectThread(props: ComponentProps<typeof CayeDirect
   const [preferenceHydrated, setPreferenceHydrated] = useState(false)
   const [hasExplicitPreference, setHasExplicitPreference] = useState(false)
   const [workPanelOpen, setWorkPanelOpen] = useState(false)
+  const threadId = props.mode === 'thread' ? props.threadId : null
 
   const load = useCallback(async () => {
-    if (props.mode !== 'thread') return
+    if (!threadId) return
     const { session } = await getSession()
     if (!session) return
-    const res = await fetch(`/api/founder/caye-direct/threads/${props.threadId}/run`, { headers: { Authorization: `Bearer ${session.access_token}` } })
+    const res = await fetch(`/api/founder/caye-direct/threads/${threadId}/run`, { headers: { Authorization: `Bearer ${session.access_token}` } })
     if (!res.ok) return
     const json = await res.json()
     setRun(json.run ?? null)
     setEvents(json.events ?? [])
-  }, [props.mode, props.threadId])
+  }, [threadId])
 
   useEffect(() => {
-    if (props.mode !== 'thread') return
+    if (!threadId) return
     try {
       const stored = window.localStorage.getItem(WORK_PANEL_PREFERENCE_KEY)
       if (stored === 'true' || stored === 'false') {
@@ -46,14 +47,14 @@ export default function CayeDirectThread(props: ComponentProps<typeof CayeDirect
       // Storage can be unavailable in locked-down browsers. The in-memory default remains safe.
     }
     setPreferenceHydrated(true)
-  }, [props.mode])
+  }, [threadId])
 
   useEffect(() => {
-    if (props.mode !== 'thread') return
+    if (!threadId) return
     void load()
     const poll = window.setInterval(() => void load(), 1600)
     return () => window.clearInterval(poll)
-  }, [load, props.mode])
+  }, [load, threadId])
 
   useEffect(() => {
     if (!preferenceHydrated || hasExplicitPreference || !run) return
@@ -76,7 +77,7 @@ export default function CayeDirectThread(props: ComponentProps<typeof CayeDirect
     <div style={{ position: 'relative', display: 'flex', height: '100%', flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden' }}>
       <div style={{ flex: 1, minWidth: 0, minHeight: 0 }}><CayeDirectThreadBase {...props} /></div>
       {hasActiveWork && preferenceHydrated ? <WorkPanelToggle open={workPanelOpen} onClick={toggleWorkPanel} /> : null}
-      {hasActiveWork && workPanelOpen ? <LiveWorkRail threadId={props.threadId} run={run!} events={events} reload={load} /> : null}
+      {hasActiveWork && workPanelOpen ? <LiveWorkRail threadId={threadId!} run={run!} events={events} reload={load} /> : null}
     </div>
   )
 }
