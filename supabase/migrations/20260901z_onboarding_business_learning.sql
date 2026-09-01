@@ -2,6 +2,23 @@
 -- extends the canonical observation/event substrate without creating a second
 -- fact writer or onboarding-specific memory table.
 
+alter table public.workspace_ai_config
+  add column if not exists onboarding_complete boolean not null default false,
+  add column if not exists onboarding_completed_at timestamptz;
+
+-- Existing WhatsApp-first customers already record completion on customers.
+-- Preserve their historical config timestamp for backfill instead of stamping
+-- migration time, which would incorrectly outrank later owner corrections.
+update public.workspace_ai_config c
+set onboarding_complete = true,
+    onboarding_completed_at = coalesce(c.onboarding_completed_at, c.updated_at, c.created_at)
+where exists (
+  select 1
+  from public.customers customer
+  where customer.id = c.workspace_id
+    and customer.has_onboarded = true
+);
+
 alter table public.business_learning_observations
   add column if not exists actor_type text,
   add column if not exists actor_id text,
