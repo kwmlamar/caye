@@ -12,9 +12,10 @@ type Row = {
 }
 
 function freshness(row: Row): string {
-  return row.type.startsWith('domain.') && typeof row.payload.observed_at === 'string'
+  const value = row.type.startsWith('domain.') && typeof row.payload.observed_at === 'string'
     ? row.payload.observed_at
     : row.occurred_at
+  return new Date(value).toISOString()
 }
 
 function mergeRows(ordinary: Row[], observed: Row[], limit: number): Row[] {
