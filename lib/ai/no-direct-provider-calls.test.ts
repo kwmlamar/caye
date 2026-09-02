@@ -68,7 +68,7 @@ describe('no direct provider coupling outside adapters', () => {
 
   it('never calls messages.create outside an adapter', () => {
     const offenders = FILES.filter(
-      (f) => /\bmessages\.create\s*\(/.test(f.text) && !ADAPTER_ALLOWLIST.includes(f.path) && !f.path.includes('caye-bench')
+      (f) => /\bmessages\.create\s*\(/.test(f.text) && !ADAPTER_ALLOWLIST.includes(f.path)
     ).map((f) => f.path)
 
     expect(offenders).toEqual([])
