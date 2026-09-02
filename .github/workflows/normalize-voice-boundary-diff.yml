@@ -23,46 +23,93 @@ jobs:
           python - <<'PY'
           from pathlib import Path
 
-          def patch(path, replacements):
-              p = Path(path)
-              s = p.read_text()
-              for old, new in replacements:
-                  count = s.count(old)
-                  if count != 1:
-                      raise SystemExit(f'{path}: expected one match, got {count}: {old[:100]!r}')
-                  s = s.replace(old, new, 1)
-              p.write_text(s)
+          def replace_once(text, old, new, label):
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected one match, got {count}: {old[:100]!r}')
+              return text.replace(old, new, 1)
 
-          patch('lib/email-ai.ts', [
-              ("import { getZohoContext } from './zoho-token'\n", "import { getZohoContext } from './zoho-token'\nimport { sanitizeHumanFacingEmail } from './human-facing-email'\n"),
-              ("  const { accountRow, accessToken, apiDomain, zohoAccountId } = await getZohoContext(workspaceId)\n  const base = mailBase(apiDomain)\n\n  const replyTargetId = await findReplyTargetZohoMessageId(workspaceId, threadId)\n", "  const clean = sanitizeHumanFacingEmail({ to, subject, body })\n  const { accountRow, accessToken, apiDomain, zohoAccountId } = await getZohoContext(workspaceId)\n  const base = mailBase(apiDomain)\n\n  const replyTargetId = await findReplyTargetZohoMessageId(workspaceId, threadId)\n"),
-              ("    toAddress: to,\n    subject,\n    content: body,\n", "    toAddress: clean.to,\n    subject: clean.subject,\n    content: clean.body,\n"),
-              ("    `[sendZohoReply] Sent to ${to}, threadId=${threadId}, ` +\n", "    `[sendZohoReply] Sent to ${clean.to}, threadId=${threadId}, ` +\n"),
-              ("  const { accountRow, accessToken, apiDomain, zohoAccountId } = await getZohoContext(workspaceId)\n  const base = mailBase(apiDomain)\n\n  const res = await fetch(`${base}/api/accounts/${zohoAccountId}/messages`, {\n", "  const clean = sanitizeHumanFacingEmail({ to, subject, body })\n  const { accountRow, accessToken, apiDomain, zohoAccountId } = await getZohoContext(workspaceId)\n  const base = mailBase(apiDomain)\n\n  const res = await fetch(`${base}/api/accounts/${zohoAccountId}/messages`, {\n"),
-              ("      toAddress: to,\n      subject,\n      content: body,\n", "      toAddress: clean.to,\n      subject: clean.subject,\n      content: clean.body,\n"),
-              ("    `[sendZohoEmail] Sent to ${to}, subject=\"${subject}\", zohoMsgId=${data.data?.messageId ?? 'unknown'}`\n", "    `[sendZohoEmail] Sent to ${clean.to}, subject=\"${clean.subject}\", zohoMsgId=${data.data?.messageId ?? 'unknown'}`\n"),
-              ("  const { accountRow, accessToken, apiDomain, zohoAccountId } = await getZohoContext(workspaceId)\n  const base = mailBase(apiDomain)\n\n  const replyTargetId = await findReplyTargetZohoMessageId(workspaceId, threadId)\n\n  const url = replyTargetId\n", "  const clean = sanitizeHumanFacingEmail({ to, subject, body })\n  const { accountRow, accessToken, apiDomain, zohoAccountId } = await getZohoContext(workspaceId)\n  const base = mailBase(apiDomain)\n\n  const replyTargetId = await findReplyTargetZohoMessageId(workspaceId, threadId)\n\n  const url = replyTargetId\n"),
-              ("    `[createZohoReplyDraft] Drafted to ${to}, threadId=${threadId}, ` +\n", "    `[createZohoReplyDraft] Drafted to ${clean.to}, threadId=${threadId}, ` +\n"),
-          ])
+          email_path = Path('lib/email-ai.ts')
+          email = email_path.read_text()
+          email = replace_once(
+              email,
+              "import { getZohoContext } from './zoho-token'\n",
+              "import { getZohoContext } from './zoho-token'\nimport { sanitizeHumanFacingEmail } from './human-facing-email'\n",
+              'email import',
+          )
 
-          # The request-body triplet in reply + draft is identical. At this point the
-          # reply one is already replaced, so replace the one remaining draft copy.
-          email = Path('lib/email-ai.ts')
-          s = email.read_text()
-          old = "    toAddress: to,\n    subject,\n    content: body,\n"
-          if s.count(old) != 1:
-              raise SystemExit(f'email draft body expected one remaining match, got {s.count(old)}')
-          email.write_text(s.replace(old, "    toAddress: clean.to,\n    subject: clean.subject,\n    content: clean.body,\n", 1))
+          starts = {
+              'reply': email.index('export async function sendZohoReply('),
+              'send': email.index('export async function sendZohoEmail('),
+              'draft': email.index('export async function createZohoReplyDraft('),
+          }
+          sections = {
+              'prefix': email[:starts['reply']],
+              'reply': email[starts['reply']:starts['send']],
+              'send': email[starts['send']:starts['draft']],
+              'draft': email[starts['draft']:],
+          }
 
-          patch('lib/whatsapp/channel-dispatch.ts', [
-              ("import { recordSalesLifecycleEvent } from '@/lib/sales/lifecycle'\n", "import { recordSalesLifecycleEvent } from '@/lib/sales/lifecycle'\nimport { sanitizeHumanFacingText } from '@/lib/human-facing-voice'\n"),
-              ("  const trimmed = text.trim()\n  if (!trimmed) throw new Error('empty reply')\n  let outboundBody = trimmed\n", "  const sanitizedText = sanitizeHumanFacingText(text)\n  if (!sanitizedText) throw new Error('empty reply')\n  let outboundBody = sanitizedText\n"),
-              ("        await sendMetaMessage(conv.customer_id, trimmed, account.access_token)\n", "        await sendMetaMessage(conv.customer_id, outboundBody, account.access_token)\n"),
-              ("          trimmed,\n          account.channel_account_id,\n", "          outboundBody,\n          account.channel_account_id,\n"),
-              ("          const subject = (meta.subject as string) || 'Quick question'\n          const sent = await sendZohoEmail(conv.customer_id, subject, trimmed, account.user_id)\n", "          const subject = sanitizeHumanFacingText((meta.subject as string) || 'Quick question')\n          const sent = await sendZohoEmail(conv.customer_id, subject, outboundBody, account.user_id)\n"),
-              ("        const subj = (meta.subject as string) || '(no subject)'\n", "        const subj = sanitizeHumanFacingText((meta.subject as string) || '(no subject)')\n"),
-              ("        outboundBody = ensureTagline(\n          trimmed,\n          (workspaceRow?.ai_voice_profile ?? undefined) as VoiceProfile | undefined\n        )\n", "        outboundBody = sanitizeHumanFacingText(ensureTagline(\n          outboundBody,\n          (workspaceRow?.ai_voice_profile ?? undefined) as VoiceProfile | undefined\n        ))\n"),
-          ])
+          for name in ('reply', 'send', 'draft'):
+              sections[name] = replace_once(
+                  sections[name],
+                  "): Promise<{ " + ("draftId" if name == 'draft' else "messageId") + ": string | null }> {\n",
+                  "): Promise<{ " + ("draftId" if name == 'draft' else "messageId") + ": string | null }> {\n  const clean = sanitizeHumanFacingEmail({ to, subject, body })\n",
+                  f'{name} clean input',
+              )
+              sections[name] = replace_once(
+                  sections[name],
+                  'toAddress: to,',
+                  'toAddress: clean.to,',
+                  f'{name} toAddress',
+              )
+              sections[name] = replace_once(
+                  sections[name],
+                  'subject,\n',
+                  'subject: clean.subject,\n',
+                  f'{name} subject',
+              )
+              sections[name] = replace_once(
+                  sections[name],
+                  'content: body,',
+                  'content: clean.body,',
+                  f'{name} body',
+              )
+
+          sections['reply'] = replace_once(
+              sections['reply'],
+              '`[sendZohoReply] Sent to ${to}, threadId=${threadId}, `',
+              '`[sendZohoReply] Sent to ${clean.to}, threadId=${threadId}, `',
+              'reply log',
+          )
+          sections['send'] = replace_once(
+              sections['send'],
+              '`[sendZohoEmail] Sent to ${to}, subject="${subject}", zohoMsgId=${data.data?.messageId ?? \'unknown\'}`',
+              '`[sendZohoEmail] Sent to ${clean.to}, subject="${clean.subject}", zohoMsgId=${data.data?.messageId ?? \'unknown\'}`',
+              'send log',
+          )
+          sections['draft'] = replace_once(
+              sections['draft'],
+              '`[createZohoReplyDraft] Drafted to ${to}, threadId=${threadId}, `',
+              '`[createZohoReplyDraft] Drafted to ${clean.to}, threadId=${threadId}, `',
+              'draft log',
+          )
+          email_path.write_text(sections['prefix'] + sections['reply'] + sections['send'] + sections['draft'])
+
+          dispatch_path = Path('lib/whatsapp/channel-dispatch.ts')
+          dispatch = dispatch_path.read_text()
+          replacements = [
+              ("import { recordSalesLifecycleEvent } from '@/lib/sales/lifecycle'\n", "import { recordSalesLifecycleEvent } from '@/lib/sales/lifecycle'\nimport { sanitizeHumanFacingText } from '@/lib/human-facing-voice'\n", 'dispatch import'),
+              ("  const trimmed = text.trim()\n  if (!trimmed) throw new Error('empty reply')\n  let outboundBody = trimmed\n", "  const sanitizedText = sanitizeHumanFacingText(text)\n  if (!sanitizedText) throw new Error('empty reply')\n  let outboundBody = sanitizedText\n", 'dispatch input'),
+              ('await sendMetaMessage(conv.customer_id, trimmed, account.access_token)', 'await sendMetaMessage(conv.customer_id, outboundBody, account.access_token)', 'meta body'),
+              ('          trimmed,\n          account.channel_account_id,', '          outboundBody,\n          account.channel_account_id,', 'whatsapp body'),
+              ("          const subject = (meta.subject as string) || 'Quick question'\n          const sent = await sendZohoEmail(conv.customer_id, subject, trimmed, account.user_id)", "          const subject = sanitizeHumanFacingText((meta.subject as string) || 'Quick question')\n          const sent = await sendZohoEmail(conv.customer_id, subject, outboundBody, account.user_id)", 'first touch'),
+              ("        const subj = (meta.subject as string) || '(no subject)'", "        const subj = sanitizeHumanFacingText((meta.subject as string) || '(no subject)')", 'reply subject'),
+              ("        outboundBody = ensureTagline(\n          trimmed,\n          (workspaceRow?.ai_voice_profile ?? undefined) as VoiceProfile | undefined\n        )", "        outboundBody = sanitizeHumanFacingText(ensureTagline(\n          outboundBody,\n          (workspaceRow?.ai_voice_profile ?? undefined) as VoiceProfile | undefined\n        ))", 'tagline'),
+          ]
+          for old, new, label in replacements:
+              dispatch = replace_once(dispatch, old, new, label)
+          dispatch_path.write_text(dispatch)
           PY
       - name: Commit normalized diff
         run: |
