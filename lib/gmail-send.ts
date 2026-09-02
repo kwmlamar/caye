@@ -14,8 +14,36 @@
 import 'server-only'
 import { createServiceClient } from './supabase-server'
 import { getGmailContext } from './gmail-token'
+import { DispatchAmbiguousError } from './whatsapp/channel-dispatch'
 
 const GMAIL_SEND_URL = 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send'
+
+async function gmailProviderSend(accessToken: string, raw: string, threadId: string): Promise<SendGmailReplyResult> {
+  let res: Response
+  try {
+    res = await fetch(GMAIL_SEND_URL, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ raw, threadId }),
+    })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw new DispatchAmbiguousError(`Gmail provider send failed or its outcome is unknown: ${message}`, false)
+  }
+
+  let data: { id?: string; threadId?: string; error?: { message: string } }
+  try {
+    data = await res.json() as typeof data
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw new DispatchAmbiguousError(`Gmail provider returned an unreadable send response (HTTP ${res.status}): ${message}`, false)
+  }
+  if (!res.ok || !data.id) {
+    const errMsg = data.error?.message || JSON.stringify(data).slice(0, 300)
+    throw new DispatchAmbiguousError(`Gmail send failed or its outcome is unknown (HTTP ${res.status}): ${errMsg}`, false)
+  }
+  return { gmailMessageId: data.id, threadId: data.threadId ?? threadId }
+}
 
 /**
  * Look up the most recent inbound (customer) Gmail message in a conversation
@@ -114,30 +142,14 @@ export async function sendGmailReply(args: SendGmailReplyArgs): Promise<SendGmai
   const rfcMessage = `${headers.join('\r\n')}\r\n\r\n${body}`
   const raw = base64UrlEncode(rfcMessage)
 
-  const res = await fetch(GMAIL_SEND_URL, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ raw, threadId: gmailThreadId }),
-  })
-
-  const data = await res.json() as { id?: string; threadId?: string; error?: { message: string } }
-  if (!res.ok || !data.id) {
-    const errMsg = data.error?.message || JSON.stringify(data).slice(0, 300)
-    throw new Error(`Gmail send failed (HTTP ${res.status}): ${errMsg}`)
-  }
+  const sent = await gmailProviderSend(accessToken, raw, gmailThreadId)
 
   console.log(
-    `[sendGmailReply] Sent to ${to}, threadId=${data.threadId ?? gmailThreadId}, ` +
-    `msgId=${data.id}, inReplyTo=${rfcInReplyTo ?? 'none (standalone)'}`
+    `[sendGmailReply] Sent to ${to}, threadId=${sent.threadId}, ` +
+    `msgId=${sent.gmailMessageId}, inReplyTo=${rfcInReplyTo ?? 'none (standalone)'}`
   )
 
-  return {
-    gmailMessageId: data.id,
-    threadId: data.threadId ?? gmailThreadId,
-  }
+  return sent
 }
 
 /** Sends a threaded multipart reply with one or more verified artifact attachments. */
@@ -162,8 +174,5 @@ export async function sendGmailReplyWithAttachments(args: SendGmailReplyArgs & {
   }
   parts.push(`--${boundary}--`)
   const raw = base64UrlEncode(`${headers.join('\r\n')}\r\n\r\n${parts.join('\r\n')}`)
-  const res = await fetch(GMAIL_SEND_URL, { method: 'POST', headers: { Authorization: `Bearer ${gmail.accessToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ raw, threadId: args.gmailThreadId }) })
-  const data = await res.json() as { id?: string; threadId?: string; error?: { message: string } }
-  if (!res.ok || !data.id) throw new Error(`Gmail send failed (HTTP ${res.status}): ${data.error?.message ?? JSON.stringify(data).slice(0, 300)}`)
-  return { gmailMessageId: data.id, threadId: data.threadId ?? args.gmailThreadId }
+  return gmailProviderSend(gmail.accessToken, raw, args.gmailThreadId)
 }
