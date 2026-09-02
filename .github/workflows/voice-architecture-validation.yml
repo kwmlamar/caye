@@ -1,0 +1,37 @@
+name: Voice architecture validation
+
+on:
+  push:
+    branches:
+      - fix/caye-communication-voice-architecture
+  pull_request:
+    paths:
+      - 'lib/human-facing-voice.ts'
+      - 'lib/human-facing-voice.test.ts'
+      - 'lib/human-facing-email.ts'
+      - 'lib/human-facing-email.test.ts'
+      - 'lib/sanitize-dashes.ts'
+      - 'lib/sanitize-dashes.test.ts'
+      - 'lib/email-ai.ts'
+      - 'lib/whatsapp/channel-dispatch.ts'
+      - 'app/api/caye/chat/route.ts'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Focused voice tests
+        run: npx vitest run lib/human-facing-voice.test.ts lib/human-facing-email.test.ts lib/sanitize-dashes.test.ts
+      - name: Full test suite
+        run: npm test -- --run
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Build
+        run: npm run build
