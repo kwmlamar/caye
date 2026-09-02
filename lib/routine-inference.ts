@@ -1,9 +1,9 @@
 import 'server-only'
 import {
   readRoutineInferenceConfig,
-  runRoutineOpenAiCompatible,
   type RoutineInferenceConfig,
 } from '@/lib/ai/providers/routine-openai-compatible'
+import { generateRoutine } from '@/lib/ai/routine'
 
 export { readRoutineInferenceConfig, type RoutineInferenceConfig } from '@/lib/ai/providers/routine-openai-compatible'
 
@@ -76,7 +76,7 @@ export async function runInference<T>(options: RunInferenceOptions<T>): Promise<
     if (!options.routine || !isConfigured(config)) {
       fallbackReason = 'routine_not_configured'
     } else {
-      const attempted = await runRoutineOpenAiCompatible(options.routine, config)
+      const attempted = await generateRoutine(options.routine, config)
       if (attempted.ok) {
         try {
           const parsed = options.routine.parse(attempted.content)

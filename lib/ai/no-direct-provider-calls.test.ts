@@ -17,20 +17,17 @@ const ROOTS = ['app', 'lib', 'components', 'scripts']
 /**
  * Adapters, by design. Each is fronted by a router that can route around it:
  *  - lib/ai/providers/*        the gateway's own adapters
- *  - lib/research/anthropic.ts + providers/anthropic.ts
- *      Anthropic's *server-side* web search/fetch tools, which the gateway's
- *      chat-completion contract does not model. lib/research/providers/router.ts
- *      falls over to the OpenAI and OpenRouter research adapters.
+ *  - lib/ai/providers/research-*.ts
+ *      The canonical AI boundary's provider-native research/search adapters.
  */
 const ADAPTER_ALLOWLIST = [
   'lib/ai/providers/anthropic.ts',
   'lib/ai/providers/openai-compatible.ts',
   'lib/ai/providers/openai-audio.ts',
   'lib/ai/providers/routine-openai-compatible.ts',
-  'lib/research/anthropic.ts',
-  'lib/research/providers/anthropic.ts',
-  'lib/research/providers/openai.ts',
-  'lib/research/providers/openrouter.ts',
+  'lib/ai/providers/research-anthropic.ts',
+  'lib/ai/providers/research-openai.ts',
+  'lib/ai/providers/research-openrouter.ts',
 ]
 
 /** Non-chat audio transports are separate from LLM generation and mint scoped

@@ -1,9 +1,7 @@
 import 'server-only'
 
 import { REQUIRED_RESEARCH_CAPABILITIES, type ResearchProviderAdapter, type ResearchProviderId } from './types'
-import { createOpenAiResearchProvider } from './openai'
-import { createAnthropicResearchAdapter } from './anthropic'
-import { createOpenRouterResearchAdapter } from './openrouter'
+import { createAnthropicResearchAdapter, createOpenAiResearchProvider, createOpenRouterResearchAdapter } from '@/lib/ai/research'
 import { logGenericLlmUsage } from '@/lib/llm-telemetry'
 
 /**

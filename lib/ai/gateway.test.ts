@@ -172,6 +172,15 @@ describe('routing', () => {
     expect(openai.calls[0]?.model).toBe('gpt-5-mini')
   })
 
+  it('does not let an ordinary caller select a model through params.model', async () => {
+    const anthropic = new FakeProvider('anthropic')
+    install({ anthropic })
+
+    await generate({ params: { ...params, model: 'claude-haiku-4-5-20251001' }, ctx })
+
+    expect(anthropic.calls[0]?.model).toBe('claude-sonnet-4-6')
+  })
+
   it('routes cheap tasks to the cheap tier', async () => {
     const anthropic = new FakeProvider('anthropic')
     install({ anthropic })
