@@ -32,11 +32,16 @@ export function normalizeRequestForModel(spec: ModelSpec, params: AIMessageParam
   }
 
   const protectedNames = protectedToolNames(params)
-  if (protectedNames.size > maxTools) {
+  // Only protected names this request actually exposes consume capacity. A
+  // transcript can name tools that are not in this turn's surface (role/mode
+  // scoping, read-only turns, registry churn); refusing a model for tools it
+  // was never going to be sent would recreate the outage this exists to stop.
+  const requiredCount = tools.reduce((count, tool) => (protectedNames.has(toolName(tool)) ? count + 1 : count), 0)
+  if (requiredCount > maxTools) {
     return {
       ok: false,
       missing: 'tool_capacity',
-      detail: `Request requires ${protectedNames.size} already-referenced/forced tools but ${spec.provider}/${spec.id} accepts at most ${maxTools}.`,
+      detail: `Request requires ${requiredCount} already-referenced/forced tools but ${spec.provider}/${spec.id} accepts at most ${maxTools}.`,
     }
   }
 
