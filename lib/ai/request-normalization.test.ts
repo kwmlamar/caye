@@ -90,6 +90,34 @@ describe('normalizeRequestForModel', () => {
     expect(result.value.params.tools?.map((t) => t.name)).toEqual(['already_used'])
   })
 
+  it('does not spend capacity on transcript tool names that are not in this request\'s surface', () => {
+    // A back-office thread outlives any single tool surface: role/mode scoping
+    // and registry churn mean the replayed transcript can name tools this turn
+    // does not expose. Those names impose no capacity requirement — counting
+    // them refuses a healthy provider for tools that were never being sent,
+    // which is the exact failure this normalization exists to prevent.
+    const spec = { ...MODELS.openai_strong, maxTools: 2 }
+    const request = {
+      ...params([tool('still_registered'), tool('other_a'), tool('other_b')]),
+      messages: [
+        {
+          role: 'assistant' as const,
+          content: [
+            { type: 'tool_use' as const, id: 'a', name: 'removed_in_a_later_deploy', input: {} },
+            { type: 'tool_use' as const, id: 'b', name: 'not_exposed_to_this_role', input: {} },
+            { type: 'tool_use' as const, id: 'c', name: 'still_registered', input: {} },
+          ],
+        },
+      ],
+    }
+    const result = normalizeRequestForModel(spec, request as never)
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.value.params.tools).toHaveLength(2)
+    expect(result.value.params.tools?.map((t) => t.name)).toContain('still_registered')
+  })
+
   it('fails closed when continuity requirements themselves exceed the provider cap', () => {
     const spec = { ...MODELS.openai_strong, maxTools: 1 }
     const request = {
