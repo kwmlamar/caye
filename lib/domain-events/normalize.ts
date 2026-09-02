@@ -23,10 +23,7 @@ function stableJson(value: unknown): string {
   return JSON.stringify(canonicalize(value))
 }
 
-function fieldChanges(
-  change: ExternalDomainChange,
-  fields: readonly string[],
-): DomainFieldChange[] {
+function fieldChanges(change: ExternalDomainChange, fields: readonly string[]): DomainFieldChange[] {
   const previous = change.previous ?? {}
   const current = change.current ?? {}
   return fields.flatMap((field) => {
@@ -48,9 +45,7 @@ function related(change: ExternalDomainChange): DomainRelatedEntity[] {
   ]
   for (const [field, entityType, role] of mappings) {
     const id = current[field]
-    if (typeof id === 'string' && id) {
-      rels.push({ role, sourceEntityType: entityType, sourceEntityId: id })
-    }
+    if (typeof id === 'string' && id) rels.push({ role, sourceEntityType: entityType, sourceEntityId: id })
   }
   return rels
 }
@@ -58,24 +53,16 @@ function related(change: ExternalDomainChange): DomainRelatedEntity[] {
 function eventIdentity(change: ExternalDomainChange, eventType: string, changes: DomainFieldChange[]): string {
   const sourceIdentity = change.sourceEventId
     ? ['source_event', change.sourceEventId, eventType]
-    : [
-        'derived',
-        change.sourceVersion ?? change.occurredAt,
-        change.operation,
-        eventType,
-        changes,
-      ]
+    : ['derived', change.sourceVersion ?? change.occurredAt, change.operation, eventType, changes]
   return createHash('sha256')
-    .update(
-      stableJson([
-        change.workspaceId,
-        change.sourceSystem,
-        change.sourceCompanyId,
-        change.sourceEntityType,
-        change.sourceEntityId,
-        sourceIdentity,
-      ]),
-    )
+    .update(stableJson([
+      change.workspaceId,
+      change.sourceSystem,
+      change.sourceCompanyId,
+      change.sourceEntityType,
+      change.sourceEntityId,
+      sourceIdentity,
+    ]))
     .digest('hex')
 }
 
@@ -85,7 +72,6 @@ function makeEvent(
   suffix: string,
   kind: NormalizedDomainEvent['changeKind'],
   changes: DomainFieldChange[],
-  attentionEligible = true,
 ): NormalizedDomainEvent {
   const type = `domain.${change.sourceEntityType}.${suffix}` as const
   return {
@@ -110,18 +96,14 @@ function makeEvent(
     correlationId: change.correlationId ?? null,
     sourceMetadata: change.metadata ?? {},
     snapshot: kind === 'bootstrap' ? change.current : null,
-    attentionEligible: attentionEligible && resolution !== null,
   }
 }
 
 function bootstrap(change: ExternalDomainChange, resolution: DomainEntityResolution | null) {
-  const event = makeEvent(change, resolution, 'bootstrap_observed', 'bootstrap', [], false)
-  // `attentionEligible: false` is not self-enforcing: the existing workspace
-  // feed decides what to raise from `actor_kind`, where 'external' maps to
-  // 'outside' and is reportable by definition. A backfill attributed to the
-  // outside world would announce every pre-existing record as fresh activity
-  // the first time a source is connected. First sight is Caye looking, not the
-  // source system acting, so bootstrap is always attributed to the system.
+  const event = makeEvent(change, resolution, 'bootstrap_observed', 'bootstrap', [])
+  // Bootstrap is an observation by Caye, not fresh external activity. Existing
+  // perception semantics raise outside actors and failures, so system attribution
+  // is the behavior that keeps initial backfill silent without inert metadata.
   return [{ ...event, actor: { ...event.actor, kind: 'system' as const } }]
 }
 
@@ -130,7 +112,7 @@ export function normalizeDomainChange(
   resolution: DomainEntityResolution | null,
 ): NormalizedDomainEvent[] {
   if (change.operation === 'snapshot') return bootstrap(change, resolution)
-  if (change.operation === 'deleted') return [] // Deletion semantics require explicit domain policy, never guess.
+  if (change.operation === 'deleted') return []
 
   const created = change.operation === 'created' || change.previous === null
   switch (change.sourceEntityType) {
@@ -150,13 +132,7 @@ export function normalizeDomainChange(
       if (status.length) events.push(makeEvent(change, resolution, 'status_changed', 'transition', status))
       const revision = fieldChanges(change, ['revision', 'revision_number'])
       if (revision.length) events.push(makeEvent(change, resolution, 'revision_changed', 'material_change', revision))
-      const amount = fieldChanges(change, [
-        'total_amount',
-        'subtotal',
-        'overhead_amount',
-        'profit_amount',
-        'tax_amount',
-      ])
+      const amount = fieldChanges(change, ['total_amount', 'subtotal', 'overhead_amount', 'profit_amount', 'tax_amount'])
       if (amount.length) events.push(makeEvent(change, resolution, 'amount_changed', 'material_change', amount))
       return events
     }
@@ -173,25 +149,14 @@ export function normalizeDomainChange(
       if (created) return [makeEvent(change, resolution, 'created', 'created', [])]
       const events: NormalizedDomainEvent[] = []
       const status = fieldChanges(change, ['status'])
-      if (status.some((entry) => entry.current === 'processed')) {
-        events.push(makeEvent(change, resolution, 'processed', 'transition', status))
-      }
+      if (status.some((entry) => entry.current === 'processed')) events.push(makeEvent(change, resolution, 'processed', 'transition', status))
       const assignment = fieldChanges(change, ['project_id'])
-      if (assignment.length && assignment[0]?.current) {
-        events.push(makeEvent(change, resolution, 'assigned_to_project', 'material_change', assignment))
-      }
+      if (assignment.length && assignment[0]?.current) events.push(makeEvent(change, resolution, 'assigned_to_project', 'material_change', assignment))
       return events
     }
     case 'time_entry':
-      // Individual time edits are deliberately not AI-visible domain events.
       return []
     case 'daily_timesheet': {
-      if (created) {
-        const submitted = fieldChanges(change, ['submitted_at'])
-        return submitted.length && submitted[0]?.current
-          ? [makeEvent(change, resolution, 'submitted', 'transition', submitted)]
-          : []
-      }
       const submitted = fieldChanges(change, ['submitted_at'])
       return submitted.length && submitted[0]?.current
         ? [makeEvent(change, resolution, 'submitted', 'transition', submitted)]
@@ -205,34 +170,22 @@ export function normalizeDomainChange(
       if ((processed.length && processed[0]?.current) || status.some((entry) => entry.current === 'processing')) {
         events.push(makeEvent(change, resolution, 'payroll_processed', 'transition', [...status, ...processed]))
       }
-      if (status.some((entry) => entry.current === 'paid')) {
-        events.push(makeEvent(change, resolution, 'paid', 'transition', status))
-      }
+      if (status.some((entry) => entry.current === 'paid')) events.push(makeEvent(change, resolution, 'paid', 'transition', status))
       const voided = fieldChanges(change, ['voided_at', 'void_reason'])
-      if (voided.some((entry) => entry.field === 'voided_at' && entry.current)) {
-        events.push(makeEvent(change, resolution, 'voided', 'material_change', voided))
-      }
+      if (voided.some((entry) => entry.field === 'voided_at' && entry.current)) events.push(makeEvent(change, resolution, 'voided', 'material_change', voided))
       const reopened = fieldChanges(change, ['reopened_at', 'reopen_reason'])
-      if (reopened.some((entry) => entry.field === 'reopened_at' && entry.current)) {
-        events.push(makeEvent(change, resolution, 'reopened', 'material_change', reopened))
-      }
+      if (reopened.some((entry) => entry.field === 'reopened_at' && entry.current)) events.push(makeEvent(change, resolution, 'reopened', 'material_change', reopened))
       return events
     }
     case 'payroll_entry': {
-      // Worker-level payroll rows are high volume. Only explicit void/reversal-like changes escape suppression.
       const voided = fieldChanges(change, ['voided_at', 'void_reason'])
-      if (voided.some((entry) => entry.field === 'voided_at' && entry.current)) {
-        return [makeEvent(change, resolution, 'voided', 'material_change', voided)]
-      }
+      if (voided.some((entry) => entry.field === 'voided_at' && entry.current)) return [makeEvent(change, resolution, 'voided', 'material_change', voided)]
       const reversal = fieldChanges(change, ['is_paid', 'payment_status'])
       const wasPaid = change.previous?.is_paid === true || change.previous?.payment_status === 'paid'
       const nowPaid = change.current?.is_paid === true || change.current?.payment_status === 'paid'
       if (wasPaid && !nowPaid) return [makeEvent(change, resolution, 'payment_reversed', 'material_change', reversal)]
-
       if (change.metadata?.material_adjustment === true) {
-        const adjustment = fieldChanges(change, [
-          'regular_hours', 'overtime_hours', 'gross_pay', 'deductions', 'net_pay', 'total_paid',
-        ])
+        const adjustment = fieldChanges(change, ['regular_hours', 'overtime_hours', 'gross_pay', 'deductions', 'net_pay', 'total_paid'])
         if (adjustment.length) return [makeEvent(change, resolution, 'material_adjustment', 'material_change', adjustment)]
       }
       return []
