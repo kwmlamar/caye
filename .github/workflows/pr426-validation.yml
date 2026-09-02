@@ -1,0 +1,109 @@
+name: PR426 final validation
+
+on:
+  push:
+    branches:
+      - integration/business-domain-bedrock-v1
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: integration/business-domain-bedrock-v1
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Run requested validation and baselines
+        shell: bash
+        run: |
+          set +e
+          REPORT=pr426-validation-results.txt
+          : > "$REPORT"
+          echo "validated_head=$(git rev-parse HEAD)" >> "$REPORT"
+          echo "reviewed_head=9c2f746eb0406e3f586aa18cacad0a3fc38b2c98" >> "$REPORT"
+          git fetch origin main
+          MAIN_SHA=$(git rev-parse origin/main)
+          echo "main_head=$MAIN_SHA" >> "$REPORT"
+
+          run_cmd() {
+            name="$1"; shift
+            "$@" > "/tmp/${name}.log" 2>&1
+            code=$?
+            echo "${name}_exit=${code}" >> "$REPORT"
+            if [ $code -ne 0 ]; then
+              echo "--- ${name} tail ---" >> "$REPORT"
+              tail -n 40 "/tmp/${name}.log" >> "$REPORT"
+              echo "--- end ${name} tail ---" >> "$REPORT"
+            fi
+          }
+
+          run_cmd change_source_review npx vitest run lib/domain-adapters/bedrock/change-source.review-fixes.test.ts
+          run_cmd bedrock_adapter npx vitest run lib/domain-adapters/bedrock/
+          run_cmd domain_events npx vitest run lib/domain-events/
+          run_cmd po_e2e npx vitest run lib/domain-integration/bedrock-purchase-order-e2e.test.ts
+          run_cmd review_fixes_migration npx vitest run lib/domain-integration/review-fixes.migration.test.ts
+          run_cmd perception_catchup npx vitest run lib/perception/domain-observation-catchup.test.ts
+          run_cmd migration_contract npx vitest run supabase/tests/domain-event-migration-contract.test.ts
+          run_cmd tsc npx tsc --noEmit
+          grep -c 'error TS' /tmp/tsc.log | xargs -I{} echo "tsc_error_lines={}" >> "$REPORT"
+          run_cmd build npm run build
+
+          run_full() {
+            label="$1"; dir="$2"; outfile="$3"
+            (cd "$dir" && npx vitest run --reporter=json --outputFile="$outfile") > "/tmp/full-${label}.log" 2>&1
+            code=$?
+            echo "full_${label}_exit=${code}" >> "$REPORT"
+            node - "$outfile" "$label" "$REPORT" <<'NODE'
+          const fs = require('fs')
+          const [file, label, report] = process.argv.slice(2)
+          try {
+            const j = JSON.parse(fs.readFileSync(file, 'utf8'))
+            const line = [
+              `full_${label}_total_tests=${j.numTotalTests ?? 'unknown'}`,
+              `full_${label}_passed_tests=${j.numPassedTests ?? 'unknown'}`,
+              `full_${label}_failed_tests=${j.numFailedTests ?? 'unknown'}`,
+              `full_${label}_pending_tests=${j.numPendingTests ?? 'unknown'}`,
+              `full_${label}_total_suites=${j.numTotalTestSuites ?? 'unknown'}`,
+              `full_${label}_passed_suites=${j.numPassedTestSuites ?? 'unknown'}`,
+              `full_${label}_failed_suites=${j.numFailedTestSuites ?? 'unknown'}`,
+            ].join('\n') + '\n'
+            fs.appendFileSync(report, line)
+          } catch (e) {
+            fs.appendFileSync(report, `full_${label}_json_error=${String(e)}\n`)
+          }
+          NODE
+          }
+
+          run_full current "$GITHUB_WORKSPACE" /tmp/full-current.json
+
+          git worktree add --detach /tmp/pr426-reviewed 9c2f746eb0406e3f586aa18cacad0a3fc38b2c98
+          ln -s "$GITHUB_WORKSPACE/node_modules" /tmp/pr426-reviewed/node_modules
+          run_full reviewed /tmp/pr426-reviewed /tmp/full-reviewed.json
+
+          git worktree add --detach /tmp/pr426-main "$MAIN_SHA"
+          ln -s "$GITHUB_WORKSPACE/node_modules" /tmp/pr426-main/node_modules
+          run_full main /tmp/pr426-main /tmp/full-main.json
+
+          echo "--- current full failure tail ---" >> "$REPORT"
+          tail -n 80 /tmp/full-current.log >> "$REPORT"
+          echo "--- reviewed full failure tail ---" >> "$REPORT"
+          tail -n 40 /tmp/full-reviewed.log >> "$REPORT"
+          echo "--- main full failure tail ---" >> "$REPORT"
+          tail -n 40 /tmp/full-main.log >> "$REPORT"
+      - name: Commit validation report
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add pr426-validation-results.txt
+          git commit -m "chore: record PR426 validation results"
+          git push
