@@ -1,6 +1,8 @@
 import 'server-only'
-import type { AIMessageParams, AITool } from './types'
+import type { AIMessageParams } from './types'
 import type { ModelSpec } from './models'
+
+type RequestTool = NonNullable<AIMessageParams['tools']>[number]
 
 export interface RequestNormalization {
   params: AIMessageParams
@@ -74,21 +76,21 @@ function protectedToolNames(params: AIMessageParams): Set<string> {
 }
 
 function selectToolsForLimit(
-  tools: AITool[],
+  tools: RequestTool[],
   limit: number,
   params: AIMessageParams,
   protectedNames: Set<string>
-): AITool[] {
+): RequestTool[] {
   const queryTerms = requestTerms(params)
   const ranked = tools.map((tool, index) => ({
     tool,
     index,
-    protected: protectedNames.has(tool.name),
+    protected: protectedNames.has(toolName(tool)),
     score: relevanceScore(tool, queryTerms),
   }))
 
-  const keep = new Set<string>()
-  for (const item of ranked) if (item.protected) keep.add(item.tool.name)
+  const keep = new Set<number>()
+  for (const item of ranked) if (item.protected) keep.add(item.index)
 
   const remaining = ranked
     .filter((item) => !item.protected)
@@ -96,13 +98,13 @@ function selectToolsForLimit(
 
   for (const item of remaining) {
     if (keep.size >= limit) break
-    keep.add(item.tool.name)
+    keep.add(item.index)
   }
 
   // Preserve registry/request order after selection. Stable ordering keeps
   // prompt caching predictable and avoids turning provider adaptation into a
   // hidden behavioral signal to the model.
-  return tools.filter((tool) => keep.has(tool.name))
+  return tools.filter((_, index) => keep.has(index))
 }
 
 function requestTerms(params: AIMessageParams): Set<string> {
@@ -137,11 +139,11 @@ function textFromContent(content: unknown): string {
     .join(' ')
 }
 
-function relevanceScore(tool: AITool, queryTerms: Set<string>): number {
+function relevanceScore(tool: RequestTool, queryTerms: Set<string>): number {
   if (queryTerms.size === 0) return 0
-  const nameTerms = tokenize(tool.name.replace(/_/g, ' '))
-  const descriptionTerms = tokenize(tool.description ?? '')
-  const schemaTerms = tokenize(JSON.stringify(tool.input_schema ?? {}))
+  const nameTerms = tokenize(toolName(tool).replace(/_/g, ' '))
+  const descriptionTerms = tokenize(toolDescription(tool))
+  const schemaTerms = tokenize(JSON.stringify(tool))
 
   let score = 0
   for (const term of queryTerms) {
@@ -150,6 +152,16 @@ function relevanceScore(tool: AITool, queryTerms: Set<string>): number {
     if (schemaTerms.has(term)) score += 1
   }
   return score
+}
+
+function toolName(tool: RequestTool): string {
+  const name = (tool as { name?: unknown }).name
+  return typeof name === 'string' ? name : ''
+}
+
+function toolDescription(tool: RequestTool): string {
+  const description = (tool as { description?: unknown }).description
+  return typeof description === 'string' ? description : ''
 }
 
 const STOP_WORDS = new Set([
