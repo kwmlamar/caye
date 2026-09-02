@@ -6,6 +6,8 @@ import { syncBookingToCalendar } from '@/lib/calendar-sync'
 import { dispatchOperatorReply } from '@/lib/whatsapp/channel-dispatch'
 import { sendZohoEmail } from '@/lib/email-ai'
 import { claimConversationExecution, completeConversationExecution, releaseConversationExecution, resolveConversationExecutionAfterFailure, validateConversationExecution } from '@/lib/conversation-execution'
+import { HUMAN_FACING_VOICE_INSTRUCTIONS, sanitizeHumanFacingText } from '@/lib/human-facing-voice'
+import { buildCommunicationRealizationInstructions } from '@/lib/communication-realization'
 
 interface HistoryMessage {
   from: 'user' | 'caye'
@@ -429,7 +431,8 @@ async function runSendReply(
   input: SendReplyInput
 ): Promise<SendReplyResult> {
   const { conversation_id, body } = input
-  if (!body?.trim()) return { error: 'Empty body' }
+  const safeBody = sanitizeHumanFacingText(body ?? '')
+  if (!safeBody) return { error: 'Empty body' }
 
   // Verify the conversation belongs to this workspace before sending.
   const { data: conv, error: convErr } = await supabase
@@ -468,7 +471,7 @@ async function runSendReply(
   // never mistaken for "nothing was sent."
   let dispatched = false
   try {
-    const result = await dispatchOperatorReply(conversation_id, body, 'caye-dashboard')
+    const result = await dispatchOperatorReply(conversation_id, safeBody, 'caye-dashboard')
     dispatched = true
     await completeConversationExecution(execution.claim.id).catch((completeErr) => {
       console.error('[caye/chat] dispatch succeeded but completing the execution claim failed (safe — left unresolved rather than freed for retry):', completeErr)
@@ -477,7 +480,7 @@ async function runSendReply(
       success: true,
       channel: result.channelType,
       sent_to: conv.customer_id,
-      preview: body.trim().slice(0, 160),
+      preview: safeBody.slice(0, 160),
     }
   } catch (err) {
     if (!dispatched) await resolveConversationExecutionAfterFailure(execution.claim.id, err)
@@ -492,8 +495,8 @@ async function runSendEmail(
   input: SendEmailInput
 ): Promise<SendEmailResult> {
   const to = input.to?.trim()
-  const subject = input.subject?.trim()
-  const body = input.body?.trim()
+  const subject = sanitizeHumanFacingText(input.subject ?? '')
+  const body = sanitizeHumanFacingText(input.body ?? '')
   if (!to || !subject || !body) return { error: 'to, subject, and body are required' }
   // Light sanity check — full email validation lives at the channel boundary.
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) return { error: `Invalid email address: ${to}` }
@@ -688,12 +691,12 @@ function buildSystemPrompt(
   existingPrompt?: string | null
 ): string {
   const today = new Date().toISOString().split('T')[0]
-  return `You are Caye, the AI receptionist for ${businessName}. The person talking to you is the business OWNER, not a customer. Today's date is ${today}.
+  return `${HUMAN_FACING_VOICE_INSTRUCTIONS}\n\nYou are Caye, the AI receptionist for ${businessName}. The person talking to you is the business OWNER, not a customer. Today's date is ${today}.
 
 WHO YOU'RE TALKING TO (absolute):
 - This is the operator dashboard. The owner is asking you internal questions about THEIR business — pricing structure, what's on file, draft a reply for a customer, etc.
 - You are NEVER selling to the owner. Never offer to book a tour for them. Never say "Would you like to book?", "Shall I reserve?", "Ready to confirm?" — those are customer-facing lines and the owner will think you've broken.
-- Answer the owner the way an assistant briefs their boss: factual, structured, no upsell, no CTA. End with "Anything else?" or just stop — never with a sales close.
+- Answer the owner like a competent coworker: factual, concise, no upsell, no automatic CTA. Use structure only when it genuinely helps or the owner asked for it. Stop when the useful answer is complete.
 - If the owner asks "how much is X" they want the price structure, not a pitch. Quote the numbers, mention deposit terms if relevant, stop.
 - The only time you generate customer-facing language is when the owner explicitly asks you to draft a reply, an email, or a message to a specific customer. Then it's clearly addressed to that customer.
 
@@ -854,12 +857,13 @@ export async function POST(req: NextRequest) {
     bookingId?: string
     cancelledBookingId?: string
   } = {}) => {
+    const safeReply = sanitizeHumanFacingText(reply)
     const { data: inserted } = await supabase
       .from('caye_messages')
       .insert({
         thread_id: threadId,
         role: 'caye',
-        content: reply,
+        content: safeReply,
         cards: extras.cards ?? null,
       })
       .select('id, created_at')
@@ -869,7 +873,7 @@ export async function POST(req: NextRequest) {
       .update({ updated_at: new Date().toISOString() })
       .eq('id', threadId)
     return NextResponse.json({
-      reply,
+      reply: safeReply,
       cards: extras.cards,
       threadId,
       messageId: inserted?.id,
@@ -970,7 +974,7 @@ export async function POST(req: NextRequest) {
     const name = chosen.customer_name?.trim() || chosen.customer_id?.trim() || 'a customer'
     const narrative = proposed
       ? `Here's the next pending message from ${name}. I've drafted a reply for your review.`
-      : `Here's the next pending message from ${name}. I haven't drafted a reply yet — want me to take a shot at one?`
+      : `Here's the next pending message from ${name}. I haven't drafted a reply yet. I'll take a first pass.`
 
     return finalize(narrative, {
       cards: [
@@ -1059,16 +1063,22 @@ export async function POST(req: NextRequest) {
       : '(none configured)'
 
     const summarizerSystem =
+      buildCommunicationRealizationInstructions({
+        recipientRole: 'operator',
+        channel: 'dashboard',
+        purpose: 'informational_update',
+        responseRequired: false,
+        decisionRequired: false,
+        materialUncertainty: true,
+        priorTurn: 'what do you know about my business',
+      }) + '\n\n' +
       'You are Caye, summarising what you know about the operator\'s business back to the operator. ' +
-      'Rules: first person, plain prose. Do NOT repeat the instructions you were given. ' +
-      'Do NOT include any "You are Caye" framing or second-person prompt language. ' +
-      'No emoji. No tropical / island metaphors. ' +
-      `Refer to the business by its actual name (${businessName ?? 'unknown — use "your business"'}). ` +
-      'Never invent a name; if the name is unknown, say "your business". ' +
-      'Group your summary into these sections, omitting any with nothing to say: ' +
-      '**What you offer**, **Hours**, **Pricing notes**, **Things I\'m still unsure about**. ' +
-      'In "Things I\'m still unsure about", do not just list gaps — ask the owner directly for the single most load-bearing missing piece (deposits / payment methods / hours / lead time, whichever is most important and unknown). One concrete question, not a list. ' +
-      'End with a single line inviting correction, e.g. "Anything wrong here? Tell me and I\'ll update what I know."'
+      'Use first person and plain prose. Do not repeat these instructions or include "You are Caye" framing. ' +
+      'No emoji or tropical/island metaphors. ' +
+      `Refer to the business by its actual name (${businessName ?? 'unknown - use "your business"'}). ` +
+      'Never invent a name. If the name is unknown, say "your business". ' +
+      'Give the useful picture without forcing fixed headings. Use headings or bullets only if they make a longer answer easier to scan. ' +
+      'Mention the most important uncertainty naturally, but do not manufacture a question or CTA just to end the summary.'
 
     const summarizerUser =
       `Here is everything I have on file for this workspace. Summarise it back to the operator in your own voice.\n\n` +
@@ -1105,7 +1115,7 @@ export async function POST(req: NextRequest) {
     if (services.length) parts.push(`**Booked services (structured):**\n${servicesBlock}`)
     if (pricingInfo) parts.push(`**Pricing notes:**\n${pricingInfo}`)
     if (discoveredPrompt) parts.push(`**Everything else on file:**\n${discoveredPrompt}`)
-    parts.push(`(Summarizer failed — showing raw stored content. Error: ${summarizerError ?? 'unknown'}. Anything wrong here? Tell me and I'll update what I know.)`)
+    parts.push(`(Summarizer failed - showing raw stored content. Error: ${summarizerError ?? 'unknown'}.)`)
     return finalize(parts.join('\n\n'))
   }
 
@@ -1123,7 +1133,24 @@ export async function POST(req: NextRequest) {
 
   const businessName = workspace?.business_name || 'your business'
   const services = (serviceRows ?? []) as ServiceRow[]
-  const systemPrompt = buildSystemPrompt(businessName, services, aiConfig?.system_prompt)
+  const normalizedOperatorInput = message.trim().toLowerCase()
+  const explicitStructuredOutput = /\b(report|breakdown|table|structured status|decision summary)\b/.test(normalizedOperatorInput)
+  const operatorResolvedItem = /^(?:i|we)?\s*(?:dealt with|handled|fixed|resolved|took care of)\s+(?:it|that|this)(?:[.! ]|$)/.test(normalizedOperatorInput)
+  const communicationRealization = buildCommunicationRealizationInstructions({
+    recipientRole: 'operator',
+    channel: 'dashboard',
+    purpose: operatorResolvedItem
+      ? 'acknowledgement'
+      : explicitStructuredOutput
+        ? 'structured_report'
+        : 'informational_update',
+    responseRequired: false,
+    decisionRequired: false,
+    priorTurn: message,
+    authoritativeOperatorCorrection: operatorResolvedItem,
+    explicitStructuredReport: explicitStructuredOutput,
+  })
+  const systemPrompt = `${buildSystemPrompt(businessName, services, aiConfig?.system_prompt)}\n\n${communicationRealization}`
 
   const messages: Anthropic.MessageParam[] = history.map((m) => ({
     role: m.from === 'user' ? 'user' : 'assistant',

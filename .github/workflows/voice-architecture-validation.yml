@@ -1,0 +1,72 @@
+name: Voice architecture validation
+
+on:
+  push:
+    branches:
+      - fix/caye-communication-voice-architecture
+  pull_request:
+    paths:
+      - 'lib/communication-realization.ts'
+      - 'lib/communication-realization.test.ts'
+      - 'lib/human-facing-voice.ts'
+      - 'lib/human-facing-voice.test.ts'
+      - 'lib/human-facing-email.ts'
+      - 'lib/human-facing-email.test.ts'
+      - 'lib/human-facing-boundaries.test.ts'
+      - 'lib/sanitize-dashes.ts'
+      - 'lib/sanitize-dashes.test.ts'
+      - 'lib/email-ai.ts'
+      - 'lib/whatsapp/channel-dispatch.ts'
+      - 'lib/caye-agent/briefing.ts'
+      - 'app/api/caye/chat/route.ts'
+      - 'scripts/voice-ci-delta.py'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install candidate dependencies
+        run: npm ci
+      - name: Focused voice tests
+        run: npx vitest run lib/communication-realization.test.ts lib/human-facing-voice.test.ts lib/human-facing-email.test.ts lib/human-facing-boundaries.test.ts lib/sanitize-dashes.test.ts
+      - name: Prepare current origin/main baseline
+        run: |
+          git fetch origin main
+          git worktree add /tmp/caye-main origin/main
+          cd /tmp/caye-main
+          npm ci
+      - name: Full tests and typecheck delta
+        shell: bash
+        run: |
+          set +e
+          python3 scripts/voice-ci-delta.py --main /tmp/caye-main --candidate "$GITHUB_WORKSPACE" 2>&1 | tee /tmp/voice-ci-delta.log
+          rc=${PIPESTATUS[0]}
+          {
+            echo '### Voice CI delta evidence'
+            echo
+            echo '```text'
+            grep -E '^(BASELINE:|BASELINE_ONLY_FIXED:|PR_REGRESSION:|CLEAN:|RESULT |CI DELTA GATE:)' /tmp/voice-ci-delta.log || true
+            echo '```'
+          } > /tmp/voice-ci-delta-summary.md
+          cat /tmp/voice-ci-delta-summary.md >> "$GITHUB_STEP_SUMMARY"
+          exit "$rc"
+      - name: Publish exact delta evidence on PR
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh pr comment 433 --body-file /tmp/voice-ci-delta-summary.md
+      - name: Build candidate
+        if: always()
+        run: npm run build

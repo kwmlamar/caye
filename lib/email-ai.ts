@@ -7,6 +7,7 @@
 
 import { createServiceClient } from './supabase-server'
 import { getZohoContext } from './zoho-token'
+import { sanitizeHumanFacingEmail } from './human-facing-email'
 
 function mailBase(apiDomain: string): string {
   return (apiDomain || 'https://www.zohoapis.com').replace('www.zohoapis', 'mail.zoho')
@@ -127,6 +128,7 @@ export async function sendZohoReply(
   threadId: string,
   workspaceId: string
 ): Promise<{ messageId: string | null }> {
+  const clean = sanitizeHumanFacingEmail({ to, subject, body })
   const { accountRow, accessToken, apiDomain, zohoAccountId } = await getZohoContext(workspaceId)
   const base = mailBase(apiDomain)
 
@@ -138,9 +140,9 @@ export async function sendZohoReply(
 
   const requestBody: Record<string, unknown> = {
     fromAddress: accountRow.channel_account_name || '',
-    toAddress: to,
-    subject,
-    content: body,
+    toAddress: clean.to,
+    subject: clean.subject,
+    content: clean.body,
     mailFormat: 'plaintext',
   }
   if (replyTargetId) requestBody.action = 'reply'
@@ -163,7 +165,7 @@ export async function sendZohoReply(
   }
 
   console.log(
-    `[sendZohoReply] Sent to ${to}, threadId=${threadId}, ` +
+    `[sendZohoReply] Sent to ${clean.to}, threadId=${threadId}, ` +
     `replyTarget=${replyTargetId ?? 'none (standalone send)'}, ` +
     `zohoMsgId=${data.data?.messageId ?? 'unknown'}`
   )
@@ -188,6 +190,7 @@ export async function sendZohoEmail(
   body: string,
   workspaceId: string
 ): Promise<{ messageId: string | null }> {
+  const clean = sanitizeHumanFacingEmail({ to, subject, body })
   const { accountRow, accessToken, apiDomain, zohoAccountId } = await getZohoContext(workspaceId)
   const base = mailBase(apiDomain)
 
@@ -199,9 +202,9 @@ export async function sendZohoEmail(
     },
     body: JSON.stringify({
       fromAddress: accountRow.channel_account_name || '',
-      toAddress: to,
-      subject,
-      content: body,
+      toAddress: clean.to,
+      subject: clean.subject,
+      content: clean.body,
       mailFormat: 'plaintext',
     }),
   })
@@ -215,7 +218,7 @@ export async function sendZohoEmail(
   }
 
   console.log(
-    `[sendZohoEmail] Sent to ${to}, subject="${subject}", zohoMsgId=${data.data?.messageId ?? 'unknown'}`
+    `[sendZohoEmail] Sent to ${clean.to}, subject="${clean.subject}", zohoMsgId=${data.data?.messageId ?? 'unknown'}`
   )
 
   return { messageId: data.data?.messageId ?? null }
@@ -250,6 +253,7 @@ export async function createZohoReplyDraft(
   threadId: string,
   workspaceId: string
 ): Promise<{ draftId: string | null }> {
+  const clean = sanitizeHumanFacingEmail({ to, subject, body })
   const { accountRow, accessToken, apiDomain, zohoAccountId } = await getZohoContext(workspaceId)
   const base = mailBase(apiDomain)
 
@@ -261,9 +265,9 @@ export async function createZohoReplyDraft(
 
   const requestBody: Record<string, unknown> = {
     fromAddress: accountRow.channel_account_name || '',
-    toAddress: to,
-    subject,
-    content: body,
+    toAddress: clean.to,
+    subject: clean.subject,
+    content: clean.body,
     mailFormat: 'plaintext',
     mode: 'draft',
   }
@@ -287,7 +291,7 @@ export async function createZohoReplyDraft(
   }
 
   console.log(
-    `[createZohoReplyDraft] Drafted to ${to}, threadId=${threadId}, ` +
+    `[createZohoReplyDraft] Drafted to ${clean.to}, threadId=${threadId}, ` +
     `replyTarget=${replyTargetId ?? 'none (standalone draft)'}, ` +
     `zohoMsgId=${data.data?.messageId ?? 'unknown'}`
   )
