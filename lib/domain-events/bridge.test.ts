@@ -102,13 +102,15 @@ describe('runDomainEventBridge', () => {
     expect(checkpoints.commits).toBe(0)
   })
 
-  it('persists unmapped entity events with attention disabled', async () => {
+  it('persists unmapped external entity events without changing their external actor semantics', async () => {
     const sink = new MemorySink()
     const result = await runDomainEventBridge({
       workspaceId: 'workspace-1', sourceSystem: 'bedrock', sourceCompanyId: 'ods', source: source([baseChange]),
       resolver: { async resolve() { return null } }, sink, checkpoints: new MemoryCheckpoints(),
     })
     expect(result.unresolved).toBe(1)
-    expect([...sink.seen.values()][0]?.attentionEligible).toBe(false)
+    const event = [...sink.seen.values()][0]
+    expect(event?.cayeEntityId).toBeNull()
+    expect(event?.actor.kind).toBe('external')
   })
 })
