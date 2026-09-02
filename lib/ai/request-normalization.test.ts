@@ -118,6 +118,50 @@ describe('normalizeRequestForModel', () => {
     expect(result.value.params.tools?.map((t) => t.name)).toContain('still_registered')
   })
 
+  it('selects the same surface every time for the same request, tools and model', () => {
+    // Selection must be a pure function of the request. A surface that drifts
+    // between identical calls would break prompt caching and make a bad
+    // routing decision unreproducible from the logged attempt trail.
+    const tools = Array.from({ length: 200 }, (_, i) =>
+      tool(`tool_${i}`, i % 7 === 0 ? 'Handles unresolved customer issues for the business' : `Generic tool ${i}`)
+    )
+    const request = params(tools, 'Are there unresolved customer issues I should look at?')
+    const signatures = new Set<string>()
+    for (let run = 0; run < 20; run++) {
+      const result = normalizeRequestForModel(MODELS.openai_strong, request as never)
+      if (!result.ok) throw new Error('expected normalization to succeed')
+      signatures.add(result.value.params.tools!.map((t) => t.name).join('|'))
+    }
+
+    expect(signatures.size).toBe(1)
+  })
+
+  it('preserves everything except the tool array, and keeps registry order', () => {
+    const tools = Array.from({ length: 129 }, (_, i) => tool(`tool_${i}`))
+    const request = {
+      ...params(tools),
+      system: 'SYSTEM PROMPT',
+      temperature: 0.3,
+      metadata: { user_id: 'operator-1' },
+      stop_sequences: ['STOP'],
+      tool_choice: { type: 'auto' as const },
+    }
+    const before = JSON.stringify(request)
+    const result = normalizeRequestForModel(MODELS.openai_strong, request as never)
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const { tools: adapted, ...rest } = result.value.params
+    const { tools: _original, ...originalRest } = request
+    expect(rest).toEqual(originalRest)
+    expect(result.value.params.messages).toBe(request.messages)
+    // Order is the request's own order, not a relevance ranking.
+    const keptIndexes = adapted!.map((t) => tools.findIndex((original) => original.name === t.name))
+    expect(keptIndexes).toEqual([...keptIndexes].sort((a, b) => a - b))
+    // And the canonical request is untouched.
+    expect(JSON.stringify(request)).toBe(before)
+  })
+
   it('fails closed when continuity requirements themselves exceed the provider cap', () => {
     const spec = { ...MODELS.openai_strong, maxTools: 1 }
     const request = {
