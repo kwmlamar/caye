@@ -24,7 +24,7 @@ describe('external domain event projection migration', () => {
   it('suppresses stale operational updates while permitting safe replay', () => {
     expect(sql).toContain("return jsonb_build_object('status', 'stale'")
     expect(sql).toContain("return jsonb_build_object('status', 'duplicate'")
-    expect(sql).toContain('pg_advisory_xact_lock')
+    expect(sql.match(/pg_advisory_xact_lock/g)).toHaveLength(2)
   })
 
   it('does not create or write business facts', () => {

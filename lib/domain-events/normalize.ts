@@ -106,7 +106,10 @@ function makeEvent(
     changes,
     relatedEntities: related(change),
     evidence: change.evidence,
+    causationId: change.causationId ?? null,
+    correlationId: change.correlationId ?? null,
     sourceMetadata: change.metadata ?? {},
+    snapshot: kind === 'bootstrap' ? change.current : null,
     attentionEligible: attentionEligible && resolution !== null,
   }
 }
@@ -138,6 +141,8 @@ export function normalizeDomainChange(
       const events: NormalizedDomainEvent[] = []
       const status = fieldChanges(change, ['status'])
       if (status.length) events.push(makeEvent(change, resolution, 'status_changed', 'transition', status))
+      const revision = fieldChanges(change, ['revision', 'revision_number'])
+      if (revision.length) events.push(makeEvent(change, resolution, 'revision_changed', 'material_change', revision))
       const amount = fieldChanges(change, [
         'total_amount',
         'subtotal',
@@ -215,9 +220,15 @@ export function normalizeDomainChange(
       const reversal = fieldChanges(change, ['is_paid', 'payment_status'])
       const wasPaid = change.previous?.is_paid === true || change.previous?.payment_status === 'paid'
       const nowPaid = change.current?.is_paid === true || change.current?.payment_status === 'paid'
-      return wasPaid && !nowPaid
-        ? [makeEvent(change, resolution, 'payment_reversed', 'material_change', reversal)]
-        : []
+      if (wasPaid && !nowPaid) return [makeEvent(change, resolution, 'payment_reversed', 'material_change', reversal)]
+
+      if (change.metadata?.material_adjustment === true) {
+        const adjustment = fieldChanges(change, [
+          'regular_hours', 'overtime_hours', 'gross_pay', 'deductions', 'net_pay', 'total_paid',
+        ])
+        if (adjustment.length) return [makeEvent(change, resolution, 'material_adjustment', 'material_change', adjustment)]
+      }
+      return []
     }
     default:
       return []
