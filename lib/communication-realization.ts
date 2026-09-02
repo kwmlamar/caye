@@ -108,9 +108,9 @@ export function buildCommunicationRealizationInstructions(ctx: CommunicationCont
   }
 
   if (plan.cta === 'none') {
-    lines.push('No decision is required now. End the update without inventing a question, offer, permission check, or "want me to" CTA.')
+    lines.push('No decision is required now. End the update without inventing a question, offer, or permission check.')
   } else {
-    lines.push('A real decision is required. Ask one natural, precise question that makes the required authority/approval unambiguous. Do not turn it into a generic "Proceed? Yes or No." template.')
+    lines.push('A real decision is required. Ask one natural, precise question that makes the required authority or approval unambiguous. Avoid generic confirmation templates.')
   }
 
   lines.push('Do not mechanically expose internal field names, enum labels, queue state, status labels, or report headings such as Decision / Why it matters / What has been done / Recommendation. Translate the approved meaning into ordinary prose.')
