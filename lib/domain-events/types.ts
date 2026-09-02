@@ -32,6 +32,8 @@ export type ExternalDomainChange = {
   current: Record<string, unknown> | null
   actor?: DomainActor | null
   evidence?: DomainEvidenceRef | null
+  causationId?: string | null
+  correlationId?: string | null
   metadata?: Record<string, unknown>
 }
 
@@ -71,7 +73,10 @@ export type NormalizedDomainEvent = {
   changes: DomainFieldChange[]
   relatedEntities: DomainRelatedEntity[]
   evidence?: DomainEvidenceRef | null
+  causationId?: string | null
+  correlationId?: string | null
   sourceMetadata: Record<string, unknown>
+  snapshot?: Record<string, unknown> | null
   attentionEligible: boolean
 }
 

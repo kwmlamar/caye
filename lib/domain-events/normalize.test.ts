@@ -72,6 +72,7 @@ describe('normalizeDomainChange', () => {
     expect(events[0]?.type).toBe('domain.purchase_order.bootstrap_observed')
     expect(events[0]?.changeKind).toBe('bootstrap')
     expect(events[0]?.attentionEligible).toBe(false)
+    expect(events[0]?.snapshot).toEqual({ status: 'received' })
   })
 
   it('retains source identity but disables attention when the Caye entity is unmapped', () => {
@@ -97,5 +98,15 @@ describe('normalizeDomainChange', () => {
       { entityId: 'payroll-1' },
     )
     expect(voided[0]?.type).toBe('domain.payroll_entry.voided')
+
+    const adjusted = normalizeDomainChange(
+      change({
+        sourceEntityType: 'payroll_entry',
+        previous: { net_pay: 900 }, current: { net_pay: 950 },
+        metadata: { material_adjustment: true },
+      }),
+      { entityId: 'payroll-1' },
+    )
+    expect(adjusted[0]?.type).toBe('domain.payroll_entry.material_adjustment')
   })
 })

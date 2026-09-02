@@ -98,6 +98,13 @@ begin
     p_workspace_id::text || ':' || p_source_system || ':' || p_idempotency_key,
     0
   ));
+  -- Serialize current-state decisions for one external entity as well. Event-level
+  -- idempotency alone is insufficient when two different source events race.
+  perform pg_advisory_xact_lock(hashtextextended(
+    p_workspace_id::text || ':' || p_source_system || ':' || p_source_company_id || ':' ||
+    p_source_entity_type || ':' || p_source_entity_id,
+    1
+  ));
 
   select id into v_existing_event_id
     from public.workspace_events
