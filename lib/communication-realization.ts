@@ -94,7 +94,8 @@ export function planCommunication(ctx: CommunicationContext): CommunicationPlan 
     resurfacing,
     cta: ctx.decisionRequired && ctx.responseRequired ? 'decision' : 'none',
     acknowledgeAuthorityFirst: Boolean(ctx.authoritativeOperatorCorrection),
-    exposeInternalTaxonomy: Boolean(structured),
+    // Structure on demand changes presentation, never the privacy boundary.
+    exposeInternalTaxonomy: false,
     preserveUncertainty: Boolean(ctx.materialUncertainty),
     preserveAuthorityRequirement:
       Boolean(ctx.decisionRequired) && Boolean(ctx.authorityRequirement && ctx.authorityRequirement !== 'none'),
@@ -131,10 +132,9 @@ export function buildCommunicationRealizationInstructions(ctx: CommunicationCont
     lines.push('A real decision is required. Ask one natural, precise question that makes the required authority/approval unambiguous. Do not turn it into a generic "Proceed? Yes or No." template.')
   }
 
-  if (!plan.exposeInternalTaxonomy) {
-    lines.push('Do not mechanically expose internal field names, enum labels, queue state, status labels, or report headings such as Decision / Why it matters / What has been done / Recommendation. Translate the approved meaning into ordinary prose.')
-  } else {
-    lines.push('The user explicitly requested structured reporting. Structure is allowed, but internal identifiers and implementation-only taxonomy still stay private.')
+  lines.push('Do not mechanically expose internal field names, enum labels, queue state, status labels, or report headings such as Decision / Why it matters / What has been done / Recommendation. Translate the approved meaning into ordinary prose.')
+  if (structured) {
+    lines.push('The user explicitly requested structured reporting. Use useful headings, bullets, tables, or a decision summary as requested, while keeping internal identifiers and implementation-only taxonomy private.')
   }
 
   if (plan.detail === 'terse') {
