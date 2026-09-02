@@ -13,14 +13,6 @@ export type CommunicationChannel = 'whatsapp' | 'email' | 'dashboard' | 'proacti
 export type CommunicationDetail = 'terse' | 'normal' | 'detailed' | 'structured'
 export type ResurfacingMode = 'full' | 'compressed' | 'suppress'
 
-/**
- * Semantic context for HOW already-approved meaning should be realized.
- *
- * This deliberately carries no permission to perform an action. Authority,
- * truth, approval gates, and tool execution remain owned by the existing
- * control layer. The realization layer can only make approved meaning more
- * conversational, never make an unsafe action permissible.
- */
 export interface CommunicationContext {
   purpose: CommunicationPurpose
   recipientRole: CommunicationRecipientRole
@@ -56,10 +48,7 @@ export function isShortConversationalTurn(text: string | null | undefined): bool
   return text.trim().split(/\s+/).length <= SHORT_TURN_WORDS
 }
 
-/**
- * Deterministic communication policy. This is the seam between Caye's
- * rigorous internal control representation and the prose the human sees.
- */
+/** Deterministic seam between operational/control state and human prose. */
 export function planCommunication(ctx: CommunicationContext): CommunicationPlan {
   const structured = ctx.explicitStructuredReport || ctx.purpose === 'structured_report'
   const mustResurface =
@@ -76,17 +65,10 @@ export function planCommunication(ctx: CommunicationContext): CommunicationPlan 
   }
 
   let detail: CommunicationDetail = structured ? 'structured' : 'normal'
-  if (
-    !structured &&
-    isShortConversationalTurn(ctx.priorTurn) &&
-    !ctx.materialSafetyInformation &&
-    ctx.purpose !== 'analytical_response'
-  ) {
+  if (!structured && isShortConversationalTurn(ctx.priorTurn) && !ctx.materialSafetyInformation && ctx.purpose !== 'analytical_response') {
     detail = 'terse'
   }
-  if (ctx.purpose === 'acknowledgement' && !ctx.materialSafetyInformation && !structured) {
-    detail = 'terse'
-  }
+  if (ctx.purpose === 'acknowledgement' && !ctx.materialSafetyInformation && !structured) detail = 'terse'
   if (ctx.purpose === 'analytical_response' && !structured) detail = 'detailed'
 
   return {
@@ -94,7 +76,6 @@ export function planCommunication(ctx: CommunicationContext): CommunicationPlan 
     resurfacing,
     cta: ctx.decisionRequired && ctx.responseRequired ? 'decision' : 'none',
     acknowledgeAuthorityFirst: Boolean(ctx.authoritativeOperatorCorrection),
-    // Structure on demand changes presentation, never the privacy boundary.
     exposeInternalTaxonomy: false,
     preserveUncertainty: Boolean(ctx.materialUncertainty),
     preserveAuthorityRequirement:
@@ -103,12 +84,12 @@ export function planCommunication(ctx: CommunicationContext): CommunicationPlan 
 }
 
 /**
- * Prompt fragment used by existing primary model calls. It does not add a
- * second model pass. The model receives a deterministic communication plan
- * alongside the operational facts/tool results it already has.
+ * Prompt fragment used by the existing primary model call. It adds no second
+ * LLM pass and cannot grant operational authority.
  */
 export function buildCommunicationRealizationInstructions(ctx: CommunicationContext): string {
   const plan = planCommunication(ctx)
+  const structured = ctx.explicitStructuredReport || ctx.purpose === 'structured_report'
   const lines = [
     'HUMAN COMMUNICATION REALIZATION',
     'The operational/control state determines WHAT is true, allowed, blocked, uncertain, or approval-gated. These instructions only determine HOW that approved meaning is expressed.',
@@ -140,11 +121,9 @@ export function buildCommunicationRealizationInstructions(ctx: CommunicationCont
   if (plan.detail === 'terse') {
     lines.push('Match the conversational bandwidth: this should usually be a short acknowledgement or one short message, not a paragraph.')
   }
-
   if (plan.preserveAuthorityRequirement) {
     lines.push(`Do not blur authority: the required ${ctx.authorityRequirement} approval must remain explicit in the human wording.`)
   }
-
   if (plan.preserveUncertainty) {
     lines.push('Material uncertainty is part of the approved meaning. Preserve it explicitly; do not smooth it into certainty for the sake of natural voice.')
   }
