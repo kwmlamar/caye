@@ -1,9 +1,6 @@
 name: Voice architecture validation
 
 on:
-  push:
-    branches:
-      - fix/caye-communication-voice-architecture
   pull_request:
     paths:
       - 'lib/communication-realization.ts'
@@ -20,6 +17,7 @@ on:
       - 'lib/caye-agent/briefing.ts'
       - 'app/api/caye/chat/route.ts'
       - 'scripts/voice-ci-delta.py'
+      - '.github/workflows/voice-architecture-validation.yml'
 
 permissions:
   contents: read
@@ -63,10 +61,14 @@ jobs:
           cat /tmp/voice-ci-delta-summary.md >> "$GITHUB_STEP_SUMMARY"
           exit "$rc"
       - name: Publish exact delta evidence on PR
-        if: always()
+        if: always() && github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh pr comment 433 --body-file /tmp/voice-ci-delta-summary.md
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          if [ -f /tmp/voice-ci-delta-summary.md ]; then
+            gh pr comment "$PR_NUMBER" --body-file /tmp/voice-ci-delta-summary.md
+          fi
       - name: Build candidate
         if: always()
         run: npm run build

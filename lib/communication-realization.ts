@@ -41,7 +41,7 @@ export interface CommunicationPlan {
   preserveAuthorityRequirement: boolean
 }
 
-const SHORT_TURN_WORDS = 8
+const SHORT_TURN_WORDS = 12
 
 export function isShortConversationalTurn(text: string | null | undefined): boolean {
   if (!text?.trim()) return false
@@ -51,35 +51,40 @@ export function isShortConversationalTurn(text: string | null | undefined): bool
 /** Deterministic seam between operational/control state and human prose. */
 export function planCommunication(ctx: CommunicationContext): CommunicationPlan {
   const structured = ctx.explicitStructuredReport || ctx.purpose === 'structured_report'
-  const mustResurface =
-    ctx.decisionRequired ||
+  const materiallyChanged = Boolean(
+    ctx.changedSinceLastMention ||
     ctx.materialSafetyInformation ||
     ctx.urgencyIncreased ||
     ctx.deadlineApproaching
+  )
 
   let resurfacing: ResurfacingMode = 'full'
-  if (ctx.previouslyMentioned && !ctx.changedSinceLastMention) {
-    resurfacing = mustResurface ? 'compressed' : 'suppress'
+  if (ctx.previouslyMentioned && !materiallyChanged) {
+    // An unresolved item is not automatically new information. Once surfaced,
+    // leave it out until it changes or the human directly asks about it.
+    resurfacing = 'suppress'
   } else if (ctx.previouslyMentioned) {
     resurfacing = 'compressed'
   }
 
-  let detail: CommunicationDetail = structured ? 'structured' : 'normal'
-  if (!structured && isShortConversationalTurn(ctx.priorTurn) && !ctx.materialSafetyInformation && ctx.purpose !== 'analytical_response') {
-    detail = 'terse'
-  }
-  if (ctx.purpose === 'acknowledgement' && !ctx.materialSafetyInformation && !structured) detail = 'terse'
+  let detail: CommunicationDetail = structured ? 'structured' : 'terse'
   if (ctx.purpose === 'analytical_response' && !structured) detail = 'detailed'
+  if (ctx.materialSafetyInformation && !structured) detail = 'normal'
+
+  const decisionCtaAllowed =
+    ctx.decisionRequired &&
+    ctx.responseRequired &&
+    resurfacing !== 'suppress'
 
   return {
     detail,
     resurfacing,
-    cta: ctx.decisionRequired && ctx.responseRequired ? 'decision' : 'none',
+    cta: decisionCtaAllowed ? 'decision' : 'none',
     acknowledgeAuthorityFirst: Boolean(ctx.authoritativeOperatorCorrection),
     exposeInternalTaxonomy: false,
     preserveUncertainty: Boolean(ctx.materialUncertainty),
     preserveAuthorityRequirement:
-      Boolean(ctx.decisionRequired) && Boolean(ctx.authorityRequirement && ctx.authorityRequirement !== 'none'),
+      decisionCtaAllowed && Boolean(ctx.authorityRequirement && ctx.authorityRequirement !== 'none'),
   }
 }
 
@@ -95,31 +100,32 @@ export function buildCommunicationRealizationInstructions(ctx: CommunicationCont
     'The operational/control state determines WHAT is true, allowed, blocked, uncertain, or approval-gated. These instructions only determine HOW that approved meaning is expressed.',
     `Recipient: ${ctx.recipientRole}. Channel: ${ctx.channel}. Purpose: ${ctx.purpose}.`,
     `Detail: ${plan.detail}. Resurfacing: ${plan.resurfacing}. CTA: ${plan.cta}.`,
+    'Default to the shortest complete answer. For normal conversation, one to three short sentences is the target.',
   ]
 
   if (plan.resurfacing === 'suppress') {
-    lines.push('This issue was already surfaced and has not materially changed. Do not reconstruct or re-announce it. Omit it unless the current human message directly asks about it.')
+    lines.push('This issue or action request was already surfaced and has not materially changed. Do not mention it again, do not repeat its approval question, and do not reconstruct its history unless the current human message directly asks about it.')
   } else if (plan.resurfacing === 'compressed') {
-    lines.push('Shared context exists. Refer to the issue briefly using normal conversational reference; do not rebuild its database history or mini-report.')
+    lines.push('Shared context exists and something materially changed. State only the change and the current consequence. Do not rebuild the history.')
   }
 
   if (plan.acknowledgeAuthorityFirst) {
-    lines.push("An authoritative operator has corrected or closed the conversational point. Acknowledge that naturally first. Keep reconciliation/checking internal unless a remaining discrepancy materially changes safety or the next action.")
+    lines.push("An authoritative operator has corrected or closed the conversational point. Acknowledge it briefly and move on. Keep reconciliation/checking internal unless a remaining discrepancy materially changes safety or the next action.")
   }
 
   if (plan.cta === 'none') {
-    lines.push('No decision is required now. End the update without inventing a question, offer, or permission check.')
+    lines.push('No decision is required in this answer. End without a question, offer, permission check, or CTA.')
   } else {
-    lines.push('A real decision is required. Ask one natural, precise question that makes the required authority or approval unambiguous. Avoid generic confirmation templates.')
+    lines.push('A real decision is required in this turn. Ask exactly one short, precise question. Do not ask it again on later turns unless the situation materially changes or the human returns to that issue.')
   }
 
   lines.push('Do not mechanically expose internal field names, enum labels, queue state, status labels, or report headings such as Decision / Why it matters / What has been done / Recommendation. Translate the approved meaning into ordinary prose.')
   if (structured) {
-    lines.push('The user explicitly requested structured reporting. Use useful headings, bullets, tables, or a decision summary as requested, while keeping internal identifiers and implementation-only taxonomy private.')
+    lines.push('The user explicitly requested structured reporting. Give the requested detail with useful headings or bullets, but keep each item concise and keep implementation-only taxonomy private.')
   }
 
   if (plan.detail === 'terse') {
-    lines.push('Match the conversational bandwidth: this should usually be a short acknowledgement or one short message, not a paragraph.')
+    lines.push('Keep this extremely short. Prefer one sentence. Use two or three only when needed for an important fact or next action.')
   }
   if (plan.preserveAuthorityRequirement) {
     lines.push(`Do not blur authority: the required ${ctx.authorityRequirement} approval must remain explicit in the human wording.`)
