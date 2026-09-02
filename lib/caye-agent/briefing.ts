@@ -97,8 +97,6 @@ export async function composeEodSummary(args: {
   const operator = (customer?.full_name as string | null)?.trim() || 'the owner'
   const business = (customer?.business_name as string | null)?.trim() || 'their business'
 
-  // Same shared read as the morning briefing — two composers writing to one
-  // thread must not disagree about whether the owner is clear.
   await syncOwnerAttention(args.workspaceId)
   const delta = await loadAttentionDelta({ workspaceId: args.workspaceId })
 
@@ -109,10 +107,7 @@ export async function composeEodSummary(args: {
   })
 
   const messages: Anthropic.MessageParam[] = [
-    {
-      role: 'user',
-      content: 'Compose tonight\'s end-of-day recap for the operator.',
-    },
+    { role: 'user', content: 'Compose tonight\'s end-of-day recap for the operator.' },
   ]
 
   const { replyText } = await runToolLoop({
@@ -120,55 +115,16 @@ export async function composeEodSummary(args: {
     maxTokens: MAX_OUTPUT_TOKENS,
     systemPrompt,
     initialMessages: messages,
-    // Cron-driven system invocation — no human caller. 'founder' role
-    // grants access to every tool, matching the existing trusted-internal
-    // semantics. Locked 2026-06-24 (#48).
     ctx: { workspaceId: args.workspaceId, callerRole: 'founder', requestId: randomUUID() },
   })
 
   return replyText
 }
 
-/**
- * Generate the morning briefing text for a workspace.
- *
- * Uses the same tool-use loop as the back-office chat path, but with a
- * dedicated briefing prompt that asks Claude to gather state (calendar,
- * held queue, today summary) and compose a single 2-4 sentence update.
- *
- * Returns just the text. Caller is responsible for sending via WhatsApp
- * and persisting the outbound row.
- */
 export async function composeMorningBriefing(args: {
   workspaceId: string
-  /** Name of the operator this briefing is actually being sent to (resolve
-   *  via resolveOperatorByPhone against the destination phone before
-   *  calling). customers.full_name is a business-level field — it can hold
-   *  something like "Mrs. Max" that has nothing to do with whoever's phone
-   *  the message lands on. Confirmed live 2026-07-25: Bimini's briefing
-   *  greeted Karenda as "Mrs. Max" because this fell back to
-   *  customers.full_name. Falls back to that same field only when no
-   *  operator name is supplied. */
   operatorName?: string | null
-  /** The single oldest currently-held conversation, workspace-wide,
-   *  regardless of escalation status — see findOldestAgingHold in
-   *  app/api/caye/morning-digest/route.ts. Overrides the normal "most
-   *  pressing held item" pick for Sentence 2 below. Without this, an old
-   *  hold with no live escalation (or an escalation that expired without
-   *  the hold ever clearing) can lose the "most pressing" slot to whatever
-   *  came in this morning, every single day, and just rot in "+N more"
-   *  forever — confirmed live 2026-07-26 (nicole silvera, 19 days held,
-   *  zero escalation rows ever created; Marissa McGourthy, 17 days held,
-   *  5 escalations all expired, hold never cleared). Null when nothing's
-   *  been held 3+ days. */
   oldestAgingHold?: { customer: string; daysHeld: number } | null
-  /** internal_sales only (decisions-log 2026-08-12) — daily autonomous
-   *  outreach counts. When present, skips the booking-business tool loop
-   *  below entirely and returns a deterministic templated line instead: the
-   *  numbers are already computed by the caller, and formatting 5 counts
-   *  into a sentence doesn't need an LLM call (or its hallucination risk) —
-   *  unlike the held-item narrative selection above, which genuinely needs
-   *  judgment about what's "most pressing." */
   outreachStats?: {
     sourced: number
     firstTouchSent: number
@@ -191,17 +147,8 @@ export async function composeMorningBriefing(args: {
     args.operatorName?.trim() || (customer?.full_name as string | null)?.trim() || 'the owner'
   const business = (customer?.business_name as string | null)?.trim() || 'their business'
 
-  // Outreach workspaces get a deterministic numbers line instead (upstream,
-  // 2026-08-12). Returns before the attention read on purpose: that digest is
-  // about send/reply counts, not about anything waiting on the owner.
-  if (args.outreachStats) {
-    return formatOutreachDigestLine(operator, args.outreachStats)
-  }
+  if (args.outreachStats) return formatOutreachDigestLine(operator, args.outreachStats)
 
-  // What the owner has already been told, and what has actually moved since
-  // (2026-08-12). Read BEFORE composing — this is the block that makes it
-  // impossible to announce "nothing needs your attention" half an hour after
-  // an escalation ping said otherwise. See lib/owner-attention.ts.
   await syncOwnerAttention(args.workspaceId)
   const delta = await loadAttentionDelta({ workspaceId: args.workspaceId })
 
@@ -213,10 +160,7 @@ export async function composeMorningBriefing(args: {
   })
 
   const messages: Anthropic.MessageParam[] = [
-    {
-      role: 'user',
-      content: 'Compose this morning\'s briefing for the operator.',
-    },
+    { role: 'user', content: 'Compose this morning\'s briefing for the operator.' },
   ]
 
   const { replyText } = await runToolLoop({
@@ -224,25 +168,12 @@ export async function composeMorningBriefing(args: {
     maxTokens: MAX_OUTPUT_TOKENS,
     systemPrompt,
     initialMessages: messages,
-    // Cron-driven system invocation — no human caller. 'founder' role
-    // grants access to every tool, matching the existing trusted-internal
-    // semantics. Locked 2026-06-24 (#48).
     ctx: { workspaceId: args.workspaceId, callerRole: 'founder', requestId: randomUUID() },
   })
 
   return replyText
 }
 
-/**
- * Deterministic (no LLM) daily sales report.
- *
- * Composed rather than generated on purpose: these are counts, and a model
- * asked to narrate counts is a model given the opportunity to round one up.
- * Reported in funnel order — where the pipeline stands first, then what
- * moved, then what got in the way — because "how many emails went out" is an
- * activity metric, and the standing complaint about activity metrics is that
- * they let a system look busy while going nowhere.
- */
 function formatOutreachDigestLine(
   operator: string,
   stats: {
@@ -257,16 +188,13 @@ function formatOutreachDigestLine(
 ): string {
   const { sourced, firstTouchSent, followupsSent, replies, tried, pipeline, objections } = stats
   const lines: string[] = []
-
-  // Where things stand. Live counts, not deltas.
   const live = pipeline ?? {}
   const inPlay = (live.contacted ?? 0) + (live.engaged ?? 0) + (live.qualified ?? 0)
   const warm = (live.engaged ?? 0) + (live.qualified ?? 0)
   const inDemo = (live.demo_started ?? 0) + (live.activated ?? 0)
 
-  if (inPlay + inDemo === 0) {
-    lines.push(`Morning, ${operator}. Pipeline is empty right now.`)
-  } else {
+  if (inPlay + inDemo === 0) lines.push(`Morning, ${operator}. Pipeline is empty right now.`)
+  else {
     const bits = [`${inPlay} still in play`]
     if (warm > 0) bits.push(`${warm} warm`)
     if (inDemo > 0) bits.push(`${inDemo} in the demo`)
@@ -274,7 +202,6 @@ function formatOutreachDigestLine(
     lines.push(`Morning, ${operator}. ${bits.join(', ')}.`)
   }
 
-  // What actually moved in the last day.
   const moved: string[] = []
   if (replies > 0) moved.push(`${replies} wrote back`)
   if (tried > 0) moved.push(`${tried} tried the demo`)
@@ -287,32 +214,16 @@ function formatOutreachDigestLine(
   if (activity.length > 0) lines.push(`I ${activity.join(', ')}.`)
   else if (moved.length === 0) lines.push('Nothing moved in the last 24 hours.')
 
-  // What keeps coming up. This is the part worth acting on.
   if (objections?.length) {
-    const top = objections
-      .filter((o) => o.count > 1)
-      .slice(0, 2)
-      .map((o) => `${o.label.replace(/_/g, ' ')} (${o.count})`)
+    const top = objections.filter((o) => o.count > 1).slice(0, 2).map((o) => `${o.label.replace(/_/g, ' ')} (${o.count})`)
     if (top.length > 0) lines.push(`Keeps coming up: ${top.join(', ')}.`)
   }
-
   return lines.join(' ')
 }
 
-/**
- * The morning briefing's system prompt, as a pure function.
- *
- * Split out of composeMorningBriefing (2026-08-12) so the rules can be
- * asserted without an LLM call or a database. What this prompt is allowed to
- * make the owner do is a product decision, and product decisions get tests —
- * the "exactly ONE concrete yes/no question" line that used to live here
- * manufactured an errand for the owner every single morning, and nothing
- * caught it because nothing could read it.
- */
 export function buildMorningBriefingPrompt(args: {
   operator: string
   business: string
-  /** Rendered shared attention state (lib/owner-attention.ts). */
   attentionContext: string
   oldestAgingHold?: { customer: string; daysHeld: number } | null
 }): string {
@@ -321,9 +232,10 @@ export function buildMorningBriefingPrompt(args: {
   const realization = buildCommunicationRealizationInstructions({
     recipientRole: 'operator',
     channel: 'proactive',
-    purpose: 'informational_update',
-    responseRequired: false,
-    decisionRequired: false,
+    purpose: oldestAgingHold ? 'approval_request' : 'informational_update',
+    responseRequired: Boolean(oldestAgingHold),
+    decisionRequired: Boolean(oldestAgingHold),
+    authorityRequirement: oldestAgingHold ? 'owner' : 'none',
     previouslyMentioned: true,
     changedSinceLastMention: true,
   })
@@ -358,7 +270,7 @@ export function buildMorningBriefingPrompt(args: {
     `- If nothing needs them, close and stop. "Quiet one — I'll shout if anything lands." No manufactured offer, no invented errand, no question mark. A two-sentence briefing is a good briefing.`,
     `- Never invent work for ${operator} so the message looks interactive.`,
     oldestAgingHold
-      ? `- ${oldestAgingHold.customer} has been waiting ${oldestAgingHold.daysHeld} days. Surface that fact compactly, but do not manufacture an offer or question. Ask only if a real owner-only decision is required.`
+      ? `- Today is the exception to the above: ${oldestAgingHold.customer} has been waiting ${oldestAgingHold.daysHeld} days, so offer to take a first pass - "Want me to take a first pass?" Just the offer; never act on it without a yes.`
       : null,
     '',
     "DON'T CONTRADICT WHAT YOU ALREADY TOLD THEM",
