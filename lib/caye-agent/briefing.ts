@@ -5,7 +5,7 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { loadAttentionDelta, renderAttentionContext } from '@/lib/owner-attention'
 import { syncOwnerAttention } from '@/lib/owner-attention-sync'
 import { runToolLoop } from './execute'
-import { buildHumanCommunicationRealizationInstructions } from '../human-communication-realization'
+import { buildCommunicationRealizationInstructions } from '../communication-realization'
 
 const MODEL = 'claude-sonnet-4-6'
 const MAX_OUTPUT_TOKENS = 600
@@ -27,12 +27,14 @@ export function buildEodSummaryPrompt(args: {
   attentionContext: string
 }): string {
   const { operator, business, attentionContext } = args
-  const realization = buildHumanCommunicationRealizationInstructions({
-    recipientRole: 'operator', channel: 'whatsapp', purpose: 'informational_update',
-    responseRequired: false, approvalRequired: false, authorityHolder: 'operator',
-    urgency: 'routine', materialUncertainty: false, issuePreviouslyMentioned: true,
-    anythingChanged: true, priorConversationalContext: true, sharedContext: 'high',
-    structuredOutputRequested: false, shortOperatorInput: false,
+  const realization = buildCommunicationRealizationInstructions({
+    recipientRole: 'operator',
+    channel: 'proactive',
+    purpose: 'informational_update',
+    responseRequired: false,
+    decisionRequired: false,
+    previouslyMentioned: true,
+    changedSinceLastMention: true,
   })
 
   return [
@@ -316,12 +318,14 @@ export function buildMorningBriefingPrompt(args: {
 }): string {
   const { operator, business, attentionContext } = args
   const oldestAgingHold = args.oldestAgingHold ?? null
-  const realization = buildHumanCommunicationRealizationInstructions({
-    recipientRole: 'operator', channel: 'whatsapp', purpose: 'briefing',
-    responseRequired: false, approvalRequired: false, authorityHolder: 'operator',
-    urgency: 'routine', materialUncertainty: false, issuePreviouslyMentioned: true,
-    anythingChanged: true, priorConversationalContext: true, sharedContext: 'high',
-    structuredOutputRequested: false, shortOperatorInput: false,
+  const realization = buildCommunicationRealizationInstructions({
+    recipientRole: 'operator',
+    channel: 'proactive',
+    purpose: 'informational_update',
+    responseRequired: false,
+    decisionRequired: false,
+    previouslyMentioned: true,
+    changedSinceLastMention: true,
   })
 
   return [

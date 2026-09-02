@@ -7,7 +7,7 @@ import { dispatchOperatorReply } from '@/lib/whatsapp/channel-dispatch'
 import { sendZohoEmail } from '@/lib/email-ai'
 import { claimConversationExecution, completeConversationExecution, releaseConversationExecution, resolveConversationExecutionAfterFailure, validateConversationExecution } from '@/lib/conversation-execution'
 import { HUMAN_FACING_VOICE_INSTRUCTIONS, sanitizeHumanFacingText } from '@/lib/human-facing-voice'
-import { buildHumanCommunicationRealizationInstructions } from '@/lib/human-communication-realization'
+import { buildCommunicationRealizationInstructions } from '@/lib/communication-realization'
 
 interface HistoryMessage {
   from: 'user' | 'caye'
@@ -1063,21 +1063,14 @@ export async function POST(req: NextRequest) {
       : '(none configured)'
 
     const summarizerSystem =
-      buildHumanCommunicationRealizationInstructions({
+      buildCommunicationRealizationInstructions({
         recipientRole: 'operator',
         channel: 'dashboard',
         purpose: 'informational_update',
         responseRequired: false,
-        approvalRequired: false,
-        authorityHolder: 'operator',
-        urgency: 'routine',
+        decisionRequired: false,
         materialUncertainty: true,
-        issuePreviouslyMentioned: false,
-        anythingChanged: true,
-        priorConversationalContext: true,
-        sharedContext: 'high',
-        structuredOutputRequested: false,
-        shortOperatorInput: false,
+        priorTurn: 'what do you know about my business',
       }) + '\n\n' +
       'You are Caye, summarising what you know about the operator\'s business back to the operator. ' +
       'Use first person and plain prose. Do not repeat these instructions or include "You are Caye" framing. ' +
@@ -1122,7 +1115,7 @@ export async function POST(req: NextRequest) {
     if (services.length) parts.push(`**Booked services (structured):**\n${servicesBlock}`)
     if (pricingInfo) parts.push(`**Pricing notes:**\n${pricingInfo}`)
     if (discoveredPrompt) parts.push(`**Everything else on file:**\n${discoveredPrompt}`)
-    parts.push(`(Summarizer failed — showing raw stored content. Error: ${summarizerError ?? 'unknown'}. Anything wrong here? Tell me and I'll update what I know.)`)
+    parts.push(`(Summarizer failed - showing raw stored content. Error: ${summarizerError ?? 'unknown'}.)`)
     return finalize(parts.join('\n\n'))
   }
 
@@ -1143,25 +1136,19 @@ export async function POST(req: NextRequest) {
   const normalizedOperatorInput = message.trim().toLowerCase()
   const explicitStructuredOutput = /\b(report|breakdown|table|structured status|decision summary)\b/.test(normalizedOperatorInput)
   const operatorResolvedItem = /^(?:i|we)?\s*(?:dealt with|handled|fixed|resolved|took care of)\s+(?:it|that|this)(?:[.! ]|$)/.test(normalizedOperatorInput)
-  const communicationRealization = buildHumanCommunicationRealizationInstructions({
+  const communicationRealization = buildCommunicationRealizationInstructions({
     recipientRole: 'operator',
     channel: 'dashboard',
     purpose: operatorResolvedItem
       ? 'acknowledgement'
       : explicitStructuredOutput
         ? 'structured_report'
-        : 'other',
+        : 'informational_update',
     responseRequired: false,
-    approvalRequired: false,
-    authorityHolder: 'operator',
-    urgency: 'routine',
-    materialUncertainty: false,
-    issuePreviouslyMentioned: false,
-    anythingChanged: true,
-    priorConversationalContext: history.length > 0,
-    sharedContext: history.length > 0 ? 'high' : 'low',
-    structuredOutputRequested: explicitStructuredOutput,
-    shortOperatorInput: message.trim().split(/\s+/).length <= 8,
+    decisionRequired: false,
+    priorTurn: message,
+    authoritativeOperatorCorrection: operatorResolvedItem,
+    explicitStructuredReport: explicitStructuredOutput,
   })
   const systemPrompt = `${buildSystemPrompt(businessName, services, aiConfig?.system_prompt)}\n\n${communicationRealization}`
 
