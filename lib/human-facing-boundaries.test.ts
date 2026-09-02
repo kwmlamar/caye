@@ -5,6 +5,8 @@ function source(path: string): string {
   return readFileSync(path, 'utf8')
 }
 
+// These checks intentionally read the real delivery seams so a future refactor
+// cannot leave the sanitizer well-tested but disconnected from runtime output.
 describe('human-facing presentation boundaries', () => {
   it('sanitizes dashboard replies before persistence and JSON return', () => {
     const route = source('app/api/caye/chat/route.ts')
