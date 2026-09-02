@@ -1,0 +1,73 @@
+validated_head=4a39f66c064d5a4e3a10f3421494021c5c169e78
+reviewed_head=9c2f746eb0406e3f586aa18cacad0a3fc38b2c98
+main_head=a45145c53225244a9be29eead3c1fa2e29c50885
+change_source_review_exit=0
+bedrock_adapter_exit=0
+domain_events_exit=0
+po_e2e_exit=0
+review_fixes_migration_exit=0
+perception_catchup_exit=0
+migration_contract_exit=0
+tsc_exit=2
+--- tsc tail ---
+app/api/caye/outreach-autosend-scan/route.test.ts(110,75): error TS2353: Object literal may only specify known properties, and 'messageId' does not exist in type '{ success: boolean; channelType: string; }'.
+lib/caye-employee-eval/evaluator.test.ts(16,22): error TS7053: Element implicitly has an 'any' type because expression of type 'string' can't be used to index type 'Readonly<{ readonly 'ods-construction-end-to-end-v1': readonly EmployeeEvalEvent[]; readonly 'bimini-island-tours-end-to-end-v1': readonly EmployeeEvalEvent[]; }>'.
+  No index signature with a parameter of type 'string' was found on type 'Readonly<{ readonly 'ods-construction-end-to-end-v1': readonly EmployeeEvalEvent[]; readonly 'bimini-island-tours-end-to-end-v1': readonly EmployeeEvalEvent[]; }>'.
+lib/caye-employee-eval/evaluator.test.ts(18,26): error TS7006: Parameter 'e' implicitly has an 'any' type.
+lib/caye-employee-eval/evaluator.test.ts(19,33): error TS7006: Parameter 'e' implicitly has an 'any' type.
+lib/job-search/execution/providers/greenhouse-browser.test.ts(92,37): error TS2345: Argument of type '{ count: Mock<() => Promise<number>>; fill: Mock<Procedure>; selectOption: Mock<Procedure>; getAttribute: Mock<() => Promise<string>>; click: Mock<...>; first(): ...; }' is not assignable to parameter of type '{ count: Mock<() => Promise<number>>; fill: Mock<Procedure>; selectOption: Mock<Procedure>; setInputFiles: Mock<Procedure>; getAttribute: Mock<...>; click: Mock<...>; first(): ...; }'.
+  Property 'setInputFiles' is missing in type '{ count: Mock<() => Promise<number>>; fill: Mock<Procedure>; selectOption: Mock<Procedure>; getAttribute: Mock<() => Promise<string>>; click: Mock<...>; first(): ...; }' but required in type '{ count: Mock<() => Promise<number>>; fill: Mock<Procedure>; selectOption: Mock<Procedure>; setInputFiles: Mock<Procedure>; getAttribute: Mock<...>; click: Mock<...>; first(): ...; }'.
+lib/job-search/execution/providers/greenhouse-browser.test.ts(117,37): error TS2345: Argument of type '{ count: Mock<() => Promise<number>>; fill: Mock<Procedure>; selectOption: Mock<Procedure>; getAttribute: Mock<() => Promise<string>>; click: Mock<...>; first(): ...; }' is not assignable to parameter of type '{ count: Mock<() => Promise<number>>; fill: Mock<Procedure>; selectOption: Mock<Procedure>; setInputFiles: Mock<Procedure>; getAttribute: Mock<...>; click: Mock<...>; first(): ...; }'.
+  Property 'setInputFiles' is missing in type '{ count: Mock<() => Promise<number>>; fill: Mock<Procedure>; selectOption: Mock<Procedure>; getAttribute: Mock<() => Promise<string>>; click: Mock<...>; first(): ...; }' but required in type '{ count: Mock<() => Promise<number>>; fill: Mock<Procedure>; selectOption: Mock<Procedure>; setInputFiles: Mock<Procedure>; getAttribute: Mock<...>; click: Mock<...>; first(): ...; }'.
+lib/recommendations/autonomous-worker.test.ts(70,34): error TS2493: Tuple type '[]' of length '0' has no element at index '0'.
+lib/recommendations/autonomous-worker.test.ts(140,30): error TS2322: Type 'Mock<() => Promise<{ recommendationVersion: string; latestDecisionId: string; latestDecision: string; executionState: null; }>>' is not assignable to type '((recommendationId: string, workspaceId: string) => Promise<RecommendationOperationInspection | null>) | undefined'.
+  Type 'Mock<() => Promise<{ recommendationVersion: string; latestDecisionId: string; latestDecision: string; executionState: null; }>>' is not assignable to type '(recommendationId: string, workspaceId: string) => Promise<RecommendationOperationInspection | null>'.
+    Type 'Promise<{ recommendationVersion: string; latestDecisionId: string; latestDecision: string; executionState: null; }>' is not assignable to type 'Promise<RecommendationOperationInspection | null>'.
+      Type '{ recommendationVersion: string; latestDecisionId: string; latestDecision: string; executionState: null; }' is not assignable to type 'RecommendationOperationInspection'.
+        Types of property 'latestDecision' are incompatible.
+          Type 'string' is not assignable to type '"pending" | "cancelled" | "rejected" | "deferred" | "accepted" | null'.
+lib/recommendations/autonomous-worker.test.ts(164,7): error TS2322: Type 'Mock<() => Promise<{ recommendationVersion: string; latestDecisionId: string; latestDecision: string; executionState: string; }>>' is not assignable to type '((recommendationId: string, workspaceId: string) => Promise<RecommendationOperationInspection | null>) | undefined'.
+  Type 'Mock<() => Promise<{ recommendationVersion: string; latestDecisionId: string; latestDecision: string; executionState: string; }>>' is not assignable to type '(recommendationId: string, workspaceId: string) => Promise<RecommendationOperationInspection | null>'.
+    Type 'Promise<{ recommendationVersion: string; latestDecisionId: string; latestDecision: string; executionState: string; }>' is not assignable to type 'Promise<RecommendationOperationInspection | null>'.
+      Type '{ recommendationVersion: string; latestDecisionId: string; latestDecision: string; executionState: string; }' is not assignable to type 'RecommendationOperationInspection'.
+        Types of property 'latestDecision' are incompatible.
+          Type 'string' is not assignable to type '"pending" | "cancelled" | "rejected" | "deferred" | "accepted" | null'.
+lib/whatsapp/actions/edit.test.ts(27,74): error TS2556: A spread argument must either have a tuple type or be passed to a rest parameter.
+lib/whatsapp/actions/edit.test.ts(80,12): error TS18046: 'staged.metadata' is of type 'unknown'.
+lib/whatsapp/actions/edit.test.ts(99,19): error TS2571: Object is of type 'unknown'.
+lib/whatsapp/actions/edit.test.ts(100,20): error TS2571: Object is of type 'unknown'.
+lib/whatsapp/actions/edit.test.ts(117,12): error TS18046: 'staged.metadata' is of type 'unknown'.
+lib/whatsapp/actions/edit.test.ts(137,12): error TS18046: 'staged.metadata' is of type 'unknown'.
+--- end tsc tail ---
+tsc_error_lines=15
+build_exit=0
+full_current_exit=1
+full_current_total_tests=4655
+full_current_passed_tests=4518
+full_current_failed_tests=96
+full_current_pending_tests=41
+full_current_total_suites=1466
+full_current_passed_suites=1388
+full_current_failed_suites=78
+full_reviewed_exit=1
+full_reviewed_total_tests=4638
+full_reviewed_passed_tests=4500
+full_reviewed_failed_tests=97
+full_reviewed_pending_tests=41
+full_reviewed_total_suites=1457
+full_reviewed_passed_suites=1377
+full_reviewed_failed_suites=80
+full_main_exit=1
+full_main_total_tests=4548
+full_main_passed_tests=4410
+full_main_failed_tests=97
+full_main_pending_tests=41
+full_main_total_suites=1436
+full_main_passed_suites=1356
+full_main_failed_suites=80
+--- current full failure tail ---
+JSON report written to /tmp/full-current.json
+--- reviewed full failure tail ---
+JSON report written to /tmp/full-reviewed.json
+--- main full failure tail ---
+JSON report written to /tmp/full-main.json
