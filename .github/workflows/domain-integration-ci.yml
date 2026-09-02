@@ -1,0 +1,39 @@
+name: Domain integration
+
+on:
+  pull_request:
+    paths:
+      - 'lib/domain-adapters/**'
+      - 'lib/domain-events/**'
+      - 'lib/domain-integration/**'
+      - 'lib/perception/**'
+      - 'lib/caye-agent/workspace-feed.ts'
+      - 'supabase/migrations/20260901_domain_event_projection_bridge.sql'
+      - 'supabase/migrations/20260902000000_domain_change_source_snapshots.sql'
+      - 'supabase/migrations/20260902043000_domain_integration_review_fixes.sql'
+      - 'supabase/tests/domain-event-migration-contract.test.ts'
+      - 'vitest.config.ts'
+      - '.github/workflows/domain-integration-ci.yml'
+  push:
+    branches:
+      - integration/business-domain-bedrock-v1
+
+jobs:
+  domain-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Domain adapter, bridge, integration, perception, and migration tests
+        run: >-
+          npx vitest run
+          lib/domain-adapters/
+          lib/domain-events/
+          lib/domain-integration/
+          lib/perception/domain-observation-catchup.test.ts
+          supabase/tests/domain-event-migration-contract.test.ts
