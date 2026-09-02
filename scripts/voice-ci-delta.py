@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Compare full-test and TypeScript failures on origin/main vs the PR checkout.
 
-The classifier is intentionally conservative. A candidate failure is BASELINE only
-when the same normalized signature is observed from the same command on main.
+A candidate failure is BASELINE only when the same normalized semantic signature
+is observed from the same command on main. TypeScript source coordinates are
+reported in the raw command output but deliberately excluded from the comparison
+key because unrelated edits move line numbers without creating a new diagnostic.
 Anything candidate-only, or any non-zero command with no extractable signature,
 is a PR_REGRESSION and fails the gate.
 """
@@ -18,9 +20,8 @@ from pathlib import Path
 
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 TEST_PREFIX = re.compile(r"^\s*(?:FAIL\s+|❯\s+|×\s+)")
-TS_ERROR = re.compile(r"(?:^|\s)([^\n]*?\([^\n]*?\):\s*error\s+TS\d+:.*)$")
 LOAD_ERROR = re.compile(r"(?:Error:\s+Failed to load url .*|Failed to load url .*)")
-TEST_SUMMARY_FAIL = re.compile(r"^\s*Test Files\s+.*failed", re.I)
+TS_LOCATION = re.compile(r"^(.*?\.tsx?)\(\d+,\d+\)(:\s*error\s+TS\d+:.*)$")
 
 
 @dataclass
@@ -35,8 +36,7 @@ class Result:
 def normalize(line: str, roots: list[Path]) -> str:
     line = ANSI.sub('', line).strip()
     for root in roots:
-        root_s = str(root.resolve())
-        line = line.replace(root_s, '<repo>')
+        line = line.replace(str(root.resolve()), '<repo>')
     line = re.sub(r"/home/runner/work/caye/caye", "<repo>", line)
     line = re.sub(r"\\", "/", line)
     line = re.sub(r"\s+", " ", line)
@@ -57,10 +57,12 @@ def extract_test_signatures(output: str, roots: list[Path]) -> set[str]:
 def extract_tsc_signatures(output: str, roots: list[Path]) -> set[str]:
     signatures: set[str] = set()
     for raw in output.splitlines():
-        line = ANSI.sub('', raw)
-        if 'error TS' not in line:
+        if 'error TS' not in raw:
             continue
-        normalized = normalize(line, roots)
+        normalized = normalize(raw, roots)
+        match = TS_LOCATION.match(normalized)
+        if match:
+            normalized = f"{match.group(1)}{match.group(2)}"
         if normalized:
             signatures.add(normalized)
     return signatures
@@ -81,8 +83,6 @@ def run(label: str, cwd: Path, command: list[str], kind: str, roots: list[Path])
     extractor = extract_test_signatures if kind == 'test' else extract_tsc_signatures
     signatures = extractor(output, roots)
     if proc.returncode != 0 and not signatures:
-        # Do not silently bless an unparsed failure. The full normalized tail gives
-        # reviewers something concrete while forcing the candidate gate red.
         tail = [normalize(x, roots) for x in output.splitlines()[-25:] if normalize(x, roots)]
         signatures.add('UNCLASSIFIED_NONZERO: ' + ' | '.join(tail[-8:]))
     return Result(label, command, proc.returncode, output, signatures)
