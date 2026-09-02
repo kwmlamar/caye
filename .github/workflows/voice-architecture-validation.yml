@@ -10,6 +10,7 @@ on:
       - 'lib/human-facing-voice.test.ts'
       - 'lib/human-facing-email.ts'
       - 'lib/human-facing-email.test.ts'
+      - 'lib/human-facing-boundaries.test.ts'
       - 'lib/sanitize-dashes.ts'
       - 'lib/sanitize-dashes.test.ts'
       - 'lib/email-ai.ts'
@@ -28,7 +29,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Focused voice tests
-        run: npx vitest run lib/human-facing-voice.test.ts lib/human-facing-email.test.ts lib/sanitize-dashes.test.ts
+        run: npx vitest run lib/human-facing-voice.test.ts lib/human-facing-email.test.ts lib/human-facing-boundaries.test.ts lib/sanitize-dashes.test.ts
       - name: Full test suite
         run: npm test -- --run
       - name: Typecheck
