@@ -16,6 +16,7 @@ import { channelLabel } from './channel-meta'
 import ConversationRow from './ConversationRow'
 import CayeHandoff from './CayeHandoff'
 import Message, { type ThreadMessage } from './Message'
+import { FreightWorkflowCard } from './FreightWorkflowCard'
 
 // Channels /api/messages/send doesn't dispatch for yet — matches its
 // switch statement's default 422 case (lib SMS send never got wired to
@@ -622,6 +623,10 @@ export default function CommandConversations({ workspaceId, selectedConversation
                 </div>
               )}
             </div>
+
+            {activeSummary.channel_type === 'email' && (
+              <FreightWorkflowCard workspaceId={workspaceId} conversationId={activeSummary.id} onPrepared={(reply) => { setReplyText(reply); setDraftSource('caye') }} />
+            )}
 
             {!SEND_UNSUPPORTED.has(activeSummary.channel_type) && (
               <div style={{ padding: '12px 18px 16px', flexShrink: 0 }}>
