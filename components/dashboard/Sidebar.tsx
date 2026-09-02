@@ -451,7 +451,7 @@ export default function Sidebar({ workspaceId }: SidebarProps) {
   const pathname = usePathname()
   const router = useRouter()
   const { setPanelOpen, sidebarExpanded, setSidebarExpanded } = useDashboard()
-  const { workspace, workspaces, isFounder } = useWorkspace()
+  const { workspace, workspaces, isOwner, isFounder } = useWorkspace()
   const [switcherOpen, setSwitcherOpen] = useState(false)
   const userButtonRef = useRef<HTMLButtonElement>(null)
   
@@ -775,6 +775,12 @@ export default function Sidebar({ workspaceId }: SidebarProps) {
 
         {/* Settings Link at the very bottom */}
         <div className="sb-settings-container">
+          {isOwner && !isFounder && (
+            <Link href={`/dashboard/${workspaceId}?freightReview=1`} className="sb-item" title="Freight review">
+              <span className="sb-icon"><NavIcon name="check" size={18} /></span>
+              <span className="sb-label">Freight review</span>
+            </Link>
+          )}
           <Link
             href={`/dashboard/${workspaceId}/settings`}
             className={'sb-item' + (isSettings ? ' active' : '')}

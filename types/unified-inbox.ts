@@ -1,4 +1,4 @@
-export type ChannelType = 'whatsapp' | 'instagram' | 'messenger' | 'email' | 'sms'
+export type ChannelType = 'whatsapp' | 'instagram' | 'messenger' | 'email' | 'gmail' | 'sms'
 export type SenderType = 'customer' | 'business'
 export type MessageContentType =
   | 'text' | 'image' | 'video' | 'audio' | 'file'
