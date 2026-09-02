@@ -57,6 +57,49 @@ describe('normalizeRequestForModel', () => {
     expect(result.value.params.tools?.map((t) => t.name)).toContain('find_unresolved_customer_issues')
   })
 
+  it('keeps the operator ask relevant after multiple tool-result rounds', () => {
+    const spec = { ...MODELS.openai_strong, maxTools: 1 }
+    const request = {
+      ...params(
+        [tool('generic_first'), tool('confirm_pending_action', 'Confirm a pending action for the operator')],
+        'Confirm the pending action for the ODS quote'
+      ),
+      messages: [
+        { role: 'user' as const, content: 'Confirm the pending action for the ODS quote' },
+        {
+          role: 'assistant' as const,
+          content: [{ type: 'tool_use' as const, id: 'a', name: 'historical_lookup_a', input: {} }],
+        },
+        {
+          role: 'user' as const,
+          content: [{ type: 'tool_result' as const, tool_use_id: 'a', content: 'calendar availability Tuesday' }],
+        },
+        {
+          role: 'assistant' as const,
+          content: [{ type: 'tool_use' as const, id: 'b', name: 'historical_lookup_b', input: {} }],
+        },
+        {
+          role: 'user' as const,
+          content: [{ type: 'tool_result' as const, tool_use_id: 'b', content: 'revenue totals and booking counts' }],
+        },
+        {
+          role: 'assistant' as const,
+          content: [{ type: 'tool_use' as const, id: 'c', name: 'historical_lookup_c', input: {} }],
+        },
+        {
+          role: 'user' as const,
+          content: [{ type: 'tool_result' as const, tool_use_id: 'c', content: 'customer phone and email details' }],
+        },
+      ],
+    }
+
+    const result = normalizeRequestForModel(spec, request as never)
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.value.params.tools?.map((t) => t.name)).toEqual(['confirm_pending_action'])
+  })
+
   it('never prunes an explicitly forced tool', () => {
     const spec = { ...MODELS.openai_strong, maxTools: 1 }
     const request = {
