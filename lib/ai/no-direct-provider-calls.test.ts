@@ -25,10 +25,19 @@ const ROOTS = ['app', 'lib', 'components', 'scripts']
 const ADAPTER_ALLOWLIST = [
   'lib/ai/providers/anthropic.ts',
   'lib/ai/providers/openai-compatible.ts',
+  'lib/ai/providers/openai-audio.ts',
+  'lib/ai/providers/routine-openai-compatible.ts',
   'lib/research/anthropic.ts',
   'lib/research/providers/anthropic.ts',
   'lib/research/providers/openai.ts',
   'lib/research/providers/openrouter.ts',
+]
+
+/** Non-chat audio transports are separate from LLM generation and mint scoped
+ * media credentials only. Keep their provider protocol isolated and explicit. */
+const MEDIA_TRANSPORT_ALLOWLIST = [
+  'lib/caye-voice/native-realtime.ts',
+  'lib/caye-voice/providers.ts',
 ]
 
 function walk(dir: string, out: string[] = []): string[] {
@@ -87,6 +96,30 @@ describe('no direct provider coupling outside adapters', () => {
     ).map((f) => f.path)
 
     expect(offenders).toEqual([])
+  })
+
+  it('keeps raw OpenAI/OpenRouter HTTP endpoints inside exact provider adapters', () => {
+    const allowed = [...ADAPTER_ALLOWLIST, ...MEDIA_TRANSPORT_ALLOWLIST]
+    const offenders = FILES.filter(
+      (f) => /https:\/\/(?:api\.openai\.com|openrouter\.ai\/api)|\/(?:chat\/completions|responses)\b/.test(f.text)
+        && !allowed.includes(f.path)
+    ).map((f) => f.path)
+
+    expect(offenders, 'call the Caye AI gateway instead of a provider HTTP endpoint').toEqual([])
+  })
+
+  it('reads OpenAI/OpenRouter credentials only at an approved adapter boundary', () => {
+    const allowed = [
+      ...ADAPTER_ALLOWLIST,
+      ...MEDIA_TRANSPORT_ALLOWLIST,
+      'lib/ai/models.ts',
+      'lib/model-router/backends/openai-compatible.ts',
+    ]
+    const offenders = FILES.filter(
+      (f) => /process\.env\.(OPENAI_API_KEY|OPENROUTER_API_KEY)/.test(f.text) && !allowed.includes(f.path)
+    ).map((f) => f.path)
+
+    expect(offenders, 'provider credentials belong to the Caye AI gateway or an approved media adapter').toEqual([])
   })
 })
 

@@ -53,9 +53,21 @@ export async function generate({ params, ctx, signal }: GenerateArgs): Promise<A
   const [health, settings] = await Promise.all([loadProviderHealth(), loadProviderSettings()])
   const order = providerPriorityOverride() ?? priorityOrder(settings)
   const pinned = ctx.pinProvider
-  const route = applyProviderPriority(routeForTask(task), order).filter(
+  const configuredRoute = applyProviderPriority(routeForTask(task), order).filter(
     (key) => !pinned || MODELS[key as ModelKey].provider === pinned
   )
+  // A provider-pinned surface is an explicit operator choice (for example,
+  // Caye Direct's provider picker). Keep its configured gateway-catalogue
+  // model first; ordinary callers remain route-controlled and cannot pin a
+  // provider or model through params.model.
+  const requestedPinnedModel = pinned
+    ? (Object.keys(MODELS) as ModelKey[]).find(
+        (key) => MODELS[key].provider === pinned && MODELS[key].id === params.model
+      )
+    : undefined
+  const route = requestedPinnedModel
+    ? [requestedPinnedModel, ...configuredRoute.filter((key) => key !== requestedPinnedModel)]
+    : configuredRoute
 
   let lastError: AIProviderError | undefined
 

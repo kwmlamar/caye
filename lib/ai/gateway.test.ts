@@ -160,6 +160,18 @@ describe('routing', () => {
     )
   })
 
+  it('keeps an explicitly selected catalogue model first for a provider-pinned surface', async () => {
+    const openai = new FakeProvider('openai')
+    install({ openai })
+
+    await generate({
+      params: { ...params, model: 'gpt-5-mini' },
+      ctx: { ...ctx, task: 'agent_planning', pinProvider: 'openai' },
+    })
+
+    expect(openai.calls[0]?.model).toBe('gpt-5-mini')
+  })
+
   it('routes cheap tasks to the cheap tier', async () => {
     const anthropic = new FakeProvider('anthropic')
     install({ anthropic })
