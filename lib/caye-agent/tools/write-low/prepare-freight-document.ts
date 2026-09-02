@@ -2,7 +2,7 @@ import 'server-only'
 import { FreightOperationError, generateFreightDocument, getGeneratedFreightArtifact, loadFreightConversation } from '@/lib/freight/server-operations'
 import { freightOwnerSummary } from '@/lib/freight/whatsapp-orchestration'
 import { gateHighRisk } from '../high-risk-gate'
-import { sendFreightDocumentTool } from '../write-high/send-freight-document'
+import { sendFreightDocumentTool, type SendFreightDocumentToolInput } from '../write-high/send-freight-document'
 import type { Tool } from '../types'
 
 interface Input {
@@ -36,16 +36,22 @@ export const prepareFreightDocument: Tool<Input> = {
         evidenceId: args.evidence_id,
       })
       const artifact = await getGeneratedFreightArtifact(ctx.workspaceId, args.conversation_id)
+      const recipient = record.request.senderEmail || conv.customer_id
+      const sendBinding: SendFreightDocumentToolInput = {
+        conversation_id: args.conversation_id,
+        artifact_id: artifact.artifact.id,
+        artifact_version: artifact.artifactVersion,
+        recipient,
+        email_thread_id: conv.channel_conversation_id,
+      }
 
-      // Preparing is reversible and autonomous, but sending is not. Stage the
-      // exact constrained send now, under THIS request id, without executing
-      // it. If the owner replies "send it" on the next WhatsApp turn, the
-      // normal high-risk gate sees the same tool+args from a DIFFERENT human
-      // request and may execute exactly once. This is how the explicit owner
-      // approval turn maps to one send instead of asking for a redundant
-      // second "yes" after "send it".
+      // Prepare is autonomous. Send is not. Stage the exact artifact/version/
+      // recipient/thread under THIS request id without executing it. The next
+      // human turn ("send it") can only execute if it supplies the identical
+      // binding; a regenerated artifact or changed target no longer matches
+      // the staged action and therefore cannot inherit the old approval.
       if ((ctx.callerRole === 'owner' || ctx.callerRole === 'founder') && ctx.operatorId != null) {
-        await gateHighRisk(sendFreightDocumentTool).execute({ conversation_id: args.conversation_id }, ctx)
+        await gateHighRisk(sendFreightDocumentTool).execute(sendBinding, ctx)
       }
 
       return {
@@ -53,12 +59,15 @@ export const prepareFreightDocument: Tool<Input> = {
         data: {
           prepared: true,
           conversation_id: args.conversation_id,
-          generated_artifact_id: record.generatedArtifactId,
+          generated_artifact_id: artifact.artifact.id,
+          artifact_version: artifact.artifactVersion,
+          recipient,
+          email_thread_id: conv.channel_conversation_id,
           review_url: artifact.url,
           summary: freightOwnerSummary({
             workflow: record,
             providerLabel: record.request.freightProvider || conv.customer_name || 'Freight provider',
-            recipient: record.request.senderEmail || conv.customer_id,
+            recipient,
             emailThreadId: conv.channel_conversation_id,
             artifactVersion: artifact.artifactVersion,
           }),
