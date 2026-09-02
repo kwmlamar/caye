@@ -60,16 +60,25 @@ jobs:
         run: node scripts/caye-employee-eval-pr-scope.mjs
 
       - name: Run frozen Employee Eval v1 against exact candidate implementation
+        if: github.event_name != 'pull_request' || steps.scope.outputs.requires_eval == 'true'
         env:
           CAYE_EMPLOYEE_CODE_REVISION: ${{ steps.revision.outputs.sha }}
           CAYE_EMPLOYEE_EVAL_RUNTIME: '1'
         run: npx vitest run lib/caye-employee-eval/candidate-runner.test.ts --reporter=verbose
 
       - name: Compare candidate score against frozen v1 baseline
+        if: github.event_name != 'pull_request' || steps.scope.outputs.requires_eval == 'true'
         run: npm run caye:employee:eval -- --candidate=lib/caye-employee-eval/__output__/candidate-report.json
 
+      - name: Note Employee Eval skipped (PR out of scope)
+        if: github.event_name == 'pull_request' && steps.scope.outputs.requires_eval != 'true'
+        run: |
+          echo "## Caye Employee Eval Comparison" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Skipped: this PR only touches evaluator infrastructure, CI, documentation, or test-only files (see PR scope step above)." >> "$GITHUB_STEP_SUMMARY"
+
       - name: Report score delta and hard-failure changes
-        if: always()
+        if: always() && (github.event_name != 'pull_request' || steps.scope.outputs.requires_eval == 'true')
         run: |
           if [ -s lib/caye-employee-eval/__output__/candidate-comparison.md ]; then
             cat lib/caye-employee-eval/__output__/candidate-comparison.md >> "$GITHUB_STEP_SUMMARY"
