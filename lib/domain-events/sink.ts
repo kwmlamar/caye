@@ -1,6 +1,7 @@
 import 'server-only'
 
 import { createServiceClient } from '@/lib/supabase-server'
+import { asCapabilityFailure } from '@/lib/db/capability'
 import { toWorkspaceEventInsert } from './workspace-event'
 import type { DomainEventSink, DomainEventWriteResult, NormalizedDomainEvent } from './types'
 
@@ -44,7 +45,14 @@ export class SupabaseDomainEventSink implements DomainEventSink {
       p_payload: envelope.payload,
     })
 
-    if (error) throw new Error(`domain event ingestion failed: ${error.message}`)
+    if (error) {
+      // ingest_external_domain_event ships in 20260901_domain_event_projection_bridge,
+      // which is deliberately review-only and unapplied. This path has no cron or
+      // route reaching it today; when one is added before the migration lands, the
+      // failure should name the missing migration rather than read as an ingestion
+      // bug. Anything that is not a missing-object error still propagates as-is.
+      throw asCapabilityFailure('domain_event_projection', error)
+    }
     return readIngestResult(data)
   }
 }

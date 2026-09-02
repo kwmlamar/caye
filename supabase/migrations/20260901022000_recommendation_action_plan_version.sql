@@ -1,3 +1,12 @@
+-- 2026-09-02 correction (never applied anywhere): the fingerprint helpers below
+-- called bare digest(), which does not resolve under `set search_path = public`
+-- because pgcrypto is installed in the `extensions` schema. The SQL-language
+-- helpers failed at CREATE time, so this migration could not be applied at all.
+-- Qualified as extensions.digest(...) rather than widening search_path, which
+-- would broaden unqualified name resolution inside a SECURITY DEFINER body.
+-- Safe to correct in place: this version has never been recorded in any
+-- environment's ledger and none of its objects exist in production.
+
 -- Recommendation execution approvals must be invalidated when the structured
 -- action plan changes, even when the human-readable recommendation text does not.
 -- The plan itself remains advisory until deterministic runtime validation.
@@ -9,7 +18,7 @@ stable
 security definer
 set search_path = public
 as $$
-  select encode(digest(concat_ws('|',
+  select encode(extensions.digest(concat_ws('|',
     'caye-recommendation-decision-version-v2',
     r.fingerprint,
     r.recommendation,

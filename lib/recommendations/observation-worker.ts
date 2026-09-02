@@ -1,6 +1,7 @@
 import 'server-only'
 
 import { createServiceClient } from '@/lib/supabase-server'
+import { asCapabilityFailure } from '@/lib/db/capability'
 import type { DurableOutcomeEvidence } from './outcomes'
 import { recordRecommendationObservation } from './observations'
 
@@ -245,7 +246,10 @@ export async function runNextRecommendationOutcomeObservation(workerId: string) 
     p_worker: workerId,
     p_now: now,
   })
-  if (claimedResult.error) throw claimedResult.error
+  // The claim RPC ships in 20260901021500_recommendation_outcome_observations,
+  // unapplied as of 2026-09-02, so every research-worker tick since this shipped
+  // has failed here. Name the gap instead of surfacing a bare PostgREST error.
+  if (claimedResult.error) throw asCapabilityFailure('recommendation_outcome_observation', claimedResult.error)
   const observation = claimedResult.data as ClaimedObservation | null
   if (!observation?.id) return { status: 'idle' as const }
 
