@@ -42,6 +42,8 @@ export {
 export { providerAdapter, allProviderAdapters, setProviderAdapters } from './providers'
 export { usageFromResponse } from './telemetry'
 export { validateAiConfiguration, type AiConfigValidation } from './config-validation'
+export { createAnthropicResearchAdapter, createOpenAiResearchProvider, createOpenRouterResearchAdapter } from './research'
+export { generateRoutine } from './routine'
 
 import { generate } from './gateway'
 

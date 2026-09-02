@@ -1,39 +1,47 @@
-import { describe, expect, it } from 'vitest'
-import { outputTokenLimit, toOpenAiMessages } from './openai-compatible'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-describe('OpenAI-compatible request adapter', () => {
-  it('uses max_completion_tokens for native OpenAI reasoning models', () => {
-    expect(outputTokenLimit('openai', 8192)).toEqual({ max_completion_tokens: 8192 })
-  })
+vi.mock('server-only', () => ({}))
 
-  it('keeps max_tokens for OpenRouter compatibility', () => {
-    expect(outputTokenLimit('openrouter', 4096)).toEqual({ max_tokens: 4096 })
+const { loggedMessagesCreate, providerAdapter } = vi.hoisted(() => ({
+  loggedMessagesCreate: vi.fn(),
+  providerAdapter: vi.fn(),
+}))
+
+vi.mock('@/lib/llm-telemetry', () => ({ loggedMessagesCreate }))
+vi.mock('@/lib/ai/providers', () => ({ providerAdapter }))
+
+import { OpenAIApiBackend } from './openai-compatible'
+import type { Tool } from '@/lib/caye-agent/tools/types'
+
+const tool: Tool<never> = {
+  name: 'test_tool', description: 'Test tool', inputSchema: { type: 'object', properties: {} },
+  risk: 'read', roles: ['founder'], modes: ['back-office'], execute: async () => ({ ok: true }),
+}
+
+beforeEach(() => {
+  providerAdapter.mockReturnValue({ hasCredentials: () => true })
+  loggedMessagesCreate.mockReset()
+  loggedMessagesCreate.mockResolvedValue({
+    content: [{ type: 'text', text: 'done', citations: null }], model: 'gpt-5-mini', usage: { input_tokens: 10, output_tokens: 2 },
   })
 })
 
-describe('OpenAI-compatible history adapter', () => {
-  it('preserves assistant tool calls and matching tool results', () => {
-    const messages = toOpenAiMessages([
-      {
-        role: 'assistant',
-        content: [
-          { type: 'text', text: 'Checking.', citations: null },
-          { type: 'tool_use', id: 'call_1', name: 'list_active_goals', input: { limit: 3 }, caller: { type: 'direct' } },
-        ],
-      } as any,
-      {
-        role: 'user',
-        content: [
-          { type: 'tool_result', tool_use_id: 'call_1', content: '{"ok":true}' },
-        ],
-      } as any,
-    ])
+describe('OpenAI-compatible Caye Direct backend', () => {
+  it('delegates a tool turn to the canonical gateway in Caye canonical format', async () => {
+    const backend = new OpenAIApiBackend()
+    await backend.invokeTurn({
+      ctx: { founderUserId: 'founder', threadId: 'thread', workspaceId: 'workspace' },
+      system: 'system', messages: [{ role: 'user', content: 'hello' }], tools: [tool], maxOutputTokens: 128,
+    }, new AbortController().signal)
 
-    expect(messages[0]).toMatchObject({
-      role: 'assistant',
-      content: 'Checking.',
-      tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'list_active_goals' } }],
-    })
-    expect(messages[1]).toEqual({ role: 'tool', tool_call_id: 'call_1', content: '{"ok":true}' })
+    expect(loggedMessagesCreate).toHaveBeenCalledWith(null, expect.objectContaining({
+      system: 'system', messages: [{ role: 'user', content: 'hello' }], tools: [expect.objectContaining({ name: 'test_tool' })],
+    }), expect.objectContaining({ pinProvider: 'openai', task: 'agent_planning', workspaceId: 'workspace' }), expect.anything())
+  })
+
+  it('uses gateway-owned credentials for health checks', async () => {
+    const backend = new OpenAIApiBackend()
+    await expect(backend.checkHealth()).resolves.toMatchObject({ state: 'available' })
+    expect(providerAdapter).toHaveBeenCalledWith('openai')
   })
 })

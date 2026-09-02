@@ -1,4 +1,5 @@
 import type Anthropic from '@anthropic-ai/sdk'
+import { generate } from '@/lib/ai/gateway'
 
 /**
  * model-double.ts
@@ -51,7 +52,7 @@ export const modelDouble: ModelDoubleController = {
 
 /**
  * The live-mode counterpart to `scriptedRounds`: makes a genuine call
- * against the real Anthropic SDK. Used ONLY by `replay/cli-runner.test.ts`
+ * through the canonical Caye AI gateway. Used ONLY by `replay/cli-runner.test.ts`
  * when a replay trace has no hand-written script — i.e. only by the
  * manually-invoked replay CLI, never by `npm test`'s default run. Every
  * other seam a replay turn touches (Supabase) stays mocked even in this
@@ -59,7 +60,10 @@ export const modelDouble: ModelDoubleController = {
  * real model is safe here but calling real Supabase never is.
  */
 export function liveModelRunner(): ModelDoubleController['current'] {
-  return (client, params) => client.messages.create(params)
+  return async (_client, params) => (await generate({
+    params,
+    ctx: { source: 'lib/caye-bench/model-double.ts:liveModelRunner', task: 'agent_planning', callerRole: 'founder' },
+  })).output
 }
 
 let callSeq = 0

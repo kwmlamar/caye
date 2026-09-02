@@ -1,6 +1,7 @@
 import 'server-only'
 import type Anthropic from '@anthropic-ai/sdk'
 import { loggedMessagesCreate } from '@/lib/llm-telemetry'
+import { providerAdapter } from '@/lib/ai/providers'
 import { asAnthropicTool } from '@/lib/caye-agent/tools/types'
 import type { BackendHealth, ModelInvokeRequest, ModelInvokeResult } from '../types'
 import type { ToolCapableBackend, ToolTurnRequest, ToolTurnResult } from '../tool-bridge/types'
@@ -33,8 +34,8 @@ export class AnthropicApiBackend implements ToolCapableBackend {
 
   async checkHealth(): Promise<BackendHealth> {
     const checkedAt = new Date().toISOString()
-    if (!process.env.ANTHROPIC_API_KEY) {
-      return { state: 'auth_required', detail: 'ANTHROPIC_API_KEY is not set.', checkedAt }
+    if (!providerAdapter('anthropic').hasCredentials()) {
+      return { state: 'auth_required', detail: 'Anthropic is not configured in the Caye AI gateway.', checkedAt }
     }
     return { state: 'available', checkedAt }
   }
