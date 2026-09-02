@@ -7,7 +7,7 @@ import {
   ledgerNameForMigrationFile,
   RECONCILIATION_MARKER_PREFIX,
 } from './migration-identity'
-import { MIGRATION_PREFIX } from './migration-match'
+import { LEGACY_RECONCILED, MIGRATION_PREFIX } from './migration-match'
 import { REPO_MIGRATIONS } from './migration-manifest'
 
 const SCRIPTS = join(__dirname, '..', '..', 'scripts')
@@ -170,6 +170,47 @@ describe('the scripts agree with the tested library', () => {
   it('check-migration-ledger.mjs uses the same reconciliation marker', () => {
     const text = readFileSync(join(SCRIPTS, 'check-migration-ledger.mjs'), 'utf8')
     expect(text).toContain(`'${RECONCILIATION_MARKER_PREFIX}'`)
+  })
+
+  it('check-migration-ledger.mjs prefers the richer RPC and names its fallback', () => {
+    const text = readFileSync(join(SCRIPTS, 'check-migration-ledger.mjs'), 'utf8')
+    expect(text).toContain('applied_migration_ledger')
+    expect(text).toContain('applied_migration_names')
+    // It must say what it could NOT check when running names-only, rather than
+    // quietly downgrading — the overclaim this whole file exists to prevent.
+    expect(text).toContain('names-only mode — these checks did NOT run')
+  })
+
+  it('check-migration-ledger.mjs reads LEGACY_RECONCILED out of the library, not a copy', () => {
+    // The audit must suppress the same verified historical exceptions the drift
+    // watchdog does, or it reports eleven known-good migrations as missing.
+    // It parses them from migration-match.ts rather than restating them; this
+    // asserts the parse still finds every entry.
+    const script = readFileSync(join(SCRIPTS, 'check-migration-ledger.mjs'), 'utf8')
+    expect(script).toContain("readFileSync(join(root, 'lib', 'db', 'migration-match.ts')")
+
+    const src = readFileSync(join(__dirname, 'migration-match.ts'), 'utf8')
+    const block = src.match(/LEGACY_RECONCILED[^=]*=\s*new Set\(\[([\s\S]*?)\]\)/)
+    expect(block, 'the script\'s regex must still match migration-match.ts').toBeTruthy()
+    const parsed = new Set([...block![1].matchAll(/'([^']+)'/g)].map((m) => m[1]))
+    expect(parsed).toEqual(new Set(LEGACY_RECONCILED))
+    expect(parsed.size).toBeGreaterThan(0)
+  })
+
+  it('the richer RPC migration exists and is service-role only', () => {
+    const sql = readFileSync(
+      join(SCRIPTS, '..', 'supabase', 'migrations', '20260902140000_applied_migration_ledger_rpc.sql'),
+      'utf8'
+    )
+    expect(sql).toContain('create or replace function public.applied_migration_ledger()')
+    expect(sql).toContain('returns table (version text, name text, created_by text)')
+    expect(sql).toContain("set search_path = ''")
+    expect(sql).toContain('grant execute on function public.applied_migration_ledger() to service_role')
+    for (const role of ['public', 'anon', 'authenticated']) {
+      expect(sql).toContain(`revoke all on function public.applied_migration_ledger() from ${role}`)
+    }
+    // read-only: no write verbs anywhere in it
+    expect(sql.toLowerCase()).not.toMatch(/\b(insert|update|delete|truncate)\s/)
   })
 
   it('apply-migration.mjs offers no way to name a migration by hand', () => {

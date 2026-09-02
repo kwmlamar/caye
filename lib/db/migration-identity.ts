@@ -23,6 +23,15 @@
  *
  * Kept pure and dependency-free so both scripts and the test suite share one
  * definition.
+ *
+ * Where the data comes from
+ * -------------------------
+ * `auditLedgerIdentity` needs `version` and `created_by`, which the existing
+ * `applied_migration_names()` RPC does not return — it is `setof text`. The
+ * richer read-only `applied_migration_ledger()` in
+ * 20260902140000_applied_migration_ledger_rpc.sql supplies them; until that is
+ * applied, scripts/check-migration-ledger.mjs runs in names-only mode and
+ * prints which checks it could not perform rather than silently skipping them.
  */
 
 import { MIGRATION_PREFIX, LEGACY_RECONCILED, slugOf } from './migration-match'
