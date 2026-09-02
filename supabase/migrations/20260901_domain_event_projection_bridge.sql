@@ -58,7 +58,7 @@ create or replace function public.ingest_external_domain_event(
   p_source_company_id text,
   p_source_entity_type text,
   p_source_entity_id text,
-  p_caye_entity_id text,
+  p_caye_entity_id uuid,
   p_event_type text,
   p_occurred_at timestamptz,
   p_observed_at timestamptz,
@@ -197,10 +197,10 @@ end;
 $$;
 
 revoke all on function public.ingest_external_domain_event(
-  uuid,text,text,text,text,text,text,timestamptz,timestamptz,text,text,text,jsonb
+  uuid,text,text,text,text,uuid,text,timestamptz,timestamptz,text,text,text,jsonb
 ) from public, anon, authenticated;
 grant execute on function public.ingest_external_domain_event(
-  uuid,text,text,text,text,text,text,timestamptz,timestamptz,text,text,text,jsonb
+  uuid,text,text,text,text,uuid,text,timestamptz,timestamptz,text,text,text,jsonb
 ) to service_role;
 
 comment on table public.domain_sync_cursors is
