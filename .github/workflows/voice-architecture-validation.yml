@@ -6,10 +6,10 @@ on:
       - fix/caye-communication-voice-architecture
   pull_request:
     paths:
+      - 'lib/communication-realization.ts'
+      - 'lib/communication-realization.test.ts'
       - 'lib/human-facing-voice.ts'
       - 'lib/human-facing-voice.test.ts'
-      - 'lib/human-communication-realization.ts'
-      - 'lib/human-communication-realization.test.ts'
       - 'lib/human-facing-email.ts'
       - 'lib/human-facing-email.test.ts'
       - 'lib/human-facing-boundaries.test.ts'
@@ -19,50 +19,34 @@ on:
       - 'lib/whatsapp/channel-dispatch.ts'
       - 'lib/caye-agent/briefing.ts'
       - 'app/api/caye/chat/route.ts'
-      - 'scripts/voice-realization-patch.py'
+      - 'scripts/voice-ci-delta.py'
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: fix/caye-communication-voice-architecture
           fetch-depth: 0
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Apply semantic realization wiring
-        run: python scripts/voice-realization-patch.py
-      - name: Commit semantic realization wiring
-        run: |
-          if git diff --quiet -- app/api/caye/chat/route.ts lib/caye-agent/briefing.ts; then
-            echo "Semantic realization wiring already applied"
-          else
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add app/api/caye/chat/route.ts lib/caye-agent/briefing.ts
-            git diff --cached --check
-            git commit -m "Wire semantic communication realization into operator paths"
-            git push origin HEAD:fix/caye-communication-voice-architecture
-          fi
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
+      - name: Install candidate dependencies
+        run: npm ci
       - name: Focused voice tests
-        run: npx vitest run lib/human-facing-voice.test.ts lib/human-facing-email.test.ts lib/human-communication-realization.test.ts lib/human-facing-boundaries.test.ts lib/sanitize-dashes.test.ts
-      - name: Full test suite
-        if: always()
-        run: npm test -- --run
-      - name: Typecheck
-        if: always()
-        run: npx tsc --noEmit
-      - name: Build
-        if: always()
+        run: npx vitest run lib/communication-realization.test.ts lib/human-facing-voice.test.ts lib/human-facing-email.test.ts lib/human-facing-boundaries.test.ts lib/sanitize-dashes.test.ts
+      - name: Prepare current origin/main baseline
+        run: |
+          git fetch origin main
+          git worktree add /tmp/caye-main origin/main
+          cd /tmp/caye-main
+          npm ci
+      - name: Full tests and typecheck delta
+        run: python3 scripts/voice-ci-delta.py --main /tmp/caye-main --candidate "$GITHUB_WORKSPACE"
+      - name: Build candidate
         run: npm run build
