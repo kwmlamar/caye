@@ -1,30 +1,52 @@
 import 'server-only'
 import { FreightOperationError, loadFreightConversation, sendFreightDocument } from '@/lib/freight/server-operations'
+import type { FreightApprovalBinding } from '@/lib/freight/whatsapp-orchestration'
 import type { Tool } from '../types'
 
-interface Input {
+export interface SendFreightDocumentToolInput {
   conversation_id: string
+  artifact_id: string
+  artifact_version: string
+  recipient: string
+  email_thread_id: string
 }
 
-export const sendFreightDocumentTool: Tool<Input> = {
+export const sendFreightDocumentTool: Tool<SendFreightDocumentToolInput> = {
   name: 'send_freight_document',
   description:
-    'Send the exact prepared freight document for one resolved freight workflow. This is consequential and must stay behind the normal high-risk confirmation round trip. ' +
-    'Never use a raw email attachment tool for freight. The shared domain operation revalidates workspace, actor, artifact version, recipient, Gmail thread, current workflow state, and conversation execution immediately before the provider call.',
+    'Send the exact prepared freight document for one resolved freight workflow. This is consequential and stays behind the normal high-risk confirmation round trip. ' +
+    'Use the exact artifact_id, artifact_version, recipient, and email_thread_id returned by prepare_freight_document (or get_freight_workflows for an already-prepared item). ' +
+    'Never substitute current-looking values yourself and never use a raw email attachment tool for freight. The shared domain operation independently revalidates the binding immediately before Gmail.',
   risk: 'high',
   roles: ['owner', 'founder'],
   modes: ['back-office'],
   inputSchema: {
     type: 'object',
     properties: {
-      conversation_id: { type: 'string', description: 'Exact prepared freight conversation id returned by get_freight_workflows/prepare_freight_document.' },
+      conversation_id: { type: 'string', description: 'Exact prepared freight conversation id.' },
+      artifact_id: { type: 'string', description: 'Exact generated freight artifact id returned by prepare_freight_document.' },
+      artifact_version: { type: 'string', description: 'Exact generated artifact version returned by prepare_freight_document.' },
+      recipient: { type: 'string', description: 'Exact recipient bound when the document was prepared.' },
+      email_thread_id: { type: 'string', description: 'Exact Gmail thread id bound when the document was prepared.' },
     },
-    required: ['conversation_id'],
+    required: ['conversation_id', 'artifact_id', 'artifact_version', 'recipient', 'email_thread_id'],
   },
   async execute(args, ctx) {
     if (ctx.operatorId == null) return { ok: false, error: 'I could not verify who approved that send.' }
     try {
       const conv = await loadFreightConversation(ctx.workspaceId, args.conversation_id)
+      const approvalBinding: FreightApprovalBinding = {
+        workspaceId: ctx.workspaceId,
+        workflowId: ((conv.metadata?.freight_workflow as { id?: string } | undefined)?.id ?? ''),
+        artifactId: args.artifact_id,
+        artifactVersion: args.artifact_version,
+        recipient: args.recipient,
+        emailThreadId: args.email_thread_id,
+        actorOperatorId: ctx.operatorId,
+        approvedAt: new Date().toISOString(),
+      }
+      if (!approvalBinding.workflowId) return { ok: false, error: 'That freight request is no longer available.' }
+
       const result = await sendFreightDocument({
         workspaceId: ctx.workspaceId,
         conversationId: args.conversation_id,
@@ -33,6 +55,7 @@ export const sendFreightDocumentTool: Tool<Input> = {
           actorKind: ctx.callerRole === 'founder' ? 'founder' : 'owner',
           operatorId: ctx.operatorId,
         },
+        approvalBinding,
       })
       const dock = result.record.request.dockReceiptNumber
       const recipientName = result.record.request.senderName || result.record.request.freightProvider || conv.customer_name || 'the freight provider'
@@ -47,10 +70,7 @@ export const sendFreightDocumentTool: Tool<Input> = {
         }
       }
       if (result.outcome === 'retryable_failure') {
-        return {
-          ok: false,
-          error: `I couldn't send that before Gmail accepted it. ${result.message}`,
-        }
+        return { ok: false, error: `I couldn't send that before Gmail accepted it. ${result.message}` }
       }
       if (result.outcome === 'already_sent') {
         return {
