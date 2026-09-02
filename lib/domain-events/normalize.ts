@@ -115,7 +115,14 @@ function makeEvent(
 }
 
 function bootstrap(change: ExternalDomainChange, resolution: DomainEntityResolution | null) {
-  return [makeEvent(change, resolution, 'bootstrap_observed', 'bootstrap', [], false)]
+  const event = makeEvent(change, resolution, 'bootstrap_observed', 'bootstrap', [], false)
+  // `attentionEligible: false` is not self-enforcing: the existing workspace
+  // feed decides what to raise from `actor_kind`, where 'external' maps to
+  // 'outside' and is reportable by definition. A backfill attributed to the
+  // outside world would announce every pre-existing record as fresh activity
+  // the first time a source is connected. First sight is Caye looking, not the
+  // source system acting, so bootstrap is always attributed to the system.
+  return [{ ...event, actor: { ...event.actor, kind: 'system' as const } }]
 }
 
 export function normalizeDomainChange(

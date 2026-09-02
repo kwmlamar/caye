@@ -14,7 +14,15 @@ function write(name: string, content: string): void {
   writeFileSync(join(OUTPUT, name), content)
 }
 
-describe('Caye Employee Eval candidate runner', () => {
+/**
+ * These cases spawn a git process and reset durable scenario state, so their
+ * real cost is process scheduling rather than computation. Under the default
+ * 5s budget they pass alone and fail whenever the suite is running enough
+ * work alongside them — the domain integration tests added in this pass boot
+ * PGlite and were enough to tip them over. The timeout is raised rather than
+ * the work reduced because the work is the point of the test.
+ */
+describe('Caye Employee Eval candidate runner', { timeout: 30_000 }, () => {
   it('runs frozen Employee Eval v1 scenarios against the PR implementation', async () => {
     const adapter = await loadEmployeeEvalAdapter()
     const snapshots = await runEmployeeFixtures(FROZEN_EMPLOYEE_SCENARIOS, adapter)

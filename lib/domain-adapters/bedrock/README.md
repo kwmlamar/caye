@@ -51,7 +51,7 @@ The adapter consumes a `BedrockConnectionResolver`:
 
 Caye workspace -> Bedrock domain connection -> Bedrock company.
 
-No ODS or other tenant UUID is hard-coded. `EnvBedrockConnectionResolver` is a transitional server-only resolver using `BEDROCK_CONNECTIONS_JSON`; Agent 1's generic domain-connection persistence should replace this resolver without changing `BedrockAdapter`.
+No ODS or other tenant UUID is hard-coded. Tenant binding lives in the kernel's `domain_source_connections` table and is read by `KernelBedrockConnectionResolver`: `external_tenant_id` is the Bedrock company id, `config.supabase_url` is non-secret configuration, and `credential_ref` names a secret that `lib/domain/secrets.ts` materialises from `DOMAIN_SECRET_*` at client-construction time. The transitional `EnvBedrockConnectionResolver` (`BEDROCK_CONNECTIONS_JSON`) it replaced has been removed, so there is exactly one tenant-binding path and no service-role key in an environment JSON blob.
 
 Example shape (values belong in deployment secrets, never source control):
 

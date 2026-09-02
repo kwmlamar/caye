@@ -20,6 +20,11 @@ export interface BedrockReadProvider {
   getEstimateSections(estimateId: string): Promise<BedrockRow[]>
   getEstimateLineItems(estimateId: string): Promise<BedrockRow[]>
   getPurchaseOrder(companyId: string, id: string): Promise<BedrockRow | null>
+  listPurchaseOrdersChangedSince(
+    companyId: string,
+    after: { updatedAt: string; id: string } | null,
+    limit: number,
+  ): Promise<BedrockRow[]>
   listProjectPurchaseOrders(companyId: string, projectId: string): Promise<BedrockRow[]>
   getPurchaseOrderItems(purchaseOrderId: string): Promise<BedrockRow[]>
   getVendor(companyId: string, id: string): Promise<BedrockRow | null>
@@ -96,6 +101,39 @@ export class SupabaseBedrockReadProvider implements BedrockReadProvider {
 
   async getEstimateLineItems(estimateId: string) {
     return throwOnError(await this.client.from('estimate_line_items').select('*').eq('estimate_id', estimateId).order('order_index')) ?? []
+  }
+
+  /**
+   * Company-scoped keyset scan over purchase orders, ordered by the pair that
+   * makes the scan resumable.
+   *
+   * `updated_at` alone is not a safe cursor: it is only second-resolution in
+   * practice and several rows can share a value, so `gt(updated_at)` would
+   * skip rows and `gte(updated_at)` would re-read them forever. Ordering by
+   * `(updated_at, id)` and seeking past the exact pair is total and stable.
+   *
+   * `updated_at` is trustworthy here specifically because Bedrock maintains it
+   * with a `BEFORE UPDATE` trigger (`set_updated_at` -> `handle_updated_at`)
+   * rather than relying on writers to remember. Do not copy this pattern onto
+   * a table without checking that the trigger exists.
+   */
+  async listPurchaseOrdersChangedSince(
+    companyId: string,
+    after: { updatedAt: string; id: string } | null,
+    limit: number,
+  ) {
+    let query = this.client.from('purchase_orders').select('*').eq('company_id', companyId)
+    if (after) {
+      query = query.or(
+        `updated_at.gt.${after.updatedAt},and(updated_at.eq.${after.updatedAt},id.gt.${after.id})`,
+      )
+    }
+    return throwOnError(
+      await query
+        .order('updated_at', { ascending: true })
+        .order('id', { ascending: true })
+        .limit(Math.min(Math.max(limit, 1), 500)),
+    ) ?? []
   }
 
   async getPurchaseOrder(companyId: string, id: string) {

@@ -1,3 +1,4 @@
+import { workspaceEventEntityRef } from '@/lib/domain/workspace-events'
 import type { NormalizedDomainEvent } from './types'
 
 export type WorkspaceEventInsert = {
@@ -30,10 +31,10 @@ export function toWorkspaceEventInsert(event: NormalizedDomainEvent): WorkspaceE
       observed_at: event.observedAt,
       change_kind: event.changeKind,
       attention_eligible: event.attentionEligible,
-      entity: {
-        caye_entity_id: event.cayeEntityId ?? null,
-        resolution: event.cayeEntityId ? 'resolved' : 'unresolved',
-      },
+      // The kernel owns this convention. Building the fragment by hand here
+      // was a second definition of `payload.entity.caye_entity_id`, and two
+      // definitions of an identity path drift.
+      entity: workspaceEventEntityRef(event.cayeEntityId),
       source: {
         system: event.sourceSystem,
         company_id: event.sourceCompanyId,
