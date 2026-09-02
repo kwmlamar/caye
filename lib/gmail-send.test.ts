@@ -17,6 +17,7 @@ vi.mock('./supabase-server', () => ({
 }))
 
 import { sendGmailReply, sendGmailReplyWithAttachments } from './gmail-send'
+import { DispatchAmbiguousError } from './whatsapp/channel-dispatch'
 
 describe('sendGmailReply observe-only safety', () => {
   it('fails closed before any Gmail network send when the account is observe-only', async () => {
@@ -60,6 +61,23 @@ describe('sendGmailReply observe-only safety', () => {
     getGmailContext.mockResolvedValue({ accountRow: { metadata: { observe_only: true } }, accessToken: 'token', emailAddress: 'owner@example.com' })
     const fetchSpy = vi.spyOn(globalThis, 'fetch')
     await expect(sendGmailReplyWithAttachments({ to: 'x@example.test', subject: 'x', body: 'x', gmailThreadId: 't', conversationId: 'c', workspaceId: 'w', attachments: [{ filename: 'x.pdf', mimeType: 'application/pdf', bytes: Buffer.from('%PDF') }] })).rejects.toThrow(/observe-only/)
+    expect(fetchSpy).not.toHaveBeenCalled(); fetchSpy.mockRestore()
+  })
+
+  it('classifies a network/provider failure as an uncertain outcome', async () => {
+    getGmailContext.mockResolvedValue({ accountRow: { metadata: {} }, accessToken: 'token', emailAddress: 'owner@example.com' })
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('connection reset'))
+    await expect(sendGmailReplyWithAttachments({ to: 'x@example.test', subject: 'x', body: 'x', gmailThreadId: 't', conversationId: 'c', workspaceId: 'w', attachments: [{ filename: 'x.pdf', mimeType: 'application/pdf', bytes: Buffer.from('%PDF') }] }))
+      .rejects.toMatchObject({ name: 'DispatchAmbiguousError', definitelySent: false } satisfies Partial<DispatchAmbiguousError>)
+    expect(fetchSpy).toHaveBeenCalledTimes(1); fetchSpy.mockRestore()
+  })
+
+  it('keeps a definite pre-provider failure as an ordinary retryable error', async () => {
+    getGmailContext.mockRejectedValue(new Error('token unavailable'))
+    const fetchSpy = vi.spyOn(globalThis, 'fetch')
+    const promise = sendGmailReplyWithAttachments({ to: 'x@example.test', subject: 'x', body: 'x', gmailThreadId: 't', conversationId: 'c', workspaceId: 'w', attachments: [{ filename: 'x.pdf', mimeType: 'application/pdf', bytes: Buffer.from('%PDF') }] })
+    await expect(promise).rejects.toThrow('token unavailable')
+    await expect(promise).rejects.not.toBeInstanceOf(DispatchAmbiguousError)
     expect(fetchSpy).not.toHaveBeenCalled(); fetchSpy.mockRestore()
   })
 })
