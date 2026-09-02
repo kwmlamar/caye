@@ -116,30 +116,38 @@ function requestTerms(params: AIMessageParams): Set<string> {
   const parts: string[] = []
   const messages = params.messages ?? []
 
-  // The newest user turn is the strongest signal for which capabilities are
-  // useful now. Include up to the last three user turns so short follow-ups
-  // like "do that" retain subject context without scoring the entire thread.
-  let seenUsers = 0
-  for (let i = messages.length - 1; i >= 0 && seenUsers < 3; i--) {
+  // Rank against genuine user-authored text, not Anthropic tool_result turns.
+  // Tool results are represented with role='user' in the provider-neutral
+  // transcript, so counting them as human turns lets a few tool-loop rounds
+  // push the operator's actual ask out of the relevance window. Keep the last
+  // three real text turns so short follow-ups like "do that" still inherit
+  // nearby human context while tool output never becomes the routing signal.
+  let seenHumanTextTurns = 0
+  for (let i = messages.length - 1; i >= 0 && seenHumanTextTurns < 3; i--) {
     const message = messages[i]
     if (message.role !== 'user') continue
-    seenUsers++
-    parts.push(textFromContent(message.content))
+    const text = directUserText(message.content)
+    if (!text.trim()) continue
+    seenHumanTextTurns++
+    parts.push(text)
   }
 
   return tokenize(parts.join(' '))
 }
 
-function textFromContent(content: unknown): string {
+/**
+ * Text authored directly by the user in a user-role message. Deliberately
+ * ignores tool_result payloads even though Anthropic represents them as
+ * role='user': they are machine observations, not the operator's intent.
+ */
+function directUserText(content: unknown): string {
   if (typeof content === 'string') return content
   if (!Array.isArray(content)) return ''
   return content
     .map((block) => {
       if (!block || typeof block !== 'object') return ''
-      const typed = block as { type?: string; text?: string; content?: unknown }
-      if (typed.type === 'text' && typeof typed.text === 'string') return typed.text
-      if (typed.type === 'tool_result') return textFromContent(typed.content)
-      return ''
+      const typed = block as { type?: string; text?: string }
+      return typed.type === 'text' && typeof typed.text === 'string' ? typed.text : ''
     })
     .join(' ')
 }
