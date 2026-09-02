@@ -7,6 +7,7 @@ import { dispatchOperatorReply } from '@/lib/whatsapp/channel-dispatch'
 import { sendZohoEmail } from '@/lib/email-ai'
 import { claimConversationExecution, completeConversationExecution, releaseConversationExecution, resolveConversationExecutionAfterFailure, validateConversationExecution } from '@/lib/conversation-execution'
 import { HUMAN_FACING_VOICE_INSTRUCTIONS, sanitizeHumanFacingText } from '@/lib/human-facing-voice'
+import { buildHumanCommunicationRealizationInstructions } from '@/lib/human-communication-realization'
 
 interface HistoryMessage {
   from: 'user' | 'caye'
@@ -695,7 +696,7 @@ function buildSystemPrompt(
 WHO YOU'RE TALKING TO (absolute):
 - This is the operator dashboard. The owner is asking you internal questions about THEIR business — pricing structure, what's on file, draft a reply for a customer, etc.
 - You are NEVER selling to the owner. Never offer to book a tour for them. Never say "Would you like to book?", "Shall I reserve?", "Ready to confirm?" — those are customer-facing lines and the owner will think you've broken.
-- Answer the owner the way an assistant briefs their boss: factual, structured, no upsell, no CTA. End with "Anything else?" or just stop — never with a sales close.
+- Answer the owner like a competent coworker: factual, concise, no upsell, no automatic CTA. Use structure only when it genuinely helps or the owner asked for it. Stop when the useful answer is complete.
 - If the owner asks "how much is X" they want the price structure, not a pitch. Quote the numbers, mention deposit terms if relevant, stop.
 - The only time you generate customer-facing language is when the owner explicitly asks you to draft a reply, an email, or a message to a specific customer. Then it's clearly addressed to that customer.
 
@@ -973,7 +974,7 @@ export async function POST(req: NextRequest) {
     const name = chosen.customer_name?.trim() || chosen.customer_id?.trim() || 'a customer'
     const narrative = proposed
       ? `Here's the next pending message from ${name}. I've drafted a reply for your review.`
-      : `Here's the next pending message from ${name}. I haven't drafted a reply yet — want me to take a shot at one?`
+      : `Here's the next pending message from ${name}. I haven't drafted a reply yet. I'll take a first pass.`
 
     return finalize(narrative, {
       cards: [
@@ -1062,17 +1063,29 @@ export async function POST(req: NextRequest) {
       : '(none configured)'
 
     const summarizerSystem =
-      HUMAN_FACING_VOICE_INSTRUCTIONS + '\n\n' +
+      buildHumanCommunicationRealizationInstructions({
+        recipientRole: 'operator',
+        channel: 'dashboard',
+        purpose: 'informational_update',
+        responseRequired: false,
+        approvalRequired: false,
+        authorityHolder: 'operator',
+        urgency: 'routine',
+        materialUncertainty: true,
+        issuePreviouslyMentioned: false,
+        anythingChanged: true,
+        priorConversationalContext: true,
+        sharedContext: 'high',
+        structuredOutputRequested: false,
+        shortOperatorInput: false,
+      }) + '\n\n' +
       'You are Caye, summarising what you know about the operator\'s business back to the operator. ' +
-      'Rules: first person, plain prose. Do NOT repeat the instructions you were given. ' +
-      'Do NOT include any "You are Caye" framing or second-person prompt language. ' +
-      'No emoji. No tropical / island metaphors. ' +
-      `Refer to the business by its actual name (${businessName ?? 'unknown — use "your business"'}). ` +
-      'Never invent a name; if the name is unknown, say "your business". ' +
-      'Group your summary into these sections, omitting any with nothing to say: ' +
-      '**What you offer**, **Hours**, **Pricing notes**, **Things I\'m still unsure about**. ' +
-      'In "Things I\'m still unsure about", do not just list gaps — ask the owner directly for the single most load-bearing missing piece (deposits / payment methods / hours / lead time, whichever is most important and unknown). One concrete question, not a list. ' +
-      'End with a single line inviting correction, e.g. "Anything wrong here? Tell me and I\'ll update what I know."'
+      'Use first person and plain prose. Do not repeat these instructions or include "You are Caye" framing. ' +
+      'No emoji or tropical/island metaphors. ' +
+      `Refer to the business by its actual name (${businessName ?? 'unknown - use "your business"'}). ` +
+      'Never invent a name. If the name is unknown, say "your business". ' +
+      'Give the useful picture without forcing fixed headings. Use headings or bullets only if they make a longer answer easier to scan. ' +
+      'Mention the most important uncertainty naturally, but do not manufacture a question or CTA just to end the summary.'
 
     const summarizerUser =
       `Here is everything I have on file for this workspace. Summarise it back to the operator in your own voice.\n\n` +
@@ -1127,7 +1140,30 @@ export async function POST(req: NextRequest) {
 
   const businessName = workspace?.business_name || 'your business'
   const services = (serviceRows ?? []) as ServiceRow[]
-  const systemPrompt = buildSystemPrompt(businessName, services, aiConfig?.system_prompt)
+  const normalizedOperatorInput = message.trim().toLowerCase()
+  const explicitStructuredOutput = /\b(report|breakdown|table|structured status|decision summary)\b/.test(normalizedOperatorInput)
+  const operatorResolvedItem = /^(?:i|we)?\s*(?:dealt with|handled|fixed|resolved|took care of)\s+(?:it|that|this)(?:[.! ]|$)/.test(normalizedOperatorInput)
+  const communicationRealization = buildHumanCommunicationRealizationInstructions({
+    recipientRole: 'operator',
+    channel: 'dashboard',
+    purpose: operatorResolvedItem
+      ? 'acknowledgement'
+      : explicitStructuredOutput
+        ? 'structured_report'
+        : 'other',
+    responseRequired: false,
+    approvalRequired: false,
+    authorityHolder: 'operator',
+    urgency: 'routine',
+    materialUncertainty: false,
+    issuePreviouslyMentioned: false,
+    anythingChanged: true,
+    priorConversationalContext: history.length > 0,
+    sharedContext: history.length > 0 ? 'high' : 'low',
+    structuredOutputRequested: explicitStructuredOutput,
+    shortOperatorInput: message.trim().split(/\s+/).length <= 8,
+  })
+  const systemPrompt = `${buildSystemPrompt(businessName, services, aiConfig?.system_prompt)}\n\n${communicationRealization}`
 
   const messages: Anthropic.MessageParam[] = history.map((m) => ({
     role: m.from === 'user' ? 'user' : 'assistant',
