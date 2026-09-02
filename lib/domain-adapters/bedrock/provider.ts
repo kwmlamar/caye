@@ -42,16 +42,14 @@ export class SupabaseBedrockReadProvider implements BedrockReadProvider {
   }
 
   async health(companyId: string) {
-    const result = await this.client.from('companies').select('id,name').eq('id', companyId).maybeSingle()
-    return throwOnError(result)
+    return throwOnError(await this.client.from('companies').select('id,name').eq('id', companyId).maybeSingle())
   }
 
   async listProjects(companyId: string, options: { search?: string; status?: string; limit?: number } = {}) {
     let query = this.client.from('projects').select('*').eq('company_id', companyId)
     if (options.status) query = query.eq('status', options.status)
     if (options.search) query = query.ilike('name', `%${options.search}%`)
-    const result = await query.order('created_at', { ascending: false }).limit(Math.min(options.limit ?? 100, 200))
-    return throwOnError(result) ?? []
+    return throwOnError(await query.order('created_at', { ascending: false }).limit(Math.min(options.limit ?? 100, 200))) ?? []
   }
 
   async getProject(companyId: string, id: string) {
@@ -93,11 +91,11 @@ export class SupabaseBedrockReadProvider implements BedrockReadProvider {
   }
 
   async getEstimateSections(estimateId: string) {
-    return throwOnError(await this.client.from('estimate_sections').select('*').eq('estimate_id', estimateId).order('sort_order')) ?? []
+    return throwOnError(await this.client.from('estimate_sections').select('*').eq('estimate_id', estimateId).order('order_index')) ?? []
   }
 
   async getEstimateLineItems(estimateId: string) {
-    return throwOnError(await this.client.from('estimate_line_items').select('*').eq('estimate_id', estimateId).order('sort_order')) ?? []
+    return throwOnError(await this.client.from('estimate_line_items').select('*').eq('estimate_id', estimateId).order('order_index')) ?? []
   }
 
   async getPurchaseOrder(companyId: string, id: string) {
