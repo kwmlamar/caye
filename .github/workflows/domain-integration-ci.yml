@@ -6,7 +6,9 @@ on:
       - 'lib/domain-adapters/**'
       - 'lib/domain-events/**'
       - 'lib/domain-integration/**'
+      - 'lib/operational-intelligence/**'
       - 'lib/perception/**'
+      - 'lib/caye-agent/operational-brief.ts'
       - 'lib/caye-agent/workspace-feed.ts'
       - 'scripts/provision-bedrock-domain.mjs'
       - 'scripts/bedrock-readonly-smoke.mjs'
@@ -35,12 +37,13 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - name: Domain adapter, bridge, integration, perception, migration, and smoke-runner tests
+      - name: Domain adapter, bridge, integration, perception, migration, smoke-runner, and operational intelligence tests
         run: >-
           npx vitest run
           lib/domain-adapters/
           lib/domain-events/
           lib/domain-integration/
+          lib/operational-intelligence/
           lib/perception/domain-observation-catchup.test.ts
           scripts/bedrock-readonly-smoke.test.ts
           supabase/tests/domain-event-migration-contract.test.ts
