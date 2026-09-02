@@ -30,6 +30,7 @@ import { getOutreachTargeting } from './read/get-outreach-targeting'
 import { getPendingBusinessDecisions } from './read/get-pending-business-decisions'
 import { getArtifact } from './read/get-artifact'
 import { searchArtifacts } from './read/search-artifacts'
+import { getFreightWorkflows } from './read/get-freight-workflows'
 import { cayeCapabilitiesTool } from './read/caye-capabilities'
 import { listPropertiesTool } from './read/list-properties'
 import { getPropertySnapshotTool } from './read/get-property-snapshot'
@@ -94,14 +95,7 @@ import { listJobSearchQueue } from './admin/read/list-job-search-queue'
 import { listJobSearchCandidates } from './admin/read/list-job-search-candidates'
 import { explainJobSearchRejection } from './admin/read/explain-job-search-rejection'
 import { pauseJobSearch } from './admin/write-low/pause-job-search'
-import {
-  startJobApplications,
-  pauseJobApplications,
-  resumeJobApplications,
-  stopJobApplications,
-  setJobApplicationPolicy,
-  getJobApplicationAutonomy,
-} from './admin/write-low/manage-job-application-autonomy'
+import { startJobApplications, pauseJobApplications, resumeJobApplications, stopJobApplications, setJobApplicationPolicy, getJobApplicationAutonomy } from './admin/write-low/manage-job-application-autonomy'
 import { resumeJobSearch } from './admin/write-low/resume-job-search'
 import { listApplicationsNeedingReview } from './admin/read/list-applications-needing-review'
 import { inspectJobSearchApplications } from './admin/read/inspect-job-search-applications'
@@ -124,188 +118,16 @@ import { createParametricPart } from './write-low/create-parametric-part'
 import { reviseParametricPart } from './write-low/revise-parametric-part'
 import { runStaticStructuralAnalysis } from './write-low/run-static-structural-analysis'
 import { rerunStaticStructuralAnalysis } from './write-low/rerun-static-structural-analysis'
-import {
-  listEngineeringProjectsTool,
-  getEngineeringProjectTool,
-  createEngineeringProjectTool,
-  establishEngineeringBaselineTool,
-  addEngineeringAlternativeTool,
-  selectEngineeringAlternativeTool,
-  recordEngineeringExecutionTool,
-  linkEngineeringOutcomeTool,
-  compareEngineeringProjectOutcomesTool,
-  recordEngineeringVerdictTool,
-} from '@/lib/engineering-projects/tools'
+import { listEngineeringProjectsTool, getEngineeringProjectTool, createEngineeringProjectTool, establishEngineeringBaselineTool, addEngineeringAlternativeTool, selectEngineeringAlternativeTool, recordEngineeringExecutionTool, linkEngineeringOutcomeTool, compareEngineeringProjectOutcomesTool, recordEngineeringVerdictTool } from '@/lib/engineering-projects/tools'
 
 type AnyTool = Tool<never>
 const inlineSendReply = HIGH_RISK_TOOLS.find((tool) => tool.name === 'send_reply') as AnyTool | undefined
-
-async function stageInlineDraftFallback(args: never, ctx: Parameters<AnyTool['execute']>[1]) {
-  if (!inlineSendReply) return { ok: false, error: 'Inline reply drafting is unavailable.' }
-  const conversationId = (args as { conversation_id?: unknown }).conversation_id
-  if (typeof conversationId === 'string') await cancelPendingExternalDraftsForConversation({ ctx, conversationId })
-  return gateHighRisk(inlineSendReply).execute(args, ctx)
-}
-
-function registeredHighRiskTool(tool: AnyTool): AnyTool {
-  const gated = (tool.name === 'expand_outreach_target'
-    ? gateBoundedOutreachTarget(tool)
-    : gateHighRisk(tool)) as AnyTool
-  if (tool.name === 'draft_in_inbox') {
-    return { ...gated, async execute(args, ctx) {
-      const intentError = await verifyExternalDraftIntent(ctx)
-      if (intentError?.error_code === EXTERNAL_DRAFT_INTENT_REQUIRED) return stageInlineDraftFallback(args, ctx)
-      if (intentError) return intentError
-      return gated.execute(args, ctx)
-    } }
-  }
-  if (tool.name === 'send_reply') {
-    return { ...gated, async execute(args, ctx) {
-      const conversationId = (args as { conversation_id?: unknown }).conversation_id
-      if (typeof conversationId === 'string') await cancelPendingExternalDraftsForConversation({ ctx, conversationId })
-      const result = await gated.execute(args, ctx)
-      const body = (args as { body?: unknown }).body
-      if (typeof body === 'string' && body.trim()) {
-        const data = result.data as { executed?: unknown } | undefined
-        await updateActiveWork({ supabase: createServiceClient(), workspaceId: ctx.workspaceId, operatorId: ctx.operatorId, work: ctx.activeWork, artifact: body.trim(), status: result.ok && data?.executed !== true ? 'ready' : result.ok ? 'completed' : 'failed' })
-      }
-      return result
-    } }
-  }
-  return gated
-}
+async function stageInlineDraftFallback(args: never, ctx: Parameters<AnyTool['execute']>[1]) { if (!inlineSendReply) return { ok: false, error: 'Inline reply drafting is unavailable.' }; const conversationId = (args as { conversation_id?: unknown }).conversation_id; if (typeof conversationId === 'string') await cancelPendingExternalDraftsForConversation({ ctx, conversationId }); return gateHighRisk(inlineSendReply).execute(args, ctx) }
+function registeredHighRiskTool(tool: AnyTool): AnyTool { const gated = (tool.name === 'expand_outreach_target' ? gateBoundedOutreachTarget(tool) : gateHighRisk(tool)) as AnyTool; if (tool.name === 'draft_in_inbox') return { ...gated, async execute(args, ctx) { const intentError = await verifyExternalDraftIntent(ctx); if (intentError?.error_code === EXTERNAL_DRAFT_INTENT_REQUIRED) return stageInlineDraftFallback(args, ctx); if (intentError) return intentError; return gated.execute(args, ctx) } }; if (tool.name === 'send_reply') return { ...gated, async execute(args, ctx) { const conversationId = (args as { conversation_id?: unknown }).conversation_id; if (typeof conversationId === 'string') await cancelPendingExternalDraftsForConversation({ ctx, conversationId }); const result = await gated.execute(args, ctx); const body = (args as { body?: unknown }).body; if (typeof body === 'string' && body.trim()) { const data = result.data as { executed?: unknown } | undefined; await updateActiveWork({ supabase: createServiceClient(), workspaceId: ctx.workspaceId, operatorId: ctx.operatorId, work: ctx.activeWork, artifact: body.trim(), status: result.ok && data?.executed !== true ? 'ready' : result.ok ? 'completed' : 'failed' }) } return result } }; return gated }
 
 export const TOOL_REGISTRY: AnyTool[] = [
-  getCalendar as AnyTool,
-  getZohoCalendar as AnyTool,
-  getHeldQueue as AnyTool,
-  getTodaySummary as AnyTool,
-  getRevenue as AnyTool,
-  getTourTypePerformance as AnyTool,
-  getCustomer as AnyTool,
-  getCustomerHistory as AnyTool,
-  getRecentActivity as AnyTool,
-  getRecentInboundTool as AnyTool,
-  getRecentBookings as AnyTool,
-  getPendingQuotes as AnyTool,
-  searchThreads as AnyTool,
-  queryBusinessKnowledge as AnyTool,
-  listStandingRules as AnyTool,
-  listActiveGoals as AnyTool,
-  getServices as AnyTool,
-  getTeamMembers as AnyTool,
-  getChannelStatus as AnyTool,
-  getOutreachStatus as AnyTool,
-  getOutreachTargeting as AnyTool,
-  getPendingBusinessDecisions as AnyTool,
-  getArtifact as AnyTool,
-  searchArtifacts as AnyTool,
-  cayeCapabilitiesTool as AnyTool,
-  listPropertiesTool as AnyTool,
-  getPropertySnapshotTool as AnyTool,
-  analyzePropertyWaterTool as AnyTool,
-  listEngineeringProjectsTool as AnyTool,
-  getEngineeringProjectTool as AnyTool,
-  compareEngineeringProjectOutcomesTool as AnyTool,
-  getConnectLink as AnyTool,
-  recordChannelIntake as AnyTool,
-  markHandled as AnyTool,
-  scheduleReminder as AnyTool,
-  sendOperatorMessage as AnyTool,
-  addServiceAvailabilityRule as AnyTool,
-  addBusinessFact as AnyTool,
-  confirmFactCandidate as AnyTool,
-  dismissFactCandidate as AnyTool,
-  removeBusinessFact as AnyTool,
-  addStandingRule as AnyTool,
-  removeStandingRule as AnyTool,
-  updateServicePrice as AnyTool,
-  addService as AnyTool,
-  addPricingTier as AnyTool,
-  setServiceVisibility as AnyTool,
-  updateBusinessHours as AnyTool,
-  addBlackoutDate as AnyTool,
-  updateVoiceRegister as AnyTool,
-  addVoiceSample as AnyTool,
-  addTeamMember as AnyTool,
-  updateTeamMemberPermissions as AnyTool,
-  updateTeamMemberName as AnyTool,
-  switchWorkspace as AnyTool,
-  skipHeldItem as AnyTool,
-  muteCaye as AnyTool,
-  unmuteCaye as AnyTool,
-  archiveThread as AnyTool,
-  addInternalNote as AnyTool,
-  sendPaymentConfirmation as AnyTool,
-  notifyDriver as AnyTool,
-  createOutreachLeads as AnyTool,
-  runOutreach as AnyTool,
-  recoverOutreachOperations as AnyTool,
-  requestBusinessDecision as AnyTool,
-  recordBusinessDecision as AnyTool,
-  relateToDirectThread as AnyTool,
-  annotateArtifactTool as AnyTool,
-  retrieveArtifactForOperator as AnyTool,
-  createPropertyTool as AnyTool,
-  addPropertyStructureTool as AnyTool,
-  addPropertySystemTool as AnyTool,
-  addPropertyAssetTool as AnyTool,
-  recordPropertyObservationTool as AnyTool,
-  startCanonicalResearchTool as AnyTool,
-  createEngineeringProjectTool as AnyTool,
-  establishEngineeringBaselineTool as AnyTool,
-  addEngineeringAlternativeTool as AnyTool,
-  selectEngineeringAlternativeTool as AnyTool,
-  recordEngineeringExecutionTool as AnyTool,
-  linkEngineeringOutcomeTool as AnyTool,
-  recordEngineeringVerdictTool as AnyTool,
-  createParametricPart as AnyTool,
-  reviseParametricPart as AnyTool,
-  runStaticStructuralAnalysis as AnyTool,
-  rerunStaticStructuralAnalysis as AnyTool,
-  ...HIGH_RISK_TOOLS.map((t) => registeredHighRiskTool(t as AnyTool)),
-  confirmPendingAction as AnyTool,
-  getMyAssignments as AnyTool,
-  getLogisticsFacts as AnyTool,
-  escalateDriverQuestion as AnyTool,
-  checkAvailabilityTool as AnyTool,
-  lookupPriceTool as AnyTool,
-  findBookingsTool as AnyTool,
-  sendCustomerReply as AnyTool,
-  getCronHealth as AnyTool,
-  getAiProviderStatus as AnyTool,
-  getWorkspaceAutonomy as AnyTool,
-  gateAdminHighRisk(triggerCron) as AnyTool,
-  gateAdminHighRisk(setWorkspaceAutonomy) as AnyTool,
-  getJobSearchSummary as AnyTool,
-  listJobSearchQueue as AnyTool,
-  listJobSearchCandidates as AnyTool,
-  explainJobSearchRejection as AnyTool,
-  pauseJobSearch as AnyTool,
-  startJobApplications as AnyTool,
-  pauseJobApplications as AnyTool,
-  resumeJobApplications as AnyTool,
-  stopJobApplications as AnyTool,
-  setJobApplicationPolicy as AnyTool,
-  getJobApplicationAutonomy as AnyTool,
-  resumeJobSearch as AnyTool,
-  listApplicationsNeedingReview as AnyTool,
-  inspectJobSearchApplications as AnyTool,
-  explainApplicationStatus as AnyTool,
-  getApplicationSubmissionEvidence as AnyTool,
-  getExecutionDailySummary as AnyTool,
-  pauseApplicationExecution as AnyTool,
-  resumeApplicationExecution as AnyTool,
-  enableDryRunMode as AnyTool,
-  disableApplicationAutomation as AnyTool,
-  gateAdminHighRisk(enableApplicationAutomation) as AnyTool,
-  gateAdminHighRisk(disableDryRunMode) as AnyTool,
-  gateAdminHighRisk(setDailySubmissionCap) as AnyTool,
-  gateAdminHighRisk(runApplicationExecution) as AnyTool,
-  previewQualifiedJobs as AnyTool,
-  gateAdminHighRisk(applyToQualifiedJobs) as AnyTool,
+  getCalendar as AnyTool, getZohoCalendar as AnyTool, getHeldQueue as AnyTool, getTodaySummary as AnyTool, getRevenue as AnyTool, getTourTypePerformance as AnyTool, getCustomer as AnyTool, getCustomerHistory as AnyTool, getRecentActivity as AnyTool, getRecentInboundTool as AnyTool, getRecentBookings as AnyTool, getPendingQuotes as AnyTool, searchThreads as AnyTool, queryBusinessKnowledge as AnyTool, listStandingRules as AnyTool, listActiveGoals as AnyTool, getServices as AnyTool, getTeamMembers as AnyTool, getChannelStatus as AnyTool, getOutreachStatus as AnyTool, getOutreachTargeting as AnyTool, getPendingBusinessDecisions as AnyTool, getArtifact as AnyTool, searchArtifacts as AnyTool, getFreightWorkflows as AnyTool, cayeCapabilitiesTool as AnyTool, listPropertiesTool as AnyTool, getPropertySnapshotTool as AnyTool, analyzePropertyWaterTool as AnyTool, listEngineeringProjectsTool as AnyTool, getEngineeringProjectTool as AnyTool, compareEngineeringProjectOutcomesTool as AnyTool,
+  getConnectLink as AnyTool, recordChannelIntake as AnyTool, markHandled as AnyTool, scheduleReminder as AnyTool, sendOperatorMessage as AnyTool, addServiceAvailabilityRule as AnyTool, addBusinessFact as AnyTool, confirmFactCandidate as AnyTool, dismissFactCandidate as AnyTool, removeBusinessFact as AnyTool, addStandingRule as AnyTool, removeStandingRule as AnyTool, updateServicePrice as AnyTool, addService as AnyTool, addPricingTier as AnyTool, setServiceVisibility as AnyTool, updateBusinessHours as AnyTool, addBlackoutDate as AnyTool, updateVoiceRegister as AnyTool, addVoiceSample as AnyTool, addTeamMember as AnyTool, updateTeamMemberPermissions as AnyTool, updateTeamMemberName as AnyTool, switchWorkspace as AnyTool, skipHeldItem as AnyTool, muteCaye as AnyTool, unmuteCaye as AnyTool, archiveThread as AnyTool, addInternalNote as AnyTool, sendPaymentConfirmation as AnyTool, notifyDriver as AnyTool, createOutreachLeads as AnyTool, runOutreach as AnyTool, recoverOutreachOperations as AnyTool, requestBusinessDecision as AnyTool, recordBusinessDecision as AnyTool, relateToDirectThread as AnyTool, annotateArtifactTool as AnyTool, retrieveArtifactForOperator as AnyTool, createPropertyTool as AnyTool, addPropertyStructureTool as AnyTool, addPropertySystemTool as AnyTool, addPropertyAssetTool as AnyTool, recordPropertyObservationTool as AnyTool, startCanonicalResearchTool as AnyTool, createEngineeringProjectTool as AnyTool, establishEngineeringBaselineTool as AnyTool, addEngineeringAlternativeTool as AnyTool, selectEngineeringAlternativeTool as AnyTool, recordEngineeringExecutionTool as AnyTool, linkEngineeringOutcomeTool as AnyTool, recordEngineeringVerdictTool as AnyTool, createParametricPart as AnyTool, reviseParametricPart as AnyTool, runStaticStructuralAnalysis as AnyTool, rerunStaticStructuralAnalysis as AnyTool,
+  ...HIGH_RISK_TOOLS.map((t) => registeredHighRiskTool(t as AnyTool)), confirmPendingAction as AnyTool, getMyAssignments as AnyTool, getLogisticsFacts as AnyTool, escalateDriverQuestion as AnyTool, checkAvailabilityTool as AnyTool, lookupPriceTool as AnyTool, findBookingsTool as AnyTool, sendCustomerReply as AnyTool, getCronHealth as AnyTool, getAiProviderStatus as AnyTool, getWorkspaceAutonomy as AnyTool, gateAdminHighRisk(triggerCron) as AnyTool, gateAdminHighRisk(setWorkspaceAutonomy) as AnyTool, getJobSearchSummary as AnyTool, listJobSearchQueue as AnyTool, listJobSearchCandidates as AnyTool, explainJobSearchRejection as AnyTool, pauseJobSearch as AnyTool, startJobApplications as AnyTool, pauseJobApplications as AnyTool, resumeJobApplications as AnyTool, stopJobApplications as AnyTool, setJobApplicationPolicy as AnyTool, getJobApplicationAutonomy as AnyTool, resumeJobSearch as AnyTool, listApplicationsNeedingReview as AnyTool, inspectJobSearchApplications as AnyTool, explainApplicationStatus as AnyTool, getApplicationSubmissionEvidence as AnyTool, getExecutionDailySummary as AnyTool, pauseApplicationExecution as AnyTool, resumeApplicationExecution as AnyTool, enableDryRunMode as AnyTool, disableApplicationAutomation as AnyTool, gateAdminHighRisk(enableApplicationAutomation) as AnyTool, gateAdminHighRisk(disableDryRunMode) as AnyTool, gateAdminHighRisk(setDailySubmissionCap) as AnyTool, gateAdminHighRisk(runApplicationExecution) as AnyTool, previewQualifiedJobs as AnyTool, gateAdminHighRisk(applyToQualifiedJobs) as AnyTool,
 ]
-
-export function findTool(name: string): AnyTool | undefined {
-  return TOOL_REGISTRY.find((t) => t.name === name)
-}
+export function findTool(name: string): AnyTool | undefined { return TOOL_REGISTRY.find((t) => t.name === name) }
