@@ -8,6 +8,8 @@ on:
       - 'lib/domain-integration/**'
       - 'lib/perception/**'
       - 'lib/caye-agent/workspace-feed.ts'
+      - 'scripts/provision-bedrock-domain.mjs'
+      - 'package.json'
       - 'supabase/migrations/20260901_domain_event_projection_bridge.sql'
       - 'supabase/migrations/20260902000000_domain_change_source_snapshots.sql'
       - 'supabase/migrations/20260902043000_domain_integration_review_fixes.sql'
@@ -37,3 +39,5 @@ jobs:
           lib/domain-integration/
           lib/perception/domain-observation-catchup.test.ts
           supabase/tests/domain-event-migration-contract.test.ts
+      - name: Production build
+        run: npm run build
