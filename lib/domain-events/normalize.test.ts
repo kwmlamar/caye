@@ -64,22 +64,22 @@ describe('normalizeDomainChange', () => {
     expect(events[0]?.type).toBe('domain.daily_timesheet.submitted')
   })
 
-  it('uses bootstrap observation rather than fabricating a created event', () => {
+  it('uses a system bootstrap observation rather than fabricating fresh external activity', () => {
     const events = normalizeDomainChange(
       change({ operation: 'snapshot', previous: null, current: { status: 'received' } }),
       { entityId: 'entity-po-1' },
     )
     expect(events[0]?.type).toBe('domain.purchase_order.bootstrap_observed')
     expect(events[0]?.changeKind).toBe('bootstrap')
-    expect(events[0]?.attentionEligible).toBe(false)
+    expect(events[0]?.actor.kind).toBe('system')
     expect(events[0]?.snapshot).toEqual({ status: 'received' })
   })
 
-  it('retains source identity but disables attention when the Caye entity is unmapped', () => {
+  it('retains source and external actor identity when the Caye entity is unmapped', () => {
     const [event] = normalizeDomainChange(change(), null)
     expect(event?.cayeEntityId).toBeNull()
     expect(event?.sourceEntityId).toBe('po-1')
-    expect(event?.attentionEligible).toBe(false)
+    expect(event?.actor.kind).toBe('unknown')
   })
 
   it('only exposes worker payroll rows for voids or payment reversals', () => {
