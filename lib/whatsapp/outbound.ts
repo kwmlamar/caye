@@ -13,6 +13,7 @@ import 'server-only'
  */
 
 import { createServiceClient } from '@/lib/supabase-server'
+import { sanitizeHumanFacingText } from '@/lib/human-facing-voice'
 
 const GRAPH_VERSION = 'v19.0'
 
@@ -115,7 +116,7 @@ export async function sendFreeFormWhatsApp(
     messaging_product: 'whatsapp',
     to: normalizeE164(toPhoneNumber),
     type: 'text',
-    text: { body, preview_url: false },
+    text: { body: sanitizeHumanFacingText(body), preview_url: false },
     biz_opaque_callback_data: idempotencyKey,
   })
 }
