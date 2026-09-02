@@ -1,0 +1,50 @@
+name: Email Attachment Evidence CI
+
+on:
+  pull_request:
+    paths:
+      - 'app/api/email/**'
+      - 'lib/artifacts/**'
+      - 'lib/freight/**'
+      - '.github/workflows/email-attachment-evidence-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Attachment evidence exact-head gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Clean install
+        run: npm ci
+
+      - name: Record exact candidate revision
+        run: echo "EMAIL_ATTACHMENT_EVIDENCE_HEAD=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Focused attachment evidence tests
+        run: npx vitest run lib/artifacts/email-evidence-semantics.test.ts lib/artifacts/email-attachments.test.ts lib/artifacts/ingest.test.ts lib/artifacts/relations.test.ts --reporter=verbose
+
+      - name: Freight regression tests
+        run: npx vitest run lib/freight/freight.test.ts lib/freight/workflow.test.ts lib/freight/authorization.test.ts lib/freight/send-safety.test.ts --reporter=verbose
+
+      - name: Full test suite
+        run: npm test -- --run
+
+      - name: TypeScript
+        run: npx tsc --noEmit
+
+      - name: Production build
+        run: npm run build
