@@ -17,14 +17,18 @@ type EnvConnection = {
  * adapter. No workspace/company identifiers or credentials belong in code.
  */
 export class EnvBedrockConnectionResolver implements BedrockConnectionResolver {
-  constructor(private readonly raw = process.env.BEDROCK_CONNECTIONS_JSON) {}
+  #raw: string | undefined
+
+  constructor(raw = process.env.BEDROCK_CONNECTIONS_JSON) {
+    this.#raw = raw
+  }
 
   async resolve(workspaceId: string): Promise<BedrockConnection | null> {
-    if (!this.raw) return null
+    if (!this.#raw) return null
 
     let parsed: unknown
     try {
-      parsed = JSON.parse(this.raw)
+      parsed = JSON.parse(this.#raw)
     } catch {
       throw new Error('BEDROCK_CONNECTIONS_JSON is invalid JSON')
     }
@@ -39,18 +43,14 @@ export class EnvBedrockConnectionResolver implements BedrockConnectionResolver {
       return item.workspaceId === workspaceId
     })
 
-    if (candidates.length !== 1) {
-      return null
-    }
+    if (candidates.length !== 1) return null
 
     const connection = candidates[0]
     if (
       typeof connection.companyId !== 'string' || !connection.companyId ||
       typeof connection.supabaseUrl !== 'string' || !connection.supabaseUrl ||
       typeof connection.serviceRoleKey !== 'string' || !connection.serviceRoleKey
-    ) {
-      return null
-    }
+    ) return null
 
     return { ...connection, workspaceId }
   }
