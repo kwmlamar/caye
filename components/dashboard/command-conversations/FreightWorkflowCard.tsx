@@ -23,7 +23,8 @@ export function FreightWorkflowCard({ workspaceId, conversationId, onPrepared }:
   useEffect(() => { setState(null); void call('GET') /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [workspaceId, conversationId])
   async function openArtifact(id: string) {
     const { session } = await getSession(); if (!session) return
-    const res = await fetch(`/api/founder/business-artifacts/${id}?workspaceId=${workspaceId}`, { headers: { Authorization: `Bearer ${session.access_token}` } })
+    const params = new URLSearchParams({ workspaceId, conversationId, artifact: '1' })
+    const res = await fetch(`/api/founder/freight-workflow?${params}`, { headers: { Authorization: `Bearer ${session.access_token}` } })
     const json = await res.json() as { artifact?: { url?: string }; error?: string }
     if (json.artifact?.url) window.open(json.artifact.url, '_blank', 'noopener,noreferrer')
     else setError(json.error ?? 'Could not open document')
