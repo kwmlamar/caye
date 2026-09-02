@@ -22,7 +22,7 @@ on:
       - 'scripts/voice-ci-delta.py'
 
 permissions:
-  contents: write
+  contents: read
   pull-requests: write
 
 jobs:
@@ -32,63 +32,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: fix/caye-communication-voice-architecture
           fetch-depth: 0
-      - name: Apply briefing semantic patch once
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('lib/caye-agent/briefing.ts')
-          s = p.read_text()
-          old = """  const realization = buildCommunicationRealizationInstructions({
-    recipientRole: 'operator',
-    channel: 'proactive',
-    purpose: 'informational_update',
-    responseRequired: false,
-    decisionRequired: false,
-    previouslyMentioned: true,
-    changedSinceLastMention: true,
-  })
-
-  return [
-    realization,
-    '',
-    `You are Caye - the AI assistant ${operator} hired to handle the front desk for ${business}.`,
-    '',
-    `It's morning."""
-          new = """  const realization = buildCommunicationRealizationInstructions({
-    recipientRole: 'operator',
-    channel: 'proactive',
-    purpose: oldestAgingHold ? 'approval_request' : 'informational_update',
-    responseRequired: Boolean(oldestAgingHold),
-    decisionRequired: Boolean(oldestAgingHold),
-    authorityRequirement: oldestAgingHold ? 'owner' : 'none',
-    previouslyMentioned: true,
-    changedSinceLastMention: true,
-  })
-
-  return [
-    realization,
-    '',
-    `You are Caye - the AI assistant ${operator} hired to handle the front desk for ${business}.`,
-    '',
-    `It's morning."""
-          old_offer = """      ? `- ${oldestAgingHold.customer} has been waiting ${oldestAgingHold.daysHeld} days. Surface that fact compactly, but do not manufacture an offer or question. Ask only if a real owner-only decision is required.`"""
-          new_offer = """      ? `- Today is the exception to the above: ${oldestAgingHold.customer} has been waiting ${oldestAgingHold.daysHeld} days, so offer to take a first pass - \"Want me to take a first pass?\" Just the offer; never act on it without a yes.`"""
-          changed = False
-          if old in s:
-              s = s.replace(old, new, 1); changed = True
-          if old_offer in s:
-              s = s.replace(old_offer, new_offer, 1); changed = True
-          if changed:
-              p.write_text(s)
-          PY
-          if git diff --quiet -- lib/caye-agent/briefing.ts; then exit 0; fi
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add lib/caye-agent/briefing.ts
-          git commit -m "Preserve real aging-hold approval ask"
-          git push origin HEAD:fix/caye-communication-voice-architecture
       - uses: actions/setup-node@v4
         with:
           node-version: 24
