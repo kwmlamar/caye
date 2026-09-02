@@ -97,19 +97,22 @@ describe('communication realization policy', () => {
     const instructions = buildCommunicationRealizationInstructions(ctx)
     expect(plan.exposeInternalTaxonomy).toBe(false)
     expect(instructions).toContain('Do not mechanically expose internal field names')
-    // Representative source state can stay rigorous internally without becoming prose labels.
     const internalState = { status: 'held', authority: 'owner', approval_required: true }
     expect(internalState).toEqual({ status: 'held', authority: 'owner', approval_required: true })
   })
 
-  it('keeps structured reporting available when the user explicitly asks for it', () => {
-    const plan = planCommunication({
+  it('keeps structured reporting available without exposing implementation taxonomy', () => {
+    const ctx: CommunicationContext = {
       ...base,
       purpose: 'structured_report',
       explicitStructuredReport: true,
-    })
+    }
+    const plan = planCommunication(ctx)
+    const instructions = buildCommunicationRealizationInstructions(ctx)
     expect(plan.detail).toBe('structured')
-    expect(plan.exposeInternalTaxonomy).toBe(true)
+    expect(plan.exposeInternalTaxonomy).toBe(false)
+    expect(instructions).toContain('explicitly requested structured reporting')
+    expect(instructions).toContain('implementation-only taxonomy private')
   })
 
   it('preserves material uncertainty in the realization contract', () => {
@@ -126,19 +129,19 @@ describe('Mrs. Max production-pattern fixtures', () => {
   it.each([
     {
       name: 'daily held-thread nag',
-      before: '1 threads holding for you, 1 booked today. Oldest waiting: Jonathan Garcia — 13d. Want me to work through the held ones with you?',
+      before: '1 threads holding for you, 1 booked today. Oldest waiting: Jonathan Garcia - 13d. Want me to work through the held ones with you?',
       context: { ...base, purpose: 'informational_update' as const, previouslyMentioned: true, changedSinceLastMention: false },
       expected: { resurfacing: 'suppress', cta: 'none' },
     },
     {
       name: 'unchanged issue with changed urgency',
-      before: 'Backing off the daily nagging on Jonathan Garcia — still held, still needs your call, I just won\'t keep bringing it up every day.',
+      before: "Backing off the daily nagging on Jonathan Garcia - still held, still needs your call, I just won't keep bringing it up every day.",
       context: { ...base, purpose: 'reminder' as const, previouslyMentioned: true, changedSinceLastMention: false, urgencyIncreased: true },
       expected: { resurfacing: 'compressed', cta: 'none' },
     },
     {
       name: 'operator correction',
-      before: 'I haven\'t seen your outbound reply land on Autumn McNeill\'s thread yet, so I left it open. Once it syncs, I can close it.',
+      before: "I haven't seen your outbound reply land on Autumn McNeill's thread yet, so I left it open. Once it syncs, I can close it.",
       context: { ...base, purpose: 'acknowledgement' as const, priorTurn: 'i dealt with it', authoritativeOperatorCorrection: true },
       expected: { detail: 'terse', cta: 'none', acknowledgeAuthorityFirst: true },
     },
