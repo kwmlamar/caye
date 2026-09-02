@@ -77,7 +77,6 @@ export type NormalizedDomainEvent = {
   correlationId?: string | null
   sourceMetadata: Record<string, unknown>
   snapshot?: Record<string, unknown> | null
-  attentionEligible: boolean
 }
 
 export type DomainSyncCheckpoint = {
