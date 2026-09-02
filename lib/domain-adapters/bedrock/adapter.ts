@@ -41,7 +41,7 @@ export class BedrockAdapter {
     return { connection, provider: this.providerFactory(connection) }
   }
 
-  private meta(workspaceId: string, companyId: string, sourceEntityType: BedrockAuthorityMetadata['sourceEntityType'], sourceEntityId: string): BedrockAuthorityMetadata {
+  private meta<T extends BedrockAuthorityMetadata['sourceEntityType']>(workspaceId: string, companyId: string, sourceEntityType: T, sourceEntityId: string): BedrockAuthorityMetadata & { sourceEntityType: T } {
     return { sourceSystem: BEDROCK_SOURCE_SYSTEM, authority: EXTERNAL_AUTHORITATIVE, sourceEntityType, sourceEntityId, workspaceId, companyId }
   }
 
