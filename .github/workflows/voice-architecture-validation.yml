@@ -31,8 +31,11 @@ jobs:
       - name: Focused voice tests
         run: npx vitest run lib/human-facing-voice.test.ts lib/human-facing-email.test.ts lib/human-facing-boundaries.test.ts lib/sanitize-dashes.test.ts
       - name: Full test suite
+        if: always()
         run: npm test -- --run
       - name: Typecheck
+        if: always()
         run: npx tsc --noEmit
       - name: Build
+        if: always()
         run: npm run build
