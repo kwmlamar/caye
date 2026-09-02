@@ -23,6 +23,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: write
 
 jobs:
   validate:
@@ -47,7 +48,25 @@ jobs:
           cd /tmp/caye-main
           npm ci
       - name: Full tests and typecheck delta
-        run: python3 scripts/voice-ci-delta.py --main /tmp/caye-main --candidate "$GITHUB_WORKSPACE"
+        shell: bash
+        run: |
+          set +e
+          python3 scripts/voice-ci-delta.py --main /tmp/caye-main --candidate "$GITHUB_WORKSPACE" 2>&1 | tee /tmp/voice-ci-delta.log
+          rc=${PIPESTATUS[0]}
+          {
+            echo '### Voice CI delta evidence'
+            echo
+            echo '```text'
+            grep -E '^(BASELINE:|BASELINE_ONLY_FIXED:|PR_REGRESSION:|CLEAN:|RESULT |CI DELTA GATE:)' /tmp/voice-ci-delta.log || true
+            echo '```'
+          } > /tmp/voice-ci-delta-summary.md
+          cat /tmp/voice-ci-delta-summary.md >> "$GITHUB_STEP_SUMMARY"
+          exit "$rc"
+      - name: Publish exact delta evidence on PR
+        if: always() && github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh pr comment 433 --body-file /tmp/voice-ci-delta-summary.md
       - name: Build candidate
         if: always()
         run: npm run build
