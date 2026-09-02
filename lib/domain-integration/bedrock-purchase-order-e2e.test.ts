@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { PGlite } from '@electric-sql/pglite'
+import { isReportable } from '@/lib/caye-agent/workspace-feed'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import { BedrockAdapter } from '@/lib/domain-adapters/bedrock/adapter'
@@ -313,6 +314,7 @@ describe('Bedrock purchase order -> Caye workspace event (PGlite)', () => {
       '20260901190000_business_entity_kernel.sql',
       '20260901_domain_event_projection_bridge.sql',
       '20260902000000_domain_change_source_snapshots.sql',
+      '20260902043000_domain_integration_review_fixes.sql',
     ]) {
       await db.exec(readFileSync(join(dir, file), 'utf8'))
     }
@@ -384,7 +386,7 @@ describe('Bedrock purchase order -> Caye workspace event (PGlite)', () => {
     // No claim that anything just happened to it.
     expect(rows[0].payload.change_kind).toBe('bootstrap')
     expect(rows[0].payload.changes).toEqual([])
-    expect(rows[0].payload.attention_eligible).toBe(false)
+    expect(isReportable({ actorKind: rows[0].actor_kind, isFailure: false })).toBe(false)
 
     // And not attributable to the outside world, so the existing workspace
     // feed (actor_kind 'outside' or is_failure) will not raise it.
