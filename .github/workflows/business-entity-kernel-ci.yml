@@ -1,0 +1,27 @@
+name: Business entity kernel
+
+on:
+  pull_request:
+    paths:
+      - 'lib/domain/**'
+      - 'supabase/migrations/20260901190000_business_entity_kernel.sql'
+      - '.github/workflows/business-entity-kernel-ci.yml'
+  push:
+    branches:
+      - feat/business-entity-kernel-v1
+
+jobs:
+  business-entity-kernel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Kernel contract and migration tests
+        run: npx vitest run lib/domain/
+      - name: Production build
+        run: npm run build

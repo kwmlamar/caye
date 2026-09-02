@@ -174,7 +174,10 @@ describe('caye_finalize_engineering_analysis (PGlite)', () => {
     await finalize({ jobId: job2, workspaceId, analysisId: analysis2Id, sourceArtifactId: artifactRev2.id, revision: artifactRev2.revision, previousAnalysisId: analysis1Id })
 
     const { rows: analyses } = await db.query<{ id: string; source_artifact_id: string; source_artifact_revision: number; previous_analysis_id: string | null }>(
-      `select id, source_artifact_id, source_artifact_revision, previous_analysis_id from public.engineering_analyses where workspace_id = $1 order by created_at`,
+      // created_at alone is not a total order here: PGlite resolves now() coarsely
+      // enough that two sequential inserts routinely share a timestamp, making the
+      // row order a coin flip. Revision is the ordering this assertion actually means.
+      `select id, source_artifact_id, source_artifact_revision, previous_analysis_id from public.engineering_analyses where workspace_id = $1 order by created_at, source_artifact_revision`,
       [workspaceId]
     )
     expect(analyses).toHaveLength(2)

@@ -5,7 +5,13 @@ export default defineConfig({
   test: {
     globals: false,
     environment: 'node',
-    include: ['lib/**/*.test.ts', 'app/**/*.test.ts'],
+    include: [
+      'lib/**/*.test.ts',
+      'app/**/*.test.ts',
+      // Deliberately narrow: include integration migration contracts without
+      // sweeping unrelated Supabase fixtures into the normal Vitest suite.
+      'supabase/tests/domain-event-migration-contract.test.ts',
+    ],
   },
   resolve: {
     alias: {

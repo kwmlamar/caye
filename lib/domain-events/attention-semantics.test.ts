@@ -1,0 +1,39 @@
+import { expect, it } from 'vitest'
+import { isReportable } from '@/lib/caye-agent/workspace-feed'
+import { toWorkspaceEventInsert } from './workspace-event'
+import type { NormalizedDomainEvent } from './types'
+
+function event(actor: 'external' | 'system', entity: string | null): NormalizedDomainEvent {
+  return {
+    workspaceId: 'w',
+    sourceSystem: 'bedrock',
+    sourceCompanyId: 'c',
+    sourceEntityType: 'purchase_order',
+    sourceEntityId: 'p',
+    sourceVersion: 'v',
+    sourceEventId: null,
+    type: 'domain.purchase_order.status_changed',
+    changeKind: 'transition',
+    occurredAt: '2026-09-01T00:00:00Z',
+    observedAt: '2026-09-01T00:00:01Z',
+    idempotencyKey: 'k',
+    causationId: null,
+    correlationId: null,
+    cayeEntityId: entity,
+    actor: { kind: actor, label: 'bedrock' },
+    changes: [{ field: 'status', previous: 'draft', current: 'ordered' }],
+    relatedEntities: [],
+    snapshot: null,
+    evidence: null,
+    sourceMetadata: {},
+  }
+}
+
+it('reports unresolved real external changes but keeps bootstrap system observations silent', () => {
+  const unresolved = toWorkspaceEventInsert(event('external', null))
+  expect(isReportable({ actorKind: unresolved.actor_kind, isFailure: false })).toBe(true)
+  expect(unresolved.payload).not.toHaveProperty('attention_eligible')
+
+  const bootstrap = toWorkspaceEventInsert(event('system', null))
+  expect(isReportable({ actorKind: bootstrap.actor_kind, isFailure: false })).toBe(false)
+})

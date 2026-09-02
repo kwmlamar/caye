@@ -23,7 +23,15 @@ afterAll(async () => {
   await __employeeEvalAdapterTestKit.close()
 })
 
-describe('Employee Eval production adapter contract', () => {
+/**
+ * These cases spawn a git process and reset durable scenario state, so their
+ * real cost is process scheduling rather than computation. Under the default
+ * 5s budget they pass alone and fail whenever the suite is running enough
+ * work alongside them — the domain integration tests added in this pass boot
+ * PGlite and were enough to tip them over. The timeout is raised rather than
+ * the work reduced because the work is the point of the test.
+ */
+describe('Employee Eval production adapter contract', { timeout: 30_000 }, () => {
   it('candidate runner refuses a missing adapter instead of replaying a baseline', async () => {
     await expect(loadEmployeeEvalAdapter('/definitely/missing/caye-production-adapter.ts')).rejects.toThrow(/baseline replay is not a candidate evaluation/i)
   })

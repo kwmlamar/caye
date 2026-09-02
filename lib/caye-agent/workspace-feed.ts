@@ -166,6 +166,19 @@ function toFeedEvent(r: RawEvent, ctx: Map<string, ConvContext>): FeedEvent {
 }
 
 /**
+ * Domain events have two clocks with different meanings. `occurred_at` is the
+ * source system's chronology and must remain untouched. `payload.observed_at`
+ * is when Caye learned about that source event and is therefore the freshness
+ * clock for outage catch-up. Ordinary workspace events still use occurred_at.
+ */
+function feedFreshness(r: RawEvent): string {
+  if (r.type.startsWith('domain.') && typeof r.payload?.observed_at === 'string') {
+    return r.payload.observed_at
+  }
+  return r.occurred_at
+}
+
+/**
  * What Caye can and cannot see, as data rather than as a prompt instruction.
  *
  * This exists because of the 2026-08-07 failure: asked who last emailed,
@@ -231,6 +244,11 @@ export async function getCoverage(workspaceId: string): Promise<Coverage> {
  * "Nothing happened" and "I can't see anything" are different answers and
  * the caller must be able to tell them apart — coverage is what separates
  * them.
+ *
+ * External domain events are the one exception to occurred_at freshness. A
+ * source event may be old but first observed after an outage today. The second
+ * query admits that bounded backlog by observed_at, orders by that same clock
+ * before applying its limit, then the two paths are deduplicated by event id.
  */
 export async function getWorkspaceFeed(
   workspaceId: string,
@@ -240,17 +258,40 @@ export async function getWorkspaceFeed(
   const hours = Math.min(opts?.hours ?? 24, 24 * 30)
   const limit = opts?.limit ?? 30
   const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString()
+  const select = 'id, occurred_at, type, actor_kind, is_failure, conversation_id, payload'
 
-  const { data } = await supabase
-    .from('workspace_events')
-    .select('id, occurred_at, type, actor_kind, is_failure, conversation_id, payload')
-    .eq('workspace_id', workspaceId)
-    .gte('occurred_at', cutoff)
-    .or(REPORTABLE_SQL_FILTER)
-    .order('occurred_at', { ascending: false })
-    .limit(limit)
+  const [{ data: ordinary }, { data: domainObserved }] = await Promise.all([
+    supabase
+      .from('workspace_events')
+      .select(select)
+      .eq('workspace_id', workspaceId)
+      .gte('occurred_at', cutoff)
+      .or(REPORTABLE_SQL_FILTER)
+      .order('occurred_at', { ascending: false })
+      .limit(limit),
+    supabase
+      .from('workspace_events')
+      .select(select)
+      .eq('workspace_id', workspaceId)
+      .like('type', 'domain.%')
+      .gte('payload->>observed_at', cutoff)
+      .or(REPORTABLE_SQL_FILTER)
+      .order('payload->>observed_at', { ascending: false })
+      .limit(limit),
+  ])
 
-  const rows = (data ?? []) as RawEvent[]
+  const byId = new Map<number, RawEvent>()
+  for (const row of [
+    ...((ordinary ?? []) as RawEvent[]),
+    ...((domainObserved ?? []) as RawEvent[]),
+  ]) {
+    byId.set(row.id, row)
+  }
+
+  const rows = [...byId.values()]
+    .sort((a, b) => feedFreshness(b).localeCompare(feedFreshness(a)))
+    .slice(0, limit)
+
   const ctx = await attachConversationContext(supabase, rows)
   const events = rows
     .map((r) => toFeedEvent(r, ctx))
