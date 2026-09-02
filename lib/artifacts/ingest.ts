@@ -62,7 +62,7 @@ export interface IngestArtifactInput {
   senderContactId?: string | null
   senderOperatorAllowlistId?: number | null
   senderLabel?: string | null
-  origin?: 'external' | 'operator_uploaded' | 'customer_uploaded'
+  origin?: 'external' | 'operator_uploaded' | 'customer_uploaded' | 'caye_generated' | 'derived'
   receivedAt?: Date
 }
 
