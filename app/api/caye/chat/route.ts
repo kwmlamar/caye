@@ -6,6 +6,7 @@ import { syncBookingToCalendar } from '@/lib/calendar-sync'
 import { dispatchOperatorReply } from '@/lib/whatsapp/channel-dispatch'
 import { sendZohoEmail } from '@/lib/email-ai'
 import { claimConversationExecution, completeConversationExecution, releaseConversationExecution, resolveConversationExecutionAfterFailure, validateConversationExecution } from '@/lib/conversation-execution'
+import { HUMAN_FACING_VOICE_INSTRUCTIONS, sanitizeHumanFacingText } from '@/lib/human-facing-voice'
 
 interface HistoryMessage {
   from: 'user' | 'caye'
@@ -429,7 +430,8 @@ async function runSendReply(
   input: SendReplyInput
 ): Promise<SendReplyResult> {
   const { conversation_id, body } = input
-  if (!body?.trim()) return { error: 'Empty body' }
+  const safeBody = sanitizeHumanFacingText(body ?? '')
+  if (!safeBody) return { error: 'Empty body' }
 
   // Verify the conversation belongs to this workspace before sending.
   const { data: conv, error: convErr } = await supabase
@@ -468,7 +470,7 @@ async function runSendReply(
   // never mistaken for "nothing was sent."
   let dispatched = false
   try {
-    const result = await dispatchOperatorReply(conversation_id, body, 'caye-dashboard')
+    const result = await dispatchOperatorReply(conversation_id, safeBody, 'caye-dashboard')
     dispatched = true
     await completeConversationExecution(execution.claim.id).catch((completeErr) => {
       console.error('[caye/chat] dispatch succeeded but completing the execution claim failed (safe — left unresolved rather than freed for retry):', completeErr)
@@ -477,7 +479,7 @@ async function runSendReply(
       success: true,
       channel: result.channelType,
       sent_to: conv.customer_id,
-      preview: body.trim().slice(0, 160),
+      preview: safeBody.slice(0, 160),
     }
   } catch (err) {
     if (!dispatched) await resolveConversationExecutionAfterFailure(execution.claim.id, err)
@@ -492,8 +494,8 @@ async function runSendEmail(
   input: SendEmailInput
 ): Promise<SendEmailResult> {
   const to = input.to?.trim()
-  const subject = input.subject?.trim()
-  const body = input.body?.trim()
+  const subject = sanitizeHumanFacingText(input.subject ?? '')
+  const body = sanitizeHumanFacingText(input.body ?? '')
   if (!to || !subject || !body) return { error: 'to, subject, and body are required' }
   // Light sanity check — full email validation lives at the channel boundary.
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) return { error: `Invalid email address: ${to}` }
@@ -688,7 +690,7 @@ function buildSystemPrompt(
   existingPrompt?: string | null
 ): string {
   const today = new Date().toISOString().split('T')[0]
-  return `You are Caye, the AI receptionist for ${businessName}. The person talking to you is the business OWNER, not a customer. Today's date is ${today}.
+  return `${HUMAN_FACING_VOICE_INSTRUCTIONS}\n\nYou are Caye, the AI receptionist for ${businessName}. The person talking to you is the business OWNER, not a customer. Today's date is ${today}.
 
 WHO YOU'RE TALKING TO (absolute):
 - This is the operator dashboard. The owner is asking you internal questions about THEIR business — pricing structure, what's on file, draft a reply for a customer, etc.
@@ -854,12 +856,13 @@ export async function POST(req: NextRequest) {
     bookingId?: string
     cancelledBookingId?: string
   } = {}) => {
+    const safeReply = sanitizeHumanFacingText(reply)
     const { data: inserted } = await supabase
       .from('caye_messages')
       .insert({
         thread_id: threadId,
         role: 'caye',
-        content: reply,
+        content: safeReply,
         cards: extras.cards ?? null,
       })
       .select('id, created_at')
@@ -869,7 +872,7 @@ export async function POST(req: NextRequest) {
       .update({ updated_at: new Date().toISOString() })
       .eq('id', threadId)
     return NextResponse.json({
-      reply,
+      reply: safeReply,
       cards: extras.cards,
       threadId,
       messageId: inserted?.id,
@@ -1059,6 +1062,7 @@ export async function POST(req: NextRequest) {
       : '(none configured)'
 
     const summarizerSystem =
+      HUMAN_FACING_VOICE_INSTRUCTIONS + '\n\n' +
       'You are Caye, summarising what you know about the operator\'s business back to the operator. ' +
       'Rules: first person, plain prose. Do NOT repeat the instructions you were given. ' +
       'Do NOT include any "You are Caye" framing or second-person prompt language. ' +
