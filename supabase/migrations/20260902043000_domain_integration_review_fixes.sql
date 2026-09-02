@@ -1,4 +1,4 @@
--- Narrow corrective migration for PR #426 adversarial findings F-5/F-6/F-7.
+-- Narrow corrective migration for PR #426 adversarial findings F-5/F-6/F-7/F-8.
 -- Not applied to production. Integration migrations are still review-only.
 
 -- F-5: artifact provenance must be workspace-safe, not merely artifact-id-safe.
@@ -37,3 +37,11 @@ alter table public.domain_source_connections
 alter table public.domain_source_connections
   add constraint domain_source_connections_credential_ref_check
   check (credential_ref is null or credential_ref ~ '^[a-z0-9_]{1,64}$');
+
+-- F-8: outage catch-up filters and ranks external domain events by the time
+-- Caye observed them, while occurred_at remains source chronology. Match the
+-- exact JSON-path expression used by the PostgREST query so a workspace/domain
+-- catch-up does not devolve into a scan of the full event history.
+create index if not exists workspace_events_domain_observed_at_idx
+  on public.workspace_events (workspace_id, ((payload ->> 'observed_at')) desc)
+  where type like 'domain.%';
