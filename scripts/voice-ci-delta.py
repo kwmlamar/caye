@@ -5,8 +5,9 @@ A candidate failure is BASELINE only when the same normalized semantic signature
 is observed from the same command on main. TypeScript source coordinates are
 reported in the raw command output but deliberately excluded from the comparison
 key because unrelated edits move line numbers without creating a new diagnostic.
-Anything candidate-only, or any non-zero command with no extractable signature,
-is a PR_REGRESSION and fails the gate.
+Vitest comparison uses its stable `FAIL file > test` identity rather than timing
+or stack-frame lines, which vary from run to run. Anything candidate-only, or any
+non-zero command with no extractable signature, is a PR_REGRESSION and fails.
 """
 from __future__ import annotations
 
@@ -19,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
-TEST_PREFIX = re.compile(r"^\s*(?:FAIL\s+|❯\s+|×\s+)")
+TEST_PREFIX = re.compile(r"^\s*FAIL\s+")
 LOAD_ERROR = re.compile(r"(?:Error:\s+Failed to load url .*|Failed to load url .*)")
 TS_LOCATION = re.compile(r"^(.*?\.tsx?)\(\d+,\d+\)(:\s*error\s+TS\d+:.*)$")
 
