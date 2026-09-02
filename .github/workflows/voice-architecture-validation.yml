@@ -63,7 +63,7 @@ jobs:
           cat /tmp/voice-ci-delta-summary.md >> "$GITHUB_STEP_SUMMARY"
           exit "$rc"
       - name: Publish exact delta evidence on PR
-        if: always() && github.event_name == 'push'
+        if: always()
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh pr comment 433 --body-file /tmp/voice-ci-delta-summary.md
