@@ -553,7 +553,6 @@ describe('Bedrock purchase order -> Caye workspace event (PGlite)', () => {
       changes: [{ field: 'status', previous: 'submitted', current: 'approved' }],
       relatedEntities: [],
       sourceMetadata: {},
-      attentionEligible: true,
     })
 
     expect(stale.status).toBe('stale')
