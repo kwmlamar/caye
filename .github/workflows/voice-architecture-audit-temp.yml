@@ -1,0 +1,60 @@
+name: Voice Architecture Audit Temp
+
+on:
+  push:
+    branches: [fix/caye-communication-voice-architecture]
+
+permissions:
+  contents: write
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Trace communication generation paths
+        shell: bash
+        run: |
+          set -u
+          echo '=== ROBOTIC PHRASE / STRUCTURE MATCHES ==='
+          grep -RniE "Decision:|Why it matters:|What.s been done:|Recommendation:|Proceed\?|Yes or No|Want me to|Would you like me to|held|holding for you|approval|reminder|proactive|escalat" app lib scripts 2>/dev/null | head -n 500 || true
+          echo '=== MODEL / PROMPT CALL SITES ==='
+          grep -RniE "systemPrompt|system_prompt|messages:|generateText|chat\.completions|anthropic|claude|openai|prompt" app lib 2>/dev/null | head -n 500 || true
+          echo '=== OWNER / OPERATOR SURFACES ==='
+          find app lib -type f \( -name '*.ts' -o -name '*.tsx' \) | grep -Ei 'owner|operator|whatsapp|proactive|attention|reminder|approval|escalat|reply|caye' | head -n 300 || true
+      - name: Baseline and candidate full test/typecheck delta
+        shell: bash
+        run: |
+          set +e
+          BASE_SHA=$(git merge-base origin/main HEAD)
+          echo "BASE_SHA=$BASE_SHA"
+          mkdir -p /tmp/voice-delta
+          git worktree add /tmp/caye-main "$BASE_SHA"
+          cd /tmp/caye-main
+          npm ci >/tmp/voice-delta/main-install.log 2>&1
+          npm test >/tmp/voice-delta/main-test.log 2>&1; echo $? >/tmp/voice-delta/main-test.exit
+          npx tsc --noEmit >/tmp/voice-delta/main-tsc.log 2>&1; echo $? >/tmp/voice-delta/main-tsc.exit
+          cd "$GITHUB_WORKSPACE"
+          npm ci >/tmp/voice-delta/pr-install.log 2>&1
+          npm test >/tmp/voice-delta/pr-test.log 2>&1; echo $? >/tmp/voice-delta/pr-test.exit
+          npx tsc --noEmit >/tmp/voice-delta/pr-tsc.log 2>&1; echo $? >/tmp/voice-delta/pr-tsc.exit
+          echo '=== MAIN TEST EXIT ==='; cat /tmp/voice-delta/main-test.exit
+          echo '=== PR TEST EXIT ==='; cat /tmp/voice-delta/pr-test.exit
+          echo '=== MAIN FAILURES ==='; grep -E '^ FAIL |^⎯|Error:|Failed to load|Test Files|Tests  ' /tmp/voice-delta/main-test.log | tail -n 250 || true
+          echo '=== PR FAILURES ==='; grep -E '^ FAIL |^⎯|Error:|Failed to load|Test Files|Tests  ' /tmp/voice-delta/pr-test.log | tail -n 250 || true
+          echo '=== MAIN TSC EXIT ==='; cat /tmp/voice-delta/main-tsc.exit
+          echo '=== PR TSC EXIT ==='; cat /tmp/voice-delta/pr-tsc.exit
+          echo '=== MAIN TSC ==='; cat /tmp/voice-delta/main-tsc.log || true
+          echo '=== PR TSC ==='; cat /tmp/voice-delta/pr-tsc.log || true
+      - name: Remove temporary audit workflow
+        if: always()
+        shell: bash
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git pull --rebase origin fix/caye-communication-voice-architecture
+          git rm .github/workflows/voice-architecture-audit-temp.yml
+          git commit -m 'chore: remove temporary voice architecture audit workflow' || exit 0
+          git push origin HEAD:fix/caye-communication-voice-architecture
