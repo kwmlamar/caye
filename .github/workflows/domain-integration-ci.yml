@@ -9,6 +9,8 @@ on:
       - 'lib/perception/**'
       - 'lib/caye-agent/workspace-feed.ts'
       - 'scripts/provision-bedrock-domain.mjs'
+      - 'scripts/bedrock-readonly-smoke.mjs'
+      - 'scripts/bedrock-readonly-smoke.test.ts'
       - 'package.json'
       - 'supabase/migrations/20260901_domain_event_projection_bridge.sql'
       - 'supabase/migrations/20260902000000_domain_change_source_snapshots.sql'
@@ -26,18 +28,50 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
       - run: npm ci
-      - name: Domain adapter, bridge, integration, perception, and migration tests
+      - name: Domain adapter, bridge, integration, perception, migration, and smoke-runner tests
         run: >-
           npx vitest run
           lib/domain-adapters/
           lib/domain-events/
           lib/domain-integration/
           lib/perception/domain-observation-catchup.test.ts
+          scripts/bedrock-readonly-smoke.test.ts
           supabase/tests/domain-event-migration-contract.test.ts
       - name: Production build
         run: npm run build
+      - name: TypeScript delta versus current main
+        shell: bash
+        run: |
+          set +e
+          npx tsc --noEmit > /tmp/head-tsc.log 2>&1
+          head_status=$?
+          head_errors=$(grep -c 'error TS' /tmp/head-tsc.log || true)
+
+          git checkout --detach origin/main
+          npx tsc --noEmit > /tmp/main-tsc.log 2>&1
+          main_status=$?
+          main_errors=$(grep -c 'error TS' /tmp/main-tsc.log || true)
+
+          echo "head_status=$head_status head_errors=$head_errors"
+          echo "main_status=$main_status main_errors=$main_errors"
+          echo '--- head TypeScript output ---'
+          cat /tmp/head-tsc.log
+          echo '--- main TypeScript output ---'
+          cat /tmp/main-tsc.log
+
+          if [ "$head_errors" -gt "$main_errors" ]; then
+            echo "PR introduces additional TypeScript errors"
+            exit 1
+          fi
+          if [ "$main_status" -eq 0 ] && [ "$head_status" -ne 0 ]; then
+            echo "PR fails TypeScript while main passes"
+            exit 1
+          fi
+          exit 0
