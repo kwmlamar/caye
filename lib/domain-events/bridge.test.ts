@@ -104,8 +104,9 @@ describe('runDomainEventBridge', () => {
 
   it('persists unmapped external entity events without changing their external actor semantics', async () => {
     const sink = new MemorySink()
+    const externalChange = { ...baseChange, actor: { kind: 'external' as const, label: 'bedrock' } }
     const result = await runDomainEventBridge({
-      workspaceId: 'workspace-1', sourceSystem: 'bedrock', sourceCompanyId: 'ods', source: source([baseChange]),
+      workspaceId: 'workspace-1', sourceSystem: 'bedrock', sourceCompanyId: 'ods', source: source([externalChange]),
       resolver: { async resolve() { return null } }, sink, checkpoints: new MemoryCheckpoints(),
     })
     expect(result.unresolved).toBe(1)
