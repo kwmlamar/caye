@@ -1,3 +1,12 @@
+-- 2026-09-02 correction (never applied anywhere): the fingerprint helpers below
+-- called bare digest(), which does not resolve under `set search_path = public`
+-- because pgcrypto is installed in the `extensions` schema. The SQL-language
+-- helpers failed at CREATE time, so this migration could not be applied at all.
+-- Qualified as extensions.digest(...) rather than widening search_path, which
+-- would broaden unqualified name resolution inside a SECURITY DEFINER body.
+-- Safe to correct in place: this version has never been recorded in any
+-- environment's ledger and none of its objects exist in production.
+
 -- Bounded observation ledger for executed recommendation actions.
 -- This schedules objective observation only. It does not grade recommendations,
 -- execute actions, poll arbitrary destinations, or modify authority. #372 remains
@@ -118,7 +127,7 @@ begin
     raise exception 'recommendation observation horizon invalid';
   end if;
 
-  v_fingerprint := encode(digest(concat_ws('|',
+  v_fingerprint := encode(extensions.digest(concat_ws('|',
     'caye-recommendation-observation-v2', v_rec.id::text, v_decision.id::text,
     v_rec.fingerprint, btrim(p_execution_key), btrim(p_observer_key)
   ), 'sha256'), 'hex');
@@ -188,7 +197,7 @@ begin
   end if;
 
   v_attempt := v_observation.observation_count + 1;
-  v_fingerprint := encode(digest(concat_ws('|',
+  v_fingerprint := encode(extensions.digest(concat_ws('|',
     'caye-recommendation-observation-measurement-v2', v_observation.id::text,
     v_attempt::text, btrim(p_metric_key)
   ), 'sha256'), 'hex');

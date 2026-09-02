@@ -83,21 +83,177 @@ create index if not exists business_fact_candidates_canonical_idx
 alter table public.business_facts
   add column if not exists customer_use_state text not null default 'authoritative';
 
--- Stable property identity for the most important known legacy contradiction
--- class. The key names the PROPERTY, never the value/location itself.
-update public.business_facts
-set canonical_key = case
-  when service_id is not null then 'service.' || service_id::text || '.meeting_point'
-  else 'workspace.meeting_point'
-end
-where canonical_key is null
-  and category = 'logistics'
-  and fact ~* '(meeting[ -]?point|pick[ -]?up (location|point)|pickup (location|point))';
+-- ── Canonical identity backfill ────────────────────────────────────────────
+--
+-- 2026-09-02: the original version of this section keyed EVERY logistics fact
+-- mentioning a meeting/pickup point as either
+--   service.<service_id>.meeting_point   (when service_id was set)
+--   workspace.meeting_point              (otherwise)
+-- and then superseded all but the top-ranked row per key.
+--
+-- No legacy fact has service_id set, so in practice every such fact collapsed
+-- into one workspace-wide key. On the live Bimini workspace that put
+--   "The meeting point for the Heritage Tour is the pink building by the dock."
+-- and
+--   "The pickup location for all tours is the Casino Tram Stop."
+-- into the same bucket and silently retired the first. Those two are not
+-- contradictory: one is scoped to a single service, the other is explicitly
+-- workspace-wide. The scope simply was not encoded anywhere the SQL could see.
+--
+-- The corrected derivation below encodes scope, and — the important part —
+-- returns NULL whenever scope cannot be established. An unresolved fact stays
+-- exactly as it is: visible, active, never superseded. Losing a real piece of
+-- business knowledge is far worse than leaving a canonical key unset, and a
+-- key can always be assigned later once the fact is linked to a service.
 
--- Legacy owner-direct rows predate canonical identity. If several current rows
--- now describe the same property, retain the highest-authority/newest row and
+-- Property vocabulary, mirroring propertyAlias() in lib/business-learning/model.ts.
+-- Unknown property -> NULL: this backfill never invents an identity.
+create or replace function public.business_fact_canonical_property(p_fact text)
+returns text
+language sql
+immutable
+set search_path = pg_catalog, public
+as $fn$
+  select case
+    when p_fact ~* '(meeting[ -]?point|pick[ -]?up[ -]?(location|point)?|pickup[ -]?(location|point)?|where (to|we) meet)'
+      then 'meeting_point'
+    when p_fact ~* 'payment[ -]?method' then 'payment_method'
+    when p_fact ~* 'cancel(lation)?[ -]?policy' then 'cancellation_policy'
+    when p_fact ~* 'refund[ -]?policy' then 'refund_policy'
+    else null
+  end;
+$fn$;
+
+-- True when the fact explicitly generalises across the whole business.
+-- "all tours", "every service", "any booking" — an owner saying this is
+-- deliberately overriding per-service variation, so workspace scope is correct.
+create or replace function public.business_fact_is_workspace_scoped(p_fact text)
+returns boolean
+language sql
+immutable
+set search_path = pg_catalog, public
+as $fn$
+  select p_fact ~* '\y(all|every|any|each)\y[ -]+(our[ -]+)?(tour|trip|excursion|charter|rental|service|package|booking|guest|customer)s?\y';
+$fn$;
+
+-- True when the fact singles something out — a named offering, a named place,
+-- a specific party. Deliberately broad, because its ONLY effect is to withhold
+-- a canonical key. A fact that names something specific which we cannot resolve
+-- to a service must never be filed under a workspace-wide property.
+create or replace function public.business_fact_has_specific_qualifier(p_fact text)
+returns boolean
+language sql
+immutable
+set search_path = pg_catalog, public
+as $fn$
+  select
+    -- "... the Heritage Tour ...", "... Sunset Charter ..." : a capitalised
+    -- proper noun immediately before an offering noun.
+    p_fact ~ '\y[A-Z][A-Za-z''-]+([ -]+[A-Z][A-Za-z''-]+)*[ -]+(Tour|Trip|Excursion|Charter|Rental|Package|Cruise|Experience)s?\y'
+    -- "In Exuma, ...", "Nassau office ..." : a place-qualified statement.
+    or p_fact ~ '\y(In|At|For|From)[ -]+[A-Z][A-Za-z''-]+'
+    or p_fact ~ '\y[A-Z][A-Za-z''-]+[ -]+(office|location|branch|dock|terminal|port)\y';
+$fn$;
+
+/**
+ * Canonical key for a legacy business fact, or NULL when scope is not provable.
+ *
+ * Scope precedence, strongest evidence first:
+ *   1. service_id set                      -> service.<service_id>.<property>
+ *   2. fact names a real service of this workspace, by name or alias
+ *                                          -> service.<matched service_id>.<property>
+ *   3. fact names something specific we could not resolve
+ *                                          -> NULL   (never collapse to workspace)
+ *   4. fact explicitly generalises         -> workspace.<property>
+ *   5. anything else                       -> NULL   (silent scope; do not guess)
+ *
+ * Rule 3 outranks rule 4 on purpose: "the meeting point for the Heritage Tour"
+ * contains no universal quantifier, but even if it did, naming a specific
+ * offering is the stronger signal and must win.
+ */
+create or replace function public.derive_business_fact_canonical_key(
+  p_workspace_id uuid,
+  p_service_id uuid,
+  p_category text,
+  p_fact text
+)
+returns text
+language plpgsql
+stable
+set search_path = pg_catalog, public
+as $fn$
+declare
+  v_property text;
+  v_service_id uuid;
+begin
+  if p_category is distinct from 'logistics' then
+    -- Widen deliberately, one category at a time, with dry-run evidence each
+    -- time. Logistics is the only category audited so far.
+    return null;
+  end if;
+
+  v_property := public.business_fact_canonical_property(p_fact);
+  if v_property is null then return null; end if;
+
+  -- 1. structural scope always wins
+  if p_service_id is not null then
+    return 'service.' || p_service_id::text || '.' || v_property;
+  end if;
+
+  -- 2. resolve a named offering against this workspace's real services.
+  --    Longest name first so "Heritage Tour Deluxe" beats "Heritage Tour".
+  select s.id into v_service_id
+  from public.booking_services s
+  where s.workspace_id = p_workspace_id
+    and length(btrim(coalesce(s.name, ''))) > 2
+    and p_fact ~* ('\y' || regexp_replace(btrim(s.name), '([.^$*+?()\[\]{}|\\])', '\\\1', 'g') || '\y')
+  order by length(s.name) desc
+  limit 1;
+
+  if v_service_id is not null then
+    return 'service.' || v_service_id::text || '.' || v_property;
+  end if;
+
+  -- 3. names something specific that did not resolve -> leave unresolved
+  if public.business_fact_has_specific_qualifier(p_fact) then
+    return null;
+  end if;
+
+  -- 4. explicitly business-wide
+  if public.business_fact_is_workspace_scoped(p_fact) then
+    return 'workspace.' || v_property;
+  end if;
+
+  -- 5. no provable scope
+  return null;
+end;
+$fn$;
+
+revoke all on function public.business_fact_canonical_property(text) from public, anon, authenticated;
+revoke all on function public.business_fact_is_workspace_scoped(text) from public, anon, authenticated;
+revoke all on function public.business_fact_has_specific_qualifier(text) from public, anon, authenticated;
+revoke all on function public.derive_business_fact_canonical_key(uuid, uuid, text, text) from public, anon, authenticated;
+grant execute on function public.business_fact_canonical_property(text) to service_role;
+grant execute on function public.business_fact_is_workspace_scoped(text) to service_role;
+grant execute on function public.business_fact_has_specific_qualifier(text) to service_role;
+grant execute on function public.derive_business_fact_canonical_key(uuid, uuid, text, text) to service_role;
+
+update public.business_facts f
+set canonical_key = public.derive_business_fact_canonical_key(
+  f.workspace_id, f.service_id, f.category, f.fact
+)
+where f.canonical_key is null
+  and public.derive_business_fact_canonical_key(
+        f.workspace_id, f.service_id, f.category, f.fact
+      ) is not null;
+
+-- Legacy owner-direct rows predate canonical identity. Within ONE canonical
+-- key — which now carries scope — retain the highest-authority/newest row and
 -- preserve the others as auditable superseded history. Lower-authority evidence
 -- can never win merely because it is newer.
+--
+-- Rows with a NULL canonical_key are untouched by construction: they never
+-- enter a partition, so an unresolved fact cannot be retired by this migration.
 with ranked as (
   select
     id,

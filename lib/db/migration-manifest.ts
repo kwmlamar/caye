@@ -224,4 +224,7 @@ export const REPO_MIGRATIONS: readonly string[] = [
   '20260901_continuous_business_learning',
   '20260901_domain_event_projection_bridge',
   '20260902000000_domain_change_source_snapshots',
+  '20260902043000_domain_integration_review_fixes',
+  '20260902120000_fix_recommendation_digest_resolution',
+  '20260902140000_applied_migration_ledger_rpc',
 ]

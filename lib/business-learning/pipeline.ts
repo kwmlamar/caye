@@ -1,5 +1,6 @@
 import 'server-only'
 import { createServiceClient } from '@/lib/supabase-server'
+import { asCapabilityFailure } from '@/lib/db/capability'
 import { evaluateObservationEligibility, type LearningObservationInput } from './filter'
 import { extractBusinessLearning } from './extract'
 import {
@@ -331,7 +332,10 @@ export async function processPendingBusinessLearning(limit = 25): Promise<{ proc
     .in('status', ['pending','failed'])
     .order('created_at', { ascending: true })
     .limit(Math.max(1, Math.min(limit, 100)))
-  if (error) throw new Error(`learning queue read failed: ${error.message}`)
+  // business_learning_observations ships in 20260901_continuous_business_learning,
+  // unapplied as of 2026-09-02. This cron has been running every 10 minutes against
+  // a table that does not exist; surface that as the named capability gap it is.
+  if (error) throw asCapabilityFailure('continuous_business_learning', error)
   let processed = 0
   let failed = 0
   for (const item of data ?? []) {

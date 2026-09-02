@@ -1,3 +1,12 @@
+-- 2026-09-02 correction (never applied anywhere): the fingerprint helpers below
+-- called bare digest(), which does not resolve under `set search_path = public`
+-- because pgcrypto is installed in the `extensions` schema. The SQL-language
+-- helpers failed at CREATE time, so this migration could not be applied at all.
+-- Qualified as extensions.digest(...) rather than widening search_path, which
+-- would broaden unqualified name resolution inside a SECURITY DEFINER body.
+-- Safe to correct in place: this version has never been recorded in any
+-- environment's ledger and none of its objects exist in production.
+
 -- Recommendation outcome learning and deterministic calibration.
 -- Canonical chain: recommendation -> canonical decision -> observed evidence -> outcome.
 -- Decision state never determines outcome quality. Execution can prove followed state,
@@ -239,7 +248,7 @@ begin
   from jsonb_array_elements(v_canonical_evidence) e
   where coalesce((e->>'measurable')::boolean, false);
 
-  v_fingerprint := encode(digest(concat_ws('|',
+  v_fingerprint := encode(extensions.digest(concat_ws('|',
     'caye-recommendation-outcome-v2', v_rec.id::text, p_decision_id::text,
     v_rec.fingerprint, v_canonical_evidence::text
   ), 'sha256'), 'hex');
@@ -325,7 +334,7 @@ begin
       and o.workspace_id is not distinct from p_workspace_id
   ) then raise exception 'founder feedback outcome mismatch'; end if;
 
-  v_fingerprint := encode(digest(concat_ws('|',
+  v_fingerprint := encode(extensions.digest(concat_ws('|',
     'caye-recommendation-founder-feedback-v1', p_recommendation_id::text,
     coalesce(p_decision_id::text,''), coalesce(p_outcome_id::text,''),
     coalesce(p_usefulness,''), coalesce(p_timing,''), coalesce(p_noisiness,''),

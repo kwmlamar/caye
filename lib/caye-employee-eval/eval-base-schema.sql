@@ -2,6 +2,17 @@
 -- Candidate migrations are applied after this frozen base schema. This file is
 -- intentionally not a production migration.
 
+-- The roles every service-role-only migration names in its revoke/grant block.
+-- Production has these; PGlite does not create them, so a candidate migration
+-- that locks its own functions down would fail here with `role "anon" does not
+-- exist` — i.e. the harness would reject a migration for being MORE careful
+-- about privileges than the ones before it.
+do $$ begin
+  if not exists (select 1 from pg_roles where rolname = 'anon') then create role anon; end if;
+  if not exists (select 1 from pg_roles where rolname = 'authenticated') then create role authenticated; end if;
+  if not exists (select 1 from pg_roles where rolname = 'service_role') then create role service_role; end if;
+end $$;
+
 create table if not exists customers (
   id uuid primary key,
   business_name text not null,
