@@ -1,29 +1,32 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requireFounder } from '@/lib/founder'
 import { createServiceClient } from '@/lib/supabase-server'
+import { requireFreightWorkspaceAuthority } from '@/lib/freight/authorization'
 import { detectFreightRequest } from '@/lib/freight/detection'
 import { purchaseEvidenceFromObservation } from '@/lib/freight/evidence'
 import { rankPurchaseEvidence } from '@/lib/freight/matching'
 import { buildFreightDocumentData, prepareFreightReply, renderFreightDocumentPdf } from '@/lib/freight/document'
 import { ingestArtifact } from '@/lib/artifacts/ingest'
-import { downloadArtifactBytes } from '@/lib/artifacts/storage'
+import { downloadArtifactBytes, signArtifactUrl } from '@/lib/artifacts/storage'
 import { sendGmailReplyWithAttachments } from '@/lib/gmail-send'
 import { claimConversationExecution, completeConversationExecution, releaseConversationExecution, resolveConversationExecutionAfterFailure, validateConversationExecution } from '@/lib/conversation-execution'
 import type { FreightWorkflowRecord } from '@/lib/freight/workflow'
 import type { PurchaseEvidence } from '@/lib/freight/types'
+import { classifyFreightSendFailure } from '@/lib/freight/send-safety'
 
 type Conversation = { id: string; channel_type: string; channel_conversation_id: string; customer_id: string; customer_name: string | null; metadata: Record<string, unknown>; connected_accounts: { user_id: string } | Array<{ user_id: string }> }
 
 async function context(req: NextRequest) {
-  if (!(await requireFounder(req))) return { error: NextResponse.json({ error: 'Forbidden' }, { status: 403 }) }
   const workspaceId = req.nextUrl.searchParams.get('workspaceId'); const conversationId = req.nextUrl.searchParams.get('conversationId')
-  if (!workspaceId || !conversationId) return { error: NextResponse.json({ error: 'workspaceId and conversationId are required' }, { status: 400 }) }
+  if (!workspaceId) return { error: NextResponse.json({ error: 'workspaceId is required' }, { status: 400 }) }
+  const authority = await requireFreightWorkspaceAuthority(req, workspaceId)
+  if (!authority) return { error: NextResponse.json({ error: 'Forbidden' }, { status: 403 }) }
   const db = createServiceClient()
+  if (!conversationId) return { db, workspaceId, authority, conversationId: null, conv: null }
   const { data } = await db.from('unified_conversations').select('id,channel_type,channel_conversation_id,customer_id,customer_name,metadata,connected_accounts!inner(user_id)').eq('id', conversationId).single()
   const conv = data as unknown as Conversation | null
   const account = Array.isArray(conv?.connected_accounts) ? conv?.connected_accounts[0] : conv?.connected_accounts
   if (!conv || account?.user_id !== workspaceId) return { error: NextResponse.json({ error: 'Not found' }, { status: 404 }) }
-  return { db, conv, workspaceId, conversationId }
+  return { db, conv, workspaceId, conversationId, authority }
 }
 
 async function loadEvidence(db: ReturnType<typeof createServiceClient>, workspaceId: string): Promise<PurchaseEvidence[]> {
@@ -56,13 +59,30 @@ async function analyze(db: ReturnType<typeof createServiceClient>, conv: Convers
 
 export async function GET(req: NextRequest) {
   const ctx = await context(req); if ('error' in ctx) return ctx.error
+  if (!ctx.conversationId || !ctx.conv) {
+    const { data } = await ctx.db.from('unified_conversations')
+      .select('id,customer_name,customer_id,metadata,last_message_at,connected_accounts!inner(user_id)')
+      .eq('connected_accounts.user_id', ctx.workspaceId)
+      .eq('channel_type', 'gmail')
+      .order('last_message_at', { ascending: false })
+      .limit(50)
+    return NextResponse.json({ conversations: (data ?? []).map((row: any) => ({ id: row.id, customerName: row.customer_name, customerId: row.customer_id, subject: row.metadata?.subject ?? null, lastMessageAt: row.last_message_at, freightStatus: row.metadata?.freight_workflow?.status ?? null })) })
+  }
   const state = await analyze(ctx.db!, ctx.conv!, ctx.workspaceId!)
+  if (req.nextUrl.searchParams.get('artifact') === '1') {
+    if ('isFreightDocumentRequest' in state || !state.generatedArtifactId) return NextResponse.json({ error: 'Freight document not found' }, { status: 404 })
+    const { data: artifact } = await ctx.db.from('business_artifacts').select('id,storage_path,filename,detected_mime_type').eq('id', state.generatedArtifactId).eq('workspace_id', ctx.workspaceId).eq('storage_state', 'stored').maybeSingle()
+    if (!artifact) return NextResponse.json({ error: 'Freight document not found' }, { status: 404 })
+    const url = await signArtifactUrl(artifact.storage_path)
+    return url ? NextResponse.json({ artifact: { id: artifact.id, filename: artifact.filename, mimeType: artifact.detected_mime_type, url } }) : NextResponse.json({ error: 'Could not prepare that file right now — try again.' }, { status: 502 })
+  }
   return NextResponse.json('isFreightDocumentRequest' in state ? state : { ...state, isFreightDocumentRequest: true })
 }
 
 export async function POST(req: NextRequest) {
   const ctx = await context(req); if ('error' in ctx) return ctx.error
-  const { db, conv, workspaceId, conversationId } = ctx as Exclude<typeof ctx, { error: NextResponse }>
+  if (!ctx.conversationId || !ctx.conv) return NextResponse.json({ error: 'conversationId is required' }, { status: 400 })
+  const { db, conv, workspaceId, conversationId, authority } = ctx
   const body = await req.json().catch(() => ({})) as { action?: string; evidenceId?: string }
   const analyzed = await analyze(db, conv, workspaceId)
   if ('isFreightDocumentRequest' in analyzed) return NextResponse.json({ error: 'This is not a freight document request' }, { status: 409 })
@@ -89,6 +109,7 @@ export async function POST(req: NextRequest) {
   if (conv.channel_type !== 'gmail') return NextResponse.json({ error: 'Attachment sending is currently supported for connected Gmail threads only. No email was sent.' }, { status: 422 })
   const claim = await claimConversationExecution({ workspaceId, conversationId, holder: 'human_manual', idempotencyKey: `freight-send:${record.id}`, reason: 'owner approved freight document attachment', leaseSeconds: 120 })
   if (!claim.ok) return NextResponse.json({ error: `Conversation is currently handled by ${claim.blockedBy}` }, { status: 409 })
+  let providerAccepted = false
   try {
     const valid = await validateConversationExecution({ claimId: claim.claim.id }); if (!valid.ok) { await releaseConversationExecution(claim.claim.id); return NextResponse.json({ error: 'Conversation changed before send; reload and review again.' }, { status: 409 }) }
     const { data: artifact } = await db.from('business_artifacts').select('id,workspace_id,storage_path,filename,detected_mime_type').eq('id', record.generatedArtifactId).eq('workspace_id', workspaceId).eq('storage_state', 'stored').single()
@@ -97,18 +118,20 @@ export async function POST(req: NextRequest) {
     const subjectRaw = String(conv.metadata?.subject ?? 'Freight document'); const subject = subjectRaw.startsWith('Re:') ? subjectRaw : `Re: ${subjectRaw}`
     const reply = record.reply
     const approvedAt = new Date().toISOString()
-    await db.from('workspace_events').insert({ workspace_id: workspaceId, type: 'freight.document.approved', actor_kind: 'founder', is_failure: false, subject_table: 'business_artifacts', subject_id: artifact.id, payload: { workflow_id: record.id, approved_at: approvedAt }, origin: 'app' })
+    await db.from('workspace_events').insert({ workspace_id: workspaceId, type: 'freight.document.approved', actor_kind: 'operator', is_failure: false, subject_table: 'business_artifacts', subject_id: artifact.id, payload: { workflow_id: record.id, approved_at: approvedAt, approved_by_user_id: authority.userId, authority_kind: authority.actorKind }, origin: 'app' })
     const sent = await sendGmailReplyWithAttachments({ to: conv.customer_id, subject, body: reply, gmailThreadId: conv.channel_conversation_id, conversationId, workspaceId, attachments: [{ filename: artifact.filename ?? 'freight-document.pdf', mimeType: artifact.detected_mime_type ?? 'application/pdf', bytes }] })
+    providerAccepted = true
     const sentAt = new Date().toISOString(); record = { ...record, status: 'SENT', approvedAt, sentAt }
-    const { data: outbound, error: outboundError } = await db.from('unified_messages').insert({ conversation_id: conversationId, channel_message_id: sent.gmailMessageId, sender_type: 'business', content: reply, message_type: 'file', sent_at: sentAt, status: 'sent', is_internal: false, metadata: { generated_by: 'caye', source: 'gmail', gmail_message_id: sent.gmailMessageId, gmail_thread_id: sent.threadId, freight_workflow_id: record.id, attachment_artifact_id: artifact.id, approved_by: 'founder' } }).select('id').single()
+    const { data: outbound, error: outboundError } = await db.from('unified_messages').insert({ conversation_id: conversationId, channel_message_id: sent.gmailMessageId, sender_type: 'business', content: reply, message_type: 'file', sent_at: sentAt, status: 'sent', is_internal: false, metadata: { generated_by: 'caye', source: 'gmail', gmail_message_id: sent.gmailMessageId, gmail_thread_id: sent.threadId, freight_workflow_id: record.id, attachment_artifact_id: artifact.id, approved_by: authority.actorKind, approved_by_user_id: authority.userId } }).select('id').single()
     if (outboundError || !outbound) throw new Error(`Email was sent but its durable receipt could not be recorded: ${outboundError?.message ?? 'unknown persistence failure'}`)
     await db.from('business_artifact_relations').insert({ workspace_id: workspaceId, artifact_id: artifact.id, relation_type: 'sent_as_attachment_in', target_entity_type: 'unified_message', target_entity_id: outbound.id, label: `Sent for Dock Receipt ${record.request.dockReceiptNumber}`, status: 'confirmed', confidence: null, provenance: 'system_derived', confirmed_at: sentAt })
     await db.from('unified_conversations').update({ metadata: { ...conv.metadata, freight_workflow: record }, human_agent_enabled: false, human_agent_reason: null, last_sender_type: 'business', last_business_sender_kind: 'human', last_message_at: sentAt, last_message_preview: reply.slice(0, 100) }).eq('id', conversationId)
-    await db.from('workspace_events').insert({ workspace_id: workspaceId, type: 'freight.document.sent', actor_kind: 'founder', is_failure: false, subject_table: 'business_artifacts', subject_id: artifact.id, payload: { workflow_id: record.id, provider_message_id: sent.gmailMessageId, conversation_id: conversationId }, origin: 'app' })
+    await db.from('workspace_events').insert({ workspace_id: workspaceId, type: 'freight.document.sent', actor_kind: 'operator', is_failure: false, subject_table: 'business_artifacts', subject_id: artifact.id, payload: { workflow_id: record.id, provider_message_id: sent.gmailMessageId, conversation_id: conversationId, approved_by_user_id: authority.userId, authority_kind: authority.actorKind }, origin: 'app' })
     await completeConversationExecution(claim.claim.id, sent.gmailMessageId)
     return NextResponse.json({ ...record, isFreightDocumentRequest: true })
   } catch (error) {
-    await resolveConversationExecutionAfterFailure(claim.claim.id, error)
-    return NextResponse.json({ error: error instanceof Error ? error.message : 'Send failed or delivery is uncertain' }, { status: 502 })
+    const classified = classifyFreightSendFailure(providerAccepted, error)
+    await resolveConversationExecutionAfterFailure(claim.claim.id, classified)
+    return NextResponse.json({ error: classified instanceof Error ? classified.message : 'Send failed or delivery is uncertain' }, { status: 502 })
   }
 }
