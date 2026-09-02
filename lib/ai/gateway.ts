@@ -5,6 +5,7 @@ import { policyFor } from './errors'
 import { providerAdapter } from './providers'
 import { isCircuitOpen, loadProviderHealth, recordProviderFailure, recordProviderSuccess } from './health'
 import { loadProviderSettings, priorityOrder } from './provider-settings'
+import { normalizeRequestForModel } from './request-normalization'
 import { logAiCall, logRoutingDecision, usageFromResponse } from './telemetry'
 import {
   AIProviderError,
@@ -93,16 +94,37 @@ export async function generate({ params, ctx, signal }: GenerateArgs): Promise<A
       attempts.push({ ...base, outcome: 'skipped_circuit_open', detail: `${h?.reason ?? 'unavailable'} until ${h?.cooldownUntil}` })
       continue
     }
-    const capability = adapter.supports(params, spec.id)
+
+    // Application code supplies one provider-neutral request. Normalize that
+    // request to this model's declared transport limits before capability
+    // checking or dispatch. This keeps provider limits at the AI boundary
+    // instead of leaking vendor-specific branches into agent/tool code.
+    const normalized = normalizeRequestForModel(spec, params)
+    if (!normalized.ok) {
+      attempts.push({
+        ...base,
+        outcome: 'skipped_capability',
+        detail: `${normalized.detail} Model cannot serve required capability: ${normalized.missing}.`,
+      })
+      continue
+    }
+    const requestParams = normalized.value.params
+
+    const capability = adapter.supports(requestParams, spec.id)
     if (!capability.ok) {
       attempts.push({ ...base, outcome: 'skipped_capability', detail: `Model cannot serve required capability: ${capability.missing}.` })
       continue
     }
 
-    const outcome = await attemptProvider(adapter, params, spec.id, signal)
+    const outcome = await attemptProvider(adapter, requestParams, spec.id, signal)
 
     if (outcome.ok) {
-      attempts.push({ ...base, outcome: 'success', latencyMs: outcome.latencyMs })
+      attempts.push({
+        ...base,
+        outcome: 'success',
+        ...(normalized.value.detail ? { detail: normalized.value.detail } : {}),
+        latencyMs: outcome.latencyMs,
+      })
       void recordProviderSuccess(spec.provider).catch(() => {})
 
       const routing: AIRouting = {
