@@ -60,16 +60,29 @@ The normal developer worker runs on Sonnet and has an 80-turn emergency ceiling,
 
 ## Validation before completion
 
+This repository uses **npm**, not pnpm. Treat `package-lock.json` as authoritative for dependency installation. Do not invent package-manager commands or assume a `typecheck` script exists.
+
+Canonical validation commands are:
+
+```bash
+npm ci
+npx vitest run <targeted test files or directories>
+npx tsc --noEmit
+npm run build
+```
+
+Use `npm test` or `npx vitest run` for broader test coverage as appropriate. There is currently no `pnpm typecheck` command in this repository.
+
 Run the strongest relevant checks available for the task:
 
 1. targeted regression tests for the changed behavior;
 2. relevant broader test suite;
-3. TypeScript/typecheck;
-4. production build when applicable;
+3. `npx tsc --noEmit` for TypeScript validation;
+4. `npm run build` for the production build when applicable;
 5. migration/schema validation when applicable;
 6. final diff inspection for unrelated changes.
 
-If a check cannot run in the GitHub runner, state exactly why. Never report a check as passing when it did not run.
+If a requested check is unavailable locally, use the repository's CI or another valid execution environment when possible and state exactly where the check ran. If an unrelated pre-existing failure prevents a broader gate from going green, report it as inherited failure rather than broadening scope or changing unrelated code merely to make the suite pass. Never report a check as passing when it did not run.
 
 ## Pull request contract
 
