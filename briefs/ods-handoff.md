@@ -1,6 +1,6 @@
 # ODS × Caye — session handoff
 
-**Written 2026-09-03.** Read this first if you are picking up the ODS work on a new machine
+**Written 2026-09-03, freight section corrected the same day.** Read this first if you are picking up the ODS work on a new machine
 or in a new session. It carries the state, the decisions still open, and the things that
 have already gone wrong once.
 
@@ -110,10 +110,26 @@ the WhatsApp verification template once. Until then the webhook drops their mess
 4. **Receipt capture by photo.** The money-out half of job costing: 3,883 timesheet rows
    against 6 receipts. Needs a WhatsApp media pipeline; the `receipts` change source already
    detects them once they exist.
-5. **Freight / shipments.** The audit's highest-volume workflow and completely untracked —
-   dock receipts, warehouse numbers, landed cost. The freight sweep names its own blocker:
-   *"there's no attachment-download tool wired up."* Building Gmail attachment fetch-and-
-   reattach would close an entire workflow.
+5. **Freight — mostly built, but nobody is told.** *Corrected 2026-09-03: an earlier version
+   of this file said freight was untouched. It is not.* `lib/freight/` implements
+   detect → match → generate a PDF from verified evidence → owner-gated send, and
+   `/api/email/gmail-cron` runs the detection and attachment ingestion every five minutes.
+   As of writing there were **1,182 ingested ODS artifacts and 1,177 parsed email-evidence
+   observations** in production, so the passive half genuinely works.
+
+   What is missing is the half that matters: **no agent tool** (grep `lib/caye-agent/` for
+   freight — nothing) and **no notification**. The only way to reach it is for Wallace to
+   remember to open the dashboard sidebar link with `?freightReview=1`. That is the audit's
+   own finding rebuilt — correct detection reported into a place nobody opens — while he
+   keeps doing the job by hand fifteen times a month.
+
+   Also open: `business_artifact_relations.target_entity_id` is `uuid not null`, but the
+   freight code writes `freight:<uuid>` strings into it. **Verified against production:
+   0 freight relations out of 2,354.** Every freight relation write has been failing since
+   it shipped. Fix by writing the underlying message UUID and letting `target_entity_type`
+   carry the distinction — the prefix is redundant. And confirm TWINex "warehouse number"
+   actually matches `detection.ts`'s patterns; only dock-receipt and shipment-ref forms are
+   clearly handled, and TWINex is half of ODS's freight traffic.
 6. **RLS is disabled on 9 TropiTrack tables** (`estimates`, `receipts`, `materials`,
    `estimate_line_items` and others) — flagged by Supabase's own advisor. The adapter treats
    TropiTrack RLS as defence-in-depth only and relies on its own company scoping, which is
