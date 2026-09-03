@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest'
-import { isNoReplySender, isCalendarInvite, isOutOfOffice, isBounceNotification } from './sender-classifier'
+import {
+  isNoReplySender, isCalendarInvite, isOutOfOffice, isBounceNotification,
+  classifyBounceSeverity, extractBouncedRecipient, classifyBounceDetail,
+} from './sender-classifier'
 
 describe('isNoReplySender', () => {
   it('flags classic noreply local-parts', () => {
@@ -142,5 +145,128 @@ describe('isBounceNotification', () => {
     expect(isBounceNotification(null)).toBe(false)
     expect(isBounceNotification(undefined)).toBe(false)
     expect(isBounceNotification('')).toBe(false)
+  })
+})
+
+// Realistic Gmail/Postfix-style DSN bodies, the two most common shapes a
+// Zoho-hosted mailbox actually receives back from cold outreach.
+const HARD_BOUNCE_BODY = `
+This is an automatically generated Delivery Status Notification.
+
+Delivery to the following recipient failed permanently:
+
+     deadaddress@nowhere-domain.com
+
+Technical details of permanent failure:
+Google tried to deliver your message, but it was rejected by the recipient
+domain. The error that the other server returned was: 550 5.1.1 The email
+account that you tried to reach does not exist.
+
+Final-Recipient: rfc822; deadaddress@nowhere-domain.com
+Original-Recipient: rfc822;deadaddress@nowhere-domain.com
+Action: failed
+Status: 5.1.1
+Diagnostic-Code: smtp; 550 5.1.1 The email account that you tried to reach does not exist.
+`
+
+const SOFT_BOUNCE_BODY = `
+This is an automatically generated Delivery Status Notification.
+
+THIS IS A WARNING MESSAGE ONLY. YOU DO NOT NEED TO RESEND YOUR MESSAGE.
+
+Delivery to the following recipient has been delayed:
+
+     fullbox@example.com
+
+Message will be retried for 2 more day(s).
+
+Technical details of temporary failure:
+[example.com: 450 4.2.2 The email account that you tried to reach is over
+quota. Please direct the recipient to https://support.example.com/9-tps]
+
+Final-Recipient: rfc822; fullbox@example.com
+Action: delayed
+Status: 4.2.2
+`
+
+const AMBIGUOUS_BOUNCE_BODY = `
+Your message could not be delivered to the recipient at this time.
+Please contact your administrator if the problem persists.
+`
+
+describe('classifyBounceSeverity', () => {
+  it('classifies a permanent-failure DSN (unknown user / 5.1.1) as hard', () => {
+    expect(classifyBounceSeverity('Undelivered Mail Returned to Sender', HARD_BOUNCE_BODY)).toBe('hard')
+  })
+
+  it('classifies a mailbox-full / over-quota DSN (4.2.2, deferred) as soft', () => {
+    expect(classifyBounceSeverity('Delivery Status Notification (Failure)', SOFT_BOUNCE_BODY)).toBe('soft')
+  })
+
+  it('classifies a vague DSN with no clear code or phrase as unknown', () => {
+    expect(classifyBounceSeverity('Mail delivery failed', AMBIGUOUS_BOUNCE_BODY)).toBe('unknown')
+  })
+
+  it('classifies as unknown when there is no body at all', () => {
+    expect(classifyBounceSeverity('Undeliverable', null)).toBe('unknown')
+    expect(classifyBounceSeverity('Undeliverable', undefined)).toBe('unknown')
+  })
+
+  it('recognizes hard-bounce phrasing without a numeric code', () => {
+    expect(classifyBounceSeverity('Undeliverable', 'Delivery failed: no such user here.')).toBe('hard')
+    expect(classifyBounceSeverity('Undeliverable', 'Recipient address rejected: domain not found.')).toBe('hard')
+  })
+
+  it('recognizes soft-bounce phrasing without a numeric code', () => {
+    expect(classifyBounceSeverity('Undeliverable', 'Delivery temporarily deferred: mailbox is full.')).toBe('soft')
+    expect(classifyBounceSeverity('Undeliverable', 'Message was greylisted, please try again later.')).toBe('soft')
+  })
+
+  it('is hard when a body carries both signals (conservative direction)', () => {
+    const mixed = 'Earlier attempt was 450 4.2.2 temporarily deferred. Final status: 550 5.1.1 no such user.'
+    expect(classifyBounceSeverity('Undeliverable', mixed)).toBe('hard')
+  })
+})
+
+describe('extractBouncedRecipient', () => {
+  it('extracts from a Final-Recipient DSN header', () => {
+    expect(extractBouncedRecipient(HARD_BOUNCE_BODY)).toBe('deadaddress@nowhere-domain.com')
+  })
+
+  it('extracts from an X-Failed-Recipients header when no Final-Recipient is present', () => {
+    const body = 'Delivery failed.\nX-Failed-Recipients: someone@bad-domain.org\nReason: unknown user'
+    expect(extractBouncedRecipient(body)).toBe('someone@bad-domain.org')
+  })
+
+  it('falls back to a bounded free-text scan, skipping mailer-daemon-style addresses', () => {
+    const body = 'Sent by mailer-daemon@zoho.com.\nThe following recipient failed: reallybad@baddomain.io (user unknown)'
+    expect(extractBouncedRecipient(body)).toBe('reallybad@baddomain.io')
+  })
+
+  it('returns null (never a guess) when no address can be confirmed', () => {
+    expect(extractBouncedRecipient(AMBIGUOUS_BOUNCE_BODY)).toBeNull()
+    expect(extractBouncedRecipient(null)).toBeNull()
+    expect(extractBouncedRecipient('')).toBeNull()
+  })
+
+  it('lowercases the extracted address', () => {
+    const body = 'Final-Recipient: rfc822; DeadAddress@Nowhere-Domain.COM'
+    expect(extractBouncedRecipient(body)).toBe('deadaddress@nowhere-domain.com')
+  })
+})
+
+describe('classifyBounceDetail', () => {
+  it('combines severity and recipient in one call', () => {
+    expect(classifyBounceDetail('Undelivered Mail Returned to Sender', HARD_BOUNCE_BODY)).toEqual({
+      classification: 'hard',
+      recipient: 'deadaddress@nowhere-domain.com',
+    })
+  })
+
+  it('reports classification unknown and recipient null honestly, never guessing either', () => {
+    expect(classifyBounceDetail('Mail delivery failed', AMBIGUOUS_BOUNCE_BODY)).toEqual({
+      classification: 'unknown',
+      recipient: null,
+    })
   })
 })
