@@ -14,6 +14,7 @@ function fakeProvider(overrides: Partial<BedrockReadProvider> = {}): BedrockRead
     listClients: async () => [],
     getClient: async (companyId, id) => companyId === 'company-1' && id === 'client-1' ? { id, company_id: companyId, name: 'Client' } : null,
     getWorker: async (companyId, id) => companyId === 'company-1' && id === 'worker-1' ? { id, company_id: companyId, first_name: 'Ada', last_name: 'Builder', hourly_rate: 25 } : null,
+    listWorkers: async () => [],
     listProjectTimeEntries: async () => [{ id: 'time-1', worker_id: 'worker-1', regular_hours: 8, overtime_hours: 2, workers: { first_name: 'Ada', last_name: 'Builder' } }],
     getPayPeriod: async (companyId, id) => companyId === 'company-1' && id === 'period-1' ? { id, start_date: '2026-08-24', end_date: '2026-08-30', status: 'paid' } : null,
     listPayrollEntries: async () => [{ id: 'pay-1', gross_pay: 250, net_pay: 220, total_paid: 220, payment_status: 'paid' }],
@@ -37,6 +38,19 @@ function fakeProvider(overrides: Partial<BedrockReadProvider> = {}): BedrockRead
 }
 
 const makeAdapter = (provider = fakeProvider()) => new BedrockAdapter(resolver, () => provider)
+
+// Real ODS roster shape, quirks included: a trailing-space/empty-surname worker
+// (Makenson), two workers that collide on the same first name (Rebins /
+// Rebins Brother), and a full set of sensitive fields that must never reach
+// adapter output.
+const odsRosterRows = [
+  { id: 'worker-cyrike', company_id: 'company-1', first_name: 'Cyrike', last_name: 'Tiler', status: 'active', worker_type: 'employee', hourly_rate: 18.75, national_insurance_number: 'NIB-001-CYRIKE', nib_number: 'NIB-001-CYRIKE', email: 'cyrike@example.com', phone: '555-0101', address: '1 Main St', emergency_contact_name: 'Jane Tiler', emergency_contact_phone: '555-0102', salary_amount: 39000 },
+  { id: 'worker-earnest', company_id: 'company-1', first_name: 'Earnest', last_name: 'Phillipe', status: 'active', worker_type: 'employee', hourly_rate: 16.25, national_insurance_number: 'NIB-002-EARNEST', nib_number: 'NIB-002-EARNEST', email: 'earnest@example.com', phone: '555-0201', address: '2 Main St', emergency_contact_name: 'John Phillipe', emergency_contact_phone: '555-0202', salary_amount: 33800 },
+  { id: 'worker-makenson', company_id: 'company-1', first_name: 'Makenson ', last_name: '', status: 'active', worker_type: 'employee', hourly_rate: 17.0, national_insurance_number: 'NIB-003-MAKENSON', nib_number: 'NIB-003-MAKENSON', email: 'makenson@example.com', phone: '555-0301', address: '3 Main St', emergency_contact_name: 'Marie Makenson', emergency_contact_phone: '555-0302', salary_amount: 35360 },
+  { id: 'worker-rebins-1', company_id: 'company-1', first_name: 'Rebins', last_name: '', status: 'active', worker_type: 'employee', hourly_rate: 15.5, national_insurance_number: 'NIB-004-REBINS', nib_number: 'NIB-004-REBINS', email: 'rebins@example.com', phone: '555-0401', address: '4 Main St', emergency_contact_name: 'Rose Rebins', emergency_contact_phone: '555-0402', salary_amount: 32240 },
+  { id: 'worker-rebins-2', company_id: 'company-1', first_name: 'Rebins', last_name: 'Brother', status: 'active', worker_type: 'employee', hourly_rate: 15.5, national_insurance_number: 'NIB-005-REBINS-B', nib_number: 'NIB-005-REBINS-B', email: 'rebins.brother@example.com', phone: '555-0501', address: '5 Main St', emergency_contact_name: 'Rose Rebins', emergency_contact_phone: '555-0502', salary_amount: 32240 },
+  { id: 'worker-alaine', company_id: 'company-1', first_name: 'Alaine', last_name: 'Prophete', status: 'inactive', worker_type: 'employee', hourly_rate: 14.0, national_insurance_number: 'NIB-006-ALAINE', nib_number: 'NIB-006-ALAINE', email: 'alaine@example.com', phone: '555-0601', address: '6 Main St', emergency_contact_name: 'Alex Prophete', emergency_contact_phone: '555-0602', salary_amount: 29120 },
+]
 
 describe('BedrockAdapter', () => {
   it('fails closed when the workspace has no domain connection', async () => {
@@ -97,5 +111,48 @@ describe('BedrockAdapter', () => {
     expect('updateEstimate' in adapter).toBe(false)
     expect('recordPayment' in adapter).toBe(false)
     expect(JSON.stringify(adapter)).not.toContain('super-secret-key')
+  })
+
+  it('lists the roster normalized as BedrockWorker with authority metadata set', async () => {
+    const adapter = makeAdapter(fakeProvider({ listWorkers: async () => odsRosterRows }))
+    const workers = await adapter.listWorkers('ws-1')
+    expect(workers).toHaveLength(odsRosterRows.length)
+    for (const worker of workers) {
+      expect(worker).toMatchObject({ sourceSystem: 'bedrock', authority: 'external_authoritative', sourceEntityType: 'worker', workspaceId: 'ws-1', companyId: 'company-1' })
+    }
+    const makenson = workers.find(w => w.sourceEntityId === 'worker-makenson')
+    expect(makenson).toMatchObject({ firstName: 'Makenson ', lastName: '', status: 'active', hourlyRate: 17.0 })
+    const [rebins1, rebins2] = [workers.find(w => w.sourceEntityId === 'worker-rebins-1'), workers.find(w => w.sourceEntityId === 'worker-rebins-2')]
+    expect(rebins1).toMatchObject({ firstName: 'Rebins', lastName: '' })
+    expect(rebins2).toMatchObject({ firstName: 'Rebins', lastName: 'Brother' })
+    const alaine = workers.find(w => w.sourceEntityId === 'worker-alaine')
+    expect(alaine).toMatchObject({ status: 'inactive' })
+  })
+
+  it('passes a status filter through to the provider', async () => {
+    let seenOptions: { status?: string; limit?: number } | undefined
+    const adapter = makeAdapter(fakeProvider({
+      listWorkers: async (companyId, options) => { seenOptions = options; return odsRosterRows.filter(row => row.status === 'active') },
+    }))
+    const workers = await adapter.listWorkers('ws-1', { status: 'active' })
+    expect(seenOptions).toMatchObject({ status: 'active' })
+    expect(workers.every(w => w.status === 'active')).toBe(true)
+  })
+
+  it('fails closed listing workers for a workspace with no domain connection', async () => {
+    await expect(makeAdapter().listWorkers('missing-workspace')).rejects.toBeInstanceOf(BedrockConnectionMissingError)
+  })
+
+  it('never surfaces sensitive worker identifiers or contact/salary data in the normalized roster', async () => {
+    const adapter = makeAdapter(fakeProvider({ listWorkers: async () => odsRosterRows }))
+    const workers = await adapter.listWorkers('ws-1')
+    const serialized = JSON.stringify(workers)
+    for (const forbidden of [
+      'national_insurance_number', 'nib_number', 'email', 'phone', 'address',
+      'emergency_contact_name', 'emergency_contact_phone', 'salary_amount',
+      'NIB-001-CYRIKE', 'cyrike@example.com', '555-0101', '1 Main St', 'Jane Tiler', '39000',
+    ]) {
+      expect(serialized).not.toContain(forbidden)
+    }
   })
 })

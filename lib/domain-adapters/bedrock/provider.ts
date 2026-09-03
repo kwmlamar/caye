@@ -12,6 +12,7 @@ export interface BedrockReadProvider {
   listClients(companyId: string, options?: { search?: string; limit?: number }): Promise<BedrockRow[]>
   getClient(companyId: string, id: string): Promise<BedrockRow | null>
   getWorker(companyId: string, id: string): Promise<BedrockRow | null>
+  listWorkers(companyId: string, options?: { status?: string; limit?: number }): Promise<BedrockRow[]>
   listProjectTimeEntries(companyId: string, projectId: string): Promise<BedrockRow[]>
   getPayPeriod(companyId: string, payPeriodId: string): Promise<BedrockRow | null>
   listPayrollEntries(companyId: string, payPeriodId: string): Promise<BedrockRow[]>
@@ -105,6 +106,12 @@ export class SupabaseBedrockReadProvider implements BedrockReadProvider {
 
   async getWorker(companyId: string, id: string) {
     return throwOnError(await this.client.from('workers').select('*').eq('company_id', companyId).eq('id', id).maybeSingle())
+  }
+
+  async listWorkers(companyId: string, options: { status?: string; limit?: number } = {}) {
+    let query = this.client.from('workers').select('*').eq('company_id', companyId)
+    if (options.status) query = query.eq('status', options.status)
+    return throwOnError(await query.order('last_name').order('first_name').limit(Math.min(options.limit ?? 100, 200))) ?? []
   }
 
   async listProjectTimeEntries(companyId: string, projectId: string) {

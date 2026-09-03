@@ -24,6 +24,7 @@ import { getPendingQuotes } from './read/get-pending-quotes'
 import { findJob } from './read/find-job'
 import { getJob } from './read/get-job'
 import { getJobLabor } from './read/get-job-labor'
+import { previewCrewDay } from './read/preview-crew-day'
 import { getPayrollStatus } from './read/get-payroll-status'
 import { searchThreads } from './read/search-threads'
 import { queryBusinessKnowledge } from './read/query-business-knowledge'
@@ -198,6 +199,7 @@ export const TOOL_REGISTRY: AnyTool[] = [
   findJob as AnyTool,
   getJob as AnyTool,
   getJobLabor as AnyTool,
+  previewCrewDay as AnyTool,
   getPayrollStatus as AnyTool,
   searchThreads as AnyTool,
   queryBusinessKnowledge as AnyTool,

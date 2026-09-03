@@ -12,6 +12,7 @@ import { sendOutreachBatch } from './write-high/send-outreach-batch'
 import { draftInInbox } from './write-high/draft-in-inbox'
 import { createCustomerBooking } from './write-high/create-customer-booking'
 import { expandOutreachTarget } from './write-high/expand-outreach-target'
+import { logCrewDay } from './write-high/log-crew-day'
 
 /**
  * The UNGATED high-risk tools, in one place.
@@ -31,6 +32,7 @@ import { expandOutreachTarget } from './write-high/expand-outreach-target'
 type AnyTool = Tool<never>
 
 export const HIGH_RISK_TOOLS: AnyTool[] = [
+  logCrewDay as AnyTool,
   sendReply as AnyTool,
   sendPaymentLink as AnyTool,
   confirmBooking as AnyTool,

@@ -19,6 +19,7 @@ function providerWith(overrides: Partial<BedrockReadProvider>): BedrockReadProvi
     listClients: async () => [],
     getClient: async () => null,
     getWorker: async () => null,
+    listWorkers: async () => [],
     listProjectTimeEntries: async () => [],
     getPayPeriod: async () => null,
     listPayrollEntries: async () => [],
