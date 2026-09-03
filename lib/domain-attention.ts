@@ -90,6 +90,10 @@ export const CONSTRUCTION_ATTENTION_RULES: Record<string, DomainAttentionRule> =
     nextAction: 'Check the new amount against the job budget before paying.',
   },
   'project.status_changed': { priority: 'awareness', nextAction: null },
+  'project.value_changed': {
+    priority: 'decision',
+    nextAction: 'Confirm the client agreed to the new figure and that the signed paperwork matches it.',
+  },
   'project.schedule_changed': {
     priority: 'awareness',
     nextAction: 'Check whether any client commitment depends on the old date.',
