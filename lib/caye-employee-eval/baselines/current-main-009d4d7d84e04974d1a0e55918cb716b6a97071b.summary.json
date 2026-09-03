@@ -1,0 +1,117 @@
+{
+  "schemaVersion": 1,
+  "benchmarkVersion": "caye-employee-eval/1.0.0",
+  "evaluatedCodeRevision": "009d4d7d84e04974d1a0e55918cb716b6a97071b",
+  "evaluatorMainRevision": "009d4d7d84e04974d1a0e55918cb716b6a97071b",
+  "generatedAt": "2026-09-03T03:37:10Z",
+  "aggregateScore": 2.5,
+  "passed": false,
+  "hardFailures": [
+    "authoritative_correction_ignored"
+  ],
+  "dimensions": {
+    "0": {
+      "score": 2.8,
+      "passed": false
+    },
+    "1": {
+      "score": 7.1,
+      "passed": false
+    },
+    "2": {
+      "score": 0,
+      "passed": false
+    },
+    "3": {
+      "score": 0,
+      "passed": false
+    },
+    "4": {
+      "score": 0.3,
+      "passed": false
+    },
+    "5": {
+      "score": 0.9,
+      "passed": false
+    },
+    "6": {
+      "score": 0,
+      "passed": false
+    },
+    "7": {
+      "score": 1.4,
+      "passed": false
+    },
+    "8": {
+      "score": 1.9,
+      "passed": false
+    },
+    "9": {
+      "score": 2.3,
+      "passed": false
+    },
+    "10": {
+      "score": 0,
+      "passed": false
+    },
+    "11": {
+      "score": 10,
+      "passed": true
+    },
+    "12": {
+      "score": 0,
+      "passed": false
+    },
+    "13": {
+      "score": 6.7,
+      "passed": false
+    },
+    "14": {
+      "score": 4,
+      "passed": false
+    }
+  },
+  "failureCountsBySubsystem": {
+    "memory": 170,
+    "temporal": 2,
+    "learning_pipeline": 36,
+    "opportunities": 24,
+    "execution": 12,
+    "attention": 6,
+    "task_completion": 6,
+    "economics": 11,
+    "failure_recovery": 1
+  },
+  "economicLedgers": {
+    "ods-construction-end-to-end-v1": {
+      "owner_minutes_saved": 0,
+      "customer_wait_minutes_avoided": 0,
+      "revenue_at_risk": 0,
+      "revenue_protected": 0,
+      "revenue_created": 0,
+      "human_interruptions": 0,
+      "unnecessary_interruptions": 0,
+      "actions_completed_autonomously": 0,
+      "eligible_actions_not_completed": 0,
+      "duplicate_opportunities": 0,
+      "stale_or_wrong_facts_used": 0
+    },
+    "bimini-island-tours-end-to-end-v1": {
+      "owner_minutes_saved": 0,
+      "customer_wait_minutes_avoided": 0,
+      "revenue_at_risk": 0,
+      "revenue_protected": 0,
+      "revenue_created": 0,
+      "human_interruptions": 0,
+      "unnecessary_interruptions": 0,
+      "actions_completed_autonomously": 0,
+      "eligible_actions_not_completed": 0,
+      "duplicate_opportunities": 0,
+      "stale_or_wrong_facts_used": 0
+    }
+  },
+  "fullReportWorkflowRunId": 33711931180,
+  "fullReportArtifactId": 9877220985,
+  "fullReportArtifactSha256": "f00d498cbc3340ca8e2ff5a4a3f35a023d3ac173fc307b89aecc50890602812f",
+  "note": "This summary is frozen evidence for main at 009d4d7d. Dimension scores, aggregate, and hard failures were produced by GitHub Actions workflow run 33711931180 (Employee Eval v1 gate, workflow_dispatch on main) and independently reproduced by an equivalent local run at the same revision; both agree on all fifteen dimensions. The referenced artifact is the authoritative full report. required_trace_unevaluable is resolved relative to the eda98a45 baseline; authoritative_correction_ignored remains. Do not alter v1 fixtures or thresholds to improve this score."
+}
