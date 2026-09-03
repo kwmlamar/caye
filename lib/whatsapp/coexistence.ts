@@ -76,12 +76,12 @@ export interface WhatsAppChangeMetadata {
   displayPhoneNumber: string | null
 }
 
-export interface RawWaContact {
+export type RawWaContact = {
   wa_id?: string
   profile?: { name?: string }
 }
 
-export interface RawWaMessage {
+export type RawWaMessage = {
   id?: string
   from?: string
   timestamp?: string
@@ -90,14 +90,14 @@ export interface RawWaMessage {
   [key: string]: unknown
 }
 
-export interface RawWaStatus {
+export type RawWaStatus = {
   id?: string
   status?: string
   timestamp?: string
   errors?: { code?: number; title?: string; message?: string }[]
 }
 
-export interface RawWaEcho {
+export type RawWaEcho = {
   id?: string
   from?: string
   to?: string
@@ -338,7 +338,7 @@ export function normalizeEcho(echo: RawWaEcho, metadata: WhatsAppChangeMetadata)
     const original = echo.edit?.original_message_id
     const edited = echo.edit?.message
     const editedType = typeof edited?.type === 'string' ? edited.type : ''
-    if (typeof original !== 'string' || !original || !editedType) return null
+    if (typeof original !== 'string' || !original || !edited || !editedType) return null
     const isText = editedType === 'text'
     return {
       providerMessageId,

@@ -1,0 +1,47 @@
+name: WhatsApp coexistence ingestion
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'app/api/webhooks/whatsapp/**'
+      - 'app/api/messages/send/route.ts'
+      - 'lib/whatsapp.ts'
+      - 'lib/whatsapp/coexistence.ts'
+      - 'lib/whatsapp/coexistence-ingest.ts'
+      - 'lib/whatsapp/coexistence.test.ts'
+      - 'lib/whatsapp/coexistence-ingest.test.ts'
+      - 'lib/whatsapp/channel-dispatch.ts'
+      - 'lib/whatsapp/fixtures/coexistence/**'
+      - '.github/workflows/whatsapp-coexistence-ci.yml'
+  push:
+    branches:
+      - feat/whatsapp-coexistence-ingestion
+
+permissions:
+  contents: read
+
+jobs:
+  coexistence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Coexistence ingestion regressions
+        run: >-
+          npx vitest run
+          lib/whatsapp/coexistence.test.ts
+          lib/whatsapp/coexistence-ingest.test.ts
+          app/api/webhooks/whatsapp/coexistence.test.ts
+          lib/whatsapp/channel-dispatch.test.ts
+      - name: Typecheck
+        run: npx tsc --noEmit -p tsconfig.json
+      - name: Full test suite
+        run: npm test
+      - name: Production build
+        run: npm run build

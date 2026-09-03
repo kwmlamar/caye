@@ -1,7 +1,7 @@
 import 'server-only'
 import type { createServiceClient } from '@/lib/supabase-server'
 import type { ObservedWhatsAppMessage, WhatsAppMessageOrigin } from './coexistence'
-import { classifyEchoOrigin, isAutoReplyEligible } from './coexistence'
+import { isAutoReplyEligible } from './coexistence'
 import { mediaPlaceholder } from '@/lib/operator-text-guard'
 import { resolveOrCreateContact } from '@/lib/contacts/resolve-contact'
 
@@ -26,11 +26,11 @@ import { resolveOrCreateContact } from '@/lib/contacts/resolve-contact'
  *     business_fact_candidates with customer_use_state
  *     'requires_confirmation'.
  *
- * So "cistern is finished" typed into WhatsApp becomes an observation with a
- * named human author and a confirmation requirement — evidence, never a
+ * So a claim the owner types into WhatsApp ("the slab is finished") becomes
+ * an observation with a named human author and a confirmation requirement — evidence, never a
  * silently-promoted project milestone. Writing metadata.authored_by honestly
  * is the entire mechanism; there is no coexistence-specific fact path, and
- * deliberately no ODS-specific parsing anywhere in this file.
+ * deliberately no customer-specific parsing anywhere in this file.
  *
  * metadata.sent_by='human' matches the flag the Zoho-sent owner path already
  * writes (app/api/email/poll/route.ts), so existing readers —
@@ -286,9 +286,9 @@ export async function ingestObservedBusinessMessage(
 /**
  * Applies an `edit` or `revoke` echo to the row it references.
  *
- * Non-destructive by construction: an edit keeps the superseded text at
- * metadata.edited_from, and a revoke marks metadata.revoked_at instead of
- * deleting anything. When the referenced message was never ingested (it
+ * Non-destructive by construction: an edit appends to metadata.edits with the
+ * superseded text kept at `superseded_content`, and a revoke marks
+ * metadata.revoked_at instead of deleting anything. When the referenced message was never ingested (it
  * predates coexistence onboarding, or arrived while the webhook was down)
  * the event is reported unresolved and dropped — inventing the row it
  * amends would be worse than the gap.
@@ -393,6 +393,22 @@ export async function recordUnattributedBusinessMessage(
     preview: string | null
   }
 ): Promise<void> {
+  // Meta redelivers on any non-200, so the audit trail needs its own dedupe:
+  // workspace_events has no natural key for an app-origin row, and a repeated
+  // delivery must not read as the message having happened twice.
+  const { data: already, error: lookupErr } = await supabase
+    .from('workspace_events')
+    .select('id')
+    .eq('workspace_id', args.workspaceId)
+    .eq('type', 'message.unattributed_business_origin')
+    .contains('payload', { wa_message_id: args.providerMessageId })
+    .maybeSingle()
+  if (lookupErr) {
+    console.error('[whatsapp coexistence] unattributed-origin dedupe lookup failed:', lookupErr)
+    return
+  }
+  if (already) return
+
   const { error } = await supabase.from('workspace_events').insert({
     workspace_id: args.workspaceId,
     occurred_at: args.observedAt,
@@ -413,5 +429,3 @@ export async function recordUnattributedBusinessMessage(
   })
   if (error) console.error('[whatsapp coexistence] unattributed-origin audit failed:', error)
 }
-
-export { classifyEchoOrigin }

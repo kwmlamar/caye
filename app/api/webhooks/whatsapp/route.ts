@@ -45,6 +45,7 @@ import {
   metaTimestampToISO,
   WHATSAPP_ECHO_FIELD,
   type ParsedWhatsAppChange,
+  type RawWaStatus,
 } from '@/lib/whatsapp/coexistence'
 import {
   echoMatchesRecordedCayeSend,
@@ -111,26 +112,6 @@ export async function POST(request: NextRequest) {
 
 // ─── Background processor ─────────────────────────────────────────────────────
 
-interface WaContact {
-  profile: { name: string }
-  wa_id: string
-}
-
-interface WaTextMessage {
-  id: string
-  from: string
-  timestamp: string
-  type: string
-  text?: { body: string }
-}
-
-interface WaStatus {
-  id: string
-  status: string // 'sent' | 'delivered' | 'read' | 'failed'
-  timestamp: string
-  errors?: { code: number; title: string; message?: string }[]
-}
-
 /**
  * Fans one webhook delivery out to the right handler per change.
  *
@@ -170,7 +151,7 @@ export async function processInboundWhatsApp(payload: Record<string, unknown>): 
     // with no messages array — ignore silently"), which is exactly how a
     // failed send could sit unnoticed.
     if (change.statuses.length > 0) {
-      await processDeliveryStatuses(change.statuses as WaStatus[])
+      await processDeliveryStatuses(change.statuses)
     }
 
     if (change.field === WHATSAPP_ECHO_FIELD) {
@@ -251,8 +232,7 @@ async function processCustomerMessages(change: ParsedWhatsAppChange): Promise<vo
   const metadata = change.metadata
   if (!metadata) return
   const phone_number_id = metadata.phoneNumberId
-  const contacts = change.contacts as WaContact[] | undefined
-  const messages = change.messages as WaTextMessage[]
+  const { contacts, messages } = change
 
   const supabase = createServiceClient()
 
@@ -290,15 +270,20 @@ async function processCustomerMessages(change: ParsedWhatsAppChange): Promise<vo
   const voiceProfile = (customer?.ai_voice_profile ?? undefined) as VoiceProfile | undefined
 
   for (const message of messages) {
-    const messageId = message.id
-    const from = message.from
+    // Read rather than cast. The normalization boundary hands back what Meta
+    // actually sent, with every field optional; a message missing its id,
+    // sender, type or timestamp is unusable and is skipped rather than
+    // becoming a row with `undefined` in a key column.
+    const messageId = typeof message.id === 'string' ? message.id : ''
+    const from = typeof message.from === 'string' ? message.from : ''
+    const messageType = typeof message.type === 'string' ? message.type : ''
     const sentAt = metaTimestampToISO(message.timestamp)
-    if (!sentAt) {
-      console.warn(`[whatsapp webhook] Unusable timestamp on message ${messageId} — skipping`)
+    if (!messageId || !from || !messageType || !sentAt) {
+      console.warn('[whatsapp webhook] Unusable message (missing id/from/type/timestamp) — skipping')
       continue
     }
-    const isTextMessage = message.type === 'text'
-    const body = message.text?.body ?? ''
+    const isTextMessage = messageType === 'text'
+    const body = typeof message.text?.body === 'string' ? message.text.body : ''
 
     // Origin replaces the old self-loop guard. Same outcome for the loop it
     // protected against — a message from the business's own number still
@@ -311,9 +296,9 @@ async function processCustomerMessages(change: ParsedWhatsAppChange): Promise<vo
         workspaceId,
         providerMessageId: messageId,
         observedAt: sentAt,
-        messageType: message.type,
+        messageType,
         phoneNumberId: phone_number_id,
-        preview: isTextMessage ? body : mediaPlaceholder(message.type),
+        preview: isTextMessage ? body : mediaPlaceholder(messageType),
       })
       console.log(`[whatsapp webhook] Business-origin message ${messageId} origin=${origin} — observed, no reply`)
       continue
@@ -347,7 +332,7 @@ async function processCustomerMessages(change: ParsedWhatsAppChange): Promise<vo
           contact_id: contactRow?.id,
           status: 'open',
           last_message_at: sentAt,
-          last_message_preview: isTextMessage ? body.slice(0, 100) : mediaPlaceholder(message.type),
+          last_message_preview: isTextMessage ? body.slice(0, 100) : mediaPlaceholder(messageType),
           last_sender_type: 'customer',
           metadata: { wa_id: from, phone_number_id },
           ...(isTextMessage
@@ -384,8 +369,8 @@ async function processCustomerMessages(change: ParsedWhatsAppChange): Promise<vo
         conversation_id: conversation.id,
         channel_message_id: messageId,
         sender_type: 'customer',
-        content: isTextMessage ? body : mediaPlaceholder(message.type),
-        message_type: isTextMessage ? 'text' : message.type,
+        content: isTextMessage ? body : mediaPlaceholder(messageType),
+        message_type: isTextMessage ? 'text' : messageType,
         sent_at: sentAt,
         status: 'delivered',
         metadata: { wa_id: from, phone_number_id },
@@ -544,12 +529,21 @@ async function processCustomerMessages(change: ParsedWhatsAppChange): Promise<vo
  * — e.g. a manual send outside the queue) is ignored; not every WhatsApp
  * send on the platform goes through the queue.
  */
-async function processDeliveryStatuses(statuses: WaStatus[]): Promise<void> {
+async function processDeliveryStatuses(statuses: RawWaStatus[]): Promise<void> {
   const supabase = createServiceClient()
 
   for (const s of statuses) {
+    // Provider fields are optional at the normalization boundary. Without an
+    // id there is nothing to match a queue row on; without a status there is
+    // nothing to record. A missing/garbled timestamp costs only the time
+    // column — the status itself is still worth writing, and inventing now()
+    // for it would misreport when delivery happened.
+    if (!s.id || !s.status) {
+      console.warn('[whatsapp webhook] Delivery status missing id/status — skipping')
+      continue
+    }
     const errorMsg = s.errors?.[0]?.message ?? s.errors?.[0]?.title ?? null
-    const statusAt = new Date(Number(s.timestamp) * 1000).toISOString()
+    const statusAt = metaTimestampToISO(s.timestamp)
 
     const { data: updated, error } = await supabase
       .from('caye_outbound_queue')
