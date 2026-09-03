@@ -13,6 +13,7 @@ import {
   type BedrockConnectionResolver,
   type BedrockEstimate,
   type BedrockHealth,
+  type BedrockInvoice,
   type BedrockListOptions,
   type BedrockPayrollSummary,
   type BedrockProject,
@@ -208,6 +209,42 @@ export class BedrockAdapter {
     const row = await provider.getVendor(connection.companyId, id)
     if (!row) throw new BedrockNotFoundError('vendor', id)
     return { ...this.meta(workspaceId, connection.companyId, 'vendor', row.id), id: row.id, name: String(row.name ?? ''), status: text(row.status), email: text(row.email), phone: text(row.phone) }
+  }
+
+  private invoice(row: BedrockRow, workspaceId: string, companyId: string): BedrockInvoice {
+    return {
+      ...this.meta(workspaceId, companyId, 'invoice', row.id), id: row.id,
+      invoiceNumber: text(row.invoice_number), clientName: text(row.client_name), projectId: text(row.project_id), status: text(row.status),
+      issueDate: text(row.issue_date), dueDate: text(row.due_date), totalAmount: number(row.total_amount), amountPaid: number(row.amount_paid),
+      balanceDue: number(row.balance_due), sentAt: text(row.sent_at), paidAt: text(row.paid_at),
+    }
+  }
+
+  async listInvoices(workspaceId: string, options: { status?: string; projectId?: string; limit?: number } = {}) {
+    const { connection, provider } = await this.context(workspaceId)
+    return (await provider.listInvoices(connection.companyId, options)).map(row => this.invoice(row, workspaceId, connection.companyId))
+  }
+
+  /**
+   * Returns the invoice alongside its actual `payments` rows -- not the
+   * invoice's own amount_paid/balance_due fields -- because "has this been
+   * confirmed" must come from a real human attestation (a payments row),
+   * not a derived counter. See listInvoicePayments on the provider for the
+   * tenant-scoping check this relies on.
+   *
+   * Re-lists invoices to find the row rather than adding a single-invoice
+   * provider primitive; at ODS's volume (single-digit to low-dozens
+   * invoices) that is a bounded, honest cost, matching the same tradeoff
+   * documented on listAllReceipts/listAllPayPeriods above. Revisit if a
+   * tenant's invoice volume grows past what a capped list scan should do.
+   */
+  async getInvoiceWithPayments(workspaceId: string, id: string): Promise<{ invoice: BedrockInvoice; payments: BedrockRow[] }> {
+    const { connection, provider } = await this.context(workspaceId)
+    const rows = await provider.listInvoices(connection.companyId, { limit: 200 })
+    const row = rows.find(r => r.id === id)
+    if (!row) throw new BedrockNotFoundError('invoice', id)
+    const payments = await provider.listInvoicePayments(connection.companyId, id)
+    return { invoice: this.invoice(row, workspaceId, connection.companyId), payments }
   }
 
   async listProjectReceipts(workspaceId: string, projectId: string): Promise<BedrockReceipt[]> {

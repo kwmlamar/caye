@@ -12,6 +12,7 @@ export type BedrockEntityType =
   | 'payroll_summary'
   | 'project_labor'
   | 'health'
+  | 'invoice'
 
 export interface BedrockAuthorityMetadata {
   sourceSystem: typeof BEDROCK_SOURCE_SYSTEM
@@ -161,6 +162,26 @@ export interface BedrockReceipt extends BedrockDomainEntity {
     unit: string | null
     cost: number
   }>
+}
+
+/**
+ * Deliberately does not carry client_email, client_phone, client_address,
+ * notes, or terms — the same restraint BedrockClient/BedrockVendor show for
+ * contact and free-text fields the read adapter has no reason to surface.
+ */
+export interface BedrockInvoice extends BedrockDomainEntity {
+  sourceEntityType: 'invoice'
+  invoiceNumber: string | null
+  clientName: string | null
+  projectId: string | null
+  status: string | null
+  issueDate: string | null
+  dueDate: string | null
+  totalAmount: number
+  amountPaid: number
+  balanceDue: number
+  sentAt: string | null
+  paidAt: string | null
 }
 
 export interface BedrockHealth extends BedrockDomainEntity {

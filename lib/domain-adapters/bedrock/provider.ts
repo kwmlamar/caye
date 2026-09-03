@@ -63,6 +63,18 @@ export interface BedrockReadProvider {
    * pay periods) and must not be reused for a large table.
    */
   listAllPayPeriods(companyId: string, limit: number): Promise<BedrockRow[]>
+  listInvoices(companyId: string, options?: { status?: string; projectId?: string; limit?: number }): Promise<BedrockRow[]>
+  /**
+   * `payments` has no `company_id` column of its own — it only joins to an
+   * invoice. Without a check here this would be a cross-tenant read: any
+   * caller who guessed or otherwise obtained another company's invoice id
+   * would get that company's payment rows back. So this validates the
+   * invoice belongs to `companyId` first (the company-scoped parent) and
+   * only queries `payments` by `invoice_id` once that lookup succeeds,
+   * mirroring the "child tables without company_id are queried only after
+   * their company-scoped parent is validated" rule in the adapter README.
+   */
+  listInvoicePayments(companyId: string, invoiceId: string): Promise<BedrockRow[]>
 }
 
 function throwOnError<T>(result: { data: T; error: { message: string } | null }): T {
@@ -289,5 +301,26 @@ export class SupabaseBedrockReadProvider implements BedrockReadProvider {
         .order('id', { ascending: true })
         .limit(Math.min(Math.max(limit, 1), 500)),
     ) ?? []
+  }
+
+  async listInvoices(companyId: string, options: { status?: string; projectId?: string; limit?: number } = {}) {
+    let query = this.client.from('invoices').select('*').eq('company_id', companyId)
+    if (options.status) query = query.eq('status', options.status)
+    if (options.projectId) query = query.eq('project_id', options.projectId)
+    return throwOnError(await query.order('issue_date', { ascending: true }).limit(Math.min(options.limit ?? 100, 200))) ?? []
+  }
+
+  /**
+   * See the interface doc comment: `payments` carries no `company_id`, so
+   * the invoice is looked up company-scoped first and its existence is the
+   * only thing that authorizes the subsequent `payments` query. A missing
+   * or cross-tenant invoice id returns an empty array rather than querying
+   * `payments` at all.
+   */
+  async listInvoicePayments(companyId: string, invoiceId: string) {
+    const invoice = await this.client.from('invoices').select('id').eq('company_id', companyId).eq('id', invoiceId).maybeSingle()
+    throwOnError(invoice)
+    if (!invoice.data) return []
+    return throwOnError(await this.client.from('payments').select('*').eq('invoice_id', invoiceId).order('payment_date', { ascending: true })) ?? []
   }
 }

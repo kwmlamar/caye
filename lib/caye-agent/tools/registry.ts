@@ -26,6 +26,7 @@ import { getJob } from './read/get-job'
 import { getJobLabor } from './read/get-job-labor'
 import { previewCrewDay } from './read/preview-crew-day'
 import { getPayrollStatus } from './read/get-payroll-status'
+import { getReceivables } from './read/get-receivables'
 import { searchThreads } from './read/search-threads'
 import { queryBusinessKnowledge } from './read/query-business-knowledge'
 import { listStandingRules } from './read/list-standing-rules'
@@ -202,6 +203,7 @@ export const TOOL_REGISTRY: AnyTool[] = [
   getJobLabor as AnyTool,
   previewCrewDay as AnyTool,
   getPayrollStatus as AnyTool,
+  getReceivables as AnyTool,
   searchThreads as AnyTool,
   queryBusinessKnowledge as AnyTool,
   listStandingRules as AnyTool,

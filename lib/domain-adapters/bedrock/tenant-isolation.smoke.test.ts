@@ -38,6 +38,8 @@ function providerWith(overrides: Partial<BedrockReadProvider>): BedrockReadProvi
     listProjectReceipts: async () => [],
     getReceiptLineItems: async () => [],
     listAllPayPeriods: async () => [],
+    listInvoices: async () => [],
+    listInvoicePayments: async () => [],
     ...overrides,
   }
 }
@@ -66,5 +68,17 @@ describe('Bedrock parent-before-child tenant isolation', () => {
 
     await expect(adapter.listProjectReceipts('ws-1', 'foreign-project')).rejects.toBeInstanceOf(BedrockNotFoundError)
     expect(calls).toEqual(['project:company-1'])
+  })
+
+  it('does not query payments when the invoice is not among the company-scoped invoice list', async () => {
+    const calls: string[] = []
+    const provider = providerWith({
+      listInvoices: async companyId => { calls.push(`invoices:${companyId}`); return [] },
+      listInvoicePayments: async () => { calls.push('payments'); return [] },
+    })
+    const adapter = new BedrockAdapter(resolver, () => provider)
+
+    await expect(adapter.getInvoiceWithPayments('ws-1', 'foreign-invoice')).rejects.toBeInstanceOf(BedrockNotFoundError)
+    expect(calls).toEqual(['invoices:company-1'])
   })
 })
