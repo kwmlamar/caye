@@ -142,21 +142,45 @@ async function scrapeSite(website: string): Promise<{ email: string | null; evid
 
 /**
  * ICP fit filter (Products/Caye/ICP.md: owner-operated Caribbean SMBs, 0-10
- * staff, no internal tech team). Google Places has no employee-count or
- * revenue field, so review volume is used as a size proxy: an owner-run
- * shop plausibly accumulates up to a few hundred Google reviews over years,
- * but tourism-industry giants (all-inclusive resorts, cruise-excursion
- * mega-operators, hospitality groups) reliably clear that within a year or
- * two of visibility. The production opt-outs that motivated this filter —
- * Atlantis Paradise Island, Blue Lagoon Island/Dolphin Encounters,
- * Brownstone Group, La Caverna — all sit far above any plausible SMB
- * review count. ICP_MAX_USER_RATINGS is deliberately generous: the goal is
- * to cut the small number of unmistakable giants, not to fine-tune a
- * boundary from a desk. `rejectedNotIcp` on the result exists so this gets
- * tuned against real production numbers instead of guessed twice.
+ * staff, no internal tech team).
+ *
+ * `user_ratings_total` is a GIANT DETECTOR, not an ICP proxy — real Places
+ * data pulled against production leads (2026-09-03) showed the two
+ * populations overlap almost completely and review count does NOT predict
+ * fit at SMB scale:
+ *
+ *   opted-out / bad leads:   Brownstone 1 (85), HumesHouse @ Hillcrest (97),
+ *                            Happistart Travel (178), Solemar (446),
+ *                            Meze Grill (968), Dolphin Encounters (1130),
+ *                            Latitudes (1143), Paranza (2080),
+ *                            Atlantis Paradise Island (22857)
+ *   genuine ICP prospects:   Outdoor Sportsman Ltd (13), Powerboat
+ *                            Adventures (496), Sandy Toes (548), Islandz
+ *                            Tours (607), Tru Bahamian Food Tours (814),
+ *                            La Caverna (442)
+ *
+ * A 300 threshold (the original guess) would have rejected four genuine,
+ * already-in-the-pipeline ICP prospects (Powerboat Adventures, Sandy Toes,
+ * Islandz Tours, Tru Bahamian Food Tours) while happily passing two of the
+ * actual bad leads (Brownstone 1 at 85, HumesHouse at 97). Review count
+ * does not do real ICP work here — the shared-mail-domain check in
+ * lib/outreach-sourcing-job.ts is what the evidence actually supports.
+ * This filter now exists only to catch unmistakable mega-operators: 5000
+ * sits ~6x above the highest legitimate SMB in the sample (Tru Bahamian
+ * Food Tours, 814) and only Atlantis-scale entities clear it. Do not
+ * re-tighten this from a hunch — re-derive it from real numbers the way
+ * the table above was built, and check the numbers above first.
  */
-export const ICP_MAX_USER_RATINGS = 300
-/** Places `price_level` is 0 ("Free") to 4 ("$$$$", very expensive) and rarely populated for tour operators; treated only as a secondary signal against resort-tier pricing. */
+export const ICP_MAX_USER_RATINGS = 5000
+/**
+ * Places `price_level` is 0 ("Free") to 4 ("$$$$", very expensive) and
+ * rarely populated for tour operators. Kept as a cheap backstop against
+ * resort-tier pricing, but the same 2026-09-03 data shows it is
+ * near-inert in practice: every problem business in the sample that had a
+ * price_level set (Solemar, Meze Grill, Latitudes, Paranza -- and also La
+ * Caverna, a genuine ICP prospect) sat at price_level 2. It is not doing
+ * real filtering work here; don't let comments elsewhere imply otherwise.
+ */
 export const ICP_MAX_PRICE_LEVEL = 3
 
 export function failsIcpFilter(details: Pick<PlaceDetails, 'business_status' | 'user_ratings_total' | 'price_level'>): boolean {

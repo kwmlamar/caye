@@ -19,10 +19,33 @@ function chain<T>(result: T) {
     select: () => obj,
     eq: () => obj,
     is: () => obj,
+    ilike: () => obj,
     not: () => obj,
     order: () => obj,
     limit: () => obj,
     then: (resolve: (v: T) => unknown) => Promise.resolve(result).then(resolve),
+  }
+  return obj
+}
+
+/** A head-count chain that behaves like the real query builder for the two
+ *  different head-count reads this job issues against outreach_leads:
+ *  countUnsentEligibleSupply (…is(…).is(…)) always resolves to a fixed
+ *  number, while countLeadsByDomain (…ilike('lead_email', '%@<domain>'))
+ *  resolves per-domain from `domainCounts`, defaulting to 0 for any domain
+ *  not listed. */
+function headCountChain(opts: { unsentSupply: number; domainCounts: Record<string, number> }) {
+  let ilikePattern: string | null = null
+  const obj = {
+    eq: () => obj,
+    is: () => obj,
+    ilike: (_col: string, pattern: string) => { ilikePattern = pattern; return obj },
+    then: (resolve: (v: { count: number; error: null }) => unknown) => {
+      const result = ilikePattern
+        ? { count: opts.domainCounts[ilikePattern.replace(/^%@/, '')] ?? 0, error: null }
+        : { count: opts.unsentSupply, error: null }
+      return Promise.resolve(result).then(resolve)
+    },
   }
   return obj
 }
@@ -44,18 +67,20 @@ function makeDb(opts: {
   unsentSupply: number
   targets?: typeof ACTIVE_TARGETS
   upsertInsertedCount?: (rows: Array<{ lead_email: string }>) => number
+  existingDomainCounts?: Record<string, number>
 }) {
   const updateCalls: string[] = []
   const updatePatches: Array<{ id: string; patch: Record<string, unknown> }> = []
   const upsertCalls: Array<{ vertical: string; count: number }> = []
   const upsertedRows: Array<{ lead_email: string; business_name: string | null; business_evidence?: string | null }> = []
   const targets = opts.targets ?? ACTIVE_TARGETS
+  const domainCounts = opts.existingDomainCounts ?? {}
 
   const from = vi.fn((table: string) => {
     if (table === 'outreach_leads') {
       return {
         select: (_cols: string, selectOpts?: { head?: boolean }) => {
-          if (selectOpts?.head) return chain({ count: opts.unsentSupply, error: null })
+          if (selectOpts?.head) return headCountChain({ unsentSupply: opts.unsentSupply, domainCounts })
           return chain({ data: [], error: null })
         },
         upsert: (rows: Array<{ lead_email: string; business_name: string | null; business_evidence?: string | null }>) => {
@@ -120,9 +145,12 @@ describe('runOutreachSourcingJob', () => {
 
   it('stops rotating once the buffer covers the daily cap mid-run', async () => {
     dbRef = { current: makeDb({ unsentSupply: 40 }) }
+    // Each lead sits on its own domain (biz1.example.com, biz2.example.com, ...)
+    // so the shared-domain cap (tested separately below) can't interfere
+    // with this test's buffer/rotation arithmetic.
     sourceLeadsMock.mockImplementation(async (vertical: string, region: string) =>
       sourceResult([1, 2, 3, 4, 5].map((n) => ({
-        business_name: `${vertical} in ${region} ${n}`, phone: null, website: null, email: `lead${n}-${region}@example.com`, address: null,
+        business_name: `${vertical} in ${region} ${n}`, phone: null, website: null, email: `lead${n}-${region}@biz${n}.example.com`, address: null,
       })))
     )
     const { runOutreachSourcingJob } = await import('./outreach-sourcing-job')
@@ -222,5 +250,93 @@ describe('runOutreachSourcingJob', () => {
     const patch = dbRef.current.updatePatches.find((p) => p.id === 'nassau-tours')!.patch
     expect(patch.query_variant_index).toBe(1)
     expect(patch.result_offset).toBe(0)
+  })
+
+  it('caps leads on a shared corporate mail domain within a single batch (regression: titan.bs group)', async () => {
+    // Mirrors the production evidence: Solemar, Meze Grill, and Latitudes
+    // all sourced in the same run, all mailing through titan.bs. Cap is 2,
+    // so the third should be rejected rather than inserted as a third
+    // "independent" business.
+    const targets = [
+      { id: 'nassau-tours', vertical: 'tour operator', region: 'Nassau, Bahamas', priority: 10, last_sourced_at: null, query_variant_index: 0, result_offset: 0 },
+    ]
+    dbRef = { current: makeDb({ unsentSupply: 1, targets }) }
+    sourceLeadsMock.mockImplementation(async () => sourceResult([
+      { business_name: 'Solemar', phone: null, website: null, email: 'solemarreservation@titan.bs', address: null },
+      { business_name: 'Meze Grill', phone: null, website: null, email: 'Mezegrill@titan.bs', address: null },
+      { business_name: 'Latitudes', phone: null, website: null, email: 'Latitudesinfo@titan.bs', address: null },
+    ]))
+    const { runOutreachSourcingJob } = await import('./outreach-sourcing-job')
+    const result = await runOutreachSourcingJob('ws-1') as { targets_run: Array<{ rejected_shared_domain: number; inserted: number; with_email: number }>; total_rejected_shared_domain: number }
+
+    expect(result.targets_run[0].with_email).toBe(3)
+    expect(result.targets_run[0].rejected_shared_domain).toBe(1)
+    expect(result.targets_run[0].inserted).toBe(2)
+    expect(result.total_rejected_shared_domain).toBe(1)
+    expect(dbRef.current.upsertedRows.map((r) => r.business_name)).toEqual(['Solemar', 'Meze Grill'])
+  })
+
+  it('counts leads a workspace already has on a domain toward the shared-domain cap', async () => {
+    const targets = [
+      { id: 'nassau-tours', vertical: 'tour operator', region: 'Nassau, Bahamas', priority: 10, last_sourced_at: null, query_variant_index: 0, result_offset: 0 },
+    ]
+    dbRef = { current: makeDb({ unsentSupply: 1, targets, existingDomainCounts: { 'titan.bs': 2 } }) }
+    sourceLeadsMock.mockImplementation(async () => sourceResult([
+      { business_name: 'Yet Another Titan Lead', phone: null, website: null, email: 'new@titan.bs', address: null },
+    ]))
+    const { runOutreachSourcingJob } = await import('./outreach-sourcing-job')
+    const result = await runOutreachSourcingJob('ws-1') as { targets_run: Array<{ rejected_shared_domain: number; inserted: number }> }
+
+    expect(result.targets_run[0].rejected_shared_domain).toBe(1)
+    expect(result.targets_run[0].inserted).toBe(0)
+  })
+
+  it('does not cap leads sharing a free-mail domain like gmail.com', async () => {
+    const targets = [
+      { id: 'nassau-tours', vertical: 'tour operator', region: 'Nassau, Bahamas', priority: 10, last_sourced_at: null, query_variant_index: 0, result_offset: 0 },
+    ]
+    dbRef = { current: makeDb({ unsentSupply: 1, targets }) }
+    sourceLeadsMock.mockImplementation(async () => sourceResult([
+      { business_name: 'Sandy Toes', phone: null, website: null, email: 'sandytoes@gmail.com', address: null },
+      { business_name: 'Islandz Tours', phone: null, website: null, email: 'islandztours@gmail.com', address: null },
+      { business_name: 'Tru Bahamian Food Tours', phone: null, website: null, email: 'trubahamian@gmail.com', address: null },
+    ]))
+    const { runOutreachSourcingJob } = await import('./outreach-sourcing-job')
+    const result = await runOutreachSourcingJob('ws-1') as { targets_run: Array<{ rejected_shared_domain: number; inserted: number }> }
+
+    expect(result.targets_run[0].rejected_shared_domain).toBe(0)
+    expect(result.targets_run[0].inserted).toBe(3)
+  })
+})
+
+describe('extractEmailDomain', () => {
+  it('lowercases and returns the domain half of an email address', async () => {
+    const { extractEmailDomain } = await import('./outreach-sourcing-job')
+    expect(extractEmailDomain('Hello@Example.COM')).toBe('example.com')
+  })
+
+  it('returns null for an address with no @', async () => {
+    const { extractEmailDomain } = await import('./outreach-sourcing-job')
+    expect(extractEmailDomain('not-an-email')).toBeNull()
+  })
+
+  it('returns null for an address with a trailing @ and nothing after it', async () => {
+    const { extractEmailDomain } = await import('./outreach-sourcing-job')
+    expect(extractEmailDomain('broken@')).toBeNull()
+  })
+})
+
+describe('isFreeMailDomain', () => {
+  it('treats common consumer providers as exempt', async () => {
+    const { isFreeMailDomain } = await import('./outreach-sourcing-job')
+    for (const domain of ['gmail.com', 'Yahoo.com', 'HOTMAIL.COM', 'outlook.com', 'icloud.com', 'aol.com', 'live.com', 'ymail.com']) {
+      expect(isFreeMailDomain(domain)).toBe(true)
+    }
+  })
+
+  it('does not treat a corporate/hospitality-group domain as free mail', async () => {
+    const { isFreeMailDomain } = await import('./outreach-sourcing-job')
+    expect(isFreeMailDomain('titan.bs')).toBe(false)
+    expect(isFreeMailDomain('atlantisparadise.com')).toBe(false)
   })
 })
