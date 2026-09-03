@@ -5,7 +5,7 @@ vi.mock('./supabase-server', () => ({ createServiceClient: vi.fn() }))
 vi.mock('./whatsapp/outbound', () => ({ sendFreeFormWhatsApp: vi.fn() }))
 vi.mock('./outreach-pause-control', () => ({ recordBounceKillSwitchPause: vi.fn() }))
 
-const { shouldTripKillSwitch, recordBounceAndMaybeTrip } = await import('./outreach-kill-switch')
+const { shouldTripKillSwitch, shouldTripKillSwitchForWindow, recordBounceAndMaybeTrip } = await import('./outreach-kill-switch')
 const { createServiceClient } = await import('./supabase-server')
 const { recordBounceKillSwitchPause } = await import('./outreach-pause-control')
 const { sendFreeFormWhatsApp } = await import('./whatsapp/outbound')
@@ -162,5 +162,56 @@ describe('recordBounceAndMaybeTrip — severity weighting', () => {
     expect(seeded.inserts).toHaveLength(2)
     expect(seeded.inserts[1].row).toEqual({ workspace_id: 'ws-a' })
     expect(recordBounceKillSwitchPause).not.toHaveBeenCalled()
+  })
+})
+
+describe('shouldTripKillSwitchForWindow — volume normalization', () => {
+  const threshold = 5
+
+  it('does not trip when the absolute floor is not reached, regardless of rate', () => {
+    // 4 bounces out of 5 sends is an 80% rate, but too few events to act on.
+    expect(shouldTripKillSwitchForWindow({ weightedBounceScore: 4, threshold, sendsInWindow: 5 }))
+      .toEqual({ trip: false, rate: null })
+  })
+
+  it('trips at low volume exactly as the count-only rule did', () => {
+    // 5 bounces / 20 sends = 25%, well over the 15% rate threshold.
+    const v = shouldTripKillSwitchForWindow({ weightedBounceScore: 5, threshold, sendsInWindow: 20 })
+    expect(v.trip).toBe(true)
+    expect(v.rate).toBeCloseTo(0.25)
+  })
+
+  it('does NOT trip at restored volume on a healthy list — the regression this exists to prevent', () => {
+    // The real failure mode: 50 first touches/day plus follow-ups is ~120
+    // sends/day. At the measured 7.3% baseline that is ~9 bounces — well
+    // past the absolute threshold of 5, but a perfectly normal cold-email
+    // rate. The count-only rule would have halted all outreach daily.
+    const v = shouldTripKillSwitchForWindow({ weightedBounceScore: 9, threshold, sendsInWindow: 120 })
+    expect(v.trip).toBe(false)
+    expect(v.rate).toBeCloseTo(0.075)
+  })
+
+  it('still trips at high volume when the rate genuinely deteriorates', () => {
+    // Same 120 sends, but 30 bounces = 25%. Real problem, still caught.
+    const v = shouldTripKillSwitchForWindow({ weightedBounceScore: 30, threshold, sendsInWindow: 120 })
+    expect(v.trip).toBe(true)
+    expect(v.rate).toBeCloseTo(0.25)
+  })
+
+  it('trips exactly at the rate threshold boundary', () => {
+    expect(shouldTripKillSwitchForWindow({ weightedBounceScore: 15, threshold, sendsInWindow: 100 }).trip).toBe(true)
+    expect(shouldTripKillSwitchForWindow({ weightedBounceScore: 14.9, threshold, sendsInWindow: 100 }).trip).toBe(false)
+  })
+
+  it('falls back to the absolute check when send volume is unknown, failing toward tripping', () => {
+    expect(shouldTripKillSwitchForWindow({ weightedBounceScore: 6, threshold, sendsInWindow: null }))
+      .toEqual({ trip: true, rate: null })
+  })
+
+  it('falls back to the absolute check when the window has zero recorded sends', () => {
+    // Bounces with no sends on record means the telemetry disagrees with
+    // itself; do not let that silently disable the kill switch.
+    expect(shouldTripKillSwitchForWindow({ weightedBounceScore: 6, threshold, sendsInWindow: 0 }))
+      .toEqual({ trip: true, rate: null })
   })
 })

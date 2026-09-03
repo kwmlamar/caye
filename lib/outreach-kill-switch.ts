@@ -49,6 +49,57 @@ export function shouldTripKillSwitch(weightedBounceScoreInWindow: number, thresh
   return weightedBounceScoreInWindow >= threshold
 }
 
+/**
+ * Bounce rate (bounces / sends in the same window) at which the trailing
+ * window stops looking like normal cold-email attrition and starts looking
+ * like a list-quality or reputation problem.
+ *
+ * Calibrated against real production data, not a rule of thumb: over
+ * 2026-08-14..2026-08-30 the workspace sent 341 outreach messages and took
+ * 25 bounces — a 7.3% baseline. 15% is roughly 2x that baseline, so normal
+ * weeks pass and a genuine deterioration trips.
+ */
+export const OUTREACH_BOUNCE_RATE_THRESHOLD = 0.15
+
+/**
+ * Volume-normalized trip decision.
+ *
+ * WHY THIS EXISTS: the absolute weighted threshold alone is only meaningful
+ * at a fixed send volume, and this system's volume is about to change by an
+ * order of magnitude. The default threshold of 5-in-24h was set when the
+ * pipeline was sending ~20/day, where 5 bounces means a 25% rate — a real
+ * emergency. At the restored 50 first-touches/day target (plus follow-ups,
+ * so ~100-150 sends/day), 5 bounces is a ~4% rate, i.e. BETTER than the
+ * measured 7.3% baseline. A count-only rule would therefore trip every
+ * single day the moment supply is fixed, halting all cold outreach on a
+ * completely healthy list. That is a foreseeable self-inflicted outage, not
+ * a safety feature.
+ *
+ * So a trip now requires BOTH:
+ *   1. the weighted score to clear the absolute floor (unchanged — this is
+ *      what stops 2-bounces-out-of-3-sends from being ignored at low
+ *      volume), AND
+ *   2. the bounce rate over the same window to clear
+ *      OUTREACH_BOUNCE_RATE_THRESHOLD.
+ *
+ * This is deliberately NOT a blanket relaxation: at low volume the rate
+ * check is trivially satisfied and behavior is identical to before. It only
+ * changes the high-volume case, which is exactly the case the count-only
+ * rule got wrong. When the send count is unknown or zero (telemetry gap),
+ * it falls back to the absolute check alone — failing toward tripping.
+ */
+export function shouldTripKillSwitchForWindow(args: {
+  weightedBounceScore: number
+  threshold: number
+  sendsInWindow: number | null
+}): { trip: boolean; rate: number | null } {
+  const { weightedBounceScore, threshold, sendsInWindow } = args
+  if (!shouldTripKillSwitch(weightedBounceScore, threshold)) return { trip: false, rate: null }
+  if (sendsInWindow === null || sendsInWindow <= 0) return { trip: true, rate: null }
+  const rate = weightedBounceScore / sendsInWindow
+  return { trip: rate >= OUTREACH_BOUNCE_RATE_THRESHOLD, rate }
+}
+
 export interface BounceRecordDetail {
   classification: BounceSeverity
   /** Lowercased failed-recipient address, or null when it couldn't be
@@ -109,12 +160,18 @@ export async function recordBounceAndMaybeTrip(
   const unknownCount = windowRows.length - hardCount - softCount
   const weightedScore = windowRows.reduce((sum, r) => sum + bounceWeight(r.classification), 0)
 
-  if (!shouldTripKillSwitch(weightedScore, threshold)) return
+  const sendsInWindow = await countOutreachSendsInWindow(supabase, workspaceId, cutoff)
+  const verdict = shouldTripKillSwitchForWindow({ weightedBounceScore: weightedScore, threshold, sendsInWindow })
+  if (!verdict.trip) return
 
+  const ratePart = verdict.rate === null
+    ? 'send volume for the window was unavailable, so the rate check was skipped'
+    : `${(verdict.rate * 100).toFixed(1)}% of ${sendsInWindow} sends, over the ` +
+      `${(OUTREACH_BOUNCE_RATE_THRESHOLD * 100).toFixed(0)}% rate threshold`
   const reason =
     `${windowRows.length} bounces in the trailing ${windowHours} hours ` +
     `(${hardCount} hard, ${softCount} soft, ${unknownCount} unclassified; ` +
-    `weighted score ${weightedScore.toFixed(2)}) crossed the safety threshold of ${threshold}.`
+    `weighted score ${weightedScore.toFixed(2)}) crossed the safety threshold of ${threshold} — ${ratePart}.`
 
   await recordBounceKillSwitchPause(workspaceId, reason)
 
@@ -123,6 +180,36 @@ export async function recordBounceAndMaybeTrip(
   )
 
   await pageFounderOutreachPaused(windowRows.length, windowHours)
+}
+
+/**
+ * Outreach sends in the same trailing window, for the rate denominator.
+ * Mirrors lib/outreach-send-limits.ts's countOutreachSendsToday, but over
+ * an arbitrary cutoff rather than start-of-day. Counts first touches and
+ * follow-ups together, because both are cold sends to non-opted-in
+ * addresses and both can bounce.
+ *
+ * Returns null (not 0) when the count can't be read, so the caller can tell
+ * "no sends" apart from "don't know" and fail toward tripping rather than
+ * silently disabling the kill switch on a query error.
+ */
+async function countOutreachSendsInWindow(
+  supabase: ReturnType<typeof createServiceClient>,
+  workspaceId: string,
+  cutoff: string
+): Promise<number | null> {
+  try {
+    const [firstTouch, followups] = await Promise.all([
+      supabase.from('outreach_leads').select('id', { count: 'exact', head: true })
+        .eq('workspace_id', workspaceId).gte('first_touch_sent_at', cutoff),
+      supabase.from('outreach_leads').select('id', { count: 'exact', head: true })
+        .eq('workspace_id', workspaceId).gte('last_nudge_at', cutoff),
+    ])
+    if (firstTouch.error || followups.error) return null
+    return (firstTouch.count ?? 0) + (followups.count ?? 0)
+  } catch {
+    return null
+  }
 }
 
 /**
