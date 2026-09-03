@@ -31,6 +31,10 @@ import { alertFounderOfDeliveryFailure } from '@/lib/whatsapp/founder-alert'
 import { OPERATOR_LOGGABLE_KINDS } from '@/app/api/caye/outbound-worker/route'
 import { mediaPlaceholder } from '@/lib/operator-text-guard'
 import { resolveOrCreateContact } from '@/lib/contacts/resolve-contact'
+import {
+  sendWhatsAppVoiceNote,
+  transcribeWhatsAppVoiceNote,
+} from '@/lib/whatsapp/voice-note'
 
 // ─── GET — webhook verification ──────────────────────────────────────────────
 
@@ -107,6 +111,11 @@ interface WaTextMessage {
   timestamp: string
   type: string
   text?: { body: string }
+  audio?: {
+    id: string
+    mime_type?: string
+    voice?: boolean
+  }
 }
 
 interface WaStatus {
@@ -206,13 +215,31 @@ async function processInboundWhatsApp(payload: Record<string, unknown>): Promise
     const from = message.from
     const sentAt = new Date(Number(message.timestamp) * 1000).toISOString()
     const isTextMessage = message.type === 'text'
-    const body = message.text?.body ?? ''
+    const isVoiceMessage = message.type === 'audio' && !!message.audio?.id
+    let body = message.text?.body ?? ''
+    let transcribedMimeType: string | null = null
 
     // Self-loop guard
     if (businessPhone && from === businessPhone) {
       console.log('[whatsapp webhook] Self-sent message — skipping loop guard')
       continue
     }
+
+    if (isVoiceMessage && message.audio?.id) {
+      try {
+        const transcription = await transcribeWhatsAppVoiceNote(
+          message.audio.id,
+          account.access_token
+        )
+        body = transcription.transcript
+        transcribedMimeType = transcription.mimeType
+      } catch (err) {
+        console.error('[whatsapp webhook] Voice-note transcription failed:', err)
+      }
+    }
+
+    const hasSemanticBody = (isTextMessage || isVoiceMessage) && !!body
+    const needsHumanReview = !hasSemanticBody
 
     // Resolve customer name from contacts array
     const contact = contacts?.find(c => c.wa_id === from)
@@ -242,12 +269,14 @@ async function processInboundWhatsApp(payload: Record<string, unknown>): Promise
           contact_id: contactRow?.id,
           status: 'open',
           last_message_at: sentAt,
-          last_message_preview: isTextMessage ? body.slice(0, 100) : mediaPlaceholder(message.type),
+          last_message_preview: hasSemanticBody
+            ? body.slice(0, 100)
+            : mediaPlaceholder(message.type),
           last_sender_type: 'customer',
           metadata: { wa_id: from, phone_number_id },
-          ...(isTextMessage
-            ? {}
-            : { human_agent_enabled: true, human_agent_reason: 'Media message — needs human review' }),
+          ...(needsHumanReview
+            ? { human_agent_enabled: true, human_agent_reason: 'Media message — needs human review' }
+            : {}),
         },
         { onConflict: 'connected_account_id,channel_conversation_id' }
       )
@@ -279,11 +308,23 @@ async function processInboundWhatsApp(payload: Record<string, unknown>): Promise
         conversation_id: conversation.id,
         channel_message_id: messageId,
         sender_type: 'customer',
-        content: isTextMessage ? body : mediaPlaceholder(message.type),
+        content: hasSemanticBody ? body : mediaPlaceholder(message.type),
+        // Preserve the real transport type even when Caye reasons over the transcript.
         message_type: isTextMessage ? 'text' : message.type,
         sent_at: sentAt,
         status: 'delivered',
-        metadata: { wa_id: from, phone_number_id },
+        metadata: {
+          wa_id: from,
+          phone_number_id,
+          ...(isVoiceMessage
+            ? {
+                voice_note: true,
+                media_id: message.audio?.id ?? null,
+                media_mime_type: transcribedMimeType ?? message.audio?.mime_type ?? null,
+                transcription_status: body ? 'completed' : 'failed',
+              }
+            : {}),
+        },
       })
       if (inboundErr) {
         console.error('[whatsapp webhook] Inbound message insert failed:', inboundErr)
@@ -296,15 +337,17 @@ async function processInboundWhatsApp(payload: Record<string, unknown>): Promise
       }
     }
 
-    // Non-text messages get no AI reply — human agent flag already set above
-    if (!isTextMessage || !body) continue
+    // Unsupported media and failed transcriptions stay held for human review.
+    if (!hasSemanticBody || !body) continue
 
     if (aiConfig?.ai_enabled === false) {
       console.log(`[whatsapp webhook] AI disabled for workspace ${workspaceId} — skipping auto-reply`)
       continue
     }
 
-    // Generate Caye response (reply or hold decision)
+    // Generate Caye response (reply or hold decision). Voice notes enter the exact
+    // same business pipeline as text after transcription, preserving all existing
+    // grounding, escalation, booking and autonomy behavior.
     let decision: Awaited<ReturnType<typeof generateCayeAutoReply>>
     try {
       decision = await generateCayeAutoReply(
@@ -375,12 +418,29 @@ async function processInboundWhatsApp(payload: Record<string, unknown>): Promise
       continue
     }
 
-    // Send reply via Meta Cloud API
-    try {
-      await sendWhatsAppMessage(from, decision.content, phone_number_id, account.access_token)
-    } catch (err) {
-      console.error('[whatsapp webhook] WhatsApp send failed:', err)
-      continue
+    // Reply in the same modality when possible. A failed voice render/send falls
+    // back to the already-authorized text response and never re-runs the agent.
+    let outboundMessageType = 'text'
+    if (isVoiceMessage) {
+      try {
+        await sendWhatsAppVoiceNote(from, decision.content, phone_number_id, account.access_token)
+        outboundMessageType = 'audio'
+      } catch (err) {
+        console.error('[whatsapp webhook] Voice-note reply failed; falling back to text:', err)
+        try {
+          await sendWhatsAppMessage(from, decision.content, phone_number_id, account.access_token)
+        } catch (fallbackErr) {
+          console.error('[whatsapp webhook] WhatsApp text fallback failed:', fallbackErr)
+          continue
+        }
+      }
+    } else {
+      try {
+        await sendWhatsAppMessage(from, decision.content, phone_number_id, account.access_token)
+      } catch (err) {
+        console.error('[whatsapp webhook] WhatsApp send failed:', err)
+        continue
+      }
     }
 
     // Store outbound message
@@ -389,13 +449,19 @@ async function processInboundWhatsApp(payload: Record<string, unknown>): Promise
       channel_message_id: `caye_wa_${Date.now()}`,
       sender_type: 'business',
       content: decision.content,
-      message_type: 'text',
+      message_type: outboundMessageType,
       sent_at: new Date().toISOString(),
       status: 'sent',
       metadata: {
         is_automated: true,
         generated_by: 'caye',
         phone_number_id,
+        ...(isVoiceMessage
+          ? {
+              inbound_voice_note: true,
+              reply_transport: outboundMessageType === 'audio' ? 'voice_note' : 'text_fallback',
+            }
+          : {}),
         ...(decision.autonomyAudit ? { autonomy: decision.autonomyAudit } : {}),
       },
     })
