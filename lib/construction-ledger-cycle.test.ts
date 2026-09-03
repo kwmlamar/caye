@@ -17,6 +17,7 @@ const SYNC_OK = [
 ]
 const ATTENTION_OK = { considered: 2, raised: 2, skipped: { bootstrap: 0, unresolvable: 0 } }
 const RECEIVABLES_OK = { considered: 1, raised: 1, skipped: { draft: 0, settled: 0 } }
+const FREIGHT_ATTENTION_OK = { considered: 1, raised: 1, skipped: { alreadySent: 0, malformed: 0, unknownStatus: 0 } }
 
 function deps(over: Record<string, unknown> = {}) {
   const calls: string[] = []
@@ -31,6 +32,10 @@ function deps(over: Record<string, unknown> = {}) {
       // sync/project only. Never the live default, which would reach a real
       // Supabase-backed adapter with no credentials in this environment.
       raiseReceivables: (async () => RECEIVABLES_OK) as never,
+      // Not tracked in `calls` by default so the existing sync/project
+      // assertions below don't have to account for it — tests that care
+      // about freight wiring specifically override this.
+      projectFreight: (async () => FREIGHT_ATTENTION_OK) as never,
       ...over,
     },
   }
@@ -69,6 +74,7 @@ describe('runConstructionLedgerCycle', () => {
           return SYNC_OK
         }) as never,
         project: (async () => ATTENTION_OK) as never,
+        projectFreight: (async () => FREIGHT_ATTENTION_OK) as never,
       },
     })
 
@@ -88,6 +94,25 @@ describe('runConstructionLedgerCycle', () => {
     expect(result.results[0].attentionError).toBe('attention ledger down')
   })
 
+  it('raises freight attention as a third independent step', async () => {
+    const { deps: d } = deps()
+    const result = await runConstructionLedgerCycle({ deps: d })
+
+    expect(result.results[0].freightAttention).toEqual(FREIGHT_ATTENTION_OK)
+    expect(result.results[0].freightAttentionError).toBeNull()
+  })
+
+  it('records a freight attention failure without discarding sync or domain attention', async () => {
+    const { deps: d } = deps({
+      projectFreight: (async () => { throw new Error('freight read failed') }) as never,
+    })
+    const result = await runConstructionLedgerCycle({ deps: d })
+
+    expect(result.results[0].sync).toEqual(SYNC_OK)
+    expect(result.results[0].attention).toEqual(ATTENTION_OK)
+    expect(result.results[0].freightAttentionError).toBe('freight read failed')
+  })
+
   it('asks for an overlapping attention window rather than a tight cursor', async () => {
     // Both halves are idempotent, so overlap is cheap and a gap is not.
     let since: Date | undefined
@@ -97,6 +122,7 @@ describe('runConstructionLedgerCycle', () => {
         listBoundWorkspaces: async () => [A],
         sync: (async () => SYNC_OK) as never,
         project: (async (args: { since?: Date }) => { since = args.since; return ATTENTION_OK }) as never,
+        projectFreight: (async () => FREIGHT_ATTENTION_OK) as never,
       },
     })
 
