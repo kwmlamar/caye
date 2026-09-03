@@ -115,9 +115,13 @@ describe('stale Sales hold recovery migration contract', () => {
   it('uses the existing lifecycle replay receipt for the stored provider message', async () => {
     // The recovery passes the original channel_message_id to the unchanged
     // Sales boundary; its lifecycle key is inbound:<id>:human_reply_received.
+    // inbound.ts now branches this template (an `attributedOutreachReply`
+    // ternary added to fix "does not attribute a reply when the
+    // conversation belongs to a different outreach lead") but the base,
+    // non-attributed key shape asserted here is still that exact literal.
     const source = await import('node:fs/promises').then(fs => fs.readFile(
       new URL('./inbound.ts', import.meta.url), 'utf8'))
-    expect(source).toContain('eventKey: `inbound:${eventRoot}:${event}`')
+    expect(source).toContain('`inbound:${eventRoot}:${event}`')
   })
 
   it('permits only a blocked pre-delivery receipt to be superseded', async () => {

@@ -140,6 +140,20 @@ describe('hand-written constraint copies stay in step with the migrations', () =
 const GENERIC_NAMES = new Set([
   'status', 'kind', 'role', 'category', 'source', 'direction', 'type',
   'action', 'effect', 'origin', 'priority', 'state', 'plan', 'visibility',
+  // subject_type is CHECK-constrained on exactly one table (business_facts),
+  // so the "exactly one table constrains it" rule above treats it as
+  // distinctive — but it is not: caye_owner_attention and
+  // caye_direct_thread_entities both declare their own `subject_type text
+  // not null` column with NO constraint, deliberately (see
+  // 20260812c_caye_owner_attention.sql: "text, not an enum ... adding a
+  // kind must never require a migration to land first"). A repo-wide
+  // `subject_type: 'literal'` scan can't tell which table a given object
+  // literal is destined for, so it flags values like 'escalation' — valid
+  // free text on caye_owner_attention rows (e.g. lib/caye-bench/replay
+  // fixtures) — as if they violated business_facts' constraint. Verified
+  // 2026-09-03: no other CHECK constraint on subject_type exists anywhere
+  // in supabase/migrations.
+  'subject_type',
 ])
 
 function scannableColumns(map: ConstraintMap): { column: string; values: Set<string> }[] {

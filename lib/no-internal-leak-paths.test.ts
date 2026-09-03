@@ -44,6 +44,10 @@ const ALLOWED = new Map<string, string>([
   ['app/api/caye/discovery/route.ts', 'prompt-internal numbering'],
   ['lib/business-fact-semantic-match.ts', 'prompt-internal candidate ids'],
   ['lib/business-fact-conflict.ts', 'prompt-internal candidate ids'],
+  // Same pattern as discovery/route.ts above: `[${index + 1}]` numbers an
+  // <email_sample> block inside synthesizeBusinessContext's prompt to
+  // loggedMessagesCreate, parsed back as JSON — never returned to a human.
+  ['app/api/caye/gmail-observation-discovery/route.ts', 'prompt-internal numbering, same as discovery/route.ts'],
   // Placeholder for an unrenderable content-block type inside a CLI
   // subprocess prompt (Claude/Codex subscription backends) — never shown
   // to a human, only ever read by the reasoning backend itself.
@@ -57,6 +61,36 @@ const ALLOWED = new Map<string, string>([
   // can correct its own malformed tool call — same category as
   // schema-validate.ts's entry above.
   ['lib/engineering/fea/spec.ts', 'validation error path returned to the model, not a human'],
+  // Array-index path segment (`arguments[2]`) in a proposed Caye-tool-call
+  // argument validation error. Verified 2026-09-03: the only caller is
+  // lib/recommendations/action-plan.ts's validateRecommendationActionPlan,
+  // whose thrown message either gets swallowed (autonomous-worker.ts's
+  // speculative `try { ... } catch { plan = null }`) or, on execution
+  // failure, is explicitly kept out of the owner-facing WhatsApp founder
+  // alert (pending-operations-worker.ts's `fail()` skips
+  // alertFounderOfDeliveryFailure specifically for 'recommendation_action'
+  // — "Recommendation failures use the canonical owner-attention ledger
+  // inside their execution runtime"). Same category as schema-validate.ts.
+  ['lib/caye-agent/tools/schema-validation.ts', 'tool-argument validation error path, never reaches an owner-facing channel'],
+  // renderOperatingMemory's output is prompt-scaffolding text ("DURABLE
+  // OPERATING MEMORY — retrieved for this workspace and current turn"),
+  // matching the shape of business-fact-semantic-match.ts /
+  // business-fact-conflict.ts above. Verified 2026-09-03: it currently has
+  // no production caller at all (grep for imports of this module found
+  // none outside its own tests), so nothing renders it to an owner today.
+  ['lib/operating-memory.ts', 'prompt-scaffolding text for a model context block, not owner-facing output'],
+  // renderOperationalBrief is consumed only by
+  // lib/caye-agent/operational-brief.ts's getOperationalBriefContext, whose
+  // own docstring says it "hands the model a deterministic brief" for
+  // agent-facing questions — same category as the discovery/route.ts entry
+  // above. Verified 2026-09-03: getOperationalBriefContext itself has no
+  // production caller yet, so nothing renders it to an owner today.
+  ['lib/operational-intelligence/brief.ts', 'model-facing operational brief text, not owner-facing output'],
+  // `stable()` is a deterministic JSON-shape stringifier used only as
+  // createHash('sha256').update(stable(...)) input for a dedupe/proposal
+  // hash — never rendered as text. Same category as
+  // lib/caye-agent/orchestrator.ts's stableStringify entry above.
+  ['lib/research/cross-domain-runtime.ts', 'stableStringify-style hash input, not output'],
 ])
 
 function sourceFiles(dir: string, out: string[] = []): string[] {
