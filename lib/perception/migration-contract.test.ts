@@ -13,8 +13,22 @@ describe('perception migration contract', () => {
     expect(sql).toContain('unique (workspace_id, capability_key, source_kind, source_identity)')
     expect(sql).toContain('alter table public.perception_source_state enable row level security')
     expect(sql).toContain('alter table public.perception_capability_evidence enable row level security')
-    expect(sql).toContain('from public, anon, authenticated')
-    expect(sql).toContain('to service_role')
+
+    // The ingest entrypoint must be revoked from every non-service role (however the
+    // revoke statements are split or combined) and granted only to service_role.
+    const ingestFn =
+      'public.ingest_property_telemetry_event(text, text, text, text, timestamptz, jsonb, jsonb, jsonb)'
+    for (const role of ['public', 'anon', 'authenticated']) {
+      expect(sql).toMatch(
+        new RegExp(
+          `revoke (all|execute) on function ${ingestFn.replace(/[.()]/g, '\\$&')}[^;]*\\bfrom\\b[^;]*\\b${role}\\b`,
+          'i'
+        )
+      )
+    }
+    expect(sql).toMatch(
+      new RegExp(`grant execute on function ${ingestFn.replace(/[.()]/g, '\\$&')}\\s+to service_role`, 'i')
+    )
   })
 
   it('resolves device authority server-side instead of accepting a workspace from ingress', () => {
