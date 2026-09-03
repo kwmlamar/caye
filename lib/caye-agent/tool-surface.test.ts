@@ -27,12 +27,16 @@ describe('production tool surface', () => {
     // values. If a change moves these, update them deliberately and say why
     // in the PR — do not "fix" the test by loosening the assertion.
     //
-    // The owner count deliberately does NOT move with CAY-194: all 11 new
-    // application-execution tools are founder-only, so owners gain nothing
-    // and only the excluded-by-role figures grow.
-    expect(owner).toMatchObject({ exposedToolCount: 73, excludedByRoleCount: 37, excludedToolSchemaBytes: 23362 })
-    expect(founder).toMatchObject({ exposedToolCount: 110, excludedByRoleCount: 0, excludedToolSchemaBytes: 0 })
-    expect(staff).toMatchObject({ exposedToolCount: 13, excludedByRoleCount: 97, excludedToolSchemaBytes: 93352 })
+    // Refreshed again 2026-09-03 (repository audit dispatch): the tool
+    // registry grew further since the CAY-194 snapshot above — dozens of
+    // commits have touched lib/caye-agent/tools/** since (new tools,
+    // schema changes) — so these three counts had drifted stale again with
+    // no change of their own. Updated to the true current values measured
+    // against this branch; still an exact, unweakened toMatchObject
+    // assertion.
+    expect(owner).toMatchObject({ exposedToolCount: 76, excludedByRoleCount: 53, excludedToolSchemaBytes: 34528 })
+    expect(founder).toMatchObject({ exposedToolCount: 129, excludedByRoleCount: 0, excludedToolSchemaBytes: 0 })
+    expect(staff).toMatchObject({ exposedToolCount: 16, excludedByRoleCount: 113, excludedToolSchemaBytes: 104897 })
   })
 
   it.each(['owner', 'staff', 'founder', 'driver'] as const)('only exposes schemas executable by %s', (callerRole) => {

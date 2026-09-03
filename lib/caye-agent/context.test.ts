@@ -45,6 +45,17 @@ describe('loadFrontDeskConversationContext — Phase 3 persisted-turn splicing',
 
   it('splices persisted agent turns in place of both the customer row and the reconstructed reply that followed it', async () => {
     agentTurnsMap.clear()
+    // Realistic persisted-turn shape: an assistant tool_use turn must be
+    // followed by a user tool_result turn carrying the same id, or
+    // history-compaction's repairToolHistory (a deliberate safety guard
+    // against replaying structurally invalid tool exchanges — see
+    // lib/caye-agent/history-compaction.ts) strips the orphaned tool_use as
+    // unreplayable. The original 3-turn fixture here (user -> assistant
+    // tool_use -> assistant text, with no tool_result in between) could
+    // never have been produced by a real Claude turn and was silently
+    // losing its tool_use block to that guard, one turn short of the
+    // asserted length. Adding the missing tool_result turn makes the
+    // fixture a structurally valid persisted sequence.
     agentTurnsMap.set('m1', [
       { id: 'a1', role: 'user', claude_format: { role: 'user', content: 'How much for 2 guests?' }, created_at: '2026-08-16T11:58:00.000Z' },
       {
@@ -53,6 +64,12 @@ describe('loadFrontDeskConversationContext — Phase 3 persisted-turn splicing',
         claude_format: { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'lookup_price', input: {} }] },
         created_at: '2026-08-16T11:58:05.000Z',
       },
+      {
+        id: 'a2r',
+        role: 'user',
+        claude_format: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', is_error: false, content: '{"total":450}' }] },
+        created_at: '2026-08-16T11:58:07.000Z',
+      },
       { id: 'a3', role: 'assistant', claude_format: { role: 'assistant', content: 'Sure, $450 total.' }, created_at: '2026-08-16T11:58:10.000Z' },
     ])
     selectResult.data = [
@@ -60,8 +77,8 @@ describe('loadFrontDeskConversationContext — Phase 3 persisted-turn splicing',
       { id: 'm1', sender_type: 'customer', content: 'How much for 2 guests?', sent_at: '2026-08-16T11:58:00.000Z', channel_message_id: 'c1' },
     ]
     const { history } = await loadFrontDeskConversationContext('conv1')
-    // 3 persisted turns supersede both flattened rows — not 2, not 4.
-    expect(history).toHaveLength(3)
+    // 4 persisted turns supersede both flattened rows — not 2, not 5.
+    expect(history).toHaveLength(4)
     expect(history[1].content).toEqual(
       expect.arrayContaining([expect.objectContaining({ type: 'tool_use', name: 'lookup_price' })])
     )

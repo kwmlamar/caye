@@ -84,7 +84,16 @@ vi.mock('@/lib/supabase-server', () => ({
           }),
         }
       }
-      return { insert: async () => ({ error: null }) }
+      // caye_effect_verifications (verifyAndPersistEffect, called from
+      // syncBookingToCalendar's real effect-verification wiring) only
+      // destructures `{ error }` off a bare `await ...upsert(...)`, with no
+      // further chaining — this fake predates that call and its default
+      // branch only ever implemented `insert`, so `.upsert` was missing
+      // entirely (TypeError, not a silent pass) until added here.
+      return {
+        insert: async () => ({ error: null }),
+        upsert: async () => ({ error: null }),
+      }
     },
   }),
 }))
@@ -93,12 +102,33 @@ const zoho = {
   create: vi.fn(),
   update: vi.fn(),
   del: vi.fn(),
+  // Real read-back path (calendar-effect-verification.ts's verifyCalendarUpsert
+  // calls listZohoCalendarEvents to observe what Zoho actually has before
+  // trusting a create/update as VERIFIED). This test file predates that
+  // effect-verification wiring and never mocked list at all — undefined
+  // when destructured from the module mock below, so every observation
+  // attempt threw and verification could never report VERIFIED. Modeled
+  // here as a read-back of the same in-memory booking state.upsert/update
+  // already mutated, at call time.
+  list: vi.fn(async (..._args: unknown[]) => {
+    const b = state.booking
+    if (!b?.zoho_event_id) return []
+    return [
+      {
+        uid: b.zoho_event_id,
+        startDate: b.booking_date,
+        startTime: b.booking_time,
+        durationMinutes: b.duration_minutes ?? b.service?.[0]?.duration_minutes ?? 120,
+      },
+    ]
+  }),
 }
 
 vi.mock('../zoho-calendar', () => ({
   createZohoCalendarEvent: (...a: unknown[]) => zoho.create(...a),
   updateZohoCalendarEvent: (...a: unknown[]) => zoho.update(...a),
   deleteZohoCalendarEvent: (...a: unknown[]) => zoho.del(...a),
+  listZohoCalendarEvents: (...a: unknown[]) => zoho.list(...a),
 }))
 
 const { syncBookingToCalendar, calendarIdempotencyKey } = await import('../calendar-sync')
@@ -263,7 +293,11 @@ describe('scenario: add_internal_note fails (the 2026-08-11 Mrs. Max exchange)',
     payload.how_to_report_this = guidanceFor(result.status, result.deferred === true)
 
     const guidance = String(payload.how_to_report_this)
-    expect(guidance).toMatch(/never ask the operator to do it themselves/i)
+    // Wording only — same prohibition as orchestrator.test.ts's matching
+    // assertion, phrased in the current guidance text as "never ask the
+    // operator to do the failed work themselves" rather than "...do it
+    // themselves".
+    expect(guidance).toMatch(/never ask the operator to do the failed work themselves/i)
     expect(guidance).toMatch(/did not go through/i)
     expect(guidance).toMatch(/you are on it/i)
   })
