@@ -18,6 +18,13 @@ import { getRecentActivity } from './read/get-recent-activity'
 import { getRecentInboundTool } from './read/get-recent-inbound'
 import { getRecentBookings } from './read/get-recent-bookings'
 import { getPendingQuotes } from './read/get-pending-quotes'
+// Construction ledger (Bedrock/TropiTrack). These return external authoritative
+// state, never Caye business facts, and no-op cleanly with a clear error on a
+// workspace that has no ledger binding — which is most of them.
+import { findJob } from './read/find-job'
+import { getJob } from './read/get-job'
+import { getJobLabor } from './read/get-job-labor'
+import { getPayrollStatus } from './read/get-payroll-status'
 import { searchThreads } from './read/search-threads'
 import { queryBusinessKnowledge } from './read/query-business-knowledge'
 import { listStandingRules } from './read/list-standing-rules'
@@ -188,6 +195,10 @@ export const TOOL_REGISTRY: AnyTool[] = [
   getRecentInboundTool as AnyTool,
   getRecentBookings as AnyTool,
   getPendingQuotes as AnyTool,
+  findJob as AnyTool,
+  getJob as AnyTool,
+  getJobLabor as AnyTool,
+  getPayrollStatus as AnyTool,
   searchThreads as AnyTool,
   queryBusinessKnowledge as AnyTool,
   listStandingRules as AnyTool,
