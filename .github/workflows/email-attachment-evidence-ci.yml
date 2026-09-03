@@ -35,7 +35,7 @@ jobs:
         run: echo "EMAIL_ATTACHMENT_EVIDENCE_HEAD=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
 
       - name: Focused attachment evidence tests
-        run: npx vitest run lib/artifacts/email-evidence-semantics.test.ts lib/artifacts/email-attachments.test.ts lib/artifacts/ingest.test.ts lib/artifacts/relations.test.ts --reporter=verbose
+        run: npx vitest run lib/artifacts/email-evidence-semantics.test.ts lib/artifacts/email-attachments.test.ts lib/artifacts/ingest.test.ts lib/artifacts/relations.test.ts app/api/email/gmail-cron/route.test.ts app/api/email/gmail-poll/attachment-only.test.ts --reporter=verbose
 
       - name: Freight regression tests
         run: npx vitest run lib/freight/freight.test.ts lib/freight/workflow.test.ts lib/freight/authorization.test.ts lib/freight/send-safety.test.ts --reporter=verbose
