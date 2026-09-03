@@ -70,8 +70,30 @@ Merged to `main` across PRs #454–#459:
 - **Adaptivity** — `lib/domain-policy.ts`. Business assumptions live in the workspace, not
   in constants; Caye asks about one at a time and remembers the answer.
 
-**Open, not merged:** `feat/ods-receivables` — receivables + the payroll-owed fix. 296 tests
-passing, needs a PR opened.
+**Merged 2026-09-03**, PRs #460, #465, #451 — production deploy `f7e420fc`, status success:
+
+- **Receivables** — `get_receivables`, `log_invoice_sent`, `record_payment`, the weekly ask,
+  and the payroll-owed fix. `get_payroll_owed` takes a date range and **never** a pay-period
+  id: the real answer is **$15,313.45** owed (`net_pay - total_paid`), not the naive
+  $24,298.45 a sum of gross would report.
+- **Freight** — the relation UUID fix (every freight relation write had been failing since it
+  shipped), TWINex/warehouse-number generalisation, and freight attention.
+- **Routing** — `lib/attention-routing.ts`, wired to live config (see below).
+
+**Live routing, verified against the real roster and config:**
+
+| item | goes to |
+|---|---|
+| payroll change | Jay (34) |
+| estimate change | *unrouted* — Omar (35) is unverified |
+| project / PO / receivable, routine | Lamar (31) |
+| PO or receivable at decision/critical | Wallace (32) |
+
+`domain_source_connections.config.operator_roles` on connection `80137a69` now reads
+`{owner: 32, office: 31, hr: 34, estimator: 35}`. Note operator 31's WhatsApp display name
+reads "Wallace Sineus." but the ledger profile is **Lamar** (`classicalsineus@`); 32 is
+Wallace Sr. (`whelsco@`), 34 is Jay (`jaysineus@`). Getting those two backwards would send
+every money decision to the wrong person.
 
 ## 5. The one thing blocking everything
 
@@ -94,23 +116,24 @@ fixing it.
 bottleneck the attention ledger was designed around; Omar and Jay are now allowlisted too.
 Lamar was deciding. **Do not flip those flags without him.**
 
-Also pending: **Omar (operator 35) and Jay (34) have not verified.** Both need to reply to
-the WhatsApp verification template once. Until then the webhook drops their messages.
+Also pending: **Omar (operator 35) has not verified** — Jay (34) since has. Omar needs to
+reply to the WhatsApp verification template once. Until then the webhook drops his messages
+*and* every estimate/pricing attention item routes nowhere, because routing refuses to hand
+an unverified operator anything rather than falling back to someone else.
 
 ## 6. Remaining work, in priority order
 
-1. **Open and merge the PR for `feat/ods-receivables`.** Done, tested, unmerged.
-2. **The Friday ask.** Nothing yet prompts payment confirmation. `record_payment` exists but
+1. **The Friday ask.** Nothing yet prompts payment confirmation. `record_payment` exists but
    waits to be told. This is the loop that actually recovers the ~$94,000, and it needs §5
    resolved first.
-3. **`caye_outbound_queue` has no construction `kind`.** Adding one needs BOTH the
+2. **`caye_outbound_queue` has no construction `kind`.** Adding one needs BOTH the
    TypeScript `OutboundKind` union and a migration extending the CHECK — they are asserted
    in lockstep by an existing test, and three past migrations exist because someone changed
    only one side and broke escalation delivery.
-4. **Receipt capture by photo.** The money-out half of job costing: 3,883 timesheet rows
+3. **Receipt capture by photo.** The money-out half of job costing: 3,883 timesheet rows
    against 6 receipts. Needs a WhatsApp media pipeline; the `receipts` change source already
    detects them once they exist.
-5. **Freight — mostly built, but nobody is told.** *Corrected 2026-09-03: an earlier version
+4. **Freight — mostly built, but nobody is told.** *Corrected 2026-09-03: an earlier version
    of this file said freight was untouched. It is not.* `lib/freight/` implements
    detect → match → generate a PDF from verified evidence → owner-gated send, and
    `/api/email/gmail-cron` runs the detection and attachment ingestion every five minutes.
@@ -130,7 +153,7 @@ the WhatsApp verification template once. Until then the webhook drops their mess
    carry the distinction — the prefix is redundant. And confirm TWINex "warehouse number"
    actually matches `detection.ts`'s patterns; only dock-receipt and shipment-ref forms are
    clearly handled, and TWINex is half of ODS's freight traffic.
-6. **RLS is disabled on 9 TropiTrack tables** (`estimates`, `receipts`, `materials`,
+5. **RLS is disabled on 9 TropiTrack tables** (`estimates`, `receipts`, `materials`,
    `estimate_line_items` and others) — flagged by Supabase's own advisor. The adapter treats
    TropiTrack RLS as defence-in-depth only and relies on its own company scoping, which is
    sound, but the gap is real and independent of this work.
