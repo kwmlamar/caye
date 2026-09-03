@@ -2,7 +2,26 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('server-only', () => ({}))
 
-const relationInsert = vi.fn(async () => ({ error: null }))
+/**
+ * Mirrors the exact payload insertSystemRelation() writes to
+ * business_artifact_relations in ./email-attachments. Declaring it here gives
+ * relationInsert.mock.calls a real element type, so the freight-role
+ * assertions below stay typed instead of indexing an empty tuple.
+ */
+interface ArtifactRelationInsert {
+  workspace_id: string
+  artifact_id: string
+  relation_type: string
+  target_entity_type: string
+  target_entity_id: string
+  label: string | null
+  status: 'candidate' | 'confirmed'
+  confidence: number | null
+  provenance: string
+  source_observation_id: string | null
+}
+
+const relationInsert = vi.fn(async (_payload: ArtifactRelationInsert) => ({ error: null }))
 let accountRow: Record<string, unknown> | null = null
 
 function chainMaybeSingle() {
