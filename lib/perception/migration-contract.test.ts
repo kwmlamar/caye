@@ -28,7 +28,7 @@ describe('perception migration contract', () => {
   it('suppresses delayed telemetry from the canonical change stream without deleting raw history', () => {
     const sql = migration('20260830h_perception_suppress_out_of_order_events.sql')
     expect(sql).toContain('where workspace_id = new.workspace_id')
-    expect(sql).toContain("source_kind = v_source_kind")
+    expect(sql).toContain('source_kind = v_source_kind')
     expect(sql).toContain('subject_id = v_subject_id')
     expect(sql).toContain('new.occurred_at < v_current_observed_at')
     expect(sql).toContain('return null')
@@ -58,5 +58,71 @@ describe('perception migration contract', () => {
     expect(sql).toContain('greatest(last_seen_at, new.observed_at)')
     expect(sql).not.toContain('workspace_events')
     expect(sql).not.toContain('perception_capability_evidence')
+  })
+
+  it('transitions only expired active sources to stale under a row lock', () => {
+    const sql = migration('20260830k_perception_freshness_monitor.sql')
+    expect(sql).toContain("where status = 'active'")
+    expect(sql).toContain('fresh_until < p_now')
+    expect(sql).toContain('for update skip locked')
+    expect(sql).toContain("set status = 'stale'")
+  })
+
+  it('downgrades live capability evidence without granting any action authority', () => {
+    const sql = migration('20260830k_perception_freshness_monitor.sql')
+    expect(sql).toContain("set status = 'limited'")
+    expect(sql).toContain('autonomous_now = false')
+    expect(sql).not.toContain('execute_tool')
+    expect(sql).not.toContain('send_message')
+  })
+
+  it('labels freshness expiry as inference rather than pretending silence was directly observed', () => {
+    const sql = migration('20260830k_perception_freshness_monitor.sql')
+    expect(sql).toContain("'monitoring.perception_source_stale'")
+    expect(sql).toContain("'epistemic_kind', 'inference'")
+    expect(sql).toContain("'inference_kind', 'freshness_expired'")
+    expect(sql).toContain("'severity', 'warning'")
+  })
+
+  it('refuses already-expired telemetry from briefly reactivating source, evidence, or property-device projections', () => {
+    const sql = migration('20260830k_perception_freshness_monitor.sql')
+    expect(sql).toContain('caye_guard_perception_source_freshness_on_write')
+    expect(sql).toContain("new.status := 'stale'")
+    expect(sql).toContain('caye_guard_perception_evidence_freshness_on_write')
+    expect(sql).toContain("new.status := 'limited'")
+    expect(sql).toContain('new.autonomous_now := false')
+    expect(sql).toContain('caye_guard_property_sensor_freshness_on_write')
+    expect(sql).toContain("ps.source_kind = 'property.telemetry'")
+    expect(sql).toContain('ps.fresh_until <= now()')
+  })
+
+  it('records recovery even when telemetry values are unchanged, but only for a genuinely fresh newer observation', () => {
+    const sql = migration('20260830k_perception_freshness_monitor.sql')
+    expect(sql).toContain("old.status = 'stale'")
+    expect(sql).toContain("new.status = 'active'")
+    expect(sql).toContain('new.last_observed_at > old.last_observed_at')
+    expect(sql).toContain('new.fresh_until > now()')
+    expect(sql).toContain("'monitoring.perception_source_recovered'")
+    expect(sql).toContain("'inference_kind', 'fresh_observation_reactivated_source'")
+    expect(sql).toContain("'source_event_id', new.last_source_event_id")
+  })
+
+  it('keeps monitoring transitions informational rather than bypassing interruption policy as canonical failures', () => {
+    const sql = migration('20260830k_perception_freshness_monitor.sql')
+    expect(sql).toContain("'monitoring.perception_source_stale'")
+    expect(sql).toContain("'monitoring.perception_source_recovered'")
+    expect(sql.match(/'system',\n\s+false,/g)?.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('keeps the freshness sweep service-role only', () => {
+    const sql = migration('20260830k_perception_freshness_monitor.sql')
+    expect(sql).toContain('revoke all on function public.refresh_perception_freshness(timestamptz) from public')
+    expect(sql).toContain('from anon')
+    expect(sql).toContain('from authenticated')
+    expect(sql).toContain('to service_role')
+    expect(sql).toContain('revoke execute on function public.caye_guard_perception_source_freshness_on_write()')
+    expect(sql).toContain('revoke execute on function public.caye_guard_perception_evidence_freshness_on_write()')
+    expect(sql).toContain('revoke execute on function public.caye_guard_property_sensor_freshness_on_write()')
+    expect(sql).toContain('revoke execute on function public.caye_event_on_perception_source_recovery()')
   })
 })
