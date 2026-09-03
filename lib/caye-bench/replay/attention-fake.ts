@@ -68,5 +68,12 @@ export function makeFakeAttentionClient(rows: ReplayAttentionSeed[]) {
       if (table !== 'caye_owner_attention') return chain([])
       return chain(rows)
     },
+    // Same "empty is the honest default" contract as the from() fallback
+    // above, for the RPC shape lib/business-facts.ts's fetchBusinessFacts
+    // migrated to (it used to be a plain select this fake never modeled
+    // either way).
+    async rpc() {
+      return { data: [], error: null }
+    },
   }
 }

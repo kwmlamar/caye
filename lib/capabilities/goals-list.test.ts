@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const createServiceClient = vi.fn()
+const { createServiceClient } = vi.hoisted(() => ({ createServiceClient: vi.fn() }))
 vi.mock('@/lib/supabase-server', () => ({ createServiceClient }))
 
 import { goalsListCapability } from './goals-list'

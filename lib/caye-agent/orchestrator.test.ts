@@ -228,7 +228,7 @@ describe('guidanceFor', () => {
     // The whole point. Left to itself the model told Mrs. Max to write her
     // own note down; this is the instruction that replaces that judgement.
     const g = guidanceFor('FAILED_PERMANENT', false)!
-    expect(g).toMatch(/never ask the operator to do it themselves/i)
+    expect(g).toMatch(/never ask the operator to do the failed work themselves/i)
   })
 
   it('preserves a draft request rather than offering a send after a draft failure', () => {

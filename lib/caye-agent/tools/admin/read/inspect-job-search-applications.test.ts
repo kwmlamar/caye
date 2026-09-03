@@ -1,9 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('server-only', () => ({}))
-const runJobSearchInspection = vi.fn()
-const inspectApplicationForHumanAssist = vi.fn()
-const recordAnswer = vi.fn()
+const { runJobSearchInspection, inspectApplicationForHumanAssist, recordAnswer, from } = vi.hoisted(() => ({
+  runJobSearchInspection: vi.fn(),
+  inspectApplicationForHumanAssist: vi.fn(),
+  recordAnswer: vi.fn(),
+  // Deferred lookup: builder is defined below (it's not referenced inside
+  // any vi.mock factory directly, only through this closure), and this
+  // arrow function isn't invoked until an actual test calls the mocked
+  // createServiceClient(), well after builder exists.
+  from: vi.fn(() => builder),
+}))
 let queryResults: Array<{ data: unknown; error: null | { message: string } }> = []
 
 const builder = {
@@ -22,7 +29,6 @@ for (const method of ['select', 'eq', 'ilike', 'order', 'limit'] as const) {
 builder.maybeSingle.mockImplementation(async () => queryResults.shift() ?? { data: null, error: null })
 builder.then.mockImplementation((resolve: (value: unknown) => unknown) => Promise.resolve(queryResults.shift() ?? { data: null, error: null }).then(resolve))
 
-const from = vi.fn(() => builder)
 vi.mock('@/lib/supabase-server', () => ({ createServiceClient: () => ({ from }) }))
 vi.mock('@/app/api/caye/job-search-inspect/route', () => ({
   runJobSearchInspection,

@@ -84,7 +84,15 @@ vi.mock('@/lib/supabase-server', () => ({
           }),
         }
       }
-      return { insert: async () => ({ error: null }) }
+      // Fallback for any table these scenarios don't assert on directly
+      // (e.g. caye_effect_verifications, written by verifyAndPersistEffect
+      // as a side effect of the recovery path under test). These scenarios
+      // are about Zoho Calendar recovery behavior, not effect-verification
+      // persistence, so the fallback just needs to not throw.
+      return {
+        insert: async () => ({ error: null }),
+        upsert: async () => ({ error: null }),
+      }
     },
   }),
 }))
@@ -93,12 +101,20 @@ const zoho = {
   create: vi.fn(),
   update: vi.fn(),
   del: vi.fn(),
+  // verifyCalendarUpsert (lib/calendar-effect-verification.ts) reads this
+  // back independently before any success path returns synced:true — see
+  // its own "an independent Zoho read-back before returning synced:true"
+  // docstring. Defaults to "nothing found" so scenarios that never reach a
+  // verified success (e.g. Zoho itself failing) are unaffected; scenarios
+  // that expect synced:true configure a matching event explicitly.
+  list: vi.fn(),
 }
 
 vi.mock('../zoho-calendar', () => ({
   createZohoCalendarEvent: (...a: unknown[]) => zoho.create(...a),
   updateZohoCalendarEvent: (...a: unknown[]) => zoho.update(...a),
   deleteZohoCalendarEvent: (...a: unknown[]) => zoho.del(...a),
+  listZohoCalendarEvents: (...a: unknown[]) => zoho.list(...a),
 }))
 
 const { syncBookingToCalendar, calendarIdempotencyKey } = await import('../calendar-sync')
@@ -131,6 +147,8 @@ beforeEach(() => {
   zoho.create.mockReset()
   zoho.update.mockReset()
   zoho.del.mockReset()
+  zoho.list.mockReset()
+  zoho.list.mockResolvedValue([])
 })
 
 // ── Zoho Calendar failure ───────────────────────────────────────────────────
@@ -178,6 +196,9 @@ describe('scenario: Zoho Calendar is down when a booking is created', () => {
 
   it('records the external id before claiming success', async () => {
     zoho.create.mockResolvedValue('evt-123')
+    zoho.list.mockResolvedValue([
+      { uid: 'evt-123', startDate: '2026-08-20', startTime: '10:00:00', durationMinutes: 120 },
+    ])
 
     const result = await syncBookingToCalendar(WORKSPACE, 'bk-1', 'upsert')
 
@@ -263,7 +284,7 @@ describe('scenario: add_internal_note fails (the 2026-08-11 Mrs. Max exchange)',
     payload.how_to_report_this = guidanceFor(result.status, result.deferred === true)
 
     const guidance = String(payload.how_to_report_this)
-    expect(guidance).toMatch(/never ask the operator to do it themselves/i)
+    expect(guidance).toMatch(/never ask the operator to do the failed work themselves/i)
     expect(guidance).toMatch(/did not go through/i)
     expect(guidance).toMatch(/you are on it/i)
   })
@@ -308,6 +329,9 @@ describe('scenario: the Zoho event was deleted directly in Zoho', () => {
       new Error('Zoho Calendar update failed: event evt-deleted no longer exists')
     )
     zoho.create.mockResolvedValue('evt-fresh')
+    zoho.list.mockResolvedValue([
+      { uid: 'evt-fresh', startDate: '2026-08-20', startTime: '10:00:00', durationMinutes: 120 },
+    ])
 
     const result = await syncBookingToCalendar(WORKSPACE, 'bk-1', 'upsert')
 

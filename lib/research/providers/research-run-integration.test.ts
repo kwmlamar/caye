@@ -46,6 +46,22 @@ function createServiceClientDouble() {
         }
       }
 
+      if (table === 'research_questions') {
+        // priorCrossCheckSourceUrls() (lib/research/runtime.ts) reads this
+        // before every run to detect an autonomous cross-check of a parent
+        // question. None of these fixtures are cross-checks, so "not found"
+        // is the correct answer for every test in this file.
+        return {
+          select() {
+            return {
+              eq() {
+                return { async maybeSingle() { return { data: null, error: null } } }
+              },
+            }
+          },
+        }
+      }
+
       if (table === 'research_run_sources') {
         return {
           async upsert(row: { run_id: string; source_id: string }) {
