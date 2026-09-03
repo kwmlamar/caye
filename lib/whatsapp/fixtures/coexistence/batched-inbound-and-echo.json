@@ -1,0 +1,52 @@
+{
+  "object": "whatsapp_business_account",
+  "entry": [
+    {
+      "id": "000000000000000",
+      "changes": [
+        {
+          "field": "messages",
+          "value": {
+            "messaging_product": "whatsapp",
+            "metadata": {
+              "display_phone_number": "15550000001",
+              "phone_number_id": "000000000000000"
+            },
+            "contacts": [
+              { "profile": { "name": "Test Customer" }, "wa_id": "15550000042" }
+            ],
+            "messages": [
+              {
+                "from": "15550000042",
+                "id": "wamid.TEST_EXTERNAL_0002",
+                "timestamp": "1756801300",
+                "type": "text",
+                "text": { "body": "Any update?" }
+              }
+            ]
+          }
+        },
+        {
+          "field": "smb_message_echoes",
+          "value": {
+            "messaging_product": "whatsapp",
+            "metadata": {
+              "display_phone_number": "15550000001",
+              "phone_number_id": "000000000000000"
+            },
+            "message_echoes": [
+              {
+                "from": "15550000001",
+                "to": "15550000042",
+                "id": "wamid.TEST_ECHO_0002",
+                "timestamp": "1756801350",
+                "type": "text",
+                "text": { "body": "On it, calling you now." }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

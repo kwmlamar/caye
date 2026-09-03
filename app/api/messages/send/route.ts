@@ -122,6 +122,7 @@ export async function POST(request: NextRequest) {
   // same thread (e.g. a follow-up to a lead who never replied) can reply
   // against it — see findReplyTargetZohoMessageId in lib/email-ai.ts.
   let zohoMessageId: string | null = null
+  let waMessageId: string | null = null
 
   // ── Dispatch to channel ─────────────────────────────────────────────────────
   // Validated (and, if unsupported, released) BEFORE any provider call is
@@ -149,7 +150,10 @@ export async function POST(request: NextRequest) {
 
         case 'whatsapp': {
           // customer_id = WA phone number, channel_account_id = phone_number_id
-          await sendWhatsAppMessage(
+          // Meta's own id is kept so a coexistence echo of this send is
+          // reconciled to it instead of being read as a second, human-authored
+          // message on the same thread.
+          waMessageId = await sendWhatsAppMessage(
             conv.customer_id,
             text,
             account.channel_account_id,
@@ -220,6 +224,7 @@ export async function POST(request: NextRequest) {
         ...classifyOutboundAuthorship(text, convMeta.proposed_reply),
         user_id: user.id,
         ...(zohoMessageId ? { zoho_message_id: zohoMessageId } : {}),
+        ...(waMessageId ? { wa_message_id: waMessageId } : {}),
       },
     })
     .select()
