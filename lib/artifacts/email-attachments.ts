@@ -17,7 +17,18 @@ export interface NormalizedEmailAttachmentDescriptor {
   provider: EmailAttachmentProvider
   providerMessageId: string
   providerThreadId: string | null
+  /**
+   * The provider's own handle for fetching these bytes. Gmail mints a fresh
+   * one on every messages.get, so it identifies a FETCH, not an attachment —
+   * never use it as a dedup key. See attachmentPartPath.
+   */
   providerAttachmentId: string
+  /**
+   * Position of this attachment in the message's MIME tree ('0.1.0'), which
+   * is stable for the life of the (immutable) message. This, not
+   * providerAttachmentId, is the attachment's durable identity.
+   */
+  attachmentPartPath: string
   filename: string | null
   mimeType: string | null
   size: number | null
@@ -56,7 +67,7 @@ export function gmailAttachmentDescriptors(input: {
   unifiedMessageId?: string | null
 }): NormalizedEmailAttachmentDescriptor[] {
   const result: NormalizedEmailAttachmentDescriptor[] = []
-  const walk = (part: GmailMimePart | undefined) => {
+  const walk = (part: GmailMimePart | undefined, partPath: string) => {
     if (!part) return
     const attachmentId = part.body?.attachmentId
     if (attachmentId) {
@@ -67,6 +78,7 @@ export function gmailAttachmentDescriptors(input: {
         providerMessageId: input.message.id,
         providerThreadId: input.message.threadId || null,
         providerAttachmentId: attachmentId,
+        attachmentPartPath: partPath,
         filename: part.filename?.trim() || null,
         mimeType: part.mimeType?.trim() || null,
         size: typeof part.body?.size === 'number' ? part.body.size : null,
@@ -77,10 +89,26 @@ export function gmailAttachmentDescriptors(input: {
         unifiedMessageId: input.unifiedMessageId ?? null,
       })
     }
-    for (const child of part.parts ?? []) walk(child)
+    part.parts?.forEach((child, index) => walk(child, `${partPath}.${index}`))
   }
-  walk(input.message.payload)
+  walk(input.message.payload, '0')
   return result.slice(0, MAX_ATTACHMENTS_PER_MESSAGE)
+}
+
+/**
+ * The attachment's durable identity, and ingestArtifact's ONLY dedup key —
+ * it compares this string alone, never content_sha256. Every component must
+ * therefore be stable across re-fetches of the same message.
+ *
+ * This deliberately does NOT include descriptor.providerAttachmentId. Gmail
+ * mints a fresh attachmentId on every messages.get of the same message, so
+ * including it meant the 5-minute poll saw each attachment as brand new,
+ * re-ingested it, and re-ran document understanding on it — ~419 duplicate
+ * extractions of two real ODS emails in 24h. The MIME part path identifies
+ * the attachment within the message and does not change between fetches.
+ */
+export function canonicalEmailAttachmentId(descriptor: NormalizedEmailAttachmentDescriptor): string {
+  return `${descriptor.connectedAccountId}:${descriptor.providerMessageId}:${descriptor.attachmentPartPath}`
 }
 
 function decodeBase64UrlBytes(data: string): Buffer {
@@ -260,10 +288,7 @@ export async function ingestNormalizedEmailAttachment(input: {
     }
   }
 
-  // providerAttachmentId includes account + message + provider attachment id.
-  // This is stronger than the provider's attachment id alone and composes with
-  // ingestArtifact's workspace/source unique identity + SHA-256 byte hash.
-  const canonicalProviderId = `${input.descriptor.connectedAccountId}:${input.descriptor.providerMessageId}:${input.descriptor.providerAttachmentId}`
+  const canonicalProviderId = canonicalEmailAttachmentId(input.descriptor)
   const ingested = await ingestArtifact({
     workspaceId: input.descriptor.workspaceId,
     sourceChannel: input.descriptor.provider === 'gmail' ? 'email_gmail' : 'email_zoho',
@@ -305,7 +330,7 @@ export async function relateEmailArtifactToFreightRequest(input: { workspaceId: 
 export async function lazyFetchGmailAttachments(input: { workspaceId: string; connectedAccountId: string; messageIds: string[]; accessToken: string }): Promise<Array<{ messageId: string; artifactIds: string[] }>> {
   if (input.messageIds.length > MAX_LAZY_MESSAGES) throw new Error(`lazy Gmail fetch is bounded to ${MAX_LAZY_MESSAGES} messages`)
   const validationDescriptor: NormalizedEmailAttachmentDescriptor = {
-    workspaceId: input.workspaceId, connectedAccountId: input.connectedAccountId, provider: 'gmail', providerMessageId: input.messageIds[0] || 'validation', providerThreadId: null, providerAttachmentId: 'validation', filename: null, mimeType: null, size: null, sender: null, subject: null, receivedAt: null, conversationId: null, unifiedMessageId: null,
+    workspaceId: input.workspaceId, connectedAccountId: input.connectedAccountId, provider: 'gmail', providerMessageId: input.messageIds[0] || 'validation', providerThreadId: null, providerAttachmentId: 'validation', attachmentPartPath: '0', filename: null, mimeType: null, size: null, sender: null, subject: null, receivedAt: null, conversationId: null, unifiedMessageId: null,
   }
   await validateConnectedAccount(validationDescriptor)
   const results: Array<{ messageId: string; artifactIds: string[] }> = []

@@ -48,12 +48,30 @@ vi.mock('./ingest', () => ({ ingestArtifact }))
 vi.mock('./process', () => ({ processArtifact: vi.fn() }))
 
 const {
+  canonicalEmailAttachmentId,
   fetchGmailAttachmentBytes,
   fetchZohoAttachmentBytes,
   gmailAttachmentDescriptors,
   ingestNormalizedEmailAttachment,
   relateEmailArtifactToFreightRequest,
 } = await import('./email-attachments')
+
+/** The same message as Gmail returns it, with the attachmentId it minted for THIS fetch. */
+function odsShipmentMessage(mintedAttachmentId: string) {
+  return {
+    id: '1a0637062d4ccbb3',
+    threadId: 'thread-ods',
+    internalDate: '1788386400000',
+    payload: {
+      headers: [{ name: 'From', value: 'Nicole Butcher <nicole.butcher@kingocean.example>' }],
+      parts: [{
+        filename: 'BL_PEVGVH04506.PDF',
+        mimeType: 'application/pdf',
+        body: { attachmentId: mintedAttachmentId, size: 40634 },
+      }],
+    },
+  }
+}
 
 describe('email attachment provider boundary', () => {
   beforeEach(() => {
@@ -97,6 +115,7 @@ describe('email attachment provider boundary', () => {
       providerMessageId: 'gmail-msg-123',
       providerThreadId: 'gmail-thread-7',
       providerAttachmentId: 'att-55',
+      attachmentPartPath: '0.0.0',
       filename: 'DOCK_RECEIPT_DR-12345.pdf',
       mimeType: 'application/pdf',
       size: 42191,
@@ -105,6 +124,43 @@ describe('email attachment provider boundary', () => {
       conversationId: 'conv-1',
       unifiedMessageId: 'umsg-1',
     })])
+  })
+
+  /**
+   * The ODS incident: Gmail mints a new attachmentId on every messages.get,
+   * so the 5-minute poll re-ingested the same two emails ~419 times in 24h,
+   * paying for a fresh document extraction each time. Attachment identity
+   * must survive a re-fetch that changes nothing but the minted id.
+   */
+  it('keeps attachment identity stable when Gmail mints a new attachmentId per fetch', () => {
+    const common = { workspaceId: 'ws-ods', connectedAccountId: 'acct-ods', unifiedMessageId: 'umsg-1' }
+    const [firstPoll] = gmailAttachmentDescriptors({ ...common, message: odsShipmentMessage('ANGjdJ-8HCL6oDppQ7ZzJOTHfXfdlpLV') })
+    const [secondPoll] = gmailAttachmentDescriptors({ ...common, message: odsShipmentMessage('ANGjdJ8I7Q_-hS49vYEwo0G9ESsm898_') })
+
+    // Precondition: the provider handle really did change between fetches.
+    expect(secondPoll.providerAttachmentId).not.toBe(firstPoll.providerAttachmentId)
+    // ...and the identity used for deduplication did not.
+    expect(canonicalEmailAttachmentId(secondPoll)).toBe(canonicalEmailAttachmentId(firstPoll))
+    expect(canonicalEmailAttachmentId(firstPoll)).not.toContain('ANGjdJ')
+  })
+
+  it('gives sibling attachments in one message distinct identities', () => {
+    const descriptors = gmailAttachmentDescriptors({
+      workspaceId: 'ws-1', connectedAccountId: 'acct-1',
+      message: {
+        id: 'msg-multi',
+        payload: {
+          parts: [
+            // Same filename and byte size — only the MIME position separates them.
+            { filename: 'scan.pdf', mimeType: 'application/pdf', body: { attachmentId: 'a-1', size: 1024 } },
+            { filename: 'scan.pdf', mimeType: 'application/pdf', body: { attachmentId: 'a-2', size: 1024 } },
+          ],
+        },
+      },
+    })
+
+    const ids = descriptors.map(canonicalEmailAttachmentId)
+    expect(new Set(ids).size).toBe(2)
   })
 
   it('bounds Gmail MIME attachment discovery to twenty attachments', () => {
@@ -124,7 +180,7 @@ describe('email attachment provider boundary', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     const bytes = await fetchGmailAttachmentBytes({
-      workspaceId: 'ws-1', connectedAccountId: 'acct-1', provider: 'gmail', providerMessageId: 'msg/a', providerThreadId: 't', providerAttachmentId: 'att+b', filename: 'x.pdf', mimeType: 'application/pdf', size: 28, sender: null, subject: null, receivedAt: null, conversationId: null, unifiedMessageId: null,
+      workspaceId: 'ws-1', connectedAccountId: 'acct-1', provider: 'gmail', providerMessageId: 'msg/a', providerThreadId: 't', providerAttachmentId: 'att+b', attachmentPartPath: '0.0', filename: 'x.pdf', mimeType: 'application/pdf', size: 28, sender: null, subject: null, receivedAt: null, conversationId: null, unifiedMessageId: null,
     }, 'token-123')
 
     expect(bytes.toString()).toBe('sanitized dock receipt bytes')
@@ -138,7 +194,7 @@ describe('email attachment provider boundary', () => {
 
   it('fails closed for an unverified Zoho attachment byte path', async () => {
     await expect(fetchZohoAttachmentBytes({
-      workspaceId: 'ws-1', connectedAccountId: 'acct-z', provider: 'zoho', providerMessageId: 'z-msg', providerThreadId: null, providerAttachmentId: 'z-att', filename: 'receipt.pdf', mimeType: 'application/pdf', size: 1, sender: null, subject: null, receivedAt: null, conversationId: null, unifiedMessageId: null,
+      workspaceId: 'ws-1', connectedAccountId: 'acct-z', provider: 'zoho', providerMessageId: 'z-msg', providerThreadId: null, providerAttachmentId: 'z-att', attachmentPartPath: '0.0', filename: 'receipt.pdf', mimeType: 'application/pdf', size: 1, sender: null, subject: null, receivedAt: null, conversationId: null, unifiedMessageId: null,
     })).rejects.toThrow('ZOHO_ATTACHMENT_FETCH_UNSUPPORTED')
   })
 
@@ -146,7 +202,7 @@ describe('email attachment provider boundary', () => {
     accountRow = null
     await expect(ingestNormalizedEmailAttachment({
       descriptor: {
-        workspaceId: 'ws-other', connectedAccountId: 'acct-1', provider: 'gmail', providerMessageId: 'msg-1', providerThreadId: 'thread-1', providerAttachmentId: 'att-1', filename: 'receipt.pdf', mimeType: 'application/pdf', size: 4, sender: null, subject: null, receivedAt: null, conversationId: null, unifiedMessageId: null,
+        workspaceId: 'ws-other', connectedAccountId: 'acct-1', provider: 'gmail', providerMessageId: 'msg-1', providerThreadId: 'thread-1', providerAttachmentId: 'att-1', attachmentPartPath: '0.0', filename: 'receipt.pdf', mimeType: 'application/pdf', size: 4, sender: null, subject: null, receivedAt: null, conversationId: null, unifiedMessageId: null,
       },
       bytes: Buffer.from('test'),
     })).rejects.toThrow('account/workspace validation failed')
