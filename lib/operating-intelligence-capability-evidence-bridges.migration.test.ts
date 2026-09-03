@@ -10,6 +10,14 @@ const sql = readFileSync(
   'utf8'
 )
 
+/**
+ * Comments in this migration deliberately NAME the columns the bridges must
+ * never write, so the "never writes" assertions below must run against
+ * executable SQL only. Asserting over the raw file makes the migration fail
+ * its own documentation.
+ */
+const executableSql = sql.replace(/--[^\n]*/g, '')
+
 describe('operating intelligence capability evidence bridges migration', () => {
   it('publishes evidence for exactly the four evaluated capabilities, and nothing else', () => {
     expect(sql).toContain("capability_key = 'research_intelligence'")
@@ -28,9 +36,9 @@ describe('operating intelligence capability evidence bridges migration', () => {
   })
 
   it('never sets maturity_status or progress_percent from a bridge', () => {
-    expect(sql).not.toContain('maturity_status')
-    expect(sql).not.toContain('progress_percent')
-    expect(sql).not.toContain('progress_evidence_id')
+    expect(executableSql).not.toContain('maturity_status')
+    expect(executableSql).not.toContain('progress_percent')
+    expect(executableSql).not.toContain('progress_evidence_id')
   })
 
   it('never touches the progress-evidence guard trigger or its constraint', () => {
