@@ -94,8 +94,23 @@ export async function runOutreachSourcingJob(workspaceId: string): Promise<Recor
   const db = createServiceClient()
   let unsentSupply = await countUnsentEligibleSupply(db, workspaceId)
   if (unsentSupply >= OUTREACH_DAILY_SEND_CAP) return { status: 'skip', detail: `un-contacted supply (${unsentSupply}) already covers the daily cap (${OUTREACH_DAILY_SEND_CAP})`, unsent_supply: unsentSupply }
-  const { data: activeTargets, error: targetErr } = await db.from('outreach_sourcing_targets').select('id, vertical, region, priority, last_sourced_at, query_variant_index, result_offset').eq('active', true)
-  if (targetErr) throw new Error(targetErr.message)
+  // Cursor columns come from supabase/migrations/20260903100000_outreach_
+  // sourcing_coverage.sql. Migrations in this repo do NOT auto-apply, so
+  // production schema can lag a merge. Selecting them unconditionally and
+  // throwing would take the whole sourcing job down until someone applied
+  // the migration by hand — strictly worse than today. Fall back to the
+  // pre-cursor behavior (variant 0, offset 0) instead, which is exactly the
+  // old code path, so this ships safely in either order.
+  let activeTargets: SourcingTargetRow[] | null = null
+  const withCursor = await db.from('outreach_sourcing_targets').select('id, vertical, region, priority, last_sourced_at, query_variant_index, result_offset').eq('active', true)
+  if (!withCursor.error) {
+    activeTargets = withCursor.data as SourcingTargetRow[] | null
+  } else {
+    console.warn('[outreach-sourcing-job] cursor columns unavailable, falling back to offset 0 (migration not deployed?):', withCursor.error.message)
+    const legacy = await db.from('outreach_sourcing_targets').select('id, vertical, region, priority, last_sourced_at').eq('active', true)
+    if (legacy.error) throw new Error(legacy.error.message)
+    activeTargets = (legacy.data ?? []).map((t) => ({ ...t, query_variant_index: 0, result_offset: 0 })) as SourcingTargetRow[]
+  }
   if (!activeTargets || activeTargets.length === 0) return { status: 'skip', detail: 'no active outreach_sourcing_targets', unsent_supply: unsentSupply }
   const queue = selectSourcingTargetsForRun({ targets: activeTargets as SourcingTargetRow[], startingUnsentSupply: unsentSupply, dailyCap: OUTREACH_DAILY_SEND_CAP, maxTargetsPerRun: MAX_TARGETS_PER_RUN })
   const unsentSupplyStart = unsentSupply
@@ -125,7 +140,14 @@ async function sourceFromTarget(db: Db, workspaceId: string, target: SourcingTar
       if (error) throw new Error(error.message); inserted = data?.length ?? 0
     }
     const nextCursor = advanceSourcingCursor({ cursor: { queryVariantIndex: variantIndex, resultOffset: target.result_offset }, variantsCount: variants.length, resultsConsumedInThisPage: sourced.consumed, totalResultsForVariant: sourced.totalResults })
-    await db.from('outreach_sourcing_targets').update({ last_sourced_at: new Date().toISOString(), query_variant_index: nextCursor.queryVariantIndex, result_offset: nextCursor.resultOffset }).eq('id', target.id)
+    const cursorWrite = await db.from('outreach_sourcing_targets').update({ last_sourced_at: new Date().toISOString(), query_variant_index: nextCursor.queryVariantIndex, result_offset: nextCursor.resultOffset }).eq('id', target.id)
+    if (cursorWrite.error) {
+      // Same pre-migration fallback as the read above: still stamp
+      // last_sourced_at so target rotation keeps working, just without the
+      // cursor advance (the run degrades to re-reading the head of the list,
+      // i.e. exactly the old behavior, rather than failing the target).
+      await db.from('outreach_sourcing_targets').update({ last_sourced_at: new Date().toISOString() }).eq('id', target.id)
+    }
     return { target: label, target_id: target.id, found: sourced.leads.length + sourced.rejectedNotIcp, with_email: withEmail.length, rejected_no_email: sourced.leads.length - withEmail.length, rejected_not_icp: sourced.rejectedNotIcp, rejected_shared_domain: rejectedSharedDomain, duplicates: accepted.length - inserted, inserted }
   } catch (err) { return { target: label, target_id: target.id, found: 0, with_email: 0, rejected_no_email: 0, rejected_not_icp: 0, rejected_shared_domain: 0, duplicates: 0, inserted: 0, error: err instanceof Error ? err.message : String(err) } }
 }
