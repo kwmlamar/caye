@@ -5,10 +5,16 @@ import { runConstructionLedgerCycle } from './construction-ledger-cycle'
 const A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
 const B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
 
-const SYNC_OK = {
+const BRIDGE_OK = {
   scanned: 3, emitted: 2, duplicates: 1, stale: 0,
   suppressed: 0, unresolved: 0, batches: 1, cursor: 'c1',
 }
+/** Every stream reports its own outcome; one failing does not fail the pass. */
+const SYNC_OK = [
+  { stream: 'purchase_orders', ok: true, result: BRIDGE_OK },
+  { stream: 'projects', ok: true, result: BRIDGE_OK },
+  { stream: 'estimates', ok: false, error: 'estimates unreadable' },
+]
 const ATTENTION_OK = { considered: 2, raised: 2, skipped: { bootstrap: 0, unresolvable: 0 } }
 
 function deps(over: Record<string, unknown> = {}) {

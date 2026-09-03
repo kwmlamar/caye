@@ -2,8 +2,7 @@ import 'server-only'
 
 import { createServiceClient } from '@/lib/supabase-server'
 import { projectDomainEventsToAttention, type DomainAttentionResult } from '@/lib/domain-attention'
-import { runBedrockPurchaseOrderSync } from '@/lib/domain-adapters/bedrock'
-import type { RunDomainBridgeResult } from '@/lib/domain-events/bridge'
+import { runBedrockSync, type BedrockStreamOutcome } from '@/lib/domain-adapters/bedrock'
 
 /**
  * One pass of the construction ledger loop, for every workspace bound to one.
@@ -31,7 +30,7 @@ const DEFAULT_ATTENTION_WINDOW_MS = 2 * 60 * 60 * 1000
 
 export interface ConstructionLedgerWorkspaceResult {
   workspaceId: string
-  sync: RunDomainBridgeResult | null
+  sync: BedrockStreamOutcome[] | null
   syncError: string | null
   attention: DomainAttentionResult | null
   attentionError: string | null
@@ -44,7 +43,7 @@ export interface ConstructionLedgerCycleResult {
 
 export interface ConstructionLedgerCycleDeps {
   listBoundWorkspaces: () => Promise<string[]>
-  sync: typeof runBedrockPurchaseOrderSync
+  sync: typeof runBedrockSync
   project: typeof projectDomainEventsToAttention
 }
 
@@ -77,7 +76,7 @@ export async function runConstructionLedgerCycle(args: {
   deps?: Partial<ConstructionLedgerCycleDeps>
 } = {}): Promise<ConstructionLedgerCycleResult> {
   const listBoundWorkspaces = args.deps?.listBoundWorkspaces ?? listBoundWorkspacesFromDb
-  const sync = args.deps?.sync ?? runBedrockPurchaseOrderSync
+  const sync = args.deps?.sync ?? runBedrockSync
   const project = args.deps?.project ?? projectDomainEventsToAttention
   const windowMs = args.attentionWindowMs ?? DEFAULT_ATTENTION_WINDOW_MS
 
