@@ -55,6 +55,7 @@ import { removeBusinessFact } from './write-low/remove-business-fact'
 import { addStandingRule } from './write-low/add-standing-rule'
 import { removeStandingRule } from './write-low/remove-standing-rule'
 import { updateServicePrice } from './write-low/update-service-price'
+import { setConstructionPolicy } from './write-low/set-construction-policy'
 import { addService } from './write-low/add-service'
 import { addPricingTier } from './write-low/add-pricing-tier'
 import { setServiceVisibility } from './write-low/set-service-visibility'
@@ -233,6 +234,7 @@ export const TOOL_REGISTRY: AnyTool[] = [
   addStandingRule as AnyTool,
   removeStandingRule as AnyTool,
   updateServicePrice as AnyTool,
+  setConstructionPolicy as AnyTool,
   addService as AnyTool,
   addPricingTier as AnyTool,
   setServiceVisibility as AnyTool,

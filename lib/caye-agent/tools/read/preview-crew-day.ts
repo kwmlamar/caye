@@ -3,8 +3,10 @@ import 'server-only'
 import {
   createBedrockAdapter,
   getBedrockOperatorIdentity,
+  getBedrockPolicyConfig,
   BedrockConnectionMissingError,
 } from '@/lib/domain-adapters/bedrock'
+import { resolveCrewDayPolicy, unconfirmed } from '@/lib/domain-policy'
 import { buildCrewDayDraft, findDuplicates, type RosterWorker } from '@/lib/ods/crew-day'
 import { resolveJob } from './find-job'
 import type { Tool } from '../types'
@@ -139,20 +141,36 @@ export const previewCrewDay: Tool<PreviewCrewDayInput> = {
     // hourly roster -- so for them "me" correctly fails to resolve and is
     // surfaced as a question rather than silently becoming somebody else.
     let identity
+    let policyConfig: Record<string, unknown> | null = null
     try {
       identity = await getBedrockOperatorIdentity(ctx.workspaceId, ctx.operatorId)
+      policyConfig = await getBedrockPolicyConfig(ctx.workspaceId)
     } catch {
       identity = { profileId: null, workerId: null }
     }
+
+    // Defaults are measured from this business's own history, but they are
+    // still assumptions until someone confirms them — so they are applied AND
+    // reported, and the owner can change any of them with set_construction_policy.
+    const policy = resolveCrewDayPolicy(policyConfig)
+    const assumed = unconfirmed(policy)
+
+    // "me" is only a timesheet line if this business says supervisors are on
+    // the roster. Otherwise the reporter is the reporter, not a row.
+    const callerWorkerId = policy.reporterLogsOwnTime.value ? identity.workerId : null
 
     const draft = buildCrewDayDraft({
       projectId: project.id,
       date,
       names: args.workers,
-      shift: { start: args.start, end: args.end, breakMinutes: args.break_minutes },
+      shift: {
+        start: args.start,
+        end: args.end,
+        breakMinutes: args.break_minutes ?? policy.breakMinutes.value,
+      },
       exceptions: args.exceptions?.map((e) => ({ name: e.worker, start: e.start, end: e.end })),
       roster,
-      callerId: identity.workerId ?? undefined,
+      callerId: callerWorkerId ?? undefined,
     })
 
     if (draft.status === 'needs_review') {
@@ -196,9 +214,20 @@ export const previewCrewDay: Tool<PreviewCrewDayInput> = {
         // Surfaced so the confirmation names them. A default nobody sees is a
         // default nobody agreed to.
         overtime_hours: 0,
+        assumptions: {
+          break_minutes: policy.breakMinutes.value,
+          break_minutes_source: policy.breakMinutes.source,
+          overtime_enabled: policy.overtimeEnabled.value,
+          reporter_logs_own_time: policy.reporterLogsOwnTime.value,
+          still_assumed: assumed,
+        },
         note: alreadyLogged.length
           ? `${alreadyLogged.join(', ')} already have time on this job for ${date}. Say so and do not log the day again.`
-          : 'Read this back with each person, their hours, the break and the zero overtime, then call log_crew_day with these exact entries.',
+          : `Read this back with each person and their hours. Say the ${policy.breakMinutes.value}-minute break and the zero overtime out loud` +
+            (assumed.length
+              ? ' and note they are assumptions — if any is wrong, use set_construction_policy before logging.'
+              : '.') +
+            ' Then call log_crew_day with these exact entries.',
       },
     }
   },

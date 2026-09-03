@@ -7,7 +7,7 @@ export { BedrockPayPeriodChangeSource, PAY_PERIOD_TRACKED_FIELDS } from './pay-p
 export { KernelBedrockConnectionResolver, toBedrockConnection } from './kernel-connection'
 export { SupabaseBedrockReadProvider } from './provider'
 export type { BedrockReadProvider } from './provider'
-export { BEDROCK_CHANGE_STREAMS, BEDROCK_DOMAIN, createBedrockAdapter, createBedrockEntityResolver, createBedrockWriteProvider, getBedrockOperatorIdentity, bedrockIdentityFor, runBedrockPurchaseOrderSync, runBedrockSync } from './runtime'
+export { BEDROCK_CHANGE_STREAMS, BEDROCK_DOMAIN, createBedrockAdapter, createBedrockEntityResolver, createBedrockWriteProvider, getBedrockOperatorIdentity, getBedrockPolicyConfig, bedrockIdentityFor, runBedrockPurchaseOrderSync, runBedrockSync } from './runtime'
 export type { BedrockStreamOutcome, BedrockOperatorIdentity } from './runtime'
 export { InMemoryDomainSnapshotStore, snapshotKey } from './snapshot-store'
 export type { DomainEntitySnapshot, DomainSnapshotKey, DomainSnapshotStore } from './snapshot-store'

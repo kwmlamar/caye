@@ -259,6 +259,20 @@ function lookupOperator(
   return typeof value === 'string' && value.trim() ? value.trim() : null
 }
 
+/**
+ * The binding's non-secret config, for policy resolution.
+ *
+ * Returned raw rather than pre-parsed so `lib/domain-policy.ts` stays the one
+ * place that knows what a policy means — the adapter's job is to hand over what
+ * the workspace stored, not to interpret it.
+ */
+export async function getBedrockPolicyConfig(
+  workspaceId: string
+): Promise<Record<string, unknown> | null> {
+  const connection = await getDomainSourceConnection(workspaceId, BEDROCK_SOURCE_SYSTEM)
+  return (connection?.config as Record<string, unknown> | undefined) ?? null
+}
+
 /** Read-side access to the same mapping, for tools that resolve before writing. */
 export async function getBedrockOperatorIdentity(
   workspaceId: string,
