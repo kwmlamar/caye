@@ -67,7 +67,10 @@ describe('Sales inbound boundary', () => {
 
   it('does not turn an unrelated thread from a known prospect into outreach reply evidence', async () => {
     state.conversation = { metadata: {}, last_sender_type: 'customer', contact_id: 'contact-1' }
-    const result = await handleSalesInbound({ ...inbound, subject: 'Different topic', body: 'Can you send me the invoice?' })
+    // Body text deliberately avoids every lib/sales/escalation-triggers.ts
+    // phrase (e.g. "invoice" is a refund_or_billing trigger) — this test is
+    // about thread attribution, not escalation, and must not couple to it.
+    const result = await handleSalesInbound({ ...inbound, subject: 'Different topic', body: 'Can you send me your onboarding steps?' })
     expect(result.disposition).toBe('eligible')
     expect(state.lifecycle).not.toHaveBeenCalledWith(expect.objectContaining({ event: 'human_reply_received' }))
     expect(state.context).toHaveBeenCalledTimes(1)

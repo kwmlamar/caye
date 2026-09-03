@@ -23,7 +23,11 @@ const REAL_SHAPE_POSTING = {
   text: 'Engineering Manager',
   hostedUrl: 'https://jobs.lever.co/veeva/posting-1',
   applyUrl: 'https://jobs.lever.co/veeva/posting-1/apply',
-  createdAt: 1735689600000,
+  // Relative to "now" rather than a frozen timestamp: the adapter's default
+  // 30-day freshness filter (see lever.ts) means a hardcoded absolute date
+  // silently ages out of the window and starts failing months after it was
+  // captured, even though nothing about the adapter changed.
+  createdAt: Date.now() - 24 * 60 * 60 * 1000,
   descriptionPlain: 'Veeva Systems is a mission-driven organization...',
   categories: { location: 'Remote - USA', team: 'Engineering', commitment: 'Full-time' },
   workplaceType: 'remote',
