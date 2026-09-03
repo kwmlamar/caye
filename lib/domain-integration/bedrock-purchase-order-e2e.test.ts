@@ -147,6 +147,7 @@ class FixtureBedrockProvider implements BedrockReadProvider {
   async listProjectPurchaseOrders() { return [] }
   async listProjectReceipts() { return [] }
   async getReceiptLineItems() { return [] }
+  async listAllPayPeriods(): Promise<BedrockRow[]> { return [] }
 }
 
 describe('Bedrock purchase order -> Caye workspace event (PGlite)', () => {

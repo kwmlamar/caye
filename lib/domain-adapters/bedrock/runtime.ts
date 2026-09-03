@@ -11,6 +11,7 @@ import { BedrockPurchaseOrderChangeSource } from './change-source'
 import { BedrockProjectChangeSource } from './project-change-source'
 import { BedrockEstimateChangeSource } from './estimate-change-source'
 import { BedrockReceiptChangeSource } from './receipt-change-source'
+import { BedrockPayPeriodChangeSource } from './pay-period-change-source'
 import { KernelBedrockConnectionResolver, toBedrockConnection } from './kernel-connection'
 import { SupabaseBedrockReadProvider } from './provider'
 import { SupabaseDomainSnapshotStore } from './supabase-snapshot-store'
@@ -23,7 +24,7 @@ import { BEDROCK_SOURCE_SYSTEM, BedrockConnectionMissingError } from './types'
  *        -> BedrockConnectionResolver   (which company, which credentials)
  *        -> BedrockReadProvider         (company-scoped reads only)
  *        -> one change source per stream (purchase orders, projects,
- *           estimates, receipts)
+ *           estimates, receipts, pay periods)
  *        -> runDomainEventBridge        (normalisation, tenant guard)
  *        -> kernel entity resolver      (canonical business_entities.id)
  *        -> ingest_external_domain_event
@@ -83,6 +84,7 @@ export const BEDROCK_CHANGE_STREAMS: Record<string, ChangeSourceFactory> = {
   projects: (args) => new BedrockProjectChangeSource(args),
   estimates: (args) => new BedrockEstimateChangeSource(args),
   receipts: (args) => new BedrockReceiptChangeSource(args),
+  pay_periods: (args) => new BedrockPayPeriodChangeSource(args),
 }
 
 export type BedrockStreamOutcome =
