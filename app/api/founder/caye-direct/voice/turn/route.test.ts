@@ -23,6 +23,23 @@ vi.mock('@/lib/caye-voice/conversational-fast-path', async (importOriginal) => {
   }
 })
 
+// #283 gave the route a thread-scope lookup before the turn runs, so a
+// visible thread whose active workspace differs from the dashboard's
+// selection is not misreported as "Thread not found". None of that is the
+// behavior under test here, but all of it runs first -- so it is stubbed
+// rather than reached, and `createServiceClient` never builds a real client.
+const getFounderThreadByIdMock = vi.fn()
+vi.mock('@/lib/supabase-server', () => ({ createServiceClient: () => ({}) }))
+vi.mock('@/lib/caye-direct-threads', () => ({
+  getFounderThreadById: (...args: unknown[]) => getFounderThreadByIdMock(...args),
+  setThreadActiveWorkspace: vi.fn().mockResolvedValue(true),
+}))
+vi.mock('@/lib/caye-direct-thread-scope', () => ({
+  // null = no authoritative override, so the turn uses the requested
+  // workspace. That is the ordinary case and what these tests assert on.
+  resolveAuthoritativeThreadWorkspace: vi.fn().mockResolvedValue(null),
+}))
+
 // next/server's after() defers to the platform; in a unit test it should
 // just run the callback so the deferred write is still observable.
 const afterCallbacks: Array<() => unknown> = []
@@ -55,6 +72,8 @@ describe('POST /api/founder/caye-direct/voice/turn', () => {
     runFounderThreadTurnMock.mockReset()
     persistConversationalVoiceTurnMock.mockReset()
     persistConversationalVoiceTurnMock.mockResolvedValue(undefined)
+    getFounderThreadByIdMock.mockReset()
+    getFounderThreadByIdMock.mockResolvedValue({ active_workspace_id: 'ws-1' })
     afterCallbacks.length = 0
   })
 
@@ -83,7 +102,15 @@ describe('POST /api/founder/caye-direct/voice/turn', () => {
       founderUserId: 'founder-1',
       responseStyle: 'voice',
     })
-    expect(await res.json()).toEqual({ replyText: 'Got it.', threadId: 't-1' })
+    expect(await res.json()).toEqual({
+      replyText: 'Got it.',
+      threadId: 't-1',
+      activeWorkspaceId: 'ws-1',
+      // No authoritative thread workspace resolved, so the turn ran in the
+      // workspace the caller was looking at -- and the response says so
+      // rather than leaving the caller to assume.
+      workspaceContextSource: 'dashboard',
+    })
   })
 
   it('tells the turn helper this reply will be spoken, so it is kept short and title work stops blocking', async () => {
@@ -107,6 +134,9 @@ describe('POST /api/founder/caye-direct/voice/turn', () => {
       replyText: "Hey. I'm here. What's up?",
       threadId: 't-1',
       backend: 'voice_fast_path',
+      // Where it was actually written -- the thread's active workspace, not
+      // the dashboard's incidental selection.
+      activeWorkspaceId: 'ws-1',
     })
     expect(runFounderThreadTurnMock).not.toHaveBeenCalled()
   })
@@ -135,6 +165,14 @@ describe('POST /api/founder/caye-direct/voice/turn', () => {
     runFounderThreadTurnMock.mockRejectedValue(new Error('Thread not found'))
     const res = await POST(req({ workspaceId: 'ws-1', threadId: 'missing', message: OPERATIONAL }))
     expect(res.status).toBe(404)
+  })
+
+  it('404s on a thread that does not exist, without running a turn', async () => {
+    requireFounderMock.mockResolvedValue({ id: 'founder-1' })
+    getFounderThreadByIdMock.mockResolvedValue(null)
+    const res = await POST(req({ workspaceId: 'ws-1', threadId: 'missing', message: OPERATIONAL }))
+    expect(res.status).toBe(404)
+    expect(runFounderThreadTurnMock).not.toHaveBeenCalled()
   })
 
   it('maps any other agent failure to 500', async () => {

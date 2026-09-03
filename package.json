@@ -12,6 +12,7 @@
     "generate:migration-manifest": "node scripts/generate-migration-manifest.mjs",
     "start": "next start",
     "lint": "next lint",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "generate:icons": "node scripts/generate-caye-mark.js",

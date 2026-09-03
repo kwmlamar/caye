@@ -20,7 +20,7 @@ vi.mock('@/lib/supabase-server', () => ({
   }),
 }))
 
-const loggedMessagesCreateMock = vi.fn(async () => ({
+const loggedMessagesCreateMock = vi.fn(async (..._args: unknown[]) => ({
   content: [{ type: 'text', text: 'a composed reply Caye made up' }],
 }))
 vi.mock('@/lib/llm-telemetry', () => ({
@@ -29,6 +29,18 @@ vi.mock('@/lib/llm-telemetry', () => ({
 
 import { actionEdit, stripDraftMarker } from './edit'
 import type { PendingHeldItem } from '../pending'
+
+/**
+ * The shape of the row `stageProposedReply` (lib/whatsapp/actions/edit.ts)
+ * passes to `unified_messages.insert(...)`, narrowed to just the fields
+ * these tests assert on. `insertMock` is typed against the generic
+ * `Record<string, unknown>` insert-row shape, so recorded calls need this
+ * cast to read `metadata.proposed_reply` and `conversation_id` back out.
+ */
+interface StagedMessageRow {
+  conversation_id: string
+  metadata: { proposed_reply: string }
+}
 
 const LANEY: PendingHeldItem = {
   index: 1,
@@ -76,7 +88,7 @@ describe('actionEdit — verbatim drafts (CAY-90, Laney incident)', () => {
     expect(loggedMessagesCreateMock).not.toHaveBeenCalled()
 
     expect(insertMock).toHaveBeenCalledTimes(1)
-    const staged = insertMock.mock.calls[0][0]
+    const staged = insertMock.mock.calls[0][0] as unknown as StagedMessageRow
     expect(staged.metadata.proposed_reply).toBe(
       'Hi Laney! Max will meet you at 9 AM for the ferry; transport to the dock is around 11.'
     )
@@ -96,8 +108,8 @@ describe('actionEdit — verbatim drafts (CAY-90, Laney incident)', () => {
 
     expect(loggedMessagesCreateMock).not.toHaveBeenCalled()
     expect(insertMock).toHaveBeenCalledTimes(2)
-    const first = insertMock.mock.calls[0][0].metadata.proposed_reply
-    const second = insertMock.mock.calls[1][0].metadata.proposed_reply
+    const first = (insertMock.mock.calls[0][0] as unknown as StagedMessageRow).metadata.proposed_reply
+    const second = (insertMock.mock.calls[1][0] as unknown as StagedMessageRow).metadata.proposed_reply
     expect(first).toBe('Thanks so much for your patience — see you at 9!')
     expect(second).toBe(first)
   })
@@ -113,7 +125,7 @@ describe('actionEdit — verbatim drafts (CAY-90, Laney incident)', () => {
     )
 
     expect(loggedMessagesCreateMock).not.toHaveBeenCalled()
-    const staged = insertMock.mock.calls[0][0]
+    const staged = insertMock.mock.calls[0][0] as unknown as StagedMessageRow
     expect(staged.metadata.proposed_reply).toBe(ownerDraft)
     expect(result.ackBody).not.toContain('Some earlier, unrelated draft.')
   })
@@ -133,7 +145,7 @@ describe('actionEdit — genuine revision instructions (unchanged behavior)', ()
     )
 
     expect(loggedMessagesCreateMock).toHaveBeenCalledTimes(1)
-    const staged = insertMock.mock.calls[0][0]
+    const staged = insertMock.mock.calls[0][0] as unknown as StagedMessageRow
     expect(staged.metadata.proposed_reply).toBe('a composed reply Caye made up')
     expect(result.tag?.status).toBe('ok')
   })

@@ -13,7 +13,7 @@ describe('Caye Employee Eval v1', () => {
       'bimini-island-tours-end-to-end-v1',
     ])
     for (const scenario of FROZEN_EMPLOYEE_SCENARIOS) {
-      const events = FROZEN_EMPLOYEE_EVENT_STREAMS[scenario.id]
+      const events = FROZEN_EMPLOYEE_EVENT_STREAMS[scenario.id as keyof typeof FROZEN_EMPLOYEE_EVENT_STREAMS]
       expect(events.length).toBeGreaterThan(0)
       expect(events.map((e) => e.id)).toEqual(expect.arrayContaining(scenario.requiredTraceIds))
       const times = events.map((e) => Date.parse(e.at))
