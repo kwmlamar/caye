@@ -171,6 +171,18 @@ const fakeSupabase = {
             filters.push((r) => r[col] === val)
             return chain
           },
+          // Repository audit, 2026-09-03: lib/caye-direct-runs.ts (wrapped
+          // around every non-voice runFounderThreadTurn call, including
+          // the failure path this file's own scripted-error tests exercise
+          // via failDirectRun) chains update().eq('id', runId).in('status',
+          // [...]) — this update() chain only ever implemented eq(), so a
+          // real production failure being handled by failDirectRun then
+          // hit a second, unrelated TypeError from this fake instead of
+          // completing cleanly.
+          in(col: string, vals: unknown[]) {
+            filters.push((r) => vals.includes(r[col]))
+            return chain
+          },
           select() {
             return {
               single: () => {
@@ -310,7 +322,25 @@ beforeEach(() => {
   sendMediaWhatsApp.mockClear()
   signArtifactUrl.mockClear()
   downloadArtifactBytes.mockReset()
-  table('caye_direct_threads').push({ id: 'thread-1', workspace_id: 'ws-bimini', status: 'active', title: null, summary: null, created_by: 'founder' })
+  // scope_kind/active_workspace_id (repository audit, 2026-09-03):
+  // getThread/setThreadStatus/etc. (lib/caye-direct-threads.ts) filter by
+  // .eq('scope_kind', 'founder').eq('active_workspace_id', workspaceId) —
+  // a workspace-switching schema (DirectThread has no workspace_id field
+  // at all; see e.g. switchDirectThreadWorkspace in that file) added after
+  // this fixture was written with a plain workspace_id. getThread silently
+  // (from this test's perspective — no thrown TypeError, since the fake's
+  // .eq() just filters to zero matches) returned null for a real thread,
+  // masked until this file's caye_direct_runs fixes above stopped an
+  // earlier, unrelated TypeError from failing first.
+  table('caye_direct_threads').push({
+    id: 'thread-1',
+    active_workspace_id: 'ws-bimini',
+    scope_kind: 'founder',
+    status: 'active',
+    title: null,
+    summary: null,
+    created_by: 'founder',
+  })
   table('operator_allowlist').push({ id: 7, workspace_id: 'ws-bimini', phone: '+12425550100', name: 'Lamar', role: 'founder' })
 })
 

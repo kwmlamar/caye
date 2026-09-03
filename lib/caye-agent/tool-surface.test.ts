@@ -27,12 +27,23 @@ describe('production tool surface', () => {
     // values. If a change moves these, update them deliberately and say why
     // in the PR — do not "fix" the test by loosening the assertion.
     //
-    // The owner count deliberately does NOT move with CAY-194: all 11 new
-    // application-execution tools are founder-only, so owners gain nothing
-    // and only the excluded-by-role figures grow.
-    expect(owner).toMatchObject({ exposedToolCount: 73, excludedByRoleCount: 37, excludedToolSchemaBytes: 23362 })
-    expect(founder).toMatchObject({ exposedToolCount: 110, excludedByRoleCount: 0, excludedToolSchemaBytes: 0 })
-    expect(staff).toMatchObject({ exposedToolCount: 13, excludedByRoleCount: 97, excludedToolSchemaBytes: 93352 })
+    // Refreshed again 2026-09-03 (repository audit dispatch): the tool
+    // registry grew by 11 since the last refresh — the construction-ledger
+    // (Bedrock/TropiTrack) tools registered in lib/caye-agent/tools/registry.ts
+    // and high-risk-registry.ts (findJob, getJob, getJobLabor, previewCrewDay,
+    // getPayrollStatus, getPayrollOwed, getReceivables, setConstructionPolicy,
+    // logCrewDay, logInvoiceSent, recordPayment). Unlike CAY-194's founder-only
+    // batch, most of these ARE owner- and several are staff-visible (roles:
+    // ['owner','staff','founder'] for the job/crew-day tools, ['owner','founder']
+    // for payroll/receivables/invoicing/policy), so exposedToolCount moves for
+    // every role this time — owner and founder each gain all 11, staff gains
+    // only the 5 job/crew-day tools it has roles for. Owner's own
+    // excludedByRoleCount/excludedToolSchemaBytes are unchanged because none
+    // of the 11 new tools are founder-only (nothing new becomes invisible to
+    // an owner). Still an exact, unweakened toMatchObject assertion.
+    expect(owner).toMatchObject({ exposedToolCount: 87, excludedByRoleCount: 53, excludedToolSchemaBytes: 34528 })
+    expect(founder).toMatchObject({ exposedToolCount: 140, excludedByRoleCount: 0, excludedToolSchemaBytes: 0 })
+    expect(staff).toMatchObject({ exposedToolCount: 21, excludedByRoleCount: 119, excludedToolSchemaBytes: 114255 })
   })
 
   it.each(['owner', 'staff', 'founder', 'driver'] as const)('only exposes schemas executable by %s', (callerRole) => {

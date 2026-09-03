@@ -80,8 +80,53 @@ const fakeSupabase = {
           },
         }
       },
-      update() {
-        return { eq: () => Promise.resolve({ error: null }) }
+      // Repository audit, 2026-09-03: runFounderThreadTurn (the wrapper this
+      // file exercises via the real import chain) now wraps every non-voice
+      // call in a durable run via lib/caye-direct-runs.ts, whose
+      // setRunStage/finishDirectRun/failDirectRun/beginDirectRun chain
+      // update().eq().eq()/.in().select().maybeSingle()/.single() against
+      // caye_direct_runs — a dependency added after this fake's update()
+      // was written as a one-shot `{ eq: () => Promise.resolve(...) }`
+      // stub with no second filter, no select(), and no actual row
+      // mutation. Rebuilt as a real filterable, mutating builder — the
+      // same shape makeQueryBuilder already gives reads above — so the
+      // rest of this file's "real in-memory table" premise (rows this
+      // same test run actually wrote) holds for updates too, not just
+      // inserts and reads.
+      update(patch: FakeRow) {
+        const rows = table(name)
+        const filters: Array<(r: FakeRow) => boolean> = []
+        const builder = {
+          eq(col: string, val: unknown) {
+            filters.push((r) => r[col] === val)
+            return builder
+          },
+          in(col: string, vals: unknown[]) {
+            filters.push((r) => vals.includes(r[col]))
+            return builder
+          },
+          select() {
+            return builder
+          },
+          apply(): FakeRow[] {
+            const matched = rows.filter((r) => filters.every((f) => f(r)))
+            for (const r of matched) Object.assign(r, patch)
+            return matched
+          },
+          maybeSingle() {
+            const matched = builder.apply()
+            return Promise.resolve({ data: matched[0] ?? null, error: null })
+          },
+          single() {
+            const matched = builder.apply()
+            return Promise.resolve({ data: matched[0] ?? null, error: null })
+          },
+          then(resolve: (v: { data: FakeRow[]; error: null }) => void) {
+            const matched = builder.apply()
+            resolve({ data: matched, error: null })
+          },
+        }
+        return builder
       },
     }
   },
@@ -234,7 +279,21 @@ vi.mock('@/lib/llm-telemetry', () => ({
     // not-yet-covered customers — mirrors the real incident's "pull
     // everything" batching behavior without wastefully re-asking for
     // revenue every single round.
-    const batch = remaining.slice(0, 30)
+    //
+    // Batch size (repository audit, 2026-09-03): execute.ts's runToolLoop
+    // has never actually enforced a MAX_TOOL_CALLS_PER_ROUND slice — that
+    // name only ever existed as a doc comment in investigation-base.ts
+    // describing the expected order of magnitude of tool calls a real,
+    // token-budgeted model turn produces, not code-enforced batching. This
+    // script's batch of 30 was comfortably inside execute.ts's real
+    // per-round behavior (every tool_use block in a round executes,
+    // uncapped), so all 60 customers finished in a single pass (round 1:
+    // 30 + revenue, round 2: the remaining 30, round 3: synthesis) —
+    // 3 model calls total, never triggering the continuation loop this
+    // test exists to prove. Batching at the documented ~10/round instead
+    // reproduces the actual incident shape: one pass's 5 rounds cover at
+    // most 50 customers, forcing a genuine continuation pass for the rest.
+    const batch = remaining.slice(0, 10)
     return {
       id: `msg_${modelCallCount}`, type: 'message', role: 'assistant', model: 'claude-sonnet-4-6',
       usage: { input_tokens: 0, output_tokens: 0 }, stop_reason: 'tool_use', stop_sequence: null,

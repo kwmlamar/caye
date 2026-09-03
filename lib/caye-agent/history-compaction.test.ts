@@ -105,7 +105,17 @@ describe('compactHistory — budget behaviour', () => {
 
 describe('compactHistory — mixed content', () => {
   it('compacts only the tool_result blocks in a multi-block turn', () => {
+    // repairToolHistory (run inside compactHistory) deliberately strips a
+    // tool_result that answers no tool_use in the immediately preceding
+    // assistant message — see history-compaction.ts's "boundary fragment"
+    // doc comment. The fixture below originally omitted that preceding
+    // toolUse('a') turn entirely, so its lone tool_result looked like an
+    // orphaned boundary fragment and was stripped before this test's
+    // budget/mixed-content assertions ever ran. Prepending the matching
+    // toolUse('a') turn makes the tool_result a valid, in-window exchange —
+    // the actual scenario this test means to exercise.
     const history: Anthropic.MessageParam[] = [
+      toolUse('a'),
       {
         role: 'user',
         content: [
@@ -115,14 +125,28 @@ describe('compactHistory — mixed content', () => {
       },
     ]
     const out = compactHistory(history, 0)
-    const blocks = out[0].content as { type: string; text?: string; content?: string }[]
+    const blocks = out[1].content as { type: string; text?: string; content?: string }[]
     expect(blocks[1]).toEqual({ type: 'text', text: 'and here is my next question' })
     expect(blocks[0].content!.length).toBeLessThan(500)
   })
 
   it('handles a turn carrying several tool_results at once', () => {
-    // runToolLoop batches parallel tool calls into one user turn.
+    // runToolLoop batches parallel tool calls into one user turn — and,
+    // symmetrically, the assistant turn that requested them carries both
+    // tool_use blocks together. As in the test above, repairToolHistory
+    // strips a tool_result with no matching tool_use in the immediately
+    // preceding assistant message, so both 'a' and 'b' need to be
+    // requested in that single preceding turn or they read as orphaned
+    // boundary fragments rather than the batched-parallel-calls case this
+    // test is named for.
     const history: Anthropic.MessageParam[] = [
+      {
+        role: 'assistant',
+        content: [
+          { type: 'tool_use', id: 'a', name: 'get_customer', input: {} },
+          { type: 'tool_use', id: 'b', name: 'get_customer', input: {} },
+        ],
+      },
       {
         role: 'user',
         content: [
@@ -132,7 +156,7 @@ describe('compactHistory — mixed content', () => {
       },
     ]
     const out = compactHistory(history, 9000)
-    const blocks = out[0].content as { tool_use_id: string; content: string }[]
+    const blocks = out[1].content as { tool_use_id: string; content: string }[]
     expect(blocks.map((b) => b.tool_use_id)).toEqual(['a', 'b'])
     // One fits the budget, the other does not.
     expect(blocks.filter((b) => b.content.length > 500)).toHaveLength(1)

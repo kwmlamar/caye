@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type Anthropic from '@anthropic-ai/sdk'
+import { createFakeSupabaseClient, type FakeSupabaseClient } from '@/lib/supabase-test-support/fake-supabase-client'
 
 vi.mock('server-only', () => ({}))
 
@@ -9,8 +10,36 @@ const insertedRow = { id: 'inbound-row-1' }
 // from 'caye_tool_calls' when a test needs runInvestigation's exhaustion
 // path to produce a real, non-empty digest. Reset per-test.
 let toolCallRows: Array<Record<string, unknown>> = []
+
+// caye_direct_runs / caye_direct_run_events (repository audit, 2026-09-03):
+// './founder-thread-turn' (the wrapper this file actually imports and
+// tests, re-exported over './founder-thread-turn-base') now wraps every
+// non-voice call in a durable run via lib/caye-direct-runs.ts's
+// beginDirectRun/setRunStage/finishDirectRun/failDirectRun — a dependency
+// added after this file's hand-rolled Supabase fake was written. Those
+// functions chain select/eq/in/order/limit/maybeSingle and
+// update/eq/in/select/maybeSingle against caye_direct_runs, none of which
+// the old fake modeled (its default branch only ever returned `insert`),
+// so every single test here failed on `supabase.from(...).select is not a
+// function` before even reaching the behavior each test actually means to
+// exercise. None of these 29 tests are about direct-run tracking itself,
+// so a real (if minimal) in-memory table — the shared FakeSupabaseClient —
+// lets beginDirectRun take its normal "no existing active run, insert a
+// fresh one" path and finishDirectRun/failDirectRun complete normally,
+// without hand-modeling each exact chain shape by hand.
+const directRunsClient: FakeSupabaseClient = createFakeSupabaseClient()
+
+function resetDirectRunsTables(): void {
+  directRunsClient.seed('caye_direct_runs', [])
+  directRunsClient.seed('caye_direct_run_events', [])
+}
+resetDirectRunsTables()
+
 const supabaseStub = {
   from: vi.fn((table: string) => {
+    if (table === 'caye_direct_runs' || table === 'caye_direct_run_events') {
+      return directRunsClient.from(table)
+    }
     if (table === 'caye_tool_calls') {
       const builder = {
         eq: vi.fn(() => builder),
@@ -103,6 +132,7 @@ import { MAX_INVESTIGATION_CONTINUATIONS } from './investigation'
 describe('runFounderThreadTurn — the single path both typed and voice turns share', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    resetDirectRunsTables()
     resolveFounderOperatorMock.mockResolvedValue({ id: 7, name: 'Lamar', role: 'founder' })
     persistAgentTurnsMock.mockResolvedValue([{ id: 'turn-1' }, { id: 'turn-2' }])
     cayeAgentMock.mockResolvedValue({ replyText: 'Here you go.', newTurns: [], linkedThreadIds: [] })
@@ -215,6 +245,7 @@ const toolResultTurn = (id: string, payload: unknown) => ({
 describe('runFounderThreadTurn — bounded investigation continuation (2026-08-17 Bimini audit fix)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    resetDirectRunsTables()
     resolveFounderOperatorMock.mockResolvedValue({ id: 7, name: 'Lamar', role: 'founder' })
     persistAgentTurnsMock.mockResolvedValue([{ id: 'turn-1' }, { id: 'turn-2' }])
     toolCallRows = []
@@ -421,6 +452,7 @@ describe('runFounderThreadTurn — bounded investigation continuation (2026-08-1
 describe('runFounderThreadTurn — attachments (multimodal Caye Direct follow-up)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    resetDirectRunsTables()
     getThreadMock.mockResolvedValue({ id: 'thread-1', status: 'active' })
     resolveFounderOperatorMock.mockResolvedValue({ id: 7, name: 'Lamar', role: 'founder' })
     persistAgentTurnsMock.mockResolvedValue([{ id: 'turn-1' }, { id: 'turn-2' }])
@@ -468,9 +500,18 @@ describe('runFounderThreadTurn — attachments (multimodal Caye Direct follow-up
     resolveWorkspaceAttachmentsMock.mockResolvedValue({ resolved: [imageArtifact], invalidIds: [] })
     buildAttachmentContentBlocksMock.mockResolvedValue({ blocks: [imageBlock], unreadableNote: null })
     await runFounderThreadTurn('ws-1', 'thread-1', 'this is Max', undefined, ['artifact-1'])
-    const insertCall = (supabaseStub.from as ReturnType<typeof vi.fn>).mock.results.find(
-      (r) => typeof r.value?.insert === 'function'
+    // Find the specific from('caye_operator_messages') call by table name,
+    // not merely "any from() result with an insert function" — beginDirectRun
+    // (lib/caye-direct-runs.ts, wrapped around every non-voice call — see
+    // the caye_direct_runs comment near supabaseStub above) now also calls
+    // from('caye_direct_runs').insert(...) earlier in the same turn, and the
+    // shared FakeSupabaseClient's TableHandle.insert is a real method too,
+    // so a bare "has an insert function" match picked that one up first.
+    const fromCallIndex = (supabaseStub.from as ReturnType<typeof vi.fn>).mock.calls.findIndex(
+      (call) => call[0] === 'caye_operator_messages'
     )
+    expect(fromCallIndex).toBeGreaterThanOrEqual(0)
+    const insertCall = (supabaseStub.from as ReturnType<typeof vi.fn>).mock.results[fromCallIndex]
     expect(insertCall).toBeDefined()
     const insertedPayload = insertCall!.value.insert.mock.calls[0][0]
     expect(insertedPayload.rich_result).toEqual({
