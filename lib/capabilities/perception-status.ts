@@ -39,6 +39,29 @@ export type PerceptionStatus = {
   }
 }
 
+export function perceptionFreshnessExpired(freshUntil: string | null, nowMs = Date.now()): boolean {
+  if (!freshUntil) return false
+  const freshUntilMs = Date.parse(freshUntil)
+  return Number.isFinite(freshUntilMs) && freshUntilMs < nowMs
+}
+
+function effectiveSourceStatus(status: string, freshUntil: string | null, nowMs: number): string {
+  if (status === 'active' && perceptionFreshnessExpired(freshUntil, nowMs)) return 'stale'
+  return status
+}
+
+function effectiveCapabilityEvidence(
+  status: CapabilityEvidence['status'],
+  autonomousNow: boolean,
+  freshUntil: string | null,
+  nowMs: number,
+): Pick<CapabilityEvidence, 'status' | 'autonomousNow'> {
+  if (status === 'active' && perceptionFreshnessExpired(freshUntil, nowMs)) {
+    return { status: 'limited', autonomousNow: false }
+  }
+  return { status, autonomousNow }
+}
+
 /**
  * Workspace-scoped, read-only evidence for Direction/founder reasoning.
  * This reports what has actually produced evidence. It does not infer future
@@ -77,31 +100,34 @@ export const perceptionStatusCapability: RegisteredCapability<Record<string, nev
 
       if (sourceResult.error || capabilityResult.error) return unavailable()
 
+      const now = Date.now()
       const sources: PerceptionSource[] = (sourceResult.data ?? []).map((row) => ({
         sourceKind: row.source_kind,
         sourceIdentity: row.source_identity,
-        status: row.status,
+        status: effectiveSourceStatus(row.status, row.fresh_until, now),
         lastObservedAt: row.last_observed_at,
         freshUntil: row.fresh_until,
         confidence: Number(row.confidence),
         consecutiveFailures: row.consecutive_failures,
         lastFailureCode: row.last_failure_code,
       }))
-      const capabilities: CapabilityEvidence[] = (capabilityResult.data ?? []).map((row) => ({
-        capabilityKey: row.capability_key,
-        sourceKind: row.source_kind,
-        sourceIdentity: row.source_identity,
-        status: row.status,
-        autonomousNow: row.autonomous_now,
-        evidenceEventId: row.evidence_event_id === null ? null : Number(row.evidence_event_id),
-        lastObservedAt: row.last_observed_at,
-        freshUntil: row.fresh_until,
-        confidence: Number(row.confidence),
-        notes: row.notes,
-        metadata: row.metadata ?? {},
-      }))
+      const capabilities: CapabilityEvidence[] = (capabilityResult.data ?? []).map((row) => {
+        const effective = effectiveCapabilityEvidence(row.status, row.autonomous_now, row.fresh_until, now)
+        return {
+          capabilityKey: row.capability_key,
+          sourceKind: row.source_kind,
+          sourceIdentity: row.source_identity,
+          status: effective.status,
+          autonomousNow: effective.autonomousNow,
+          evidenceEventId: row.evidence_event_id === null ? null : Number(row.evidence_event_id),
+          lastObservedAt: row.last_observed_at,
+          freshUntil: row.fresh_until,
+          confidence: Number(row.confidence),
+          notes: row.notes,
+          metadata: row.metadata ?? {},
+        }
+      })
 
-      const now = Date.now()
       const latestObservationAt = sources
         .map((source) => source.lastObservedAt)
         .filter((value): value is string => !!value)
@@ -117,7 +143,7 @@ export const perceptionStatusCapability: RegisteredCapability<Record<string, nev
           summary: {
             activeSources: sources.filter((source) => source.status === 'active').length,
             autonomousSources: capabilities.filter((capability) => capability.autonomousNow && capability.status === 'active').length,
-            staleSources: sources.filter((source) => source.freshUntil !== null && Date.parse(source.freshUntil) < now).length,
+            staleSources: sources.filter((source) => source.status === 'stale').length,
             latestObservationAt,
           },
         },
