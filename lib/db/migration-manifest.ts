@@ -227,4 +227,5 @@ export const REPO_MIGRATIONS: readonly string[] = [
   '20260902043000_domain_integration_review_fixes',
   '20260902120000_fix_recommendation_digest_resolution',
   '20260902140000_applied_migration_ledger_rpc',
+  '20260902150000_perception_channel_and_booking_sources',
 ]

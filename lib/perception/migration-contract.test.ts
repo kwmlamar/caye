@@ -59,4 +59,56 @@ describe('perception migration contract', () => {
     expect(sql).not.toContain('workspace_events')
     expect(sql).not.toContain('perception_capability_evidence')
   })
+
+  it('normalizes channel message activity from the existing canonical message stream, workspace-scoped', () => {
+    const sql = migration('20260902150000_perception_channel_and_booking_sources.sql')
+    expect(sql).toContain("from public.workspace_events")
+    expect(sql).toContain("type = 'message.inbound'")
+    expect(sql).toContain("from public.unified_conversations")
+    expect(sql).toContain("v_source_kind := 'channel.' || v_channel_type")
+    expect(sql).toContain("subject_kind = 'unified_conversation'")
+    expect(sql).toContain('workspace_id = v_latest.workspace_id')
+    expect(sql).toContain("'epistemic_kind', 'observation'")
+    expect(sql).toContain("'anomaly', false")
+  })
+
+  it('only writes observation.channel_activity for initial/changed state, never for an unchanged poll', () => {
+    const sql = migration('20260902150000_perception_channel_and_booking_sources.sql')
+    expect(sql).toContain("if v_change_kind <> 'unchanged' then")
+    expect(sql).toContain("'observation.channel_activity'")
+  })
+
+  it('normalizes booking state from the existing canonical booking event stream instead of re-querying bookings', () => {
+    const sql = migration('20260902150000_perception_channel_and_booking_sources.sql')
+    expect(sql).toContain("type in ('booking.created', 'booking.status_changed')")
+    expect(sql).toContain("subject_table = 'bookings'")
+    expect(sql).not.toContain('from public.bookings')
+    expect(sql).not.toContain('update public.bookings')
+    expect(sql).toContain("subject_kind = 'booking'")
+    expect(sql).toContain("'observation.booking_state'")
+  })
+
+  it('derives booking importance as classification only, never as anomaly or send/mutate authority', () => {
+    const sql = migration('20260902150000_perception_channel_and_booking_sources.sql')
+    expect(sql).toContain("v_status in ('cancelled', 'no_show')")
+    expect(sql).toContain("v_importance := 'notice'")
+    expect(sql).toContain("'anomaly', false")
+    expect(sql).not.toMatch(/'anomaly',\s*true/)
+    expect(sql).not.toContain('sendWhatsAppMessage')
+    expect(sql).not.toContain('send_message')
+    expect(sql).not.toContain('update public.bookings')
+    expect(sql).not.toContain('insert into public.caye_escalations')
+    expect(sql).not.toContain('insert into public.owner_attention')
+  })
+
+  it('keeps both new sources workspace-scoped, service-role only, and folded into the existing bounded cron RPC', () => {
+    const sql = migration('20260902150000_perception_channel_and_booking_sources.sql')
+    expect(sql).toContain('create or replace function public.run_workspace_event_perception_cycle(p_limit integer default 100)')
+    expect(sql).toContain('public.run_channel_activity_perception_cycle(v_limit)')
+    expect(sql).toContain('public.run_booking_state_perception_cycle(v_limit)')
+    expect(sql).toContain('revoke all on function public.observe_channel_message_activity(uuid, timestamptz) from public, anon, authenticated')
+    expect(sql).toContain('grant execute on function public.observe_channel_message_activity(uuid, timestamptz) to service_role')
+    expect(sql).toContain('revoke all on function public.observe_booking_state(text, timestamptz) from public, anon, authenticated')
+    expect(sql).toContain('grant execute on function public.observe_booking_state(text, timestamptz) to service_role')
+  })
 })
