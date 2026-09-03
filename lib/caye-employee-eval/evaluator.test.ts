@@ -13,7 +13,11 @@ describe('Caye Employee Eval v1', () => {
       'bimini-island-tours-end-to-end-v1',
     ])
     for (const scenario of FROZEN_EMPLOYEE_SCENARIOS) {
-      const events = FROZEN_EMPLOYEE_EVENT_STREAMS[scenario.id]
+      // EmployeeScenarioFixture declares id: string, so this loop's element
+      // type doesn't narrow to FROZEN_EMPLOYEE_EVENT_STREAMS's literal keys.
+      // The assertion just above already proves scenario.id is one of the
+      // two frozen keys before this line runs.
+      const events = FROZEN_EMPLOYEE_EVENT_STREAMS[scenario.id as keyof typeof FROZEN_EMPLOYEE_EVENT_STREAMS]
       expect(events.length).toBeGreaterThan(0)
       expect(events.map((e) => e.id)).toEqual(expect.arrayContaining(scenario.requiredTraceIds))
       const times = events.map((e) => Date.parse(e.at))

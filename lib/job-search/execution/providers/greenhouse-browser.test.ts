@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const labelledControl = { count: vi.fn(async () => 1), fill: vi.fn(), selectOption: vi.fn(), setInputFiles: vi.fn(), getAttribute: vi.fn(async () => null), click: vi.fn(), first() { return this } }
+// getAttribute is typed to Playwright's own Locator.getAttribute() return
+// shape (Promise<string | null>) rather than the narrower `null` this first
+// use happens to return, since page.getByLabel's mock return type locks to
+// this object's shape and other scenarios need it to resolve a real string
+// (e.g. 'combobox').
+const labelledControl = { count: vi.fn(async () => 1), fill: vi.fn(), selectOption: vi.fn(), setInputFiles: vi.fn(), getAttribute: vi.fn(async (): Promise<string | null> => null), click: vi.fn(), first() { return this } }
 const roleOption = { count: vi.fn(async () => 1), click: vi.fn(), first() { return this } }
 const page = {
   route: vi.fn(), goto: vi.fn(), url: vi.fn(() => 'https://job-boards.greenhouse.io/example/jobs/1'),
@@ -81,7 +86,7 @@ describe('Greenhouse browser executor (#216)', () => {
       allowedOptions: [{ label: 'United States', value: 'US' }, { label: 'United Kingdom', value: 'GB' }], confidence: 1,
     }
     const noMatch = { count: vi.fn(async () => 0), fill: vi.fn(), selectOption: vi.fn(), getAttribute: vi.fn(async () => null), click: vi.fn(), first() { return this } }
-    const customCombobox = { count: vi.fn(async () => 1), fill: vi.fn(), selectOption: vi.fn(), getAttribute: vi.fn(async () => 'combobox'), click: vi.fn(), first() { return this } }
+    const customCombobox = { count: vi.fn(async () => 1), fill: vi.fn(), selectOption: vi.fn(), setInputFiles: vi.fn(), getAttribute: vi.fn(async () => 'combobox'), click: vi.fn(), first() { return this } }
     const fileInput = { count: vi.fn(async () => 1), fill: vi.fn(), selectOption: vi.fn(), setInputFiles: vi.fn(), getAttribute: vi.fn(async () => null), click: vi.fn(), first() { return this } }
     const body = { count: vi.fn(async () => 1), innerText: vi.fn(async () => 'Apply for this job'), first() { return this } }
     page.locator.mockImplementation((selector: string) => {
@@ -110,7 +115,7 @@ describe('Greenhouse browser executor (#216)', () => {
       allowedOptions: [{ label: 'United States', value: 'US' }], confidence: 1,
     }
     const noMatch = { count: vi.fn(async () => 0), fill: vi.fn(), selectOption: vi.fn(), getAttribute: vi.fn(async () => null), click: vi.fn(), first() { return this } }
-    const customCombobox = { count: vi.fn(async () => 1), fill: vi.fn(), selectOption: vi.fn(), getAttribute: vi.fn(async () => 'combobox'), click: vi.fn(), first() { return this } }
+    const customCombobox = { count: vi.fn(async () => 1), fill: vi.fn(), selectOption: vi.fn(), setInputFiles: vi.fn(), getAttribute: vi.fn(async () => 'combobox'), click: vi.fn(), first() { return this } }
     const body = { count: vi.fn(async () => 1), innerText: vi.fn(async () => 'Apply for this job'), first() { return this } }
     const ambiguousOption = { count: vi.fn(async () => 2), click: vi.fn(), first() { return this } }
     page.locator.mockImplementation((selector: string) => selector === 'body' ? body : noMatch)

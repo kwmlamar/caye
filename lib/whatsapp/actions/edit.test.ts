@@ -2,12 +2,29 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 vi.mock('server-only', () => ({}))
 
-const insertMock = vi.fn(async (_row: Record<string, unknown>) => ({ error: null }))
+/** Mirrors the exact row stageProposedReply() (./edit.ts) inserts. */
+interface StagedReplyRow {
+  conversation_id: string
+  channel_message_id: string | null
+  sender_type: string
+  content: string
+  message_type: string
+  sent_at: string
+  status: string
+  is_internal: boolean
+  metadata: {
+    generated_by: string
+    hold_reason: string
+    proposed_reply: string
+  }
+}
+
+const insertMock = vi.fn(async (_row: StagedReplyRow) => ({ error: null }))
 vi.mock('@/lib/supabase-server', () => ({
   createServiceClient: () => ({
     from: (table: string) => {
       if (table === 'unified_messages') {
-        return { insert: (row: Record<string, unknown>) => insertMock(row) }
+        return { insert: (row: StagedReplyRow) => insertMock(row) }
       }
       if (table === 'workspace_ai_config') {
         return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null }) }) }) }
@@ -20,7 +37,7 @@ vi.mock('@/lib/supabase-server', () => ({
   }),
 }))
 
-const loggedMessagesCreateMock = vi.fn(async () => ({
+const loggedMessagesCreateMock = vi.fn(async (..._args: unknown[]) => ({
   content: [{ type: 'text', text: 'a composed reply Caye made up' }],
 }))
 vi.mock('@/lib/llm-telemetry', () => ({
