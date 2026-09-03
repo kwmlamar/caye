@@ -7,6 +7,7 @@ import { isCircuitOpen, loadProviderHealth, recordProviderFailure, recordProvide
 import { loadProviderSettings, priorityOrder } from './provider-settings'
 import { normalizeRequestForModel } from './request-normalization'
 import { logAiCall, logRoutingDecision, usageFromResponse } from './telemetry'
+import { accountFatalFallbackCause, alertProviderDegradation, isAccountFatal } from './degradation-alert'
 import {
   AIProviderError,
   NoAIProviderAvailableError,
@@ -116,6 +117,12 @@ export async function generate({ params, ctx, signal }: GenerateArgs): Promise<A
       continue
     }
 
+    // Captured before the attempt so a success can be recognised as a
+    // recovery transition rather than just another healthy call. Read from
+    // the health map already loaded above — no extra query, no new state.
+    const priorHealth = health.get(spec.provider)
+    const wasInCooldown = priorHealth?.state === 'cooldown'
+
     const outcome = await attemptProvider(adapter, requestParams, spec.id, signal)
 
     if (outcome.ok) {
@@ -141,6 +148,23 @@ export async function generate({ params, ctx, signal }: GenerateArgs): Promise<A
       const usage = usageFromResponse(outcome.response)
       logAiCall({ ctx, routing, usage, outcome: 'success' })
       logRoutingDecision(ctx, routing, 'success')
+
+      // A served request can still carry news. Two kinds, both fire-and-forget:
+      // a user-facing request that changed vendor because an account died, and
+      // a provider that just came back from cooldown.
+      const fallbackCause = accountFatalFallbackCause(routing)
+      if (fallbackCause) {
+        alertProviderDegradation({ kind: 'user_facing_fallback', ctx, routing, ...fallbackCause })
+      }
+      if (wasInCooldown) {
+        alertProviderDegradation({
+          kind: 'provider_recovered',
+          ctx,
+          routing,
+          provider: spec.provider,
+          previousReason: priorHealth?.reason ?? null,
+        })
+      }
       return { output: outcome.response, usage, routing }
     }
 
@@ -148,6 +172,21 @@ export async function generate({ params, ctx, signal }: GenerateArgs): Promise<A
     lastError = error
     attempts.push({ ...base, outcome: error.category, detail: safeDetail(error.message), latencyMs: outcome.latencyMs })
     void recordProviderFailure(spec.provider, error.category, error.message).catch(() => {})
+
+    // An account-level failure is news the moment it happens, whether or not
+    // a later provider rescues the request. Raised here rather than at an
+    // exit because billing_exhausted fails over (policy.failover === true),
+    // so a successful failover would otherwise hide the dead account.
+    if (isAccountFatal(error.category)) {
+      alertProviderDegradation({
+        kind: 'account_fatal',
+        ctx,
+        provider: spec.provider,
+        category: error.category,
+        task,
+        detail: error.message,
+      })
+    }
 
     if (PROVIDER_WIDE_FAILURES.has(error.category)) failedProviders.add(spec.provider)
 
@@ -165,6 +204,9 @@ export async function generate({ params, ctx, signal }: GenerateArgs): Promise<A
   const routing = failedRouting(task, last?.provider ?? 'anthropic', last?.model ?? 'none', attempts, startedAt, failoverOccurred)
   logAiCall({ ctx, routing, outcome: 'failure', failureCategory: lastError?.category ?? 'unknown' })
   logRoutingDecision(ctx, routing, 'failure')
+  // Nothing served this request. Highest severity in the module, and the one
+  // case that is not a failover story at all.
+  alertProviderDegradation({ kind: 'chain_exhausted', ctx, routing, detail: lastError?.message ?? null })
   throw new NoAIProviderAvailableError(task, attempts, lastError)
 }
 
