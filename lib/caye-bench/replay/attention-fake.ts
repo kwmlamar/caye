@@ -68,5 +68,11 @@ export function makeFakeAttentionClient(rows: ReplayAttentionSeed[]) {
       if (table !== 'caye_owner_attention') return chain([])
       return chain(rows)
     },
+    // `fetchBusinessFacts` calls the `retrieve_operating_memory` RPC before
+    // falling back to the legacy `business_facts` table on error. This fake
+    // has no typed-memory rows to serve, so it returns the same honest empty
+    // result `.from()` above returns for every table it doesn't model —
+    // never throwing, never reaching real Supabase.
+    rpc: async (_fn: string, _args?: Record<string, unknown>) => ({ data: [], error: null }),
   }
 }

@@ -57,6 +57,31 @@ const ALLOWED = new Map<string, string>([
   // can correct its own malformed tool call — same category as
   // schema-validate.ts's entry above.
   ['lib/engineering/fea/spec.ts', 'validation error path returned to the model, not a human'],
+  // Array-index path segment in the generic tool-argument schema validator,
+  // used by lib/recommendations/action-plan.ts to check a model-proposed
+  // action plan before execution. Errors are thrown/returned to that
+  // internal caller, never rendered to an owner/customer — same category as
+  // schema-validate.ts's entry above.
+  ['lib/caye-agent/tools/schema-validation.ts', 'validation error path returned to the model/internal caller, not a human'],
+  // DURABLE OPERATING MEMORY block: system-prompt context handed to the
+  // model, same category as lib/business-facts.ts's formatBusinessFactsBlock
+  // (unflagged only because its brackets have text before the `${`). Never
+  // sent as-is to a customer/operator channel — only the model's own
+  // subsequent reply is.
+  ['lib/operating-memory.ts', 'system-prompt memory-context rendering, not owner-facing output'],
+  // CURRENT OPERATIONAL BRIEF: agent-facing context assembled for questions
+  // like "what's going on with ODS right now" — see
+  // lib/caye-agent/operational-brief.ts's own doc comment ("hands the model
+  // a deterministic brief"). Prompt-internal, not rendered to a human.
+  ['lib/operational-intelligence/brief.ts', 'agent-facing operational brief handed to the model as reasoning context, not owner-facing output'],
+  // `stable()` is JSON-with-sorted-keys serialization feeding
+  // synthesisFingerprint's sha256 hash input — same category as
+  // orchestrator.ts's stableStringify entry above. Never displayed.
+  ['lib/research/cross-domain-runtime.ts', 'stableStringify-style hash input, not output'],
+  // Numbered list inside an LLM prompt, reading the owner's own Gmail for a
+  // read-only business-discovery pass — same category as
+  // app/api/caye/discovery/route.ts's entry above.
+  ['app/api/caye/gmail-observation-discovery/route.ts', 'prompt-internal numbering'],
 ])
 
 function sourceFiles(dir: string, out: string[] = []): string[] {
