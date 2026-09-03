@@ -8,11 +8,38 @@ const EMAIL_RE = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi
 const NEGATION_RE = /\b(?:do not|don't|does not|doesn't|cannot|can't|never|won't|will not)\b/i
 const TRANSFERABLE_ARTIFACT_RE = /\b(?:photo|picture|image|file|document|details?|information|info|link|copy|receipt|invoice|attachment|confirmation|it|that)\b/i
 
+/**
+ * An abbreviation whose trailing period does NOT end a sentence.
+ *
+ * Without this, `sentences()` cut "Mrs. Max will be sending your invoice"
+ * into "Mrs." and "Max will be sending your invoice" -- and `hasFutureActor`
+ * matches an honorific followed by a name and `will`, so the half it was
+ * given no longer had the "Mrs. " it needed. The guard returned null on the
+ * exact string the 2026-08-20 incident is named after, which is the string
+ * `hasFutureActor` was widened to catch in the first place.
+ */
+const NON_TERMINAL_ABBREVIATION_RE = /\b(?:mr|mrs|ms|dr|prof|rev|hon|sr|jr|st)\.$/i
+
 function sentences(text: string): string[] {
-  return text
+  const parts = text
     .split(/(?<=[.!?])\s+|\n+/)
     .map((s) => s.trim())
     .filter(Boolean)
+
+  // Re-join anything the split tore off an honorific. Done as a repair pass
+  // rather than a cleverer split regex because titles chain -- "Mr. and Mrs.
+  // Christiansen will..." breaks twice -- and a loop handles that without the
+  // regex having to.
+  const joined: string[] = []
+  for (const part of parts) {
+    const previous = joined[joined.length - 1]
+    if (previous !== undefined && NON_TERMINAL_ABBREVIATION_RE.test(previous)) {
+      joined[joined.length - 1] = `${previous} ${part}`
+    } else {
+      joined.push(part)
+    }
+  }
+  return joined
 }
 
 function normalizeEmail(value: unknown): string | null {
