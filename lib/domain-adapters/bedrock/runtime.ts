@@ -15,6 +15,7 @@ import { BedrockPayPeriodChangeSource } from './pay-period-change-source'
 import { KernelBedrockConnectionResolver, toBedrockConnection } from './kernel-connection'
 import { SupabaseBedrockReadProvider } from './provider'
 import { SupabaseDomainSnapshotStore } from './supabase-snapshot-store'
+import { BedrockWriteProvider } from './write-provider'
 import { BEDROCK_SOURCE_SYSTEM, BedrockConnectionMissingError } from './types'
 
 /**
@@ -176,4 +177,108 @@ export async function runBedrockPurchaseOrderSync(
  */
 export function createBedrockAdapter(): BedrockAdapter {
   return new BedrockAdapter(new KernelBedrockConnectionResolver())
+}
+
+/**
+ * The write boundary, resolved for one workspace.
+ *
+ * Deliberately a separate factory from `createBedrockAdapter`, and deliberately
+ * not memoised into a shared singleton: obtaining write access should be an
+ * explicit act at the call site, visible in a diff, rather than something a
+ * caller acquires by holding the read adapter it already had.
+ *
+ * Throws when the workspace has no active Bedrock binding, so a workspace that
+ * was never connected — or whose binding was paused or revoked — cannot be
+ * written to on the strength of a stale reference.
+ */
+export async function createBedrockWriteProvider(
+  workspaceId: string
+): Promise<{
+  provider: BedrockWriteProvider
+  companyId: string
+  identityFor: (operatorId: number | string | null | undefined) => BedrockOperatorIdentity
+}> {
+  const connection = await getDomainSourceConnection(workspaceId, BEDROCK_SOURCE_SYSTEM)
+  if (!connection) throw new BedrockConnectionMissingError(workspaceId)
+
+  const bedrock = toBedrockConnection(connection)
+  return {
+    provider: new BedrockWriteProvider(bedrock),
+    companyId: bedrock.companyId,
+    identityFor: (operatorId) => bedrockIdentityFor(connection.config, operatorId),
+  }
+}
+
+/** How a Caye operator appears inside the construction ledger. */
+export interface BedrockOperatorIdentity {
+  /** `profiles.id` — who a written row is attributed to. */
+  profileId: string | null
+  /** `workers.id` — whose hours "me" means. Null for anyone not on the hourly roster. */
+  workerId: string | null
+}
+
+/**
+ * Read the operator's ledger identities from the binding's non-secret config.
+ *
+ * TWO MAPPINGS, NOT ONE, BECAUSE THEY ARE TWO DIFFERENT THINGS
+ *
+ * `profiles` and `workers` are separate tables holding separate people. Wallace,
+ * Omar and Jay exist as profiles and appear in NO worker row; the hourly crew
+ * exist as workers and have no profile. So:
+ *
+ *   - `operator_profiles` answers "who recorded this" -> time_entries.created_by
+ *   - `operator_workers`  answers "whose hours are these" -> "me" in a crew day
+ *
+ * A supervisor reporting a crew day is the author of the record without being
+ * one of the people on it. Collapsing these into one mapping would either
+ * refuse a legitimate report or invent an hourly row for someone who is not
+ * paid hourly.
+ *
+ * Both return null when unmapped, and that is the point: an unattributable
+ * write into a table that feeds payroll must be refused, never defaulted.
+ */
+export function bedrockIdentityFor(
+  config: Record<string, unknown> | null | undefined,
+  operatorId: number | string | null | undefined
+): BedrockOperatorIdentity {
+  return {
+    profileId: lookupOperator(config, 'operator_profiles', operatorId),
+    workerId: lookupOperator(config, 'operator_workers', operatorId),
+  }
+}
+
+function lookupOperator(
+  config: Record<string, unknown> | null | undefined,
+  key: string,
+  operatorId: number | string | null | undefined
+): string | null {
+  if (operatorId === null || operatorId === undefined) return null
+  const map = (config ?? {})[key]
+  if (!map || typeof map !== 'object') return null
+  const value = (map as Record<string, unknown>)[String(operatorId)]
+  return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+/**
+ * The binding's non-secret config, for policy resolution.
+ *
+ * Returned raw rather than pre-parsed so `lib/domain-policy.ts` stays the one
+ * place that knows what a policy means — the adapter's job is to hand over what
+ * the workspace stored, not to interpret it.
+ */
+export async function getBedrockPolicyConfig(
+  workspaceId: string
+): Promise<Record<string, unknown> | null> {
+  const connection = await getDomainSourceConnection(workspaceId, BEDROCK_SOURCE_SYSTEM)
+  return (connection?.config as Record<string, unknown> | undefined) ?? null
+}
+
+/** Read-side access to the same mapping, for tools that resolve before writing. */
+export async function getBedrockOperatorIdentity(
+  workspaceId: string,
+  operatorId: number | string | null | undefined
+): Promise<BedrockOperatorIdentity> {
+  const connection = await getDomainSourceConnection(workspaceId, BEDROCK_SOURCE_SYSTEM)
+  if (!connection) throw new BedrockConnectionMissingError(workspaceId)
+  return bedrockIdentityFor(connection.config, operatorId)
 }

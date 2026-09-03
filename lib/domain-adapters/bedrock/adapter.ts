@@ -104,6 +104,34 @@ export class BedrockAdapter {
     return this.worker(row, workspaceId, connection.companyId)
   }
 
+  async listWorkers(workspaceId: string, options: Pick<BedrockListOptions, 'status' | 'limit'> = {}) {
+    const { connection, provider } = await this.context(workspaceId)
+    return (await provider.listWorkers(connection.companyId, options)).map(row => this.worker(row, workspaceId, connection.companyId))
+  }
+
+  /**
+   * Who already has time on a job, by day — and nothing else.
+   *
+   * Deliberately not a timesheet reader. Individual time entries are not an
+   * AI-visible domain object (see `normalize.ts`, which suppresses
+   * `time_entry` events on purpose), and hours and rates are none of a
+   * duplicate check's business. This returns only the keys needed to answer
+   * "has this person already been logged on this job that day", which is what
+   * stops a re-reported crew day from doubling somebody's pay.
+   */
+  async listProjectTimeEntryKeys(
+    workspaceId: string,
+    projectId: string,
+    date?: string
+  ): Promise<Array<{ workerId: string; projectId: string; date: string }>> {
+    const { connection, provider } = await this.context(workspaceId)
+    if (!await provider.getProject(connection.companyId, projectId)) throw new BedrockNotFoundError('project', projectId)
+    const rows = await provider.listProjectTimeEntries(connection.companyId, projectId)
+    return rows
+      .map(row => ({ workerId: String(row.worker_id), projectId, date: String(row.date ?? '') }))
+      .filter(key => key.workerId && (!date || key.date === date))
+  }
+
   async getProjectLabor(workspaceId: string, projectId: string): Promise<BedrockProjectLabor> {
     const { connection, provider } = await this.context(workspaceId)
     if (!await provider.getProject(connection.companyId, projectId)) throw new BedrockNotFoundError('project', projectId)

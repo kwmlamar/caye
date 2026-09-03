@@ -24,6 +24,7 @@ import { getPendingQuotes } from './read/get-pending-quotes'
 import { findJob } from './read/find-job'
 import { getJob } from './read/get-job'
 import { getJobLabor } from './read/get-job-labor'
+import { previewCrewDay } from './read/preview-crew-day'
 import { getPayrollStatus } from './read/get-payroll-status'
 import { searchThreads } from './read/search-threads'
 import { queryBusinessKnowledge } from './read/query-business-knowledge'
@@ -54,6 +55,7 @@ import { removeBusinessFact } from './write-low/remove-business-fact'
 import { addStandingRule } from './write-low/add-standing-rule'
 import { removeStandingRule } from './write-low/remove-standing-rule'
 import { updateServicePrice } from './write-low/update-service-price'
+import { setConstructionPolicy } from './write-low/set-construction-policy'
 import { addService } from './write-low/add-service'
 import { addPricingTier } from './write-low/add-pricing-tier'
 import { setServiceVisibility } from './write-low/set-service-visibility'
@@ -198,6 +200,7 @@ export const TOOL_REGISTRY: AnyTool[] = [
   findJob as AnyTool,
   getJob as AnyTool,
   getJobLabor as AnyTool,
+  previewCrewDay as AnyTool,
   getPayrollStatus as AnyTool,
   searchThreads as AnyTool,
   queryBusinessKnowledge as AnyTool,
@@ -231,6 +234,7 @@ export const TOOL_REGISTRY: AnyTool[] = [
   addStandingRule as AnyTool,
   removeStandingRule as AnyTool,
   updateServicePrice as AnyTool,
+  setConstructionPolicy as AnyTool,
   addService as AnyTool,
   addPricingTier as AnyTool,
   setServiceVisibility as AnyTool,

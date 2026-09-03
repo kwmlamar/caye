@@ -137,6 +137,7 @@ class FixtureBedrockProvider implements BedrockReadProvider {
   async listClients() { return [] }
   async getClient() { return null }
   async getWorker() { return null }
+  async listWorkers(): Promise<BedrockRow[]> { return [] }
   async listProjectTimeEntries() { return [] }
   async getPayPeriod() { return null }
   async listPayrollEntries() { return [] }
