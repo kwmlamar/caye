@@ -68,7 +68,10 @@ export class FreightWorkflow {
     if (!record.candidates.some(c => c.evidence.id === evidence.id)) throw new Error('Purchase evidence is not a candidate for this workflow')
     const data = buildFreightDocumentData(businessName, record.request, evidence)
     const bytes = renderFreightDocumentPdf(data)
-    const filename = `freight-${record.request.dockReceiptNumber}.pdf`.replace(/[^a-zA-Z0-9._-]/g, '-')
+    // data.reference is guaranteed non-null -- buildFreightDocumentData throws before constructing a
+    // FreightDocumentData without one. Derive the filename from the reference value (not the King-Ocean
+    // -only dockReceiptNumber projection) so a TWINex warehouse number doesn't produce "freight-null.pdf".
+    const filename = `freight-${data.reference.value}.pdf`.replace(/[^a-zA-Z0-9._-]/g, '-')
     const artifactId = await this.artifacts.write({
       workspaceId: record.workspaceId, conversationId: record.conversationId,
       idempotencyKey: `freight-document:${record.id}`, filename, bytes, data,

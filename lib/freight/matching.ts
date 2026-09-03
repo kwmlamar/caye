@@ -23,7 +23,7 @@ export function rankPurchaseEvidence(request: FreightRequest, candidates: Purcha
   const ranked = candidates.map((candidate): RankedPurchaseEvidence => {
     let score = 0
     const reasons: string[] = []
-    const requestRefs = [request.dockReceiptNumber, request.shipmentReference].filter(Boolean).map(norm)
+    const requestRefs = [request.reference?.value ?? null].filter(Boolean).map(norm)
     const evidenceRefs = [...candidate.referenceNumbers, candidate.orderNumber, candidate.receiptNumber, candidate.poNumber].filter(Boolean).map(norm)
     if (requestRefs.some(r => evidenceRefs.includes(r))) { score += 100; reasons.push('exact reference match') }
 

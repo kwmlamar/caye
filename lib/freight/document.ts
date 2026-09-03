@@ -1,3 +1,4 @@
+import { FREIGHT_REFERENCE_LABELS, freightReferenceLabel } from './types'
 import type { FreightDocumentData, FreightRequest, PurchaseEvidence } from './types'
 
 const money = (n: number | null, currency: string | null) => n === null ? 'UNKNOWN' : `${currency ?? ''} ${n.toFixed(2)}`.trim()
@@ -10,7 +11,7 @@ export function verifiedLineTotal(line: PurchaseEvidence['lines'][number]): numb
 }
 
 export function buildFreightDocumentData(businessName: string, request: FreightRequest, evidence: PurchaseEvidence): FreightDocumentData {
-  if (!request.dockReceiptNumber) throw new Error('Dock receipt number is required before document generation')
+  if (!request.reference) throw new Error('A freight reference (dock receipt, warehouse number, or shipment reference) is required before document generation')
   const unresolvedFields: string[] = []
   if (!evidence.vendor) unresolvedFields.push('vendor')
   if (!evidence.purchaseDate) unresolvedFields.push('purchase date')
@@ -23,7 +24,7 @@ export function buildFreightDocumentData(businessName: string, request: FreightR
   })
   return {
     documentTitle: 'FREIGHT DOCUMENT', businessName, freightProvider: request.freightProvider,
-    dockReceiptNumber: request.dockReceiptNumber, vendor: evidence.vendor, purchaseDate: evidence.purchaseDate,
+    reference: request.reference, vendor: evidence.vendor, purchaseDate: evidence.purchaseDate,
     purchaseReference: evidence.receiptNumber ?? evidence.orderNumber ?? evidence.poNumber,
     lines: evidence.lines, subtotal: evidence.subtotal, tax: evidence.tax, shipping: evidence.shipping,
     total: evidence.total, currency: evidence.currency, purchaser: evidence.purchaser,
@@ -36,7 +37,7 @@ export function buildFreightDocumentData(businessName: string, request: FreightR
 export function renderFreightDocumentPdf(data: FreightDocumentData): Buffer {
   const rows = [
     data.documentTitle, data.businessName, '',
-    `Dock Receipt: ${data.dockReceiptNumber}`,
+    `${FREIGHT_REFERENCE_LABELS[data.reference.kind]}: ${data.reference.value}`,
     `Freight Provider: ${data.freightProvider ?? 'UNKNOWN'}`,
     `Vendor / Source Purchase: ${data.vendor ?? 'UNKNOWN'}`,
     `Purchase Date: ${data.purchaseDate ?? 'UNKNOWN'}`,
@@ -64,5 +65,5 @@ export function renderFreightDocumentPdf(data: FreightDocumentData): Buffer {
 
 export function prepareFreightReply(request: FreightRequest): string {
   const greeting = request.senderName ? `Hi ${request.senderName.split(/\s+/)[0]},` : 'Hello,'
-  return `${greeting}\n\nAttached is the requested freight document for Dock Receipt ${request.dockReceiptNumber ?? 'UNKNOWN'}.\n\nPlease let me know if you need anything else.`
+  return `${greeting}\n\nAttached is the requested freight document for ${freightReferenceLabel(request.reference)}.\n\nPlease let me know if you need anything else.`
 }
