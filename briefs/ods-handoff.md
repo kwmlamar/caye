@@ -39,6 +39,28 @@ Wallace · Omar · Jay
 
 Caye is never a second copy of the ledger. Every answer cites a ledger row.
 
+## 2b. Who actually does what — trust this over the audit
+
+Stated by Lamar, 2026-09-03. The audit's role labels are wrong and several briefs were
+written against them.
+
+| Person | Role |
+|---|---|
+| Wallace Sr. | owns ODS; final call on **money, contracts, new vendors** |
+| Omar | **estimating / pricing** |
+| Jay | **HR / crew management** — hence 1,529 timesheet rows since January |
+| Lamar | **runs the office** — client communication, document filing, data entry, paper trail |
+
+The audit calls Jay "Accountant" and Omar "PM / Site Supervisor". Both are wrong.
+
+**Two briefs inherit the error and should be read with this correction in mind:**
+`ods-receivables-loop.md` assigns receivables to Jay — it belongs to Lamar, with Wallace
+making the money call. `ods-crew-day-write-path.md` frames the crew day as Omar's — crew is
+Jay's.
+
+Attention should route by domain rather than seniority: money and contracts to Wallace,
+payroll and crew to Jay, estimating to Omar, documents and the paper trail to Lamar.
+
 ## 3. Identifiers you will need
 
 | Thing | Value |
