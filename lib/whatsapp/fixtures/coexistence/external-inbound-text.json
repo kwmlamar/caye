@@ -1,0 +1,32 @@
+{
+  "object": "whatsapp_business_account",
+  "entry": [
+    {
+      "id": "000000000000000",
+      "changes": [
+        {
+          "field": "messages",
+          "value": {
+            "messaging_product": "whatsapp",
+            "metadata": {
+              "display_phone_number": "15550000001",
+              "phone_number_id": "000000000000000"
+            },
+            "contacts": [
+              { "profile": { "name": "Test Customer" }, "wa_id": "15550000042" }
+            ],
+            "messages": [
+              {
+                "from": "15550000042",
+                "id": "wamid.TEST_EXTERNAL_0001",
+                "timestamp": "1756800000",
+                "type": "text",
+                "text": { "body": "Are you free to quote a job next week?" }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -49,13 +49,21 @@ export async function generateWhatsAppReply(
 
 /**
  * Sends a WhatsApp message via the Meta Cloud API.
+ *
+ * Returns Meta's own message id (wamid) when the response carries one.
+ * Callers persist it at `unified_messages.metadata.wa_message_id`, which is
+ * what lets coexistence tell Caye's own Cloud API sends apart from the
+ * owner's WhatsApp Business app messages — see
+ * lib/whatsapp/coexistence-ingest.ts's echoMatchesRecordedCayeSend. Null
+ * (a 200 with an unexpected body) is a real answer, not an error: the send
+ * happened, the id just is not available to reconcile against.
  */
 export async function sendWhatsAppMessage(
   to: string,
   body: string,
   phoneNumberId: string,
   accessToken: string
-): Promise<void> {
+): Promise<string | null> {
   const res = await fetch(
     `https://graph.facebook.com/v19.0/${phoneNumberId}/messages`,
     {
@@ -78,5 +86,14 @@ export async function sendWhatsAppMessage(
     throw new Error(
       `Meta WhatsApp API error (HTTP ${res.status}) sending to ${to}: ${detail.slice(0, 300)}`
     )
+  }
+
+  try {
+    const data = (await res.json()) as { messages?: { id?: string }[] }
+    const id = data.messages?.[0]?.id
+    return typeof id === 'string' && id ? id : null
+  } catch {
+    // The send already succeeded; an unparsable body only costs the id.
+    return null
   }
 }

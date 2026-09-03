@@ -139,6 +139,7 @@ export async function dispatchOperatorReply(
   // never replied) can reply against it and thread correctly — see
   // findReplyTargetZohoMessageId in lib/email-ai.ts.
   let zohoMessageId: string | null = null
+  let waMessageId: string | null = null
 
   if (!['messenger', 'instagram', 'whatsapp', 'email'].includes(conv.channel_type)) {
     throw new Error(`unsupported channel: ${conv.channel_type}`)
@@ -155,7 +156,9 @@ export async function dispatchOperatorReply(
         await sendMetaMessage(conv.customer_id, outboundBody, account.access_token)
         break
       case 'whatsapp':
-        await sendWhatsAppMessage(
+        // Meta's own id for this send, persisted below so a coexistence echo
+        // of it is recognised as Caye's work rather than the owner's.
+        waMessageId = await sendWhatsAppMessage(
           conv.customer_id,
           outboundBody,
           account.channel_account_id,
@@ -233,6 +236,7 @@ export async function dispatchOperatorReply(
         ? { autonomy: meta.autonomy }
         : {}),
       ...(zohoMessageId ? { zoho_message_id: zohoMessageId } : {}),
+      ...(waMessageId ? { wa_message_id: waMessageId } : {}),
       ...(idempotencyKey
         ? { idempotency_key: idempotencyKey, idempotency_channel: conv.channel_type }
         : {}),
