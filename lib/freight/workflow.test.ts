@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { KING_OCEAN_FIXTURE } from './fixture'
+import { KING_OCEAN_FIXTURE, TWINEX_FIXTURE } from './fixture'
 import { FreightWorkflow, type FreightWorkflowRecord, type FreightWorkflowStore } from './workflow'
 
 function harness() {
@@ -60,5 +60,25 @@ describe('freight workflow orchestration', () => {
     const h = harness()
     const result = await h.workflow.discover({ workspaceId: 'w', conversationId: 'c', requestMessageId: 'm', request: { ...KING_OCEAN_FIXTURE.request, isFreightDocumentRequest: false }, evidence: [] })
     expect(result).toBeNull(); expect(h.events).toHaveLength(0); expect(h.writes).toHaveLength(0); expect(h.sends).toHaveLength(0)
+  })
+
+  it('derives the generated PDF filename from the reference value for a TWINex warehouse-number request', async () => {
+    const h = harness()
+    const discovered = await h.workflow.discover({ workspaceId: 'workspace-ods-fixture', conversationId: 'conv-1', requestMessageId: 'msg-request-1', request: TWINEX_FIXTURE.request, evidence: [TWINEX_FIXTURE.evidence] })
+    await h.workflow.generate(discovered!, TWINEX_FIXTURE.evidence, 'ODS Construction')
+    expect(h.writes).toHaveLength(1)
+    const filename = (h.writes[0] as { filename: string }).filename
+    expect(filename).toBe('freight-188052.pdf')
+    expect(filename).not.toContain('null')
+    expect(filename).not.toMatch(/dock/i)
+  })
+
+  it('renders the King Ocean generated filename exactly as before -- regression', async () => {
+    const h = harness()
+    const discovered = await h.workflow.discover({ workspaceId: 'workspace-ods-fixture', conversationId: 'conv-1', requestMessageId: 'msg-request-1', request: KING_OCEAN_FIXTURE.request, evidence: [KING_OCEAN_FIXTURE.evidence] })
+    await h.workflow.generate(discovered!, KING_OCEAN_FIXTURE.evidence, 'ODS Construction')
+    expect(h.writes).toHaveLength(1)
+    const filename = (h.writes[0] as { filename: string }).filename
+    expect(filename).toBe('freight-DR-12345.pdf')
   })
 })

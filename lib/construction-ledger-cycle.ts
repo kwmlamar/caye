@@ -3,6 +3,7 @@ import 'server-only'
 import { createServiceClient } from '@/lib/supabase-server'
 import { projectDomainEventsToAttention, type DomainAttentionResult } from '@/lib/domain-attention'
 import { raiseReceivablesAttention, type ReceivablesAttentionResult } from '@/lib/receivables-attention'
+import { projectFreightRequestsToAttention, type FreightAttentionResult } from '@/lib/freight-attention'
 import { runBedrockSync, type BedrockStreamOutcome } from '@/lib/domain-adapters/bedrock'
 
 /**
@@ -49,6 +50,8 @@ export interface ConstructionLedgerWorkspaceResult {
   attentionError: string | null
   receivables: ReceivablesAttentionResult | null
   receivablesError: string | null
+  freightAttention: FreightAttentionResult | null
+  freightAttentionError: string | null
 }
 
 export interface ConstructionLedgerCycleResult {
@@ -61,6 +64,7 @@ export interface ConstructionLedgerCycleDeps {
   sync: typeof runBedrockSync
   project: typeof projectDomainEventsToAttention
   raiseReceivables: typeof raiseReceivablesAttention
+  projectFreight: typeof projectFreightRequestsToAttention
 }
 
 const BEDROCK = 'bedrock'
@@ -95,6 +99,7 @@ export async function runConstructionLedgerCycle(args: {
   const sync = args.deps?.sync ?? runBedrockSync
   const project = args.deps?.project ?? projectDomainEventsToAttention
   const raiseReceivables = args.deps?.raiseReceivables ?? raiseReceivablesAttention
+  const projectFreight = args.deps?.projectFreight ?? projectFreightRequestsToAttention
   const windowMs = args.attentionWindowMs ?? DEFAULT_ATTENTION_WINDOW_MS
 
   const workspaceIds = await listBoundWorkspaces()
@@ -112,6 +117,8 @@ export async function runConstructionLedgerCycle(args: {
       attentionError: null,
       receivables: null,
       receivablesError: null,
+      freightAttention: null,
+      freightAttentionError: null,
     }
 
     try {
@@ -136,6 +143,19 @@ export async function runConstructionLedgerCycle(args: {
       result.receivables = await raiseReceivables({ workspaceId })
     } catch (error) {
       result.receivablesError = message(error)
+    }
+
+    // A fourth independent step, same shape as the three above: freight
+    // requests are detected by the Gmail poll cron, not by this sync, so
+    // this does not depend on `sync` having succeeded this pass — it reads
+    // whatever `unified_conversations.metadata.freight_workflow` already
+    // holds. One workspace's (or one producer's) failure here must not
+    // withhold what sync/attention already produced above, so this gets its
+    // own try/catch rather than sharing the block above.
+    try {
+      result.freightAttention = await projectFreight({ workspaceId })
+    } catch (error) {
+      result.freightAttentionError = message(error)
     }
 
     // One workspace's outage is not another's. A thrown error here would stop

@@ -1,3 +1,4 @@
+import { freightRequestEntityId } from './types'
 import 'server-only'
 
 import { createServiceClient } from '@/lib/supabase-server'
@@ -32,7 +33,10 @@ export async function reconcileFreightEmailAttachmentEvidence(message: FreightEm
   if (!request.isFreightDocumentRequest) return { freightRequestId: null, purchaseCandidates: 0, shipmentEvidence: 0 }
 
   const db = createServiceClient()
-  const freightRequestId = `freight:${message.unifiedMessageId}`
+  // The workflow record's display id keeps the prefix; the relation must not.
+  // See freightRequestEntityId -- a prefixed id is not valid UUID syntax and
+  // every insert using one has been failing silently.
+  const freightRequestId = freightRequestEntityId(message.unifiedMessageId)
   const since = new Date(new Date(message.receivedAt).getTime() - 90 * 86_400_000).toISOString()
   const { data: observations, error } = await db
     .from('business_artifact_observations')
