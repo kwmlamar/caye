@@ -101,6 +101,21 @@ class FixtureBedrockProvider implements BedrockReadProvider {
       .map((row) => ({ ...row }))
   }
 
+  // This fixture exercises the purchase-order stream only. The other change
+  // readers exist on the interface and are deliberately inert here rather than
+  // faked, so this file keeps asserting one stream end to end.
+  async listProjectsChangedSince(): Promise<BedrockRow[]> {
+    return []
+  }
+
+  async listEstimatesChangedSince(): Promise<BedrockRow[]> {
+    return []
+  }
+
+  async listAllReceipts(): Promise<BedrockRow[]> {
+    return []
+  }
+
   async getPurchaseOrder(companyId: string, id: string) {
     const row = this.rows.get(id)
     return row && row.company_id === companyId ? { ...row } : null

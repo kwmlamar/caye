@@ -26,6 +26,27 @@ export interface BedrockReadProvider {
     limit: number,
     notBefore?: string | null,
   ): Promise<BedrockRow[]>
+  listProjectsChangedSince(
+    companyId: string,
+    after: { updatedAt: string; id: string } | null,
+    limit: number,
+    notBefore?: string | null,
+  ): Promise<BedrockRow[]>
+  listEstimatesChangedSince(
+    companyId: string,
+    after: { updatedAt: string; id: string } | null,
+    limit: number,
+    notBefore?: string | null,
+  ): Promise<BedrockRow[]>
+  /**
+   * Receipts have NO `updated_at` column in Bedrock — only `created_at`. A
+   * keyset poll would therefore catch new rows and silently miss every status
+   * transition, which is worse than not polling at all because it looks like
+   * it works. Change detection for receipts is a bounded full scan compared
+   * against the snapshot fingerprint instead, which is honest at ODS's volume
+   * (single-digit rows) and must not be reused for a large table.
+   */
+  listAllReceipts(companyId: string, limit: number): Promise<BedrockRow[]>
   listProjectPurchaseOrders(companyId: string, projectId: string): Promise<BedrockRow[]>
   getPurchaseOrderItems(purchaseOrderId: string): Promise<BedrockRow[]>
   getVendor(companyId: string, id: string): Promise<BedrockRow | null>
@@ -139,6 +160,73 @@ export class SupabaseBedrockReadProvider implements BedrockReadProvider {
     return throwOnError(
       await query
         .order('updated_at', { ascending: true })
+        .order('id', { ascending: true })
+        .limit(Math.min(Math.max(limit, 1), 500)),
+    ) ?? []
+  }
+
+  /**
+   * The same keyset scan for the two other tables that carry `updated_at`.
+   * Kept as separate methods rather than one table-parameterised helper: the
+   * table name is the tenant boundary's other half, and a caller-supplied
+   * table string is exactly the shape that later grows into arbitrary read
+   * access on a provider whose whole purpose is to have none.
+   */
+  async listProjectsChangedSince(
+    companyId: string,
+    after: { updatedAt: string; id: string } | null,
+    limit: number,
+    notBefore?: string | null,
+  ) {
+    let query = this.client.from('projects').select('*').eq('company_id', companyId)
+    if (notBefore) query = query.gte('updated_at', notBefore)
+    if (after) {
+      query = query.or(
+        `updated_at.gt.${after.updatedAt},and(updated_at.eq.${after.updatedAt},id.gt.${after.id})`,
+      )
+    }
+    return throwOnError(
+      await query
+        .order('updated_at', { ascending: true })
+        .order('id', { ascending: true })
+        .limit(Math.min(Math.max(limit, 1), 500)),
+    ) ?? []
+  }
+
+  async listEstimatesChangedSince(
+    companyId: string,
+    after: { updatedAt: string; id: string } | null,
+    limit: number,
+    notBefore?: string | null,
+  ) {
+    let query = this.client.from('estimates').select('*').eq('company_id', companyId)
+    if (notBefore) query = query.gte('updated_at', notBefore)
+    if (after) {
+      query = query.or(
+        `updated_at.gt.${after.updatedAt},and(updated_at.eq.${after.updatedAt},id.gt.${after.id})`,
+      )
+    }
+    return throwOnError(
+      await query
+        .order('updated_at', { ascending: true })
+        .order('id', { ascending: true })
+        .limit(Math.min(Math.max(limit, 1), 500)),
+    ) ?? []
+  }
+
+  /**
+   * No `updated_at` on `receipts`, so there is no keyset position to resume
+   * from and no way to ask the source what changed. The caller compares the
+   * whole scan against its own fingerprints. Ordered for a stable scan, capped
+   * like every other read here.
+   */
+  async listAllReceipts(companyId: string, limit: number) {
+    return throwOnError(
+      await this.client
+        .from('receipts')
+        .select('*')
+        .eq('company_id', companyId)
+        .order('created_at', { ascending: true })
         .order('id', { ascending: true })
         .limit(Math.min(Math.max(limit, 1), 500)),
     ) ?? []
