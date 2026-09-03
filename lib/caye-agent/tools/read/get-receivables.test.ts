@@ -118,13 +118,14 @@ describe('getReceivables', () => {
       expect(result.ok).toBe(true)
       if (!result.ok) throw new Error('unreachable')
 
-      expect(result.data.nothing_recorded).toBe(true)
-      expect(result.data.total_invoices).toBe(0)
-      expect(result.data.total_outstanding_balance).toBe(0)
+      const data = result.data as any
+      expect(data.nothing_recorded).toBe(true)
+      expect(data.total_invoices).toBe(0)
+      expect(data.total_outstanding_balance).toBe(0)
 
       // The zero is present, but it never travels without the sentence that
       // says what it means -- that is the whole point.
-      const note = String(result.data.nothing_recorded_note)
+      const note = String(data.nothing_recorded_note)
       expect(note).toMatch(/not.*mean.*no money is owed|does NOT mean/i)
       expect(note).toMatch(/record/i)
     })
@@ -138,8 +139,10 @@ describe('getReceivables', () => {
 
       // Same zero, two different facts: one job having no invoice is ordinary;
       // the register having none at all is the thing worth saying out loud.
-      expect(scoped.data.nothing_recorded_note).not.toBe(whole.data.nothing_recorded_note)
-      expect(String(scoped.data.nothing_recorded_note)).toMatch(/this job/i)
+      const scopedNote = (scoped.data as any).nothing_recorded_note
+      const wholeNote = (whole.data as any).nothing_recorded_note
+      expect(scopedNote).not.toBe(wholeNote)
+      expect(String(scopedNote)).toMatch(/this job/i)
     })
 
     it('stays silent about emptiness the moment there is anything to report', async () => {
@@ -148,8 +151,8 @@ describe('getReceivables', () => {
       const result = await tool.execute({}, ctx)
       if (!result.ok) throw new Error('unreachable')
 
-      expect(result.data.nothing_recorded).toBe(false)
-      expect(result.data.nothing_recorded_note).toBeNull()
+      expect((result.data as any).nothing_recorded).toBe(false)
+      expect((result.data as any).nothing_recorded_note).toBeNull()
     })
   })
 
