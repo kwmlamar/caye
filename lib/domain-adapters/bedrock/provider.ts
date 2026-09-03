@@ -52,6 +52,16 @@ export interface BedrockReadProvider {
   getVendor(companyId: string, id: string): Promise<BedrockRow | null>
   listProjectReceipts(companyId: string, projectId: string): Promise<BedrockRow[]>
   getReceiptLineItems(receiptId: string): Promise<BedrockRow[]>
+  /**
+   * Pay periods have NO `updated_at` column in Bedrock — only `created_at`.
+   * A keyset poll would therefore catch newly opened pay periods and
+   * silently miss every `open -> processing -> paid` status transition,
+   * which is worse than not polling at all because it looks like it works.
+   * Change detection for pay periods is a bounded full scan compared against
+   * the snapshot fingerprint instead, which is honest at ODS's volume (35
+   * pay periods) and must not be reused for a large table.
+   */
+  listAllPayPeriods(companyId: string, limit: number): Promise<BedrockRow[]>
 }
 
 function throwOnError<T>(result: { data: T; error: { message: string } | null }): T {
@@ -254,5 +264,23 @@ export class SupabaseBedrockReadProvider implements BedrockReadProvider {
 
   async getReceiptLineItems(receiptId: string) {
     return throwOnError(await this.client.from('receipt_line_items').select('*').eq('receipt_id', receiptId)) ?? []
+  }
+
+  /**
+   * No `updated_at` on `pay_periods`, so there is no keyset position to
+   * resume from and no way to ask the source what changed. The caller
+   * compares the whole scan against its own fingerprints. Ordered for a
+   * stable scan, capped like every other read here.
+   */
+  async listAllPayPeriods(companyId: string, limit: number) {
+    return throwOnError(
+      await this.client
+        .from('pay_periods')
+        .select('*')
+        .eq('company_id', companyId)
+        .order('created_at', { ascending: true })
+        .order('id', { ascending: true })
+        .limit(Math.min(Math.max(limit, 1), 500)),
+    ) ?? []
   }
 }

@@ -3,6 +3,7 @@ export { BedrockPurchaseOrderChangeSource, PURCHASE_ORDER_TRACKED_FIELDS, decode
 export { BedrockProjectChangeSource, PROJECT_TRACKED_FIELDS } from './project-change-source'
 export { BedrockEstimateChangeSource, ESTIMATE_TRACKED_FIELDS } from './estimate-change-source'
 export { BedrockReceiptChangeSource, RECEIPT_TRACKED_FIELDS } from './receipt-change-source'
+export { BedrockPayPeriodChangeSource, PAY_PERIOD_TRACKED_FIELDS } from './pay-period-change-source'
 export { KernelBedrockConnectionResolver, toBedrockConnection } from './kernel-connection'
 export { SupabaseBedrockReadProvider } from './provider'
 export type { BedrockReadProvider } from './provider'
