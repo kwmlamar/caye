@@ -1,0 +1,42 @@
+name: Semantic isolation foundation
+
+on:
+  pull_request:
+    paths:
+      - 'lib/semantic-scope.ts'
+      - 'lib/semantic-scope.test.ts'
+      - 'lib/semantic-scope-parent.test.ts'
+      - 'supabase/migrations/20260901141500_semantic_scope_foundation.sql'
+      - 'supabase/migrations/20260901142500_semantic_scope_parent_binding.sql'
+      - '.github/workflows/semantic-isolation-foundation-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Phase 1 verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Semantic scope unit and migration tests
+        run: npx vitest run lib/semantic-scope.test.ts lib/semantic-scope-parent.test.ts --reporter=verbose
+      - name: Full unit/integration suite
+        id: full_suite
+        continue-on-error: true
+        run: npm test
+      - name: Typecheck
+        if: always()
+        run: npx tsc --noEmit
+      - name: Build
+        if: always()
+        run: npm run build
+      - name: Preserve full-suite failure
+        if: steps.full_suite.outcome == 'failure'
+        run: exit 1
