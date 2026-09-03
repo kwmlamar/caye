@@ -30,9 +30,16 @@ describe('production tool surface', () => {
     // The owner count deliberately does NOT move with CAY-194: all 11 new
     // application-execution tools are founder-only, so owners gain nothing
     // and only the excluded-by-role figures grow.
-    expect(owner).toMatchObject({ exposedToolCount: 73, excludedByRoleCount: 37, excludedToolSchemaBytes: 23362 })
-    expect(founder).toMatchObject({ exposedToolCount: 110, excludedByRoleCount: 0, excludedToolSchemaBytes: 0 })
-    expect(staff).toMatchObject({ exposedToolCount: 13, excludedByRoleCount: 97, excludedToolSchemaBytes: 93352 })
+    //
+    // Moved deliberately by the ODS grounded-invoice-proposal change: it adds
+    // exactly one back-office read tool, `propose_freight_invoice`, tagged
+    // owner+founder. Owners and founders each gain one exposed schema; staff
+    // gain one more excluded-by-role tool and its 715 serialized bytes
+    // (714 for the tool object plus one array separator). Owner exclusion
+    // figures are unchanged because owners can call it.
+    expect(owner).toMatchObject({ exposedToolCount: 74, excludedByRoleCount: 37, excludedToolSchemaBytes: 23362 })
+    expect(founder).toMatchObject({ exposedToolCount: 111, excludedByRoleCount: 0, excludedToolSchemaBytes: 0 })
+    expect(staff).toMatchObject({ exposedToolCount: 13, excludedByRoleCount: 98, excludedToolSchemaBytes: 94067 })
   })
 
   it.each(['owner', 'staff', 'founder', 'driver'] as const)('only exposes schemas executable by %s', (callerRole) => {

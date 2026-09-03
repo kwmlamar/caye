@@ -34,6 +34,7 @@ import { cayeCapabilitiesTool } from './read/caye-capabilities'
 import { listPropertiesTool } from './read/list-properties'
 import { getPropertySnapshotTool } from './read/get-property-snapshot'
 import { analyzePropertyWaterTool } from './read/analyze-property-water'
+import { proposeFreightInvoice } from './read/propose-freight-invoice'
 import { getConnectLink } from './write-low/get-connect-link'
 import { recordChannelIntake } from './write-low/record-channel-intake'
 import { markHandled } from './write-low/mark-handled'
@@ -204,6 +205,7 @@ export const TOOL_REGISTRY: AnyTool[] = [
   listPropertiesTool as AnyTool,
   getPropertySnapshotTool as AnyTool,
   analyzePropertyWaterTool as AnyTool,
+  proposeFreightInvoice as AnyTool,
   listEngineeringProjectsTool as AnyTool,
   getEngineeringProjectTool as AnyTool,
   compareEngineeringProjectOutcomesTool as AnyTool,
