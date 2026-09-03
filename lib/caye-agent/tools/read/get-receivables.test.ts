@@ -104,6 +104,55 @@ function makeAdapter(
 }
 
 describe('getReceivables', () => {
+  // The empty ledger is the state ODS is ACTUALLY in: zero invoice rows
+  // against 25 projects, while roughly $94,178 sits outstanding in email and
+  // spreadsheets. So the empty case is not an edge case here -- it is the
+  // production case, and the one where a confident wrong answer does real
+  // harm. These pin that emptiness is reported as its own fact and never as
+  // a zero balance.
+  describe('an empty register is never reported as nothing owed', () => {
+    it('says nothing has been RECORDED, not that nothing is outstanding', async () => {
+      const tool = makeGetReceivables(makeAdapter([]), NOW)
+
+      const result = await tool.execute({}, ctx)
+      expect(result.ok).toBe(true)
+      if (!result.ok) throw new Error('unreachable')
+
+      expect(result.data.nothing_recorded).toBe(true)
+      expect(result.data.total_invoices).toBe(0)
+      expect(result.data.total_outstanding_balance).toBe(0)
+
+      // The zero is present, but it never travels without the sentence that
+      // says what it means -- that is the whole point.
+      const note = String(result.data.nothing_recorded_note)
+      expect(note).toMatch(/not.*mean.*no money is owed|does NOT mean/i)
+      expect(note).toMatch(/record/i)
+    })
+
+    it('distinguishes an empty JOB from an empty register', async () => {
+      const tool = makeGetReceivables(makeAdapter([]), NOW)
+
+      const scoped = await tool.execute({ project_id: 'project-1' }, ctx)
+      const whole = await tool.execute({}, ctx)
+      if (!scoped.ok || !whole.ok) throw new Error('unreachable')
+
+      // Same zero, two different facts: one job having no invoice is ordinary;
+      // the register having none at all is the thing worth saying out loud.
+      expect(scoped.data.nothing_recorded_note).not.toBe(whole.data.nothing_recorded_note)
+      expect(String(scoped.data.nothing_recorded_note)).toMatch(/this job/i)
+    })
+
+    it('stays silent about emptiness the moment there is anything to report', async () => {
+      const tool = makeGetReceivables(makeAdapter([offTheReef]), NOW)
+
+      const result = await tool.execute({}, ctx)
+      if (!result.ok) throw new Error('unreachable')
+
+      expect(result.data.nothing_recorded).toBe(false)
+      expect(result.data.nothing_recorded_note).toBeNull()
+    })
+  })
+
   it('ages every invoice from issue_date/due_date at the injected clock, never a stored figure', async () => {
     const tool = makeGetReceivables(makeAdapter([offTheReef, islandBreeze, laVieEnRose, sundancer]), NOW)
 

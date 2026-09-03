@@ -60,6 +60,7 @@ export function makeGetReceivables(
       "An invoice with even one recorded payment is never 'unconfirmed', even if it is still overdue and only partially paid -- partial payment is normal for ODS's milestone billing. " +
       "A `payments` row is written only by record_payment (high risk) as a human attestation that money was received; this tool never infers a payment from a promise, a client's message, or an invoice's own status. " +
       "The response ALWAYS states, in the data itself, that no bank is connected -- Caye can see what TropiTrack says was invoiced and what a human has confirmed as paid, but never what actually landed in an account. Never imply otherwise when reporting this. " +
+      "If `nothing_recorded` is true, NOTHING HAS BEEN ENTERED -- that is not the same as nothing being owed, and must never be reported as 'nothing outstanding' or 'all caught up'. Report the register as empty and offer to record invoices that have already gone out. " +
       'Only invoices that have actually been sent (log_invoice_sent recorded a sent_at) and still carry a balance are included -- drafts and fully-paid invoices are not receivables. ' +
       'Invoices are sorted oldest-unconfirmed-first: that is the order a human should work them in.',
     risk: 'read',
@@ -127,6 +128,25 @@ export function makeGetReceivables(
         const overdueCount = rows.filter((r) => r.overdue).length
         const totalOutstandingBalance = Math.round(rows.reduce((sum, r) => sum + r.balance_due, 0) * 100) / 100
 
+        // An empty result is the single most dangerous thing this tool can
+        // return, and it is not the same fact as "nothing is owed".
+        //
+        // At the time of writing the ledger holds ZERO invoice rows against 25
+        // projects and 3,883 timesheet entries, while the audit puts roughly
+        // $94,178 of payment requests outstanding. Every one of those lives in
+        // email and spreadsheets, not here. So a bare `total_outstanding_balance: 0`
+        // reads as "you are all caught up" when the truth is "nobody has written
+        // any of it down yet" -- the audit's own core failure, handed back to the
+        // owner as reassurance. A wrong zero is worse than no answer, because a
+        // zero gets believed and nobody re-checks a number that looks clean.
+        //
+        // So the emptiness is reported as its own explicit fact rather than left
+        // to be inferred from a total. `scope` distinguishes the two ways of
+        // arriving at zero: nothing recorded for this JOB is ordinary, nothing
+        // recorded ANYWHERE means the register itself is empty.
+        const nothingRecorded = rows.length === 0
+        const scopedToProject = Boolean(args.project_id)
+
         return {
           ok: true,
           data: {
@@ -134,6 +154,12 @@ export function makeGetReceivables(
             bank_connected: false,
             bank_note:
               'No bank account is connected. This reflects what TropiTrack has invoiced and what a human has confirmed as received -- it is not a bank balance, and Caye cannot see whether money has actually arrived.',
+            nothing_recorded: nothingRecorded,
+            nothing_recorded_note: nothingRecorded
+              ? scopedToProject
+                ? 'No invoice has been recorded against this job. That means none has been entered -- it does NOT mean the job is fully paid or that nothing is owed on it. Say that this is what is on record, not what is owed, and offer to record any invoice that has already gone out.'
+                : 'No invoice has been recorded at all, so there is nothing here to age. Do NOT report this as "nothing outstanding", "all caught up", or a zero balance -- it means none have been entered yet, not that no money is owed. Say plainly that the register is empty, and offer to record the invoices that have already gone out so they can start being tracked.'
+              : null,
             total_invoices: rows.length,
             unconfirmed_count: unconfirmedCount,
             overdue_count: overdueCount,
