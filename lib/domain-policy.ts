@@ -128,6 +128,73 @@ export function unconfirmed(policy: Record<string, { source: PolicySource }>): s
     .map(([key]) => key)
 }
 
+/**
+ * The one thing worth asking about right now — or nothing.
+ *
+ * "Ask when you don't know" is only useful if it is disciplined. Asking about
+ * all six assumptions on every crew day would be an interrogation, and someone
+ * standing on a roof would stop answering by the third one. Two rules keep it
+ * bearable:
+ *
+ *   - Ask about an assumption only when it actually shaped THIS result. A break
+ *     length nobody's day depended on is not worth a question.
+ *   - Ask about at most one thing at a time, most consequential first, so a
+ *     reply is a sentence rather than a form.
+ *
+ * Returned as data rather than left to the model's judgement, for the same
+ * reason ambiguous names are: whether to ask is a correctness decision, and a
+ * prompt that usually remembers to ask is a prompt that sometimes does not.
+ */
+export interface PolicyQuestion {
+  /** The `set_construction_policy` field a reply should settle. */
+  key: string
+  question: string
+}
+
+export interface CrewDayContext {
+  /** The reporter named themselves among the crew. */
+  reporterNamed: boolean
+  /** A break was stated in the message, so the default did not decide it. */
+  breakStated: boolean
+  /** The longest net shift in the day, in hours. */
+  longestShiftHours: number
+}
+
+export function nextCrewDayQuestion(
+  policy: CrewDayPolicy,
+  context: CrewDayContext
+): PolicyQuestion | null {
+  // Who is on the timesheet decides who gets paid, so it outranks the rest.
+  if (context.reporterNamed && policy.reporterLogsOwnTime.source === 'default') {
+    return {
+      key: 'reporter_logs_own_time',
+      question:
+        'You said "me" — should I put your own hours on the timesheet too, or are you just reporting the crew? ' +
+        "I've left you off for now.",
+    }
+  }
+
+  // Every hour figure in the day rests on this one.
+  if (!context.breakStated && policy.breakMinutes.source === 'default') {
+    return {
+      key: 'break_minutes',
+      question: `I took an hour off for lunch, which is what every past entry uses. Is that right for this crew?`,
+    }
+  }
+
+  // Only bites on a long day. On a normal one it would be noise.
+  if (context.longestShiftHours > 8 && policy.overtimeEnabled.source === 'default') {
+    return {
+      key: 'overtime_enabled',
+      question:
+        `That's over 8 hours. I've logged it all as regular time because there's no overtime rule written down — ` +
+        'tell me the rule if there is one.',
+    }
+  }
+
+  return null
+}
+
 export interface AttentionOverride {
   priority?: string
   nextAction?: string | null

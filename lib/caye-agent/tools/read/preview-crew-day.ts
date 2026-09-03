@@ -6,7 +6,7 @@ import {
   getBedrockPolicyConfig,
   BedrockConnectionMissingError,
 } from '@/lib/domain-adapters/bedrock'
-import { resolveCrewDayPolicy, unconfirmed } from '@/lib/domain-policy'
+import { nextCrewDayQuestion, resolveCrewDayPolicy, unconfirmed } from '@/lib/domain-policy'
 import { buildCrewDayDraft, findDuplicates, type RosterWorker } from '@/lib/ods/crew-day'
 import { resolveJob } from './find-job'
 import type { Tool } from '../types'
@@ -195,6 +195,12 @@ export const previewCrewDay: Tool<PreviewCrewDayInput> = {
       alreadyLogged = []
     }
 
+    const question = nextCrewDayQuestion(policy, {
+      reporterNamed: args.workers.some((n) => n.trim().toLowerCase() === 'me'),
+      breakStated: args.break_minutes !== undefined,
+      longestShiftHours: draft.drafts.reduce((max, d) => Math.max(max, d.regularHours), 0),
+    })
+
     return {
       ok: true,
       data: {
@@ -221,7 +227,13 @@ export const previewCrewDay: Tool<PreviewCrewDayInput> = {
           reporter_logs_own_time: policy.reporterLogsOwnTime.value,
           still_assumed: assumed,
         },
-        note: alreadyLogged.length
+        // At most one question, and only when the assumption actually shaped
+        // this day. Whether to ask is a correctness decision, so it is decided
+        // here rather than left to the model to remember.
+        ask: question,
+        note: question
+          ? `${question.question} Then read the day back and call log_crew_day.`
+          : alreadyLogged.length
           ? `${alreadyLogged.join(', ')} already have time on this job for ${date}. Say so and do not log the day again.`
           : `Read this back with each person and their hours. Say the ${policy.breakMinutes.value}-minute break and the zero overtime out loud` +
             (assumed.length

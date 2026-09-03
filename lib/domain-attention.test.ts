@@ -40,10 +40,20 @@ function recorder() {
   return { calls, observe }
 }
 
-function run(events: DomainAttentionEvent[], observe: never) {
+/**
+ * Runs the projection with no real Supabase access: `loadEvents` returns the
+ * fixture events directly, and `loadConfig` returns `config` — defaulting to
+ * `null` (no workspace policy on record) so a test that does not care about
+ * policy does not need to say so.
+ */
+function run(
+  events: DomainAttentionEvent[],
+  observe: never,
+  config: Record<string, unknown> | null = null
+) {
   return projectDomainEventsToAttention({
     workspaceId: WORKSPACE,
-    deps: { loadEvents: async () => events, observe },
+    deps: { loadEvents: async () => events, loadConfig: async () => config, observe },
   })
 }
 
@@ -52,7 +62,7 @@ describe('projectDomainEventsToAttention', () => {
     const { calls, observe } = recorder()
     const result = await run([event()], observe)
 
-    expect(result).toEqual({ considered: 1, raised: 1, skipped: { bootstrap: 0, unresolvable: 0 } })
+    expect(result).toEqual({ considered: 1, raised: 1, skipped: { bootstrap: 0, unresolvable: 0, muted: 0 } })
     expect(calls).toHaveLength(1)
     expect(calls[0].subjectType).toBe(SUBJECT_CONSTRUCTION_CHANGE)
     expect(calls[0].subjectId).toBe('bedrock:purchase_order:po-77')
@@ -113,30 +123,134 @@ describe('projectDomainEventsToAttention', () => {
       observe
     )
 
-    expect(result).toEqual({ considered: 3, raised: 1, skipped: { bootstrap: 1, unresolvable: 1 } })
+    expect(result).toEqual({
+      considered: 3,
+      raised: 1,
+      skipped: { bootstrap: 1, unresolvable: 1, muted: 0 },
+    })
     expect(calls).toHaveLength(1)
+  })
+
+  it('skips a muted event and counts it, without ever calling observe', async () => {
+    const { calls, observe } = recorder()
+    const config = { policy: { attention: { muted: ['purchase_order.status_changed'] } } }
+    const result = await run([event()], observe, config)
+
+    expect(result).toEqual({ considered: 1, raised: 0, skipped: { bootstrap: 0, unresolvable: 0, muted: 1 } })
+    expect(calls).toHaveLength(0)
+  })
+
+  it('still raises a failed change as critical even when its rule key is muted and overridden', async () => {
+    // A workspace muting or downgrading routine noise must not accidentally
+    // silence the one signal that means "this broke."
+    const { calls, observe } = recorder()
+    const config = {
+      policy: {
+        attention: {
+          muted: ['purchase_order.status_changed'],
+          'purchase_order.status_changed': { priority: 'routine' },
+        },
+      },
+    }
+    const result = await run([event({ isFailure: true })], observe, config)
+
+    expect(result).toEqual({ considered: 1, raised: 1, skipped: { bootstrap: 0, unresolvable: 0, muted: 0 } })
+    expect(calls).toHaveLength(1)
+    expect(calls[0].priority).toBe('critical')
+  })
+
+  it('applies a workspace override to change the raised priority', async () => {
+    const { calls, observe } = recorder()
+    const config = {
+      policy: { attention: { 'purchase_order.status_changed': { priority: 'routine' } } },
+    }
+    await run([event()], observe, config)
+
+    expect(calls[0].priority).toBe('routine')
   })
 })
 
 describe('ruleFor', () => {
   it('treats a failed change as critical whatever the entity was', () => {
-    expect(ruleFor('domain.receipt.processed', true).priority).toBe('critical')
+    expect(ruleFor('domain.receipt.processed', true)?.priority).toBe('critical')
   })
 
   it('falls back to awareness for an entity type the policy has no opinion about', () => {
     // A new entity type must not silently arrive as urgent, and must not be
     // silently dropped either.
-    expect(ruleFor('domain.shipment.status_changed', false).priority).toBe('awareness')
+    expect(ruleFor('domain.shipment.status_changed', false)?.priority).toBe('awareness')
   })
 
   it('treats a contract value move as a decision, not mere awareness', () => {
     const rule = ruleFor('domain.project.value_changed', false)
-    expect(rule.priority).toBe('decision')
-    expect(String(rule.nextAction)).toContain('paperwork')
+    // Not muted by default: null here would mean the owner never hears that a
+    // contract figure moved, which is the exact gap this rule was added to close.
+    expect(rule).not.toBeNull()
+    expect(rule?.priority).toBe('decision')
+    expect(String(rule?.nextAction)).toContain('paperwork')
   })
 
   it('keeps routine ledger bookkeeping out of the decision tier', () => {
-    expect(ruleFor('domain.pay_period.paid', false).priority).toBe('routine')
+    expect(ruleFor('domain.pay_period.paid', false)?.priority).toBe('routine')
+  })
+
+  it('returns the shipped rule when there is no workspace config', () => {
+    expect(ruleFor('domain.purchase_order.status_changed', false, null)).toEqual({
+      priority: 'awareness',
+      nextAction: 'If material has landed, confirm what is on island and release anything waiting on it.',
+    })
+  })
+
+  it('returns null for a muted rule, never a downgraded priority', () => {
+    const config = { policy: { attention: { muted: ['purchase_order.status_changed'] } } }
+    expect(ruleFor('domain.purchase_order.status_changed', false, config)).toBeNull()
+  })
+
+  it('a failure is always critical even when the rule key is muted', () => {
+    const config = { policy: { attention: { muted: ['purchase_order.status_changed'] } } }
+    expect(ruleFor('domain.purchase_order.status_changed', true, config)?.priority).toBe('critical')
+  })
+
+  it('a failure is always critical even when the rule key has an override', () => {
+    const config = {
+      policy: { attention: { 'purchase_order.status_changed': { priority: 'routine' } } },
+    }
+    expect(ruleFor('domain.purchase_order.status_changed', true, config)).toEqual({
+      priority: 'critical',
+      nextAction: 'A change could not be processed. Check the source record.',
+    })
+  })
+
+  it('applies a workspace override on top of the shipped rule', () => {
+    const config = {
+      policy: { attention: { 'estimate.status_changed': { priority: 'awareness' } } },
+    }
+    const rule = ruleFor('domain.estimate.status_changed', false, config)
+
+    // priority is overridden; next_action falls through from the shipped rule
+    // because the override did not say anything about it.
+    expect(rule?.priority).toBe('awareness')
+    expect(rule?.nextAction).toContain('contract')
+  })
+
+  it('an explicit next_action: null clears the shipped next action', () => {
+    const config = {
+      policy: { attention: { 'estimate.status_changed': { next_action: null } } },
+    }
+    expect(ruleFor('domain.estimate.status_changed', false, config)).toEqual({
+      priority: 'decision',
+      nextAction: null,
+    })
+  })
+
+  it('ignores an override priority outside the AttentionPriority union', () => {
+    const config = {
+      policy: { attention: { 'purchase_order.status_changed': { priority: 'urgent' } } },
+    }
+    const rule = ruleFor('domain.purchase_order.status_changed', false, config)
+
+    // Falls back to the shipped priority rather than passing 'urgent' to the ledger.
+    expect(rule?.priority).toBe('awareness')
   })
 })
 

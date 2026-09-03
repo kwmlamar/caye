@@ -49,7 +49,9 @@ export const setConstructionPolicy: Tool<SetConstructionPolicyInput> = {
   description:
     "Record how this business actually works, so Caye stops using a default and uses their answer. " +
     'Use it when the owner corrects an assumption — "lunch is half an hour", "we start at 6:30", ' +
-    '"Omar should be on the timesheet too", "overtime after 8 hours". Changes no existing record and ' +
+    '"Omar should be on the timesheet too", "overtime after 8 hours". ALSO use it when they CONFIRM one: ' +
+    'if preview_crew_day asked about the hour lunch and they say "yeah that\'s right", record 60 anyway. ' +
+    'That is what stops Caye asking the same question every day. Changes no existing record and ' +
     'writes nothing to the ledger: it only changes what future crew days assume, and those are still ' +
     'confirmed before anything is written. Always read back what changed and what it now assumes.',
   risk: 'low',

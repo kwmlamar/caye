@@ -2,6 +2,8 @@ import 'server-only'
 
 import { createServiceClient } from '@/lib/supabase-server'
 import { observeAttentionItem, type AttentionPriority } from '@/lib/owner-attention'
+import { getDomainSourceConnection } from '@/lib/domain/connections'
+import { isMuted, resolveAttentionOverride } from '@/lib/domain-policy'
 
 /**
  * Domain events -> owner attention.
@@ -110,13 +112,21 @@ const DEFAULT_RULE: DomainAttentionRule = { priority: 'awareness', nextAction: n
 
 export interface DomainAttentionDeps {
   loadEvents: (workspaceId: string, since: Date, limit: number) => Promise<DomainAttentionEvent[]>
+  /**
+   * The workspace's own say on how loudly a change is raised — see
+   * `lib/domain-policy.ts`. `null` means "no workspace policy on record",
+   * which `ruleFor` treats identically to an empty config: every shipped
+   * default applies. A read failure must fall back to `null` rather than
+   * throwing — losing overrides is recoverable, losing delivery is not.
+   */
+  loadConfig: (workspaceId: string) => Promise<Record<string, unknown> | null>
   observe: typeof observeAttentionItem
 }
 
 export interface DomainAttentionResult {
   considered: number
   raised: number
-  skipped: { bootstrap: number; unresolvable: number }
+  skipped: { bootstrap: number; unresolvable: number; muted: number }
 }
 
 /**
@@ -135,11 +145,61 @@ export function ruleKeyFor(eventType: string): string {
   return eventType.startsWith('domain.') ? eventType.slice('domain.'.length) : eventType
 }
 
-export function ruleFor(eventType: string, isFailure: boolean): DomainAttentionRule {
+const ATTENTION_PRIORITIES: ReadonlySet<string> = new Set<AttentionPriority>([
+  'critical',
+  'decision',
+  'awareness',
+  'routine',
+])
+
+function isAttentionPriority(value: string | undefined): value is AttentionPriority {
+  return typeof value === 'string' && ATTENTION_PRIORITIES.has(value)
+}
+
+/**
+ * The rule for one event, after the workspace's own policy has had its say.
+ *
+ * Precedence, and why each rung outranks the one below it:
+ *
+ *   1. A failed change is always `critical`. A workspace can retune how
+ *      loudly a *successful* change is raised, but it cannot mute or
+ *      downgrade a change that could not be processed — that is a
+ *      correctness problem, not a preference, and nothing below this line
+ *      gets a vote on it.
+ *   2. A muted rule returns `null` rather than a low priority — "do not tell
+ *      me about this" and "tell me quietly" are different instructions, and
+ *      returning a rule object for either would blur them. The caller decides
+ *      what to do with a skip; this function only reports one honestly.
+ *   3. A workspace override is applied over the shipped rule field by field,
+ *      so overriding `next_action` alone does not also reset `priority`. An
+ *      override with an invalid priority (not one of `AttentionPriority`) is
+ *      ignored rather than passed on to the ledger.
+ *   4. The shipped table, then the conservative `awareness` fallback for an
+ *      entity type the policy has no opinion about yet.
+ */
+export function ruleFor(
+  eventType: string,
+  isFailure: boolean,
+  config?: Record<string, unknown> | null
+): DomainAttentionRule | null {
   if (isFailure) {
     return { priority: 'critical', nextAction: 'A change could not be processed. Check the source record.' }
   }
-  return CONSTRUCTION_ATTENTION_RULES[ruleKeyFor(eventType)] ?? DEFAULT_RULE
+
+  const ruleKey = ruleKeyFor(eventType)
+  if (isMuted(config, ruleKey)) return null
+
+  const shipped = CONSTRUCTION_ATTENTION_RULES[ruleKey] ?? DEFAULT_RULE
+  const override = resolveAttentionOverride(config, ruleKey)
+  if (!override) return shipped
+
+  return {
+    priority: isAttentionPriority(override.priority) ? override.priority : shipped.priority,
+    // `'nextAction' in override` distinguishes an explicit `next_action: null`
+    // (deliberately cleared) from an absent one (not overridden, so the
+    // shipped next action still applies).
+    nextAction: 'nextAction' in override ? (override.nextAction ?? null) : shipped.nextAction,
+  }
 }
 
 /**
@@ -237,6 +297,28 @@ async function loadDomainEventsFromDb(
   }))
 }
 
+const BEDROCK = 'bedrock'
+
+/**
+ * The workspace's construction-domain policy, straight from
+ * `domain_source_connections.config.policy` for its active `bedrock`
+ * connection.
+ *
+ * Any failure here — no connection, a revoked one, a query error — falls
+ * back to `null` rather than throwing. `ruleFor` already treats `null`
+ * identically to an empty config (every shipped default applies), so a
+ * policy read failure loses the workspace's overrides for one pass, not the
+ * whole projection. Losing overrides is recoverable; losing delivery is not.
+ */
+async function loadDomainPolicyConfig(workspaceId: string): Promise<Record<string, unknown> | null> {
+  try {
+    const connection = await getDomainSourceConnection(workspaceId, BEDROCK)
+    return connection?.config ?? null
+  } catch {
+    return null
+  }
+}
+
 /**
  * Raise owner attention for domain changes accepted since `since`.
  *
@@ -255,13 +337,19 @@ export async function projectDomainEventsToAttention(args: {
   const since = args.since ?? new Date(Date.now() - 24 * 60 * 60 * 1000)
   const limit = args.limit ?? 200
   const loadEvents = args.deps?.loadEvents ?? loadDomainEventsFromDb
+  const loadConfig = args.deps?.loadConfig ?? loadDomainPolicyConfig
   const observe = args.deps?.observe ?? observeAttentionItem
 
-  const events = await loadEvents(args.workspaceId, since, limit)
+  // One config read per workspace per pass, not per event — the policy does
+  // not change mid-batch, and a batch can be 200 events.
+  const [events, config] = await Promise.all([
+    loadEvents(args.workspaceId, since, limit),
+    loadConfig(args.workspaceId),
+  ])
   const result: DomainAttentionResult = {
     considered: events.length,
     raised: 0,
-    skipped: { bootstrap: 0, unresolvable: 0 },
+    skipped: { bootstrap: 0, unresolvable: 0, muted: 0 },
   }
 
   for (const event of events) {
@@ -279,7 +367,11 @@ export async function projectDomainEventsToAttention(args: {
       continue
     }
 
-    const rule = ruleFor(event.type, event.isFailure)
+    const rule = ruleFor(event.type, event.isFailure, config)
+    if (!rule) {
+      result.skipped.muted++
+      continue
+    }
 
     await observe({
       workspaceId: event.workspaceId,
