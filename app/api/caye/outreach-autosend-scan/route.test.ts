@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { DispatchResult } from '@/lib/whatsapp/channel-dispatch'
 
 const { dispatch, update, firstTouch, followup, lifecycle } = vi.hoisted(() => ({
-  dispatch: vi.fn(async () => ({ success: true, channelType: 'email' })),
+  dispatch: vi.fn(async (): Promise<DispatchResult> => ({ success: true, channelType: 'email' })),
   update: vi.fn(() => ({ eq: vi.fn(async () => ({ error: null })) })),
   firstTouch: vi.fn(),
   followup: vi.fn(),

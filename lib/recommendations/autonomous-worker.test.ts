@@ -59,7 +59,7 @@ function runtime(overrides: Partial<RecommendationActionRuntime> = {}): Recommen
 
 describe('autonomous recommendation wake', () => {
   it('wakes an autonomously eligible recommendation without a founder prompt', async () => {
-    const enqueue = vi.fn(async () => ({ queued: true, alreadyQueued: false }))
+    const enqueue = vi.fn(async (_candidate: RecommendationWakeCandidate) => ({ queued: true, alreadyQueued: false }))
     const result = await stageEligibleRecommendationActions(5, {
       listCandidates: async () => [candidate()],
       decideUndecided: async () => ({ kind: 'accepted', decisionId: 'auto-decision' }),
@@ -137,7 +137,7 @@ describe('recommendation action operation', () => {
   })
 
   it('refuses stale queued work before execution', async () => {
-    const bridge = runtime({ inspect: vi.fn(async () => ({ recommendationVersion: 'version-2', latestDecisionId: 'decision-new', latestDecision: 'accepted', executionState: null })) })
+    const bridge = runtime({ inspect: vi.fn(async (): Promise<RecommendationOperationInspection> => ({ recommendationVersion: 'version-2', latestDecisionId: 'decision-new', latestDecision: 'accepted', executionState: null })) })
     const result = await runRecommendationActionOperation(operation({ payload: { recommendation_id: 'rec-1', recommendation_version: 'version-1', decision_id: 'decision-old' } }), bridge)
     expect(result).toEqual({ disposition: 'synced', reason: 'recommendation_version_changed' })
     expect(bridge.execute).not.toHaveBeenCalled()
@@ -161,7 +161,7 @@ describe('recommendation action operation', () => {
     const execute = vi.fn(async () => ({ status: 'completed' as const, material: false, executionRef: 'exec-1' }))
     await runRecommendationActionOperation(operation(), runtime({ execute }))
     const completedBridge = runtime({
-      inspect: vi.fn(async () => ({ recommendationVersion: 'version-1', latestDecisionId: 'decision-1', latestDecision: 'accepted', executionState: 'completed' })),
+      inspect: vi.fn(async (): Promise<RecommendationOperationInspection> => ({ recommendationVersion: 'version-1', latestDecisionId: 'decision-1', latestDecision: 'accepted', executionState: 'completed' })),
       execute,
     })
     await expect(runRecommendationActionOperation(operation(), completedBridge)).resolves.toEqual({ disposition: 'synced', reason: 'terminal_execution_state' })
