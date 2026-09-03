@@ -13,6 +13,8 @@ import { draftInInbox } from './write-high/draft-in-inbox'
 import { createCustomerBooking } from './write-high/create-customer-booking'
 import { expandOutreachTarget } from './write-high/expand-outreach-target'
 import { logCrewDay } from './write-high/log-crew-day'
+import { logInvoiceSent } from './write-high/log-invoice-sent'
+import { recordPayment } from './write-high/record-payment'
 
 /**
  * The UNGATED high-risk tools, in one place.
@@ -33,6 +35,8 @@ type AnyTool = Tool<never>
 
 export const HIGH_RISK_TOOLS: AnyTool[] = [
   logCrewDay as AnyTool,
+  logInvoiceSent as AnyTool,
+  recordPayment as AnyTool,
   sendReply as AnyTool,
   sendPaymentLink as AnyTool,
   confirmBooking as AnyTool,
