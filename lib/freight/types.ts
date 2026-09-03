@@ -86,3 +86,21 @@ export type FreightWorkflowStatus =
   | 'READY_FOR_APPROVAL'
   | 'SENT'
 
+
+/**
+ * The entity id a freight-request relation must carry.
+ *
+ * A freight request is not its own record -- it IS the inbound email that asked
+ * for the document. `business_artifact_relations.target_entity_id` is `uuid not
+ * null`, and `target_entity_type = 'freight_request'` already carries the
+ * distinction, so the id must be the bare message UUID.
+ *
+ * This exists because it was not. Both call sites wrote `freight:<uuid>`, which
+ * is not valid UUID syntax, so every freight relation insert failed: production
+ * held 0 freight relations against 2,354 total. The prefixed form is still the
+ * workflow record's own id for the dashboard -- it just must never reach the
+ * database as an entity id.
+ */
+export function freightRequestEntityId(idOrMessageId: string): string {
+  return idOrMessageId.startsWith('freight:') ? idOrMessageId.slice('freight:'.length) : idOrMessageId
+}
