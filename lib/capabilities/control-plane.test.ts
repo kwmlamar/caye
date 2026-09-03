@@ -126,6 +126,10 @@ describe('conversational capability control plane', () => {
 
     const writeResult = await startCanonicalResearchTool.execute({ questionId: 'question-1' }, context)
     expect(writeResult.ok).toBe(false)
-    expect(writeResult.error).toContain('founder Caye Direct')
+    // Wording diverged from the read-side message in dd10658b ("Make founder
+    // research instructions durable"), which also broadened the write-side
+    // gate to check callerRole in addition to channel. Assert on the phrase
+    // that tool actually returns rather than the read tool's phrasing.
+    expect(writeResult.error).toContain('the founder in Caye Direct')
   })
 })

@@ -1,35 +1,54 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('server-only', () => ({}))
-const runJobSearchInspection = vi.fn()
-const inspectApplicationForHumanAssist = vi.fn()
-const recordAnswer = vi.fn()
-let queryResults: Array<{ data: unknown; error: null | { message: string } }> = []
 
-const builder = {
-  select: vi.fn(),
-  eq: vi.fn(),
-  ilike: vi.fn(),
-  order: vi.fn(),
-  limit: vi.fn(),
-  maybeSingle: vi.fn(),
-  then: vi.fn(),
-}
+// vi.hoisted: vi.mock() factories below are hoisted to the top of the
+// module, above any plain `const x = vi.fn()`. Declaring these via
+// vi.hoisted() ensures they exist before the (also-hoisted) mock factories
+// that close over them run, avoiding "Cannot access before initialization".
+const mocks = vi.hoisted(() => {
+  let queryResults: Array<{ data: unknown; error: null | { message: string } }> = []
 
-for (const method of ['select', 'eq', 'ilike', 'order', 'limit'] as const) {
-  builder[method].mockImplementation(() => builder)
-}
-builder.maybeSingle.mockImplementation(async () => queryResults.shift() ?? { data: null, error: null })
-builder.then.mockImplementation((resolve: (value: unknown) => unknown) => Promise.resolve(queryResults.shift() ?? { data: null, error: null }).then(resolve))
+  const builder = {
+    select: vi.fn(),
+    eq: vi.fn(),
+    ilike: vi.fn(),
+    order: vi.fn(),
+    limit: vi.fn(),
+    maybeSingle: vi.fn(),
+    then: vi.fn(),
+  }
 
-const from = vi.fn(() => builder)
-vi.mock('@/lib/supabase-server', () => ({ createServiceClient: () => ({ from }) }))
+  for (const method of ['select', 'eq', 'ilike', 'order', 'limit'] as const) {
+    builder[method].mockImplementation(() => builder)
+  }
+  builder.maybeSingle.mockImplementation(async () => queryResults.shift() ?? { data: null, error: null })
+  builder.then.mockImplementation((resolve: (value: unknown) => unknown) => Promise.resolve(queryResults.shift() ?? { data: null, error: null }).then(resolve))
+
+  const from = vi.fn(() => builder)
+
+  return {
+    runJobSearchInspection: vi.fn(),
+    inspectApplicationForHumanAssist: vi.fn(),
+    recordAnswer: vi.fn(),
+    builder,
+    from,
+    getQueryResults: () => queryResults,
+    setQueryResults: (next: typeof queryResults) => {
+      queryResults = next
+    },
+  }
+})
+
+const { runJobSearchInspection, inspectApplicationForHumanAssist, recordAnswer, from } = mocks
+
+vi.mock('@/lib/supabase-server', () => ({ createServiceClient: () => ({ from: mocks.from }) }))
 vi.mock('@/app/api/caye/job-search-inspect/route', () => ({
-  runJobSearchInspection,
-  inspectApplicationForHumanAssist,
+  runJobSearchInspection: mocks.runJobSearchInspection,
+  inspectApplicationForHumanAssist: mocks.inspectApplicationForHumanAssist,
 }))
 vi.mock('../write-low/record-job-search-answer', () => ({
-  recordJobSearchAnswer: { execute: recordAnswer },
+  recordJobSearchAnswer: { execute: mocks.recordAnswer },
 }))
 
 import { inspectJobSearchApplications } from './inspect-job-search-applications'
@@ -47,7 +66,7 @@ describe('inspectJobSearchApplications', () => {
     inspectApplicationForHumanAssist.mockReset()
     recordAnswer.mockReset()
     from.mockClear()
-    queryResults = []
+    mocks.setQueryResults([])
   })
 
   it('is a direct founder read-style tool, not a submission action', () => {
@@ -69,7 +88,7 @@ describe('inspectJobSearchApplications', () => {
   })
 
   it('inspects one exact PREPARED application when application_id is valid', async () => {
-    queryResults = [{ data: { id: 'app-1' }, error: null }]
+    mocks.setQueryResults([{ data: { id: 'app-1' }, error: null }])
     inspectApplicationForHumanAssist.mockResolvedValue({ applicationId: 'app-1', applicationStatus: 'PREPARED', finalAnswers: [] })
     const result = await inspectJobSearchApplications.execute({ application_id: 'app-1' }, ctx)
     expect(result.ok).toBe(true)
@@ -78,10 +97,10 @@ describe('inspectJobSearchApplications', () => {
   })
 
   it('recovers when a candidate id was mistakenly supplied as application_id', async () => {
-    queryResults = [
+    mocks.setQueryResults([
       { data: null, error: null },
       { data: [{ id: 'app-1' }], error: null },
-    ]
+    ])
     inspectApplicationForHumanAssist.mockResolvedValue({ applicationId: 'app-1', applicationStatus: 'PREPARED', finalAnswers: [] })
     const result = await inspectJobSearchApplications.execute({ application_id: 'candidate-1' }, ctx)
     expect(result.ok).toBe(true)
@@ -89,7 +108,7 @@ describe('inspectJobSearchApplications', () => {
   })
 
   it('resolves a natural company selector to its single PREPARED application', async () => {
-    queryResults = [{
+    mocks.setQueryResults([{
       data: [{
         id: 'app-scaleops',
         status: 'PREPARED',
@@ -97,7 +116,7 @@ describe('inspectJobSearchApplications', () => {
         candidate: { company: 'scaleops', title: 'Technical Support Engineer' },
       }],
       error: null,
-    }]
+    }])
     inspectApplicationForHumanAssist.mockResolvedValue({ applicationId: 'app-scaleops', applicationStatus: 'PREPARED', finalAnswers: [] })
     const result = await inspectJobSearchApplications.execute({ company: 'ScaleOps', title: 'Technical Support Engineer' }, ctx)
     expect(result.ok).toBe(true)
@@ -105,7 +124,7 @@ describe('inspectJobSearchApplications', () => {
   })
 
   it('preserves explicit founder answer persistence after resolving the selector', async () => {
-    queryResults = [{ data: { id: 'app-1' }, error: null }]
+    mocks.setQueryResults([{ data: { id: 'app-1' }, error: null }])
     recordAnswer.mockResolvedValue({ ok: true, data: { applicationId: 'app-1' } })
     const result = await inspectJobSearchApplications.execute({
       application_id: 'app-1',

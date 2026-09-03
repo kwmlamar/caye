@@ -115,9 +115,13 @@ describe('stale Sales hold recovery migration contract', () => {
   it('uses the existing lifecycle replay receipt for the stored provider message', async () => {
     // The recovery passes the original channel_message_id to the unchanged
     // Sales boundary; its lifecycle key is inbound:<id>:human_reply_received.
+    // inbound.ts now also has an `inbound:outreach:<id>:<event>` variant for
+    // replies durably attributed to a cold-outreach lead (see
+    // lib/sales/inbound.test.ts), but the plain, non-attributed template
+    // this recovery path relies on is still the one below.
     const source = await import('node:fs/promises').then(fs => fs.readFile(
       new URL('./inbound.ts', import.meta.url), 'utf8'))
-    expect(source).toContain('eventKey: `inbound:${eventRoot}:${event}`')
+    expect(source).toContain('`inbound:${eventRoot}:${event}`')
   })
 
   it('permits only a blocked pre-delivery receipt to be superseded', async () => {

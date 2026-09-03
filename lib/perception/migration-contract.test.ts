@@ -13,7 +13,13 @@ describe('perception migration contract', () => {
     expect(sql).toContain('unique (workspace_id, capability_key, source_kind, source_identity)')
     expect(sql).toContain('alter table public.perception_source_state enable row level security')
     expect(sql).toContain('alter table public.perception_capability_evidence enable row level security')
-    expect(sql).toContain('from public, anon, authenticated')
+    // The migration revokes execute with three separate statements (one per
+    // role) rather than a single combined `from public, anon, authenticated`
+    // list — same security posture, different SQL shape. Check each grantee
+    // is actually revoked instead of a substring that never matched the SQL.
+    expect(sql).toContain('revoke all on function public.ingest_property_telemetry_event(text, text, text, text, timestamptz, jsonb, jsonb, jsonb) from public')
+    expect(sql).toContain('revoke all on function public.ingest_property_telemetry_event(text, text, text, text, timestamptz, jsonb, jsonb, jsonb) from anon')
+    expect(sql).toContain('revoke all on function public.ingest_property_telemetry_event(text, text, text, text, timestamptz, jsonb, jsonb, jsonb) from authenticated')
     expect(sql).toContain('to service_role')
   })
 
