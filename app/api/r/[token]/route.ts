@@ -57,7 +57,7 @@ export async function GET(
 
   const { data: lead } = await supabase
     .from('outreach_leads')
-    .select('id, workspace_id, tried_at, first_touch_sent_at')
+    .select('id, workspace_id, tried_at, first_touch_sent_at, last_touch_sent_at')
     .eq('demo_token', token)
     .maybeSingle()
 
@@ -71,7 +71,10 @@ export async function GET(
       xMoz: req.headers.get('x-moz'),
       secFetchMode: req.headers.get('sec-fetch-mode'),
       secFetchDest: req.headers.get('sec-fetch-dest'),
-      firstTouchSentAt: lead.first_touch_sent_at,
+      // Anchor proximity on the LATEST touch, not the first. Most sends are
+      // follow-ups, and a scanner prefetching a touch-3 email days after
+      // first contact would otherwise pass the too-soon check trivially.
+      lastSendAt: lead.last_touch_sent_at ?? lead.first_touch_sent_at,
     })
 
     if (classification.isLikelyHuman) {

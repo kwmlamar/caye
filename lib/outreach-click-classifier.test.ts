@@ -19,7 +19,7 @@ function baseRequest(overrides: Partial<OutreachClickRequest> = {}): OutreachCli
   return {
     method: 'GET',
     userAgent: REAL_CHROME_UA,
-    firstTouchSentAt: SENT_AT,
+    lastSendAt: SENT_AT,
     now: SAFE_NOW,
     ...overrides,
   }
@@ -43,8 +43,8 @@ describe('classifyOutreachClick — accepts real humans', () => {
     expect(result.isLikelyHuman).toBe(true)
   })
 
-  it('accepts when firstTouchSentAt is missing (no timing signal available)', () => {
-    const result = classifyOutreachClick(baseRequest({ firstTouchSentAt: null }))
+  it('accepts when lastSendAt is missing (no timing signal available)', () => {
+    const result = classifyOutreachClick(baseRequest({ lastSendAt: null }))
     expect(result.isLikelyHuman).toBe(true)
   })
 
@@ -166,8 +166,8 @@ describe('classifyOutreachClick — rejects hits too soon after send', () => {
     expect(result.isLikelyHuman).toBe(true)
   })
 
-  it('ignores an unparsable firstTouchSentAt rather than rejecting', () => {
-    const result = classifyOutreachClick(baseRequest({ firstTouchSentAt: 'not-a-date' }))
+  it('ignores an unparsable lastSendAt rather than rejecting', () => {
+    const result = classifyOutreachClick(baseRequest({ lastSendAt: 'not-a-date' }))
     expect(result.isLikelyHuman).toBe(true)
   })
 })

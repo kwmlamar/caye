@@ -41,8 +41,14 @@ export interface OutreachClickRequest {
   secFetchMode?: string | null
   /** `Sec-Fetch-Dest` — real top-level navigation sends `document`. */
   secFetchDest?: string | null
-  /** ISO timestamp the tracked email was sent (outreach_leads.first_touch_sent_at). */
-  firstTouchSentAt?: string | null
+  /**
+   * ISO timestamp of the MOST RECENT touch on this lead — the caller passes
+   * `last_touch_sent_at ?? first_touch_sent_at`, never first-touch alone.
+   * Most scanner traffic arrives on follow-ups (251 of 355 sends since
+   * 2026-08-12 were follow-ups), and a follow-up sent days after first
+   * touch would sail through a first-touch-anchored proximity check.
+   */
+  lastSendAt?: string | null
   /** Injectable for tests; defaults to `new Date()`. */
   now?: Date
 }
@@ -196,8 +202,8 @@ export function classifyOutreachClick(req: OutreachClickRequest): OutreachClickC
     return { isLikelyHuman: false, reason: 'background_fetch_dest' }
   }
 
-  if (req.firstTouchSentAt) {
-    const sentAt = Date.parse(req.firstTouchSentAt)
+  if (req.lastSendAt) {
+    const sentAt = Date.parse(req.lastSendAt)
     if (!Number.isNaN(sentAt)) {
       const now = (req.now ?? new Date()).getTime()
       if (now - sentAt < OUTREACH_CLICK_MIN_MS_SINCE_SEND) {
