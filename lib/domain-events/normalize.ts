@@ -145,6 +145,14 @@ export function normalizeDomainChange(
       if (status.length) events.push(makeEvent(change, resolution, 'status_changed', 'transition', status))
       const schedule = fieldChanges(change, ['start_date', 'estimated_end_date', 'actual_end_date'])
       if (schedule.length) events.push(makeEvent(change, resolution, 'schedule_changed', 'material_change', schedule))
+      // What a job is worth is not bookkeeping. A contract value that moves
+      // without anyone hearing is how a job ends up executed against a figure
+      // nobody agreed to — the exact shape of ODS's largest open exposure,
+      // where a $25,945 recorded contract sits against a $33,984 estimate on
+      // work already built. Change sources already fingerprint these fields;
+      // until now the change was detected and then discarded here.
+      const value = fieldChanges(change, ['contract_value', 'budget'])
+      if (value.length) events.push(makeEvent(change, resolution, 'value_changed', 'material_change', value))
       return events
     }
     case 'estimate': {

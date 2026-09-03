@@ -129,6 +129,12 @@ describe('ruleFor', () => {
     expect(ruleFor('domain.shipment.status_changed', false).priority).toBe('awareness')
   })
 
+  it('treats a contract value move as a decision, not mere awareness', () => {
+    const rule = ruleFor('domain.project.value_changed', false)
+    expect(rule.priority).toBe('decision')
+    expect(String(rule.nextAction)).toContain('paperwork')
+  })
+
   it('keeps routine ledger bookkeeping out of the decision tier', () => {
     expect(ruleFor('domain.pay_period.paid', false).priority).toBe('routine')
   })

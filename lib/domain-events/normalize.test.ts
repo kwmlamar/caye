@@ -30,6 +30,61 @@ describe('normalizeDomainChange', () => {
     expect(first[0]?.idempotencyKey).toBe(replay[0]?.idempotencyKey)
   })
 
+  it('emits a project value change when the contract figure moves', () => {
+    // A contract value that moves without anyone hearing is how a job ends up
+    // executed against a figure nobody agreed to. Change sources already
+    // fingerprint this field; before this it was detected and then discarded.
+    const events = normalizeDomainChange(
+      change({
+        sourceEntityType: 'project',
+        sourceEntityId: 'proj-christiansen',
+        previous: { status: 'active', contract_value: 25945, budget: 25945 },
+        current: { status: 'active', contract_value: 33984.48, budget: 25945 },
+      }),
+      { entityId: 'entity-proj-1' },
+    )
+
+    expect(events).toHaveLength(1)
+    expect(events[0]?.type).toBe('domain.project.value_changed')
+    expect(events[0]?.changeKind).toBe('material_change')
+    expect(events[0]?.changes).toEqual([
+      { field: 'contract_value', previous: 25945, current: 33984.48 },
+    ])
+  })
+
+  it('reports a status move and a value move as separate project events', () => {
+    // They are different things to know and carry different urgency, so they
+    // must not be collapsed into one line in a briefing.
+    const events = normalizeDomainChange(
+      change({
+        sourceEntityType: 'project',
+        sourceEntityId: 'proj-1',
+        previous: { status: 'planning', contract_value: 10000 },
+        current: { status: 'active', contract_value: 12000 },
+      }),
+      { entityId: 'entity-proj-1' },
+    )
+
+    expect(events.map((e) => e.type)).toEqual([
+      'domain.project.status_changed',
+      'domain.project.value_changed',
+    ])
+  })
+
+  it('stays silent when a project is touched without its value moving', () => {
+    const events = normalizeDomainChange(
+      change({
+        sourceEntityType: 'project',
+        sourceEntityId: 'proj-1',
+        previous: { status: 'active', contract_value: 25945, name: 'Old name' },
+        current: { status: 'active', contract_value: 25945, name: 'New name' },
+      }),
+      { entityId: 'entity-proj-1' },
+    )
+
+    expect(events).toEqual([])
+  })
+
   it('emits a material estimate amount transition', () => {
     const events = normalizeDomainChange(
       change({
