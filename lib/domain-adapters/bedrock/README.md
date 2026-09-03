@@ -89,6 +89,7 @@ The credential payload is stored in a native private field so ordinary serializa
 - getWorker
 - getProjectWorkers / getProjectLabor
 - getPayrollSummary
+- listPayPeriods / getPayrollOwed
 - getEstimate / listProjectEstimates
 - getPurchaseOrder / listProjectPurchaseOrders
 - getVendor

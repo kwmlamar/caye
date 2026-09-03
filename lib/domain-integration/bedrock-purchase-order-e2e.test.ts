@@ -149,6 +149,7 @@ class FixtureBedrockProvider implements BedrockReadProvider {
   async listProjectReceipts() { return [] }
   async getReceiptLineItems() { return [] }
   async listAllPayPeriods(): Promise<BedrockRow[]> { return [] }
+  async listPayPeriods(): Promise<BedrockRow[]> { return [] }
   async listInvoices(): Promise<BedrockRow[]> { return [] }
   async listInvoicePayments(): Promise<BedrockRow[]> { return [] }
 }

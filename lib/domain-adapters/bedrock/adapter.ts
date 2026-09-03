@@ -15,6 +15,8 @@ import {
   type BedrockHealth,
   type BedrockInvoice,
   type BedrockListOptions,
+  type BedrockPayPeriod,
+  type BedrockPayrollOwed,
   type BedrockPayrollSummary,
   type BedrockProject,
   type BedrockProjectLabor,
@@ -29,6 +31,7 @@ type ProviderFactory = (connection: BedrockConnection) => BedrockReadProvider
 const number = (value: unknown) => typeof value === 'number' ? value : Number(value ?? 0) || 0
 const nullableNumber = (value: unknown) => value == null ? null : number(value)
 const text = (value: unknown) => value == null ? null : String(value)
+const round2 = (value: number) => Math.round(value * 100) / 100
 
 export class BedrockAdapter {
   constructor(
@@ -61,6 +64,10 @@ export class BedrockAdapter {
 
   private worker(row: BedrockRow, workspaceId: string, companyId: string): BedrockWorker {
     return { ...this.meta(workspaceId, companyId, 'worker', row.id), id: row.id, firstName: String(row.first_name ?? ''), lastName: String(row.last_name ?? ''), status: text(row.status), workerType: text(row.worker_type), hourlyRate: nullableNumber(row.hourly_rate) }
+  }
+
+  private payPeriod(row: BedrockRow, workspaceId: string, companyId: string): BedrockPayPeriod {
+    return { ...this.meta(workspaceId, companyId, 'pay_period', row.id), id: row.id, startDate: text(row.start_date), endDate: text(row.end_date), status: text(row.status) }
   }
 
   async health(workspaceId: string): Promise<BedrockHealth> {
@@ -162,6 +169,87 @@ export class BedrockAdapter {
       startDate: text(period.start_date), endDate: text(period.end_date), status: text(period.status), entryCount: rows.length,
       grossPay: rows.reduce((s, r) => s + number(r.gross_pay), 0), netPay: rows.reduce((s, r) => s + number(r.net_pay), 0), totalPaid: rows.reduce((s, r) => s + number(r.total_paid), 0),
       unpaidCount: rows.filter(r => r.payment_status === 'unpaid').length, partialCount: rows.filter(r => r.payment_status === 'partial').length, paidCount: rows.filter(r => r.payment_status === 'paid').length,
+    }
+  }
+
+  /**
+   * Pay periods in a date window -- the only way to resolve "latest" or a
+   * plain date into a real pay_period_id. Exists so get_payroll_status never
+   * has to ask a human for a database identifier: see that tool's
+   * `resolvePayPeriodId` for the "ask about intent, never about
+   * identifiers" resolution this enables.
+   */
+  async listPayPeriods(workspaceId: string, options: { from?: string; to?: string; status?: string; limit?: number } = {}) {
+    const { connection, provider } = await this.context(workspaceId)
+    return (await provider.listPayPeriods(connection.companyId, options)).map(row => this.payPeriod(row, workspaceId, connection.companyId))
+  }
+
+  /**
+   * What ODS actually owes workers across a date range of pay periods.
+   *
+   * "Owed" is `net_pay - total_paid` per entry, never a raw sum of net_pay.
+   * Partial payroll payments are routine at ODS -- payment_status is one of
+   * unpaid | partial | paid -- so treating "unpaid" as all-or-nothing
+   * overstated a real owner's question by roughly 37% (see the CAY ticket:
+   * $24,298.45 of net pay on 55 non-fully-paid entries, of which $8,985.00
+   * had already been paid, for a true owed figure of $15,313.45). A fully
+   * paid entry contributes zero here because net_pay - total_paid is zero
+   * for it, so nothing extra is needed to exclude it from the total; it is
+   * simply not counted toward entryCount or the per-worker breakdown either,
+   * since a $0 line has no place in "who do we still owe".
+   *
+   * Voided entries (`voided_at` not null) are reversed and excluded
+   * entirely -- they must never count toward what is owed.
+   *
+   * periodCount/rangeStart/rangeEnd describe only the periods that actually
+   * contributed a nonzero owed amount, not every period the date window
+   * touched -- a fully-paid period inside the window contributes $0 and does
+   * not appear in the range either.
+   */
+  async getPayrollOwed(workspaceId: string, options: { from?: string; to?: string } = {}): Promise<BedrockPayrollOwed> {
+    const { connection, provider } = await this.context(workspaceId)
+    const periods = await provider.listPayPeriods(connection.companyId, { from: options.from, to: options.to })
+
+    const workerTotals = new Map<string, { workerId: string; workerName: string; owed: number }>()
+    let totalOwed = 0
+    let entryCount = 0
+    let periodCount = 0
+    let rangeStart: string | null = null
+    let rangeEnd: string | null = null
+
+    for (const period of periods) {
+      const entries = await provider.listPayrollEntries(connection.companyId, period.id)
+      let periodContributed = false
+
+      for (const row of entries) {
+        if (row.voided_at) continue
+        const owed = number(row.net_pay) - number(row.total_paid)
+        if (owed <= 0) continue
+
+        periodContributed = true
+        entryCount += 1
+        totalOwed += owed
+
+        const workerRow = Array.isArray(row.workers) ? row.workers[0] : row.workers
+        const workerId = String(row.worker_id)
+        const workerName = workerRow ? `${workerRow.first_name ?? ''} ${workerRow.last_name ?? ''}`.trim() : workerId
+        const current = workerTotals.get(workerId) ?? { workerId, workerName, owed: 0 }
+        current.owed += owed
+        workerTotals.set(workerId, current)
+      }
+
+      if (periodContributed) {
+        periodCount += 1
+        const end = text(period.end_date)
+        if (end && (!rangeEnd || end > rangeEnd)) rangeEnd = end
+        if (end && (!rangeStart || end < rangeStart)) rangeStart = end
+      }
+    }
+
+    return {
+      ...this.meta(workspaceId, connection.companyId, 'payroll_owed', connection.companyId), id: connection.companyId,
+      totalOwed: round2(totalOwed), entryCount, periodCount, rangeStart, rangeEnd,
+      workers: [...workerTotals.values()].map(w => ({ ...w, owed: round2(w.owed) })).sort((a, b) => b.owed - a.owed),
     }
   }
 

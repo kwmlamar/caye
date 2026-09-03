@@ -3,6 +3,7 @@ import { makeGetPayrollStatus } from './get-payroll-status'
 import {
   BedrockConnectionMissingError,
   BedrockNotFoundError,
+  type BedrockPayPeriod,
   type BedrockPayrollSummary,
 } from '@/lib/domain-adapters/bedrock'
 import type { ToolContext } from '../types'
@@ -37,6 +38,25 @@ function summary(overrides: Partial<BedrockPayrollSummary> = {}): BedrockPayroll
   }
 }
 
+function payPeriod(overrides: Partial<BedrockPayPeriod> = {}): BedrockPayPeriod {
+  return {
+    sourceSystem: 'bedrock',
+    authority: 'external_authoritative',
+    sourceEntityType: 'pay_period',
+    sourceEntityId: 'period-1',
+    workspaceId: 'ws-1',
+    companyId: 'company-1',
+    id: 'period-1',
+    startDate: '2026-08-24',
+    endDate: '2026-08-30',
+    status: 'paid',
+    ...overrides,
+  }
+}
+
+/** No production test needs pay periods listed unless resolving a reference. */
+const noPayPeriods = async () => []
+
 describe('getPayrollStatus', () => {
   it('returns the payroll summary shape for a fully-paid period', async () => {
     const tool = makeGetPayrollStatus(() => ({
@@ -45,6 +65,7 @@ describe('getPayrollStatus', () => {
         expect(payPeriodId).toBe('period-1')
         return summary()
       },
+      listPayPeriods: noPayPeriods,
     }))
 
     const result = await tool.execute({ pay_period_id: 'period-1' }, ctx)
@@ -71,6 +92,7 @@ describe('getPayrollStatus', () => {
     const tool = makeGetPayrollStatus(() => ({
       getPayrollSummary: async () =>
         summary({ unpaidCount: 2, partialCount: 1, paidCount: 9, totalPaid: 3800, netPay: 4400 }),
+      listPayPeriods: noPayPeriods,
     }))
 
     const result = await tool.execute({ pay_period_id: 'period-1' }, ctx)
@@ -85,6 +107,7 @@ describe('getPayrollStatus', () => {
   it('never exposes deduction details or NIB numbers — only passes through the adapter-normalized fields', async () => {
     const tool = makeGetPayrollStatus(() => ({
       getPayrollSummary: async () => summary(),
+      listPayPeriods: noPayPeriods,
     }))
 
     const result = await tool.execute({ pay_period_id: 'period-1' }, ctx)
@@ -100,6 +123,7 @@ describe('getPayrollStatus', () => {
       getPayrollSummary: async () => {
         throw new BedrockConnectionMissingError('ws-1')
       },
+      listPayPeriods: noPayPeriods,
     }))
 
     const result = await tool.execute({ pay_period_id: 'period-1' }, ctx)
@@ -114,6 +138,7 @@ describe('getPayrollStatus', () => {
       getPayrollSummary: async () => {
         throw new BedrockNotFoundError('pay period', 'bogus-id')
       },
+      listPayPeriods: noPayPeriods,
     }))
 
     const result = await tool.execute({ pay_period_id: 'bogus-id' }, ctx)
@@ -122,11 +147,80 @@ describe('getPayrollStatus', () => {
     expect(result.status).toBe('NOT_FOUND')
   })
 
-  it('requires pay_period_id', async () => {
+  it('requires pay_period_id or reference', async () => {
     const tool = makeGetPayrollStatus(() => ({
       getPayrollSummary: async () => summary(),
+      listPayPeriods: noPayPeriods,
     }))
     const result = await tool.execute({ pay_period_id: '  ' }, ctx)
     expect(result.ok).toBe(false)
+    if (result.ok) throw new Error('unreachable')
+    expect(result.status).toBe('FAILED_PERMANENT')
+  })
+
+  it('resolves reference "latest" to the most recent pay period without ever being given an id', async () => {
+    const tool = makeGetPayrollStatus(() => ({
+      listPayPeriods: async (workspaceId, options) => {
+        expect(workspaceId).toBe('ws-1')
+        expect(options).toMatchObject({ limit: 1 })
+        return [payPeriod({ id: 'period-latest', startDate: '2026-08-24', endDate: '2026-08-30' })]
+      },
+      getPayrollSummary: async (workspaceId, payPeriodId) => {
+        expect(payPeriodId).toBe('period-latest')
+        return summary({ id: 'period-latest', sourceEntityId: 'period-latest', payPeriodId: 'period-latest' })
+      },
+    }))
+
+    const result = await tool.execute({ reference: 'latest' }, ctx)
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error('unreachable')
+    expect((result.data as any).pay_period_id).toBe('period-latest')
+  })
+
+  it('resolves a plain date reference to the pay period that contains it, without an id', async () => {
+    const periods = [
+      payPeriod({ id: 'period-later', startDate: '2026-08-31', endDate: '2026-09-06' }),
+      payPeriod({ id: 'period-target', startDate: '2026-08-24', endDate: '2026-08-30' }),
+      payPeriod({ id: 'period-earlier', startDate: '2026-08-17', endDate: '2026-08-23' }),
+    ]
+    const tool = makeGetPayrollStatus(() => ({
+      listPayPeriods: async () => periods,
+      getPayrollSummary: async (workspaceId, payPeriodId) => {
+        expect(payPeriodId).toBe('period-target')
+        return summary({ id: 'period-target', sourceEntityId: 'period-target', payPeriodId: 'period-target' })
+      },
+    }))
+
+    const result = await tool.execute({ reference: '2026-08-27' }, ctx)
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error('unreachable')
+    expect((result.data as any).pay_period_id).toBe('period-target')
+  })
+
+  it('returns a clean not-found error when no pay period covers the given date reference', async () => {
+    const tool = makeGetPayrollStatus(() => ({
+      listPayPeriods: async () => [payPeriod({ id: 'period-1', startDate: '2026-08-24', endDate: '2026-08-30' })],
+      getPayrollSummary: async () => summary(),
+    }))
+
+    const result = await tool.execute({ reference: '2099-01-01' }, ctx)
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error('unreachable')
+    expect(result.status).toBe('NOT_FOUND')
+  })
+
+  it('prefers an explicit pay_period_id over reference when both are given', async () => {
+    const tool = makeGetPayrollStatus(() => ({
+      listPayPeriods: async () => {
+        throw new Error('listPayPeriods should not be called when pay_period_id is given')
+      },
+      getPayrollSummary: async (workspaceId, payPeriodId) => {
+        expect(payPeriodId).toBe('period-explicit')
+        return summary({ id: 'period-explicit', sourceEntityId: 'period-explicit', payPeriodId: 'period-explicit' })
+      },
+    }))
+
+    const result = await tool.execute({ pay_period_id: 'period-explicit', reference: 'latest' }, ctx)
+    expect(result.ok).toBe(true)
   })
 })
