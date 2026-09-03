@@ -32,7 +32,7 @@ const HARD_BOUNCE_WEIGHT = 1
 const SOFT_BOUNCE_WEIGHT = 0.25
 const UNKNOWN_BOUNCE_WEIGHT = 1
 
-function bounceWeight(classification: string | null): number {
+export function bounceWeight(classification: string | null): number {
   if (classification === 'soft') return SOFT_BOUNCE_WEIGHT
   if (classification === 'hard') return HARD_BOUNCE_WEIGHT
   return UNKNOWN_BOUNCE_WEIGHT // null (legacy row) or 'unknown'

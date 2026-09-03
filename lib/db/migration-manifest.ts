@@ -227,5 +227,7 @@ export const REPO_MIGRATIONS: readonly string[] = [
   '20260902043000_domain_integration_review_fixes',
   '20260902120000_fix_recommendation_digest_resolution',
   '20260902140000_applied_migration_ledger_rpc',
+  '20260903100000_outreach_sourcing_coverage',
   '20260903110000_outreach_bounce_detail_suppression',
+  '20260903120000_outreach_demo_confirmation',
 ]

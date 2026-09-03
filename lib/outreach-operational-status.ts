@@ -4,6 +4,7 @@ import { OUTREACH_DAILY_FIRST_TOUCH_CAP } from './outreach-send-limits'
 import { isValidOutreachEmail } from './outreach-email'
 import { hasSalesCapability } from './sales/capability'
 import { classifyOutreachPause, type OutreachPauseState } from './outreach-pause-control'
+import { bounceWeight, shouldTripKillSwitchForWindow } from './outreach-kill-switch'
 
 export interface OutreachOperationalStatus {
   workspaceId: string
@@ -66,14 +67,16 @@ export async function getOutreachOperationalStatus(workspaceId: string): Promise
   const now = new Date()
   const start = startOfBusinessDay(now, timezone)
   const monthStart = startOfBusinessMonth(now, timezone)
-  const [first, follow, monthFirst, monthFollow, bounceCount] = await Promise.all([
+  const bounceWindowHours = config.data?.outreach_bounce_window_hours ?? 24
+  const bounceCutoff = new Date(Date.now() - bounceWindowHours * 60 * 60 * 1000).toISOString()
+  const [first, follow, monthFirst, monthFollow, bounceRows, windowFirst, windowFollow] = await Promise.all([
     db.from('outreach_leads').select('id', { count: 'exact', head: true }).eq('workspace_id', workspaceId).gte('first_touch_sent_at', start),
     db.from('outreach_leads').select('id', { count: 'exact', head: true }).eq('workspace_id', workspaceId).gte('last_nudge_at', start),
     db.from('outreach_leads').select('id', { count: 'exact', head: true }).eq('workspace_id', workspaceId).gte('first_touch_sent_at', monthStart),
     db.from('outreach_leads').select('id', { count: 'exact', head: true }).eq('workspace_id', workspaceId).gte('last_nudge_at', monthStart),
-    db.from('caye_outreach_bounces').select('id', { count: 'exact', head: true }).eq('workspace_id', workspaceId).gte('created_at',
-      new Date(Date.now() - (config.data?.outreach_bounce_window_hours ?? 24) * 60 * 60 * 1000).toISOString()
-    ),
+    db.from('caye_outreach_bounces').select('classification').eq('workspace_id', workspaceId).gte('created_at', bounceCutoff),
+    db.from('outreach_leads').select('id', { count: 'exact', head: true }).eq('workspace_id', workspaceId).gte('first_touch_sent_at', bounceCutoff),
+    db.from('outreach_leads').select('id', { count: 'exact', head: true }).eq('workspace_id', workspaceId).gte('last_nudge_at', bounceCutoff),
   ])
   const sent = (first.count ?? 0) + (follow.count ?? 0)
   const monthFirstTouch = monthFirst.count ?? 0
@@ -89,7 +92,25 @@ export async function getOutreachOperationalStatus(workspaceId: string): Promise
   const lastInserted = numeric(sourcingSummary?.total_inserted)
   const availableCandidates = (sourced.data ?? []).filter((row) => isValidOutreachEmail(row.lead_email)).length
   const tokenUsable = Boolean(account.data && (account.data.refresh_token || (account.data.token_expires_at && Date.parse(account.data.token_expires_at) > Date.now())))
-  const activeSafetyCondition = (bounceCount.count ?? 0) >= (config.data?.outreach_bounce_threshold ?? 5)
+  // Must use the SAME decision the kill switch itself uses. This value feeds
+  // classifyOutreachPause, which reports a paused workspace as `safety_active`
+  // (not resumable) whenever a safety condition looks live — so a status layer
+  // computing it with a different, stricter rule than the one that actually
+  // trips would report outreach as safety-blocked when it is not, and hold it
+  // there. It previously used a raw unweighted count with no volume
+  // normalization, which diverges from the real trip decision at exactly the
+  // send volumes this pipeline is being restored to.
+  const bounceWindowRows = bounceRows.error ? [] : (bounceRows.data ?? [])
+  const weightedBounceScore = bounceWindowRows.reduce((sum, r) => sum + bounceWeight(r.classification as string | null), 0)
+  const sendsInBounceWindow = windowFirst.error || windowFollow.error
+    ? null
+    : (windowFirst.count ?? 0) + (windowFollow.count ?? 0)
+  const bounceTrip = shouldTripKillSwitchForWindow({
+    weightedBounceScore,
+    threshold: config.data?.outreach_bounce_threshold ?? 5,
+    sendsInWindow: sendsInBounceWindow,
+  })
+  const activeSafetyCondition = bounceTrip.trip
     ? 'bounce_threshold'
     : !tokenUsable ? 'provider_unhealthy' : null
   const pause = classifyOutreachPause({
