@@ -48,6 +48,7 @@ import { isValidOutreachEmail } from '@/lib/outreach-email'
 import { isProductionSalesWorkspace } from '@/lib/sales/workspace-eligibility'
 import { getRevalidatableParkedDraft } from '@/lib/outreach-parked-draft'
 import { reserveFirstTouchCapacity } from '@/lib/outreach-first-touch-capacity'
+import { getSuppressedAddresses } from '@/lib/outreach-suppression'
 
 /** Leads examined per tick. Bounds runtime; the next tick picks up the rest. */
 const LEAD_BATCH_SIZE = 40
@@ -210,10 +211,22 @@ async function processWorkspace(
       .in('customer_id', leadRows.map((lead) => lead.lead_email))
     : { data: [] }
   const conversationsByEmail = new Map((conversations ?? []).map((row) => [String(row.customer_id).toLowerCase(), row]))
+  // Single choke point for both first-touch and follow-up sends: this
+  // filter feeds the same `actionable` list both action kinds are drawn
+  // from below, so an address suppressed here (lib/outreach-suppression.ts)
+  // never gets a first touch OR a follow-up.
+  const suppressedAddresses = leadRows.length
+    ? await getSuppressedAddresses(workspaceId, leadRows.map((lead) => lead.lead_email))
+    : new Map()
   const actionable = leadRows.filter((lead) => {
     summary.leads_considered++
     if (!isValidOutreachEmail(lead.lead_email)) {
       countReason(summary, 'invalid_email')
+      return false
+    }
+    const suppression = suppressedAddresses.get(lead.lead_email.toLowerCase().trim())
+    if (suppression?.suppressed) {
+      countReason(summary, suppression.reason === 'hard_bounce' ? 'suppressed_hard_bounce' : 'suppressed_repeated_soft_bounce')
       return false
     }
     const conversation = conversationsByEmail.get(lead.lead_email.toLowerCase())

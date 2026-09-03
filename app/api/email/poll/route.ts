@@ -27,7 +27,7 @@ import { maybeSuggestBusinessFacts } from '@/lib/business-fact-suggestions'
 import { clearStaleOutreachAutofill } from '@/lib/outreach-autofill'
 import { detectOwnerCorrection } from '@/lib/owner-correction'
 import { sendZohoReply } from '@/lib/email-ai'
-import { isNoReplySender, isCalendarInvite, isPaymentReceipt, isOutOfOffice, isBounceNotification } from '@/lib/sender-classifier'
+import { isNoReplySender, isCalendarInvite, isPaymentReceipt, isOutOfOffice, isBounceNotification, classifyBounceDetail } from '@/lib/sender-classifier'
 import { recordBounceAndMaybeTrip } from '@/lib/outreach-kill-switch'
 import { hasSalesCapability } from '@/lib/sales/capability'
 import {
@@ -697,10 +697,25 @@ async function processMessage(
       .select('workspace_kind')
       .eq('id', workspaceId)
       .maybeSingle()
+    // isOutOfOffice guard: subject-based NDR patterns don't overlap with
+    // OOO subject patterns in practice, but a body-level auto-reply
+    // shouldn't be double-counted as a bounce now that this block reads
+    // the body for hard/soft classification (it never did before).
     if (hasSalesCapability(ws)) {
-      await recordBounceAndMaybeTrip(workspaceId).catch(err =>
-        console.error('[email/poll] recordBounceAndMaybeTrip failed:', err)
+      const bounceBody = await fetchMessageContent(
+        base, String(accountId), messageId, accessToken,
+        String(msg.folderId || msg.folder_id || '')
       )
+      if (!isOutOfOffice(subject, bounceBody)) {
+        const { classification, recipient } = classifyBounceDetail(subject, bounceBody)
+        await recordBounceAndMaybeTrip(workspaceId, {
+          classification,
+          recipient,
+          sourceSubject: subject,
+        }).catch(err =>
+          console.error('[email/poll] recordBounceAndMaybeTrip failed:', err)
+        )
+      }
     }
   }
 
