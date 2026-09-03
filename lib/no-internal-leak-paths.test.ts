@@ -57,6 +57,31 @@ const ALLOWED = new Map<string, string>([
   // can correct its own malformed tool call — same category as
   // schema-validate.ts's entry above.
   ['lib/engineering/fea/spec.ts', 'validation error path returned to the model, not a human'],
+  // Array-index path segment in the Caye tool-argument schema validator,
+  // consumed only by lib/recommendations/action-plan.ts (thrown, then either
+  // discarded via a bare `catch { plan = null }` or console.error'd — never
+  // returned in a founder/operator-facing result). Same category as
+  // schema-validate.ts's entry above. If a future caller starts surfacing
+  // that caught error's .message to a human, this file needs a renderer
+  // instead and must come off this list.
+  ['lib/caye-agent/tools/schema-validation.ts', 'validation error path consumed internally, never returned to a human'],
+  // Durable operating memory and the operational brief are both explicit
+  // MODEL CONTEXT construction (see each file's own docstring/callers,
+  // e.g. lib/caye-agent/operational-brief.ts: "the model does not assemble
+  // operational truth. This function does."), never returned as owner-facing
+  // text directly. Same category as the prompt-internal entries above; the
+  // model is instructed to synthesize prose from this, not quote it.
+  ['lib/operating-memory.ts', 'LLM context construction, not owner-facing output'],
+  ['lib/operational-intelligence/brief.ts', 'LLM context construction, not owner-facing output'],
+  // stable() is a deterministic JSON-like serializer used for fingerprinting/
+  // hashing comparisons, never rendered to a human. Same category as
+  // orchestrator.ts's stableStringify entry above.
+  ['lib/research/cross-domain-runtime.ts', 'fingerprint/hash serialization, not output'],
+  // Numbered list inside an LLM prompt sampling the owner's own Gmail for
+  // operational discovery. Same shape and same reasoning as
+  // app/api/caye/discovery/route.ts above; the returned DiscoveryResult is
+  // structured JSON, never this raw scaffold.
+  ['app/api/caye/gmail-observation-discovery/route.ts', 'prompt-internal numbering'],
 ])
 
 function sourceFiles(dir: string, out: string[] = []): string[] {

@@ -37,6 +37,16 @@ function listSourceFiles(dir: string): string[] {
   return files
 }
 
+// Exact source lines allowed to mention workspace_id/workspaceId, each with
+// a reason proving it cannot carry real workspace data. Add to this only
+// when the match is provably inert — never to silence a real reference.
+const ALLOWED_WORKSPACE_MENTIONS: Record<string, string> = {
+  'objective-operator.ts:65': 'workspaceId: null, — a literal null satisfying the shared ' +
+    'lib/operator/objective-store.ts scopeKind:"workspace"|"founder" contract. ' +
+    'The value can never carry a real workspace id; it is how a founder-only ' +
+    'objective declares it has none.',
+}
+
 describe('lib/job-search — founder-data isolation (#192)', () => {
   it('no job-search module references workspace scoping', () => {
     const offenders: { file: string; line: number; text: string }[] = []
@@ -44,7 +54,9 @@ describe('lib/job-search — founder-data isolation (#192)', () => {
       const content = readFileSync(file, 'utf8')
       content.split('\n').forEach((line, idx) => {
         if (/workspace_id|workspaceId/.test(line)) {
-          offenders.push({ file: path.relative(LIB_DIR, file), line: idx + 1, text: line.trim() })
+          const relFile = path.relative(LIB_DIR, file)
+          if (ALLOWED_WORKSPACE_MENTIONS[`${relFile}:${idx + 1}`]) return
+          offenders.push({ file: relFile, line: idx + 1, text: line.trim() })
         }
       })
     }
