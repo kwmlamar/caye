@@ -32,6 +32,7 @@ import { sendGmailReply } from '@/lib/gmail-send'
 import { isNoReplySender, isCalendarInvite, isOutOfOffice } from '@/lib/sender-classifier'
 import { recordCronRun } from '@/lib/cron-run-log'
 import { resolveOrCreateContact } from '@/lib/contacts/resolve-contact'
+import { gmailAttachmentDescriptors, type GmailAttachmentMessage } from '@/lib/artifacts/email-attachments'
 
 const GMAIL_API_BASE = 'https://gmail.googleapis.com/gmail/v1/users/me'
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
@@ -45,7 +46,7 @@ interface GmailMessagePart {
   mimeType?: string
   filename?: string
   headers?: GmailHeader[]
-  body?: { data?: string; size?: number }
+  body?: { data?: string; size?: number; attachmentId?: string }
   parts?: GmailMessagePart[]
 }
 interface GmailMessage {
@@ -175,7 +176,7 @@ function detectNewsletter(body: string, subject: string, fromEmail: string): str
 type Supabase = ReturnType<typeof createServiceClient>
 type Account = Record<string, unknown>
 
-async function processGmailMessage(
+export async function processGmailMessage(
   supabase: Supabase,
   account: Account,
   message: GmailMessage,
@@ -209,12 +210,16 @@ async function processGmailMessage(
   if (!fromEmail || fromEmail === ownEmail) return 'skipped'
 
   const body = extractBody(message.payload)
-  if (!body || body.trim().length === 0) {
-    // Phantom artifact — skip persistence. Same rationale as zoho poll:
-    // body-less messages are usually thread metadata / system notifications
-    // with nothing actionable. Persisting them as subject-only rows clutters
-    // the inbox (the Valeriia 2026-05-24 Zoho case produced 6 phantom rows).
-    console.warn(`[gmail-poll] empty body for ${messageId} (subject="${subject}") — skipping persistence`)
+  const hasMeaningfulBody = body.trim().length > 0
+  const hasDiscoverableAttachment = gmailAttachmentDescriptors({
+    workspaceId,
+    connectedAccountId: String(account.id),
+    message: message as GmailAttachmentMessage,
+  }).length > 0
+  if (!hasMeaningfulBody && !hasDiscoverableAttachment) {
+    // Preserve the existing phantom/system-message filter, but do not discard
+    // a real attachment-only business document before unified persistence.
+    console.warn(`[gmail-poll] empty body and no attachment for ${messageId} (subject="${subject}") — skipping persistence`)
     return 'skipped'
   }
 
@@ -333,6 +338,14 @@ async function processGmailMessage(
       unread_count: 1, // simple v1 — increments would need a fetch-update-write cycle
     })
     .eq('id', conversationId)
+
+  // Attachment-only messages are persisted so the bounded post-poll evidence
+  // synchronizer can fetch/classify the document. Do not invent body text or
+  // generate a subject-only customer reply before document understanding runs.
+  if (!hasMeaningfulBody && hasDiscoverableAttachment) {
+    console.log(`[gmail-poll] persisted attachment-only message — ${fromEmail} / ${subject}`)
+    return 'processed'
+  }
 
   // Newsletter guard: save, but don't run Caye on it. hold_kind='newsletter'
   // (2026-08-26, owner-attention audit — mirrors the Zoho poll fix) keeps a
