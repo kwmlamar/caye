@@ -19,7 +19,8 @@
     "caye:bench:corpus": "node scripts/caye-bench-corpus.mjs",
     "caye:bench:export": "node scripts/caye-bench-export.mjs",
     "caye:employee:eval": "node scripts/caye-employee-eval.mjs",
-    "domain:bedrock:provision": "node scripts/provision-bedrock-domain.mjs"
+    "domain:bedrock:provision": "node scripts/provision-bedrock-domain.mjs",
+    "whatsapp:simulate": "node scripts/whatsapp-simulate-inbound.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.96.0",
