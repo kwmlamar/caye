@@ -41,9 +41,25 @@ describe('production tool surface', () => {
     // excludedByRoleCount/excludedToolSchemaBytes are unchanged because none
     // of the 11 new tools are founder-only (nothing new becomes invisible to
     // an owner). Still an exact, unweakened toMatchObject assertion.
+    // Refreshed again 2026-09-03, later the same day: staff's
+    // excludedToolSchemaBytes only, 114255 -> 114516. No tool was added or
+    // removed — every other number here is unchanged, including all three
+    // exposedToolCounts and both excludedByRoleCounts.
+    //
+    // Cause, accounted for exactly rather than re-baselined: #467 added one
+    // sentence to get_receivables' tool `description` (the "If
+    // `nothing_recorded` is true, NOTHING HAS BEEN ENTERED..." instruction
+    // that stops an empty register being reported as nothing owed). That
+    // string is 261 bytes and the drift is 261 bytes.
+    //
+    // Only staff moves because get_receivables is roles ['owner','founder']
+    // (get-receivables.ts:67): it is excluded from staff, so staff's excluded
+    // total grows, and it is visible to an owner, so owner's excluded total
+    // does not. That asymmetry is the detector working — it is what makes
+    // the number diagnostic instead of just noisy.
     expect(owner).toMatchObject({ exposedToolCount: 87, excludedByRoleCount: 53, excludedToolSchemaBytes: 34528 })
     expect(founder).toMatchObject({ exposedToolCount: 140, excludedByRoleCount: 0, excludedToolSchemaBytes: 0 })
-    expect(staff).toMatchObject({ exposedToolCount: 21, excludedByRoleCount: 119, excludedToolSchemaBytes: 114255 })
+    expect(staff).toMatchObject({ exposedToolCount: 21, excludedByRoleCount: 119, excludedToolSchemaBytes: 114516 })
   })
 
   it.each(['owner', 'staff', 'founder', 'driver'] as const)('only exposes schemas executable by %s', (callerRole) => {
