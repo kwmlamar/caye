@@ -5,6 +5,10 @@ import { projectDomainEventsToAttention, type DomainAttentionResult } from '@/li
 import { raiseReceivablesAttention, type ReceivablesAttentionResult } from '@/lib/receivables-attention'
 import { projectFreightRequestsToAttention, type FreightAttentionResult } from '@/lib/freight-attention'
 import { runBedrockSync, type BedrockStreamOutcome } from '@/lib/domain-adapters/bedrock'
+import {
+  deliverConstructionAttention,
+  type ConstructionAttentionDeliveryResult,
+} from '@/lib/construction-attention-delivery'
 
 /**
  * One pass of the construction ledger loop, for every workspace bound to one.
@@ -52,6 +56,8 @@ export interface ConstructionLedgerWorkspaceResult {
   receivablesError: string | null
   freightAttention: FreightAttentionResult | null
   freightAttentionError: string | null
+  delivery: ConstructionAttentionDeliveryResult | null
+  deliveryError: string | null
 }
 
 export interface ConstructionLedgerCycleResult {
@@ -65,6 +71,7 @@ export interface ConstructionLedgerCycleDeps {
   project: typeof projectDomainEventsToAttention
   raiseReceivables: typeof raiseReceivablesAttention
   projectFreight: typeof projectFreightRequestsToAttention
+  deliver: typeof deliverConstructionAttention
 }
 
 const BEDROCK = 'bedrock'
@@ -100,6 +107,7 @@ export async function runConstructionLedgerCycle(args: {
   const project = args.deps?.project ?? projectDomainEventsToAttention
   const raiseReceivables = args.deps?.raiseReceivables ?? raiseReceivablesAttention
   const projectFreight = args.deps?.projectFreight ?? projectFreightRequestsToAttention
+  const deliver = args.deps?.deliver ?? deliverConstructionAttention
   const windowMs = args.attentionWindowMs ?? DEFAULT_ATTENTION_WINDOW_MS
 
   const workspaceIds = await listBoundWorkspaces()
@@ -119,6 +127,8 @@ export async function runConstructionLedgerCycle(args: {
       receivablesError: null,
       freightAttention: null,
       freightAttentionError: null,
+      delivery: null,
+      deliveryError: null,
     }
 
     try {
@@ -156,6 +166,30 @@ export async function runConstructionLedgerCycle(args: {
       result.freightAttention = await projectFreight({ workspaceId })
     } catch (error) {
       result.freightAttentionError = message(error)
+    }
+
+    // THE LAST HOP, and the reason the rest of this loop was worth building.
+    //
+    // Everything above raises attention. Until this step existed, nothing
+    // delivered it: the receivables sweep computed the entire weekly ask and
+    // left it in a table, which is the ODS audit's own finding — correct work
+    // with the last step missed — reproduced in the software written to fix
+    // it.
+    //
+    // Runs LAST because it reads what the steps above just wrote, but it is
+    // independent of all of them for the usual reason, and one that matters
+    // more here than anywhere else in this function: a sync outage must not
+    // also withhold an invoice that was already detected on an earlier pass
+    // and has still never reached a human. Delivery is not allowed to depend
+    // on the freshest poll succeeding.
+    //
+    // It sends nothing on its own authority. Quiet hours, the workspace's
+    // notifications_paused gate inside enqueueOutbound, and routing's refusal
+    // to hand anything to an unmapped or unverified operator all still apply.
+    try {
+      result.delivery = await deliver({ workspaceId })
+    } catch (error) {
+      result.deliveryError = message(error)
     }
 
     // One workspace's outage is not another's. A thrown error here would stop

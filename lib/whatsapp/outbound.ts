@@ -251,6 +251,29 @@ export type OutboundKind =
   // constraint as a claim-before-send lock. Still needs to be a valid kind
   // for the CHECK constraint the insert runs against.
   | 'operator_message'
+  // Construction ledger attention that has been routed to a specific
+  // operator (lib/attention-delivery.ts). The construction loop has raised
+  // attention items since it shipped and nothing ever delivered them: the
+  // receivables sweep computes the whole weekly ask — which invoices are
+  // outstanding, how long, whether a payment was ever confirmed — writes it
+  // to caye_owner_attention, and stops. That is the ODS audit's own finding
+  // (correct work, last step missed) rebuilt one layer out, so this kind is
+  // the missing hop rather than a new feature.
+  //
+  // ONE kind for all construction attention, not one per domain.
+  // lib/attention-routing.ts already discriminates a receivable from a pay
+  // period from a purchase order and resolves each to a role; the body
+  // composer reads the specifics off the payload. Same shape 'escalation'
+  // uses, and a kind per domain would be a parallel path carrying no extra
+  // information.
+  //
+  // Free-form only, like 'operator_reminder' and 'dropped_confirmation':
+  // there is no approved Meta template for it and inventing one needs Meta
+  // review. So it is deliberately NOT in TEMPLATE_REQUIRED_KINDS, and it IS
+  // in OPERATOR_LOGGABLE_KINDS — a closed 24h window means it lands in that
+  // operator's Caye Direct thread instead of disappearing, which is the
+  // whole point of building this hop at all.
+  | 'construction_attention'
 
 export interface EnqueueOutboundInput {
   workspaceId: string
