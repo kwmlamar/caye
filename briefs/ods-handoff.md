@@ -100,6 +100,12 @@ Merged to `main` across PRs #454–#459:
 - **Six production defects** #470 had found and left failing, plus a seventh underneath
   them in `canonicalPropertyKey`.
 
+**Merged 2026-09-03, PRs #475/#476** — `main` at `41b3a568`, production deploy success:
+
+- **Receipt capture** — the money-out half of job costing. A photographed
+  receipt now reaches the ledger with its image attached, gated behind
+  confirmation. See §6 for the four constraints that shaped it.
+
 **Live routing, verified against the real roster and config:**
 
 | item | goes to |
@@ -168,30 +174,49 @@ an unverified operator anything rather than falling back to someone else.
    row is enqueued, or the insert is silently rejected by the CHECK. There is no ordering
    hazard while notifications stay paused.
 
-1. **Receipt capture by photo.** The money-out half of job costing: 3,883 timesheet rows
-   against 6 receipts.
+~~1. **Receipt capture by photo.**~~ **DONE 2026-09-03 (PRs #475, #476, `41b3a568`).**
+   Photo arrives -> Caye reads it -> proposes what she actually saw -> a human
+   confirms -> the photo is fetched from Meta, stored in TropiTrack's
+   `documents` bucket, and the receipt row written with an audit entry.
 
-   **Correction 2026-09-03: this does NOT need a WhatsApp media pipeline. One already
-   exists and is live.** `lib/whatsapp/media.ts` (`downloadWhatsAppMedia` — Meta's two-step
-   media_id → signed URL → bytes dance) and `lib/whatsapp/image-burst.ts` are both wired
-   into `app/api/webhooks/whatsapp-operator/route.ts`, which handles inbound `image`
-   messages (`handleImageInbound`) and inbound PDFs (`handleDocumentInbound`, #87). Images
-   are persisted and reach the model, and the burst logic already exists because Mrs. Max
-   once sent eleven photos in thirty-nine seconds and got eleven replies.
+   *The premise this file carried was wrong: it said this needed a WhatsApp
+   media pipeline. One already existed and was live* (`lib/whatsapp/media.ts`,
+   `image-burst.ts`, wired into the operator webhook for both images and PDFs).
 
-   So a receipt photo already arrives, is stored, and is readable by Caye today. What is
-   actually missing is narrower than this file previously implied:
+   Four things the next person should know:
 
-   - **`insertReceipt` on the Bedrock write provider.** The insert-only boundary currently
-     exposes `insertTimeEntries`, `insertInvoice`, `insertPayment` and nothing for
-     receipts. `BedrockReceipt` (types.ts:152) already describes the shape, including the
-     line items.
-   - **A gated tool pair**, following `preview_crew_day` / `log_crew_day` exactly — preview
-     what was read off the photo, let a human correct it, then write. Do not skip the
-     preview: a receipt total read from a photo is a guess until a person confirms it, and
-     the whole point of this system is not asserting things it cannot evidence.
-   - The `receipts` change source already detects them once they exist, so perception and
-     (since #472) delivery need no new work at all.
+   - **`receipts.image_url` is NOT NULL with no default.** A receipt row cannot
+     exist without a stored image, which is why the write boundary now does a
+     storage write at all (`uploadReceiptImage`). It stays append-only:
+     `upsert: false`, never overwrites, never deletes.
+   - **All six pre-existing receipts have `image_url` = the literal string
+     `'uploaded'`,** and `receipt_line_items` has zero rows. TropiTrack's own
+     flow never stored an image either. Writing that placeholder was refused
+     deliberately: it asserts an upload that did not happen.
+   - **The media HANDLE is persisted, not the bytes** (`caye_operator_messages
+     .inbound_media`). The confirmation lands on a later turn, by which point
+     the model no longer has the image, so the tool re-fetches from Meta at
+     write time. Uploading eagerly would put unconfirmed photos into another
+     company's storage before anyone approved them.
+   - **The accepted mime types are not the set Caye can read.** `image/gif` is
+     model-readable but bucket-rejected; `image/heic` (iPhone's default) is
+     bucket-accepted but model-unreadable. A caller must satisfy both.
+
+   **Migration `20260903b_operator_message_inbound_media.sql` WAS APPLIED to
+   the Caye project on 2026-09-03**, before merging, under explicit one-off
+   authorization from Lamar. Verified after: `inbound_media jsonb`, nullable,
+   3,954 existing rows untouched. It had to go first — the webhook writes that
+   column on every inbound image, and without it the insert fails, image rows
+   stop persisting, and `decideImageBurst` (which reads the previous image row)
+   would see every photo as the first, bringing back the eleven-replies
+   incident. `20260903_add_construction_attention_outbound_kind.sql` from #472
+   is still **NOT applied** and must be before any `construction_attention` row
+   is enqueued.
+
+   Still open: **PDF receipts.** `handleDocumentInbound` does not carry a media
+   handle, so a PDF cannot be logged this way even though the bucket accepts
+   `application/pdf`. Images only.
+
 2. **Freight — mostly built, but nobody is told.** *Corrected 2026-09-03: an earlier version
    of this file said freight was untouched. It is not.* `lib/freight/` implements
    detect → match → generate a PDF from verified evidence → owner-gated send, and
@@ -259,6 +284,16 @@ TMP=$(mktemp -d); git archive HEAD | tar -x -C "$TMP"
 ln -s "$PWD/node_modules" "$TMP/node_modules"
 (cd "$TMP" && npx tsc --noEmit)
 ```
+
+**A migration that a webhook writes to MUST be applied before the code
+deploys.** Merging to `main` deploys to production. `caye_operator_messages`'s
+insert in `handleImageInbound` discarded its error (supabase-js returns rather
+than throws), so a missing column meant image rows silently stopped
+persisting — and `decideImageBurst` reads the previous image row, so every
+photo would look like the first and the eleven-replies incident would return.
+The insert now logs its error, which is what makes such a lag visible. Check
+`information_schema.columns` before merging anything whose runtime path writes
+a new column.
 
 **The outbound-kind constraint has THREE mirrors, not two.** This file used to say two.
 Adding a kind means updating `lib/whatsapp/outbound.ts`'s `OutboundKind` union, the CHECK
