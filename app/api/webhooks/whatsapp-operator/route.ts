@@ -1396,6 +1396,15 @@ async function handleImageInbound(
     operator_allowlist_id: operator.id,
     operator_name: operator.name,
     operator_role: operator.role,
+    // The media HANDLE, not the bytes. claude_format above deliberately
+    // persists only a placeholder, so the image itself is readable on this
+    // turn and gone afterwards -- which is fine for "look at this photo" and
+    // fatal for anything staged for confirmation. A receipt is proposed now
+    // and written after a human agrees, on a later turn, and this is what
+    // lets that later turn still fetch the photo. Keeping the id rather than
+    // the bytes also keeps the better property: nothing is uploaded into the
+    // construction ledger until somebody has actually approved it.
+    inbound_media: { media_id: image.id, mime_type: image.mime_type },
   })
 
   // Mid-burst: the row is persisted (so the next turn's context knows the
