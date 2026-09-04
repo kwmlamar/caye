@@ -3,6 +3,7 @@ import 'server-only'
 import { createServiceClient } from '@/lib/supabase-server'
 import { observeAttentionItem, type AttentionPriority } from '@/lib/owner-attention'
 import { freightReferenceLabel } from '@/lib/freight/types'
+import { detectOpenFreightRequest, loadPurchaseEvidence, type FreightConversation } from '@/lib/freight/server-operations'
 import type { FreightWorkflowRecord } from '@/lib/freight/workflow'
 
 /**
@@ -12,27 +13,44 @@ import type { FreightWorkflowRecord } from '@/lib/freight/workflow'
  *
  * ODS's audit found the single highest-volume repetitive job in the business
  * is Wallace personally emailing a commercial invoice back to a freight
- * forwarder — at least 15 times in a 60-day window. Detection for this
- * already runs every five minutes: a cron reads Gmail, ingests attachments,
- * and `app/api/founder/freight-workflow/route.ts` detects the request and
- * writes a `FreightWorkflowRecord` onto `unified_conversations.metadata.
- * freight_workflow`. None of that reaches Wallace — it lands in a dashboard
- * tab (`FreightReviewInbox`) nobody opens. That is the exact failure the
- * audit describes throughout: correct detection reported somewhere nobody
- * reads. This module is the missing wire, following the same pattern
- * `lib/domain-attention.ts` established for construction-domain changes.
+ * forwarder — at least 15 times in a 60-day window. Attachments themselves
+ * are ingested correctly every five minutes by the Gmail cron
+ * (`lib/artifacts/gmail-attachment-sync.ts` /
+ * `lib/freight/email-attachment-reconciliation.ts`), but for a long time the
+ * *request itself* was only classified into a `FreightWorkflowRecord` when a
+ * human opened that specific conversation in the `FreightReviewInbox`
+ * dashboard tab (`app/api/founder/freight-workflow/route.ts` ->
+ * `analyzeFreightWorkflow`) — nobody opens it unprompted, so the classified
+ * record never got written and this sweep, reading only
+ * `unified_conversations.metadata.freight_workflow`, never fired. That is
+ * the exact failure the audit describes throughout: correct detection
+ * possible, but gated behind a screen nobody visits.
+ *
+ * This module closes the gap by recomputing the same detection
+ * (`detectOpenFreightRequest`, the pure core `analyzeFreightWorkflow` itself
+ * calls) directly against what the Gmail cron already ingested —
+ * `unified_messages` for the request email, `business_artifact_observations`
+ * for candidate purchase evidence — for any conversation nobody has opened
+ * the dashboard for yet. It never writes `metadata.freight_workflow`, never
+ * touches `workspace_events`, and never flips `human_agent_enabled`: those
+ * remain `analyzeFreightWorkflow`'s side effects alone, triggered only by a
+ * human opening the conversation or an explicit generate/send. A
+ * conversation the dashboard has already classified is read from its
+ * persisted record as before (richer and authoritative once it exists —
+ * e.g. it carries `generatedArtifactId` for `READY_FOR_APPROVAL`/`SENT`,
+ * which nothing recomputes).
  *
  * WHAT IT DELIBERATELY DOES NOT DO
  *
- * It does not detect a freight request, rank purchase evidence, or generate
- * a document — `app/api/founder/freight-workflow/route.ts` already owns all
- * of that, with its own idempotency (the record is keyed and persisted once
- * per conversation) and its own consequential-action architecture (a send
+ * It does not generate a document or send anything —
+ * `app/api/founder/freight-workflow/route.ts` already owns all of that, with
+ * its own idempotency and its own consequential-action architecture (a send
  * requires `claimConversationExecution` and explicit owner approval). This
- * module only reads the workflow record that process already wrote, decides
- * whether its current state is worth the owner's attention, and hands that
- * decision to the ledger that owns notification state. It never sends
- * anything, never generates a document, and never claims one was sent.
+ * module only classifies (or reads an existing classification of) a
+ * request's current state, decides whether that state is worth the owner's
+ * attention, and hands that decision to the ledger that owns notification
+ * state. It never sends anything, never generates a document, and never
+ * claims one was sent.
  */
 
 /**
@@ -224,23 +242,62 @@ async function loadOpenFreightRequestsFromDb(workspaceId: string): Promise<Freig
   // caution `lib/email-ai.ts` documents for JSON-path filters: this read
   // must not depend on getting that operator precedence exactly right, and
   // a handful of a workspace's own Gmail threads is cheap to filter here.
+  // Selects the extra columns `detectOpenFreightRequest` needs (customer_id,
+  // channel_conversation_id, customer_name, channel_type) so a conversation
+  // without a persisted record can be classified from this same row, with
+  // no second per-conversation fetch.
   const { data, error } = await supabase
     .from('unified_conversations')
-    .select('id, metadata, connected_accounts!inner(user_id)')
+    .select('id, channel_type, channel_conversation_id, customer_id, customer_name, metadata, connected_accounts!inner(user_id)')
     .eq('connected_accounts.user_id', workspaceId)
     .eq('channel_type', 'gmail')
     .limit(200)
 
   if (error) throw new Error(`freight attention: could not read unified_conversations — ${error.message}`)
 
-  const out: FreightAttentionConversation[] = []
-  for (const row of data ?? []) {
-    const metadata = (row.metadata ?? {}) as Record<string, unknown>
+  const rows = (data ?? []) as unknown as FreightConversation[]
+  const alreadyClassified: FreightAttentionConversation[] = []
+  const unclassified: FreightConversation[] = []
+  for (const conv of rows) {
+    const metadata = (conv.metadata ?? {}) as Record<string, unknown>
     const workflow = metadata.freight_workflow as FreightWorkflowRecord | undefined
-    if (!workflow || workflow.status === 'SENT') continue
-    out.push({ conversationId: row.id as string, workflow })
+    if (workflow) {
+      if (workflow.status !== 'SENT') alreadyClassified.push({ conversationId: conv.id, workflow })
+      continue
+    }
+    unclassified.push(conv)
   }
-  return out
+  if (unclassified.length === 0) return alreadyClassified
+
+  // No dashboard visit (or agent turn) has run `analyzeFreightWorkflow` for
+  // these conversations yet -- classify them the same way that function
+  // would, without persisting anything. Purchase evidence is workspace-wide,
+  // not per-conversation, so it is loaded once and reused across every
+  // candidate here rather than requeried per conversation.
+  const purchaseEvidence = await loadPurchaseEvidence(workspaceId)
+  const freshlyClassified: FreightAttentionConversation[] = []
+  for (const conv of unclassified) {
+    const detected = await detectOpenFreightRequest(conv, purchaseEvidence)
+    if (!detected) continue
+    freshlyClassified.push({
+      conversationId: conv.id,
+      workflow: {
+        id: `freight:${detected.requestMessageId}`,
+        workspaceId,
+        conversationId: conv.id,
+        requestMessageId: detected.requestMessageId,
+        request: detected.request,
+        status: detected.status,
+        candidates: detected.candidates,
+        selectedEvidenceId: detected.selectedEvidenceId,
+        generatedArtifactId: null,
+        reply: null,
+        approvedAt: null,
+        sentAt: null,
+      },
+    })
+  }
+  return [...alreadyClassified, ...freshlyClassified]
 }
 
 /**

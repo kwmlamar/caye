@@ -24,7 +24,7 @@ import {
   type FreightApprovalBinding,
 } from '@/lib/freight/whatsapp-orchestration'
 import type { FreightWorkflowRecord } from '@/lib/freight/workflow'
-import type { PurchaseEvidence } from '@/lib/freight/types'
+import type { FreightRequest, FreightWorkflowStatus, PurchaseEvidence, RankedPurchaseEvidence } from '@/lib/freight/types'
 
 export type FreightConversation = {
   id: string
@@ -81,7 +81,7 @@ export async function listFreightConversations(workspaceId: string) {
   return data ?? []
 }
 
-async function loadPurchaseEvidence(workspaceId: string): Promise<PurchaseEvidence[]> {
+export async function loadPurchaseEvidence(workspaceId: string): Promise<PurchaseEvidence[]> {
   const since = new Date(Date.now() - 90 * 86_400_000).toISOString()
   const { data, error } = await createServiceClient()
     .from('business_artifact_observations')
@@ -110,16 +110,54 @@ async function loadPurchaseEvidence(workspaceId: string): Promise<PurchaseEviden
   })
 }
 
-export async function analyzeFreightWorkflow(workspaceId: string, conversationId: string): Promise<FreightWorkflowRecord | null> {
-  const db = createServiceClient()
-  const conv = await loadFreightConversation(workspaceId, conversationId)
-  const existing = (conv.metadata?.freight_workflow ?? null) as FreightWorkflowRecord | null
-  if (existing?.workspaceId === workspaceId && existing.conversationId === conversationId) return existing
+export interface FreightDetectionResult {
+  requestMessageId: string
+  request: FreightRequest
+  status: FreightWorkflowStatus
+  candidates: RankedPurchaseEvidence[]
+  selectedEvidenceId: string | null
+}
 
+/**
+ * Pure detect + rank, no I/O. Split out of `analyzeFreightWorkflow` so the
+ * owner-attention sweep (`lib/freight-attention.ts`) can recompute the same
+ * result on every pass without persisting anything -- see that module's
+ * header for why detection must not be gated on `analyzeFreightWorkflow`
+ * ever having run for a conversation.
+ */
+export function detectFreightRequestState(input: {
+  requestMessageId: string
+  subject: string
+  body: string
+  from: string
+  receivedAt: string
+  purchaseEvidence: PurchaseEvidence[]
+}): FreightDetectionResult | null {
+  const request = detectFreightRequest({ subject: input.subject, body: input.body, from: input.from, receivedAt: input.receivedAt })
+  if (!request.isFreightDocumentRequest) return null
+  const match = rankPurchaseEvidence(request, input.purchaseEvidence)
+  return {
+    requestMessageId: input.requestMessageId,
+    request,
+    status: match.status,
+    candidates: match.candidates,
+    selectedEvidenceId: match.selection?.evidence.id ?? null,
+  }
+}
+
+/**
+ * Loads the latest inbound message for a conversation and runs
+ * `detectFreightRequestState` against it. `purchaseEvidence` is
+ * workspace-wide (not per-conversation), so callers sweeping many
+ * conversations should load it once with `loadPurchaseEvidence` and reuse it
+ * rather than re-querying per conversation.
+ */
+export async function detectOpenFreightRequest(conv: FreightConversation, purchaseEvidence: PurchaseEvidence[]): Promise<FreightDetectionResult | null> {
+  const db = createServiceClient()
   const { data: message, error } = await db
     .from('unified_messages')
     .select('id,content,sent_at,metadata')
-    .eq('conversation_id', conversationId)
+    .eq('conversation_id', conv.id)
     .eq('sender_type', 'customer')
     .eq('is_internal', false)
     .order('sent_at', { ascending: false })
@@ -129,24 +167,34 @@ export async function analyzeFreightWorkflow(workspaceId: string, conversationId
   if (!message) return null
 
   const meta = (message.metadata ?? {}) as Record<string, unknown>
-  const request = detectFreightRequest({
+  return detectFreightRequestState({
+    requestMessageId: message.id,
     subject: String(meta.subject ?? conv.metadata?.subject ?? ''),
     body: message.content,
     from: String(meta.from ?? conv.metadata?.from ?? conv.customer_id),
     receivedAt: message.sent_at,
+    purchaseEvidence,
   })
-  if (!request.isFreightDocumentRequest) return null
+}
 
-  const match = rankPurchaseEvidence(request, await loadPurchaseEvidence(workspaceId))
+export async function analyzeFreightWorkflow(workspaceId: string, conversationId: string): Promise<FreightWorkflowRecord | null> {
+  const db = createServiceClient()
+  const conv = await loadFreightConversation(workspaceId, conversationId)
+  const existing = (conv.metadata?.freight_workflow ?? null) as FreightWorkflowRecord | null
+  if (existing?.workspaceId === workspaceId && existing.conversationId === conversationId) return existing
+
+  const detected = await detectOpenFreightRequest(conv, await loadPurchaseEvidence(workspaceId))
+  if (!detected) return null
+
   const record: FreightWorkflowRecord = {
-    id: `freight:${message.id}`,
+    id: `freight:${detected.requestMessageId}`,
     workspaceId,
     conversationId,
-    requestMessageId: message.id,
-    request,
-    status: match.status,
-    candidates: match.candidates,
-    selectedEvidenceId: match.selection?.evidence.id ?? null,
+    requestMessageId: detected.requestMessageId,
+    request: detected.request,
+    status: detected.status,
+    candidates: detected.candidates,
+    selectedEvidenceId: detected.selectedEvidenceId,
     generatedArtifactId: null,
     reply: null,
     approvedAt: null,
@@ -155,7 +203,7 @@ export async function analyzeFreightWorkflow(workspaceId: string, conversationId
   const { error: updateError } = await db.from('unified_conversations').update({
     metadata: { ...conv.metadata, freight_workflow: record },
     human_agent_enabled: true,
-    human_agent_reason: `Freight document requested for ${freightReferenceLabel(request.reference)} — review required`,
+    human_agent_reason: `Freight document requested for ${freightReferenceLabel(record.request.reference)} — review required`,
   }).eq('id', conversationId)
   if (updateError) throw new FreightOperationError(updateError.message)
 
@@ -168,24 +216,25 @@ export async function analyzeFreightWorkflow(workspaceId: string, conversationId
     subject_id: conversationId,
     payload: {
       workflow_id: record.id,
-      request_message_id: message.id,
+      request_message_id: record.requestMessageId,
       // dock_receipt_number is the King-Ocean-only derived projection, kept for existing
       // readers; reference ({ kind, value }) is the source of truth and covers every kind.
-      dock_receipt_number: request.dockReceiptNumber,
-      reference: request.reference,
-      evidence: request.evidence,
+      dock_receipt_number: record.request.dockReceiptNumber,
+      reference: record.request.reference,
+      evidence: record.request.evidence,
     },
     origin: 'app',
   })
-  if (match.selection) {
+  const selected = record.selectedEvidenceId ? record.candidates.find((c) => c.evidence.id === record.selectedEvidenceId) : undefined
+  if (selected) {
     await db.from('workspace_events').insert({
       workspace_id: workspaceId,
       type: 'freight.purchase_evidence.matched',
       actor_kind: 'system',
       is_failure: false,
       subject_table: 'business_artifacts',
-      subject_id: match.selection.evidence.id,
-      payload: { workflow_id: record.id, confidence: match.selection.confidence, reasons: match.selection.reasons },
+      subject_id: selected.evidence.id,
+      payload: { workflow_id: record.id, confidence: selected.confidence, reasons: selected.reasons },
       origin: 'app',
     })
   }
