@@ -95,6 +95,18 @@ export const attentionSurface: CSSProperties = {
  *  threads) — a tonal hint, not a boxed table. */
 export const rowDivider = '1px solid rgba(255,255,255,0.045)'
 
+/** Selected/active row — nav items, list rows, tabs. A neutral tonal lift,
+ *  not a wash of Caye's aqua across the row. Aqua is her color: live
+ *  badges, her authored threads, voice pulses. A flat aqua fill behind
+ *  every selected row spends that signal on plain "you are here" state
+ *  until it just reads as "the app's blue" — this keeps selection legible
+ *  through weight and brightness alone. */
+export function selectedRow(active: boolean): CSSProperties {
+  return active
+    ? { background: 'rgba(255,255,255,0.065)' }
+    : {}
+}
+
 /** A near-invisible container boundary — hairline outline, almost no
  *  fill — for a list/table that should read like Claude or ChatGPT's own
  *  minimal surfaces (content grouped by whitespace + row dividers) rather

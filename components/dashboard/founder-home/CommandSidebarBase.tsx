@@ -7,7 +7,7 @@ import type { WorkspaceMembership } from '@/lib/workspace-context'
 import type { CustomerStatus } from '@/types/database'
 import FounderProfile from './FounderProfile'
 import WorkspaceSwitcher from './WorkspaceSwitcher'
-import { AQUA, TEXT_QUIET, glass, sidebarPopoverSurface, paneShadowSoft } from '../surface'
+import { AQUA, TEXT_QUIET, glass, sidebarPopoverSurface, paneShadowSoft, selectedRow } from '../surface'
 
 export type ActiveView =
   | { type: 'page'; id: FounderRailId }
@@ -31,11 +31,11 @@ export interface LiveOperator {
 
 const PRIMARY_NAV_ITEMS: { id: FounderRailId; label: string; icon: ReactNode }[] = [
   { id: 'inbox', label: 'Inbox', icon: <><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 7l9 6 9-6" /></> },
-  { id: 'work', label: 'Work', icon: <><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M3 10h18M8 3v4M16 3v4" /></> },
   { id: 'direction', label: 'Direction', icon: <><circle cx="12" cy="12" r="8.5" /><circle cx="12" cy="12" r="4" /><path d="M12 3.5v3M12 17.5v3M3.5 12h3M17.5 12h3" /></> },
 ]
 
 const SECONDARY_NAV_ITEMS: { id: FounderRailId; label: string; icon: ReactNode }[] = [
+  { id: 'work', label: 'Work', icon: <><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M3 10h18M8 3v4M16 3v4" /></> },
   { id: 'people', label: 'People', icon: <><circle cx="9" cy="8" r="3" /><path d="M2 21c0-3.5 3-6 7-6s7 2.5 7 6" /><circle cx="17" cy="8" r="2.5" /><path d="M17 13.5c2.5.3 4 2.3 4 5.5" /></> },
   { id: 'memory', label: 'Memory', icon: <><path d="M12 4.5c-2-1.6-5-1.6-7 0v13c2-1.6 5-1.6 7 0" /><path d="M12 4.5c2-1.6 5-1.6 7 0v13c-2-1.6-5-1.6-7 0" /></> },
 ]
@@ -204,9 +204,10 @@ function NavRow({ label, icon, active, onClick, trailing }: {
       style={{
         width: '100%', display: 'flex', alignItems: 'center', gap: 9, padding: '6px 9px',
         border: 0, borderRadius: 9, textAlign: 'left', cursor: 'pointer',
-        background: active ? 'rgba(78,190,206,0.1)' : hover ? 'rgba(255,255,255,0.04)' : 'transparent',
-        color: active ? '#7DD8E0' : hover ? '#e4e4e7' : '#9c9ca3',
+        background: active ? undefined : hover ? 'rgba(255,255,255,0.04)' : 'transparent',
+        color: active ? '#f4f4f5' : hover ? '#e4e4e7' : '#9c9ca3',
         transition: 'background 0.14s ease, color 0.14s ease',
+        ...selectedRow(active),
       }}
     >
       <Icon path={icon} size={15} />
@@ -341,9 +342,10 @@ export default function CommandSidebar({
           style={{
             position: 'relative', flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 6,
             padding: '5.5px 26px 5.5px 8px', overflow: 'hidden', border: 0, borderRadius: 8,
-            background: active ? 'rgba(78,190,206,0.11)' : 'transparent',
+            background: active ? undefined : 'transparent',
             color: active ? '#f4f4f5' : '#b1b1b9', cursor: 'pointer', textAlign: 'left',
             font: '500 12px inherit', whiteSpace: 'nowrap',
+            ...selectedRow(active),
           }}
         >
           {thread.created_by === 'caye' && (
@@ -496,9 +498,10 @@ export default function CommandSidebar({
                       style={{
                         position: 'relative', width: '100%', display: 'flex', alignItems: 'center', gap: 7,
                         padding: '5.5px 8px', overflow: 'hidden', border: 0, borderRadius: 8,
-                        background: active ? 'rgba(78,190,206,0.11)' : 'transparent',
+                        background: active ? undefined : 'transparent',
                         color: active ? '#f4f4f5' : '#b1b1b9', cursor: 'pointer', textAlign: 'left',
                         font: '500 12px inherit', whiteSpace: 'nowrap',
+                        ...selectedRow(active),
                       }}
                     >
                       <span aria-hidden style={{ width: 6, height: 6, flex: '0 0 6px', borderRadius: '50%', background: '#34d399', boxShadow: '0 0 6px rgba(52,211,153,0.6)' }} />

@@ -7,6 +7,7 @@ import { CayeMark } from '@/components/brand/CayeMark'
 import { FormattedReplyText } from '@/components/ui/FormattedReplyText'
 import { Pill } from '@/components/dashboard/founder-home/console-ui'
 import { CayeComposerSurface } from '@/components/dashboard/founder-home/AskCayeComposer'
+import CayeVoiceNoteButton from './voice/CayeVoiceNoteButton'
 import { emitStale, ALL_TOPICS } from '@/lib/founder-freshness'
 import CayeVoiceSession from './voice/CayeVoiceSession'
 import { RichResultRenderer } from './RichResultRenderer'
@@ -460,6 +461,10 @@ export default function CayeDirectThread(props: Props) {
     if (e.dataTransfer.files?.length) addFiles(e.dataTransfer.files)
   }
 
+  function applyVoiceTranscript(transcript: string) {
+    setInput((current) => current.trim() ? `${current.trimEnd()} ${transcript}` : transcript)
+  }
+
   async function handleCopy(key: string, text: string) {
     try {
       await navigator.clipboard.writeText(text)
@@ -576,6 +581,12 @@ export default function CayeDirectThread(props: Props) {
     const el = textareaRef.current
     if (!el) return
     el.style.height = 'auto'
+    // overflowY stays hidden until content genuinely exceeds the cap — an
+    // always-on 'auto' shows a spurious scrollbar the instant scrollHeight
+    // rounds a hair above the height we just set (common at fractional
+    // device-pixel ratios on larger/external displays), even though the
+    // text fits.
+    el.style.overflowY = el.scrollHeight > TEXTAREA_MAX_H ? 'auto' : 'hidden'
     el.style.height = `${Math.min(el.scrollHeight, TEXTAREA_MAX_H)}px`
   }, [input])
 
@@ -904,7 +915,15 @@ export default function CayeDirectThread(props: Props) {
           ref={scrollRef}
           onScroll={handleScroll}
           className="caye-direct-scroll"
-          style={{ height: '100%', overflowY: 'auto', padding: '18px var(--caye-direct-gutter) 24px' }}
+          style={{
+            height: '100%', overflowY: 'auto', padding: '18px var(--caye-direct-gutter) 24px',
+            // Content dissolves into the composer instead of getting cut off
+            // by a hard edge — a mask (not a color-matched overlay) so it
+            // works regardless of what's behind this panel (full-page vs.
+            // the Caye Direct modal have different backgrounds).
+            maskImage: 'linear-gradient(to bottom, black calc(100% - 20px), transparent 100%)',
+            WebkitMaskImage: 'linear-gradient(to bottom, black calc(100% - 20px), transparent 100%)',
+          }}
         >
           <div className="caye-direct-message-column">
             {loading ? (
@@ -1047,33 +1066,6 @@ export default function CayeDirectThread(props: Props) {
             </div>
           ) : (
           <>
-          {mode === 'thread' && (
-            <div style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-              width: '100%', margin: '0 0 6px', padding: '0 4px',
-            }}>
-              <select
-                value={modelMode}
-                onChange={(e) => setModelMode(e.target.value as typeof modelMode)}
-                title="Which model reasons for Caye on your next message"
-                style={{
-                  background: 'transparent', border: 'none', color: '#71717a',
-                  fontSize: 10.5, fontFamily: 'var(--font-mono)', letterSpacing: '0.02em',
-                  cursor: 'pointer', outline: 'none', padding: '2px 0', appearance: 'none',
-                }}
-              >
-                <option value="auto">Auto ▾</option>
-                <option value="claude">Claude ▾</option>
-                <option value="openai">Codex ▾</option>
-                <option value="api">API ▾</option>
-              </select>
-              {lastBackend && (
-                <span style={{ fontSize: 9.5, fontFamily: 'var(--font-mono)', color: '#52525b' }}>
-                  via {backendLabel(lastBackend)}
-                </span>
-              )}
-            </div>
-          )}
           <form
             className="caye-direct-composer-shell"
             onSubmit={(e) => { e.preventDefault(); send(input) }}
@@ -1130,76 +1122,133 @@ export default function CayeDirectThread(props: Props) {
             <CayeComposerSurface
               active={composerFocused || dragActive}
               maxWidth="100%"
+              layout="column"
               style={{
-                alignItems: 'flex-end',
                 borderRadius: 20,
                 background: dragActive ? 'rgba(78,190,206,0.08)' : composerFocused ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.035)',
-                border: `1px solid ${composerFocused || dragActive ? 'rgba(78,190,206,0.28)' : 'rgba(255,255,255,0.07)'}`,
+                border: `1px solid ${dragActive ? 'rgba(78,190,206,0.35)' : 'rgba(255,255,255,0.07)'}`,
                 boxShadow: composerFocused
-                  ? '0 1px 0 rgba(255,255,255,0.04) inset, 0 0 14px -4px rgba(78,190,206,0.18), 0 10px 24px -12px rgba(0,0,0,0.5)'
+                  ? '0 1px 0 rgba(255,255,255,0.05) inset, 0 10px 24px -12px rgba(0,0,0,0.5)'
                   : '0 1px 0 rgba(255,255,255,0.03) inset, 0 8px 18px -10px rgba(0,0,0,0.45)',
                 transition: 'background 0.18s ease, border-color 0.2s ease, box-shadow 0.22s ease',
               }}
             >
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={sending}
-                title="Attach an image or PDF"
-                aria-label="Attach a file"
-                className="caye-direct-send"
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(244,244,245,0.6)" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21.44 11.05l-9.19 9.19a5 5 0 0 1-7.07-7.07l9.19-9.19a3.5 3.5 0 0 1 4.95 4.95l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
-                </svg>
-              </button>
-              <textarea
-                ref={textareaRef}
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(input) }
-                }}
-                onPaste={handlePaste}
-                placeholder="Ask Caye anything…"
-                disabled={sending}
-                onFocus={() => setComposerFocused(true)}
-                onBlur={() => setComposerFocused(false)}
-                rows={1}
-                className="caye-direct-textarea"
-                style={{
-                  flex: 1, resize: 'none', overflowY: 'auto',
-                  maxHeight: TEXTAREA_MAX_H,
-                  background: 'transparent', border: 'none',
-                  padding: '6px 0', fontSize: 13.5, lineHeight: 1.5, color: '#f4f4f5',
-                  outline: 'none', fontFamily: 'inherit',
-                }}
-              />
-              <button
-                type="button"
-                onClick={() => setVoiceActive(true)}
-                disabled={sending}
-                title="Talk to Caye"
-                aria-label="Start voice conversation with Caye"
-                className="caye-direct-send"
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(244,244,245,0.6)" strokeWidth="2.2" strokeLinecap="round">
-                  <rect x="9" y="2" width="6" height="12" rx="3" /><path d="M5 10a7 7 0 0 0 14 0M12 19v3" />
-                </svg>
-              </button>
-              <button
-                type="submit"
-                disabled={sending || !canSend}
-                title="Send"
-                aria-label="Send message"
-                className={`caye-direct-send${canSend && !sending ? ' is-ready' : ''}`}
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
-                  stroke={canSend && !sending ? '#4EBECE' : 'rgba(244,244,245,0.45)'}
-                  strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-                  <line x1="12" y1="19" x2="12" y2="5" /><polyline points="5 12 12 5 19 12" />
-                </svg>
-              </button>
+              <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10, width: '100%' }}>
+                <textarea
+                  ref={textareaRef}
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(input) }
+                  }}
+                  onPaste={handlePaste}
+                  placeholder="Ask Caye anything…"
+                  disabled={sending}
+                  onFocus={() => setComposerFocused(true)}
+                  onBlur={() => setComposerFocused(false)}
+                  rows={1}
+                  className="caye-direct-textarea"
+                  style={{
+                    flex: 1, minWidth: 0, resize: 'none', overflowX: 'hidden', overflowY: 'hidden',
+                    maxHeight: TEXTAREA_MAX_H, wordBreak: 'break-word',
+                    background: 'transparent', border: 'none',
+                    padding: '6px 0', fontSize: 13.5, lineHeight: 1.5, color: '#f4f4f5',
+                    outline: 'none', fontFamily: 'inherit',
+                  }}
+                />
+                {canSend ? (
+                  <button
+                    type="submit"
+                    disabled={sending}
+                    title="Send"
+                    aria-label="Send message"
+                    style={{
+                      flexShrink: 0, width: 32, height: 32, borderRadius: '50%', border: 'none',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      background: '#4EBECE', cursor: sending ? 'default' : 'pointer', opacity: sending ? 0.5 : 1,
+                      transition: 'opacity .15s ease, transform .08s ease',
+                    }}
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#0a0a0b" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                      <line x1="12" y1="19" x2="12" y2="5" /><polyline points="5 12 12 5 19 12" />
+                    </svg>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setVoiceActive(true)}
+                    disabled={sending}
+                    title="Talk to Caye"
+                    aria-label="Start voice conversation with Caye"
+                    style={{
+                      flexShrink: 0, width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      border: 'none', borderRadius: 7, background: 'transparent',
+                      cursor: sending ? 'default' : 'pointer', opacity: sending ? 0.5 : 1,
+                      transition: 'opacity .15s ease, background .15s ease',
+                    }}
+                  >
+                    <svg aria-hidden width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="rgba(244,244,245,0.6)" strokeWidth="2.2" strokeLinecap="round">
+                      <path d="M5 10v4M9 7v10M13 5v14M17 8v8M21 10v4" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', padding: '0 2px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={sending}
+                    title="Attach an image or PDF"
+                    aria-label="Attach a file"
+                    style={{
+                      width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      border: 'none', borderRadius: 7, background: 'transparent', cursor: sending ? 'default' : 'pointer',
+                    }}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(244,244,245,0.6)" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M21.44 11.05l-9.19 9.19a5 5 0 0 1-7.07-7.07l9.19-9.19a3.5 3.5 0 0 1 4.95 4.95l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+                    </svg>
+                  </button>
+                  <CayeVoiceNoteButton disabled={sending} onTranscript={applyVoiceTranscript} />
+                </div>
+                {mode === 'thread' && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <select
+                      value={modelMode}
+                      onChange={(e) => setModelMode(e.target.value as typeof modelMode)}
+                      title="Which model reasons for Caye on your next message"
+                      style={{
+                        background: 'transparent', border: 'none', color: '#71717a',
+                        fontSize: 10.5, fontFamily: 'var(--font-mono)', letterSpacing: '0.02em',
+                        cursor: 'pointer', outline: 'none', padding: '2px 0', appearance: 'none',
+                      }}
+                    >
+                      <option value="auto">Auto ▾</option>
+                      <option value="claude">Claude ▾</option>
+                      <option value="openai">Codex ▾</option>
+                      <option value="api">API ▾</option>
+                    </select>
+                    {lastBackend && (
+                      <span style={{ fontSize: 9.5, fontFamily: 'var(--font-mono)', color: '#52525b' }}>
+                        via {backendLabel(lastBackend)}
+                      </span>
+                    )}
+                    <span style={{ fontSize: 10.5, fontFamily: 'var(--font-mono)', color: '#71717a', letterSpacing: '0.02em' }}>
+                      High
+                    </span>
+                    <span
+                      aria-hidden
+                      title="Caye is online"
+                      style={{
+                        width: 14, height: 14, borderRadius: '50%',
+                        border: '1.5px solid rgba(78,190,206,0.85)',
+                        boxShadow: '0 0 6px rgba(78,190,206,0.45)',
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
             </CayeComposerSurface>
           </form>
           </>

@@ -120,7 +120,7 @@ export default function WorkspaceSwitcher({
                 style={{
                   display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, width: '100%',
                   textAlign: 'left', border: 'none', cursor: 'pointer', borderRadius: 10,
-                  padding: '9px 10px', background: active ? 'rgba(78,190,206,0.08)' : 'transparent',
+                  padding: '9px 10px', background: active ? 'rgba(255,255,255,0.05)' : 'transparent',
                   transition: 'background 0.12s ease',
                 }}
                 onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = 'rgba(255,255,255,0.035)' }}
