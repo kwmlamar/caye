@@ -3,16 +3,27 @@
  *
  * This module opens the applicant page, enforces every destination/challenge
  * control, fills the resolved answers, and uploads the verified resume. It
- * stops there. It contains no submit selector, no click path, and no way to
- * express one.
+ * stops there. It contains no submit selector, no submit-shaped click path,
+ * and no way to express one.
+ *
+ * It DOES click twice, inside fillSelectControl(): Greenhouse renders some
+ * select-type fields (e.g. Country) as an accessible custom combobox rather
+ * than a native <select>, and there is no non-click way to open that
+ * combobox and choose an option. Both clicks are filling form state, not
+ * submitting it — they only ever target a control resolved from a
+ * DiscoveredField (never a submit button, which this module has no selector
+ * for at all) and an exact-match role="option" inside it. Neither click
+ * navigates, neither can reach an employer, and isolation.test.ts separately
+ * asserts this file's code never references "submit".
  *
  * It exists so the readiness pass (greenhouse-browser.ts) and the live
  * submission path (greenhouse-submit.ts) share ONE implementation of the
  * security-critical parts. The alternative — copying navigation routing, SSRF
  * revalidation, and challenge detection into a second module — guarantees the
- * two drift, and the one that drifts is the one that clicks.
+ * two drift, and the one that drifts is the one that submits.
  *
- * The consequential click lives in greenhouse-submit.ts and nowhere else.
+ * The consequential (submit) click lives in greenhouse-submit.ts and nowhere
+ * else.
  */
 import 'server-only'
 import crypto from 'node:crypto'
