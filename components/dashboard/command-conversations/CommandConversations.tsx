@@ -333,6 +333,12 @@ export default function CommandConversations({ workspaceId, selectedConversation
     const el = replyTextareaRef.current
     if (!el) return
     el.style.height = 'auto'
+    // overflowY stays hidden until content genuinely exceeds the cap — an
+    // always-on 'auto' shows a spurious scrollbar the instant scrollHeight
+    // rounds a hair above the height we just set (common at fractional
+    // device-pixel ratios on larger/external displays), even though the
+    // text fits.
+    el.style.overflowY = el.scrollHeight > REPLY_MAX_HEIGHT ? 'auto' : 'hidden'
     el.style.height = `${Math.min(el.scrollHeight, REPLY_MAX_HEIGHT)}px`
   }, [replyText])
 
@@ -588,7 +594,17 @@ export default function CommandConversations({ workspaceId, selectedConversation
               )}
             </div>
 
-            <div ref={threadContainerRef} style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '16px 18px' }}>
+            <div
+              ref={threadContainerRef}
+              style={{
+                flex: 1, minHeight: 0, overflowY: 'auto', padding: '16px 18px',
+                // Messages dissolve into the composer instead of getting cut
+                // off by a hard edge — a mask so it works regardless of what
+                // sits behind this panel.
+                maskImage: 'linear-gradient(to bottom, black calc(100% - 20px), transparent 100%)',
+                WebkitMaskImage: 'linear-gradient(to bottom, black calc(100% - 20px), transparent 100%)',
+              }}
+            >
               {threadLoading ? (
                 <CayeLoadingPulse size={16} />
               ) : (
@@ -643,7 +659,7 @@ export default function CommandConversations({ workspaceId, selectedConversation
                         color: drafting ? TEXT_QUIET : AQUA,
                       }}
                     >
-                      {drafting ? <CayeLoadingPulse size={11} /> : <CayeMark size={12} />}
+                      {drafting && <CayeLoadingPulse size={11} />}
                       {drafting ? 'Drafting…' : 'Ask Caye to draft'}
                     </button>
                   )}
@@ -696,11 +712,11 @@ function ReplyBox({
         alignItems: 'flex-end',
         borderRadius: 20,
         background: focused ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.035)',
-        border: `1px solid ${focused ? 'rgba(78,190,206,0.28)' : 'rgba(255,255,255,0.07)'}`,
+        border: '1px solid rgba(255,255,255,0.07)',
         boxShadow: focused
-          ? '0 1px 0 rgba(255,255,255,0.04) inset, 0 0 14px -4px rgba(78,190,206,0.18), 0 10px 24px -12px rgba(0,0,0,0.5)'
+          ? '0 1px 0 rgba(255,255,255,0.05) inset, 0 10px 24px -12px rgba(0,0,0,0.5)'
           : '0 1px 0 rgba(255,255,255,0.03) inset, 0 8px 18px -10px rgba(0,0,0,0.45)',
-        transition: 'background 0.18s ease, border-color 0.2s ease, box-shadow 0.22s ease',
+        transition: 'background 0.18s ease, box-shadow 0.22s ease',
       }}
     >
       <textarea
@@ -717,7 +733,8 @@ function ReplyBox({
         rows={1}
         disabled={sending}
         style={{
-          flex: 1, resize: 'none', overflowY: 'auto', maxHeight,
+          flex: 1, minWidth: 0, resize: 'none', overflowX: 'hidden', overflowY: 'hidden', maxHeight,
+          wordBreak: 'break-word',
           background: 'transparent', border: 'none',
           padding: '6px 0', fontSize: 13.5, lineHeight: 1.5, color: TEXT,
           outline: 'none', fontFamily: 'inherit',
@@ -729,17 +746,16 @@ function ReplyBox({
         title="Send (⌘/Ctrl+Enter)"
         aria-label="Send reply"
         style={{
-          flexShrink: 0, width: 34, height: 34, borderRadius: '50%',
+          flexShrink: 0, width: 32, height: 32, borderRadius: '50%', border: 'none',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          background: ready ? 'rgba(78,190,206,0.16)' : 'rgba(255,255,255,0.09)',
-          border: `1px solid ${ready ? 'rgba(78,190,206,0.5)' : 'rgba(255,255,255,0.14)'}`,
+          background: ready ? AQUA : 'rgba(255,255,255,0.09)',
           cursor: ready ? 'pointer' : 'default',
-          transition: 'background 0.15s ease, border-color 0.15s ease, transform 0.08s ease',
+          transition: 'background 0.15s ease, transform 0.08s ease',
         }}
       >
         {sending ? <CayeLoadingPulse size={12} /> : (
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
-            stroke={ready ? '#4EBECE' : 'rgba(244,244,245,0.65)'}
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+            stroke={ready ? '#0a0a0b' : 'rgba(244,244,245,0.65)'}
             strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
             <path d="M12 19V5" /><path d="M5 12l7-7 7 7" />
           </svg>

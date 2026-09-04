@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { formatDistanceToNow } from '@/lib/utils'
-import { GOLD, TEXT, TEXT_QUIET } from '@/components/dashboard/surface'
+import { GOLD, TEXT, TEXT_QUIET, selectedRow } from '@/components/dashboard/surface'
 import { conversationNeedsFounder, cleanHoldReason } from '@/lib/hold-kinds-shared'
 import { channelLabel } from './channel-meta'
 import type { ConversationSummary } from '@/lib/useFounderConversations'
@@ -29,9 +29,10 @@ export default function ConversationRow({ c, active, onClick }: {
       onMouseLeave={() => setHover(false)}
       style={{
         display: 'block', width: '100%', textAlign: 'left', border: 'none', cursor: 'pointer',
-        background: active ? 'rgba(78,190,206,0.11)' : hover ? 'rgba(255,255,255,0.03)' : 'transparent',
+        background: active ? undefined : hover ? 'rgba(255,255,255,0.03)' : 'transparent',
         borderRadius: 10, padding: '10px 12px', marginBottom: 1,
         transition: 'background 0.12s ease',
+        ...selectedRow(active),
       }}
     >
       <div style={{

@@ -142,8 +142,8 @@ function ViewToggle({ view, onChange }: { view: 'capabilities' | 'registry'; onC
           style={{
             border: 'none', cursor: 'pointer', borderRadius: 7, padding: '5px 10px',
             fontSize: 11, fontWeight: 600, fontFamily: 'var(--font-mono)',
-            background: view === v ? 'rgba(78,190,206,0.14)' : 'transparent',
-            color: view === v ? '#7DD8E0' : LABEL_COLOR,
+            background: view === v ? 'rgba(255,255,255,0.09)' : 'transparent',
+            color: view === v ? '#f4f4f5' : LABEL_COLOR,
           }}
         >
           {v === 'capabilities' ? 'What she can do' : 'Developer view'}

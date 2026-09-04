@@ -29,16 +29,10 @@ export default function PersonRow({ person, active, onClick }: {
       style={{
         position: 'relative', display: 'block', width: '100%', textAlign: 'left', border: 'none', cursor: 'pointer',
         padding: '11px 14px 11px 18px', borderRadius: 10, borderTop: rowDivider,
-        background: active ? 'rgba(78,190,206,0.06)' : hover ? 'rgba(255,255,255,0.03)' : 'transparent',
+        background: active ? 'rgba(255,255,255,0.05)' : hover ? 'rgba(255,255,255,0.03)' : 'transparent',
         transition: 'background 0.12s ease',
       }}
     >
-      {active && (
-        <span aria-hidden style={{
-          position: 'absolute', left: 4, top: 9, bottom: 9, width: 2, borderRadius: 2,
-          background: AQUA, boxShadow: `0 0 6px ${AQUA}77`,
-        }} />
-      )}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 14 }}>
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 7, minWidth: 0 }}>

@@ -27,11 +27,16 @@ function directChildProps(child: ReactNode): DirectComposerChildProps | null {
  */
 /** The shared visual surface for every founder-facing Caye composer. Keeping
  * this here prevents the modal composer from slowly becoming a lookalike. */
-export function CayeComposerSurface({ children, active, maxWidth = 600, style }: {
+export function CayeComposerSurface({ children, active, maxWidth = 600, style, layout = 'row' }: {
   children: ReactNode
   active?: boolean
   maxWidth?: number | string
   style?: CSSProperties
+  /** 'column' stacks children as full-width rows (the text field, then a
+   *  toolbar row underneath) instead of laying them out inline — CayeDirect's
+   *  composer only; skips the isDirectComposer auto-transform below since a
+   *  caller using 'column' hand-lays-out its own primary action. */
+  layout?: 'row' | 'column'
 }) {
   const childList = Children.toArray(children)
   const textareaIndex = childList.findIndex((child) =>
@@ -96,7 +101,7 @@ export function CayeComposerSurface({ children, active, maxWidth = 600, style }:
           transition: 'opacity .15s ease, transform .08s ease',
         }}
       >
-        <svg aria-hidden width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#0a0a0b" strokeWidth="2.2" strokeLinecap="round">
+        <svg aria-hidden width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#0a0a0b" strokeWidth="2.2" strokeLinecap="round">
           <path d="M5 10v4M9 7v10M13 5v14M17 8v8M21 10v4" />
         </svg>
       </button>
@@ -120,7 +125,11 @@ export function CayeComposerSurface({ children, active, maxWidth = 600, style }:
   return (
     <div
       style={{
-        display: 'flex', alignItems: 'center', gap: 10, width: '100%', maxWidth,
+        display: 'flex',
+        ...(layout === 'column'
+          ? { flexDirection: 'column', alignItems: 'stretch', gap: 6 }
+          : { alignItems: 'center', gap: 10 }),
+        width: '100%', maxWidth,
         background: `rgba(255,255,255,${active ? 0.055 : 0.032})`,
         backdropFilter: 'blur(22px) saturate(150%)', WebkitBackdropFilter: 'blur(22px) saturate(150%)',
         borderRadius: 999, padding: '10px 10px 10px 16px',

@@ -3,6 +3,7 @@
 import { createPortal } from 'react-dom'
 import { useEffect, useMemo, useRef, useState, type ComponentProps } from 'react'
 import { getSession } from '@/lib/supabase'
+import { selectedRow } from '../surface'
 import CommandSidebarBase from './CommandSidebarBase'
 
 export type { ActiveView, ThreadListItem, LiveOperator } from './CommandSidebarBase'
@@ -62,7 +63,7 @@ export default function CommandSidebar(props: Props) {
             const active = props.activeView.type === 'thread' && props.activeView.id === thread.id
             const needs = run.status === 'waiting_user' || run.status === 'paused'
             return (
-              <button key={thread.id} type="button" onClick={() => props.onSelectThread(thread.id)} style={{ width: '100%', minWidth: 0, display: 'flex', alignItems: 'flex-start', gap: 7, padding: '6px 8px', border: 0, borderRadius: 8, background: active ? 'rgba(78,190,206,.11)' : 'transparent', color: active ? '#f4f4f5' : '#b1b1b9', cursor: 'pointer', textAlign: 'left' }}>
+              <button key={thread.id} type="button" onClick={() => props.onSelectThread(thread.id)} style={{ width: '100%', minWidth: 0, display: 'flex', alignItems: 'flex-start', gap: 7, padding: '6px 8px', border: 0, borderRadius: 8, background: active ? undefined : 'transparent', color: active ? '#f4f4f5' : '#b1b1b9', cursor: 'pointer', textAlign: 'left', ...selectedRow(active) }}>
                 <span aria-hidden style={{ width: 6, height: 6, marginTop: 4, flex: '0 0 6px', borderRadius: '50%', background: needs ? '#fbbf24' : '#4EBECE' }} />
                 <span style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 1 }}>
                   <span style={{ maxWidth: 175, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12, fontWeight: 500 }}>{thread.title || 'New conversation'}</span>

@@ -10,6 +10,7 @@ import ToolsPage from './ToolsPage'
 import AiProvidersPage from './AiProvidersPage'
 import AdminShell from '@/components/dashboard/admin-shell/AdminShell'
 import GlobalPerformance from '@/components/dashboard/global-performance/GlobalPerformance'
+import { selectedRow } from '@/components/dashboard/surface'
 
 const CARD_BORDER = '#28282d'
 const LABEL_COLOR = '#71717a'
@@ -42,7 +43,8 @@ function TabButton({ label, active, onClick, quiet }: { label: string; active: b
         border: 'none', cursor: 'pointer', textAlign: 'left', padding: '7px 12px', borderRadius: 9,
         fontSize: quiet ? 12.5 : 13, fontWeight: active ? 600 : 500,
         color: active ? '#f4f4f5' : quiet ? '#71717a' : '#a1a1aa',
-        background: active ? 'rgba(78,190,206,0.1)' : 'transparent',
+        background: active ? undefined : 'transparent',
+        ...selectedRow(active),
       }}
     >
       {label}
