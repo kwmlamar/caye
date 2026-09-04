@@ -13,10 +13,19 @@ import type { BedrockConnection } from './types'
  * write contract and `briefs/ods-receivables-loop.md` for the receivables
  * contract this class also implements.
  *
- * Three capabilities: `insertTimeEntries`, `insertInvoice`, `insertPayment`.
- * No update, no delete, on any table. Approving a timesheet (`approved_by`
- * / `approved_at`) is a separate authority and is out of scope for this
- * class.
+ * Capabilities: `insertTimeEntries`, `insertInvoice`, `insertPayment`,
+ * `insertReceipt`, and `uploadReceiptImage`. No update, no delete, on any
+ * table or storage object. Approving a timesheet (`approved_by` /
+ * `approved_at`) is a separate authority and is out of scope for this class.
+ *
+ * `uploadReceiptImage` is the one capability here that is not a table
+ * insert, and it stays inside the same rule: it only ever ADDS an object,
+ * never overwrites (`upsert: false`) and never removes one. It exists
+ * because `receipts.image_url` is NOT NULL with no default -- a receipt row
+ * physically cannot be written without an image already stored somewhere --
+ * so storing the photo is not an optional extra, it is a precondition of
+ * the insert. See `insertReceipt` for why the placeholder the existing rows
+ * use was not an option.
  *
  * `insertPayment` in particular stays insert-only on purpose. TropiTrack
  * runs a live trigger, `after_payment_insert`, calling
@@ -36,6 +45,27 @@ import type { BedrockConnection } from './types'
  * overwrites it with the resolved `companyId` argument and never trusts the
  * value on the row itself.
  */
+/**
+ * TropiTrack's `documents` bucket, verified live 2026-09-03: the only bucket
+ * in that project, public, 10MB cap, and these exact mime types. Its own app
+ * already writes receipt images under a `receipts/` prefix.
+ *
+ * Note `image/gif` is absent even though Caye can read one, and `image/heic`
+ * is present even though the model cannot -- the two sets are not the same,
+ * and a caller has to satisfy both.
+ */
+export const BEDROCK_DOCUMENTS_BUCKET = 'documents'
+export const BEDROCK_RECEIPT_MAX_BYTES = 10 * 1024 * 1024
+export const BEDROCK_RECEIPT_MIME_TYPES = new Set([
+  'image/jpeg',
+  'image/jpg',
+  'image/png',
+  'image/webp',
+  'application/pdf',
+  'image/heic',
+  'image/heif',
+])
+
 export interface BedrockTimeEntryInsert {
   worker_id: string
   project_id: string
@@ -97,10 +127,39 @@ export interface BedrockPaymentInsert {
   notes: string | null
 }
 
+/**
+ * Insertable shape of a `receipts` row, restricted to the columns this write
+ * path is allowed to set. Verified against the live table on 2026-09-03.
+ *
+ * `image_url` is NOT NULL with no default, so it is required here rather
+ * than optional -- the schema itself refuses a receipt with no image.
+ *
+ * `status` is NOT NULL with a CHECK of ('pending','processed','failed') and
+ * a default of 'pending'. It is deliberately NOT settable here: a receipt
+ * Caye records is 'pending' by definition, because nothing has reconciled
+ * it yet, and letting a caller declare it 'processed' would be Caye
+ * asserting an outcome it has no evidence for.
+ *
+ * `project_id`, `vendor`, `receipt_date` and `total_amount` are all nullable
+ * on the table, and that is used rather than worked around: a receipt whose
+ * job nobody could name is recorded unattributed instead of guessed at, the
+ * same restraint `log_invoice_sent` already shows for its own job link.
+ */
+export interface BedrockReceiptInsert {
+  image_url: string
+  project_id: string | null
+  submitted_by: string | null
+  vendor: string | null
+  receipt_date: string | null
+  total_amount: number | null
+  notes: string | null
+  company_id: string
+}
+
 export interface BedrockWriteRowFailure {
-  /** Index into the `rows` array passed to `insertTimeEntries`; always 0 for the single-row insertInvoice/insertPayment paths. */
+  /** Index into the `rows` array passed to `insertTimeEntries`; always 0 for the single-row insertInvoice/insertPayment/insertReceipt paths. */
   index: number
-  row: BedrockTimeEntryInsert | BedrockInvoiceInsert | BedrockPaymentInsert
+  row: BedrockTimeEntryInsert | BedrockInvoiceInsert | BedrockPaymentInsert | BedrockReceiptInsert
   error: string
 }
 
@@ -346,6 +405,98 @@ export class BedrockWriteProvider {
   }
 
   /**
+   * Store a receipt photo and return the URL that `insertReceipt` needs.
+   *
+   * WHY THIS EXISTS AT ALL
+   *
+   * `receipts.image_url` is NOT NULL with no default. A receipt row cannot
+   * be written without one, so this is a precondition of the insert rather
+   * than a convenience.
+   *
+   * WHY NOT THE PLACEHOLDER THE EXISTING ROWS USE
+   *
+   * All six receipts in the live table have `image_url` set to the literal
+   * string `'uploaded'`. Writing that for a photo that was never uploaded
+   * anywhere would be recording a claim with nothing behind it, which is the
+   * one thing this system is built not to do. If the image cannot be stored,
+   * the receipt is not written.
+   *
+   * WHERE IT GOES
+   *
+   * TropiTrack's own `documents` bucket, under the `receipts/` prefix its
+   * app already uses. The bucket is public, which is TropiTrack's existing
+   * choice for this bucket and not something this class changes -- callers
+   * should know a receipt URL is not a secret. Allowed types there are
+   * jpeg/jpg/png/webp/pdf/heic/heif with a 10MB cap; this refuses anything
+   * else up front rather than letting storage reject it with a less useful
+   * error.
+   *
+   * `upsert: false`, so this can only ever add an object. A name collision
+   * fails loudly instead of overwriting somebody's receipt.
+   */
+  async uploadReceiptImage(
+    companyId: string,
+    params: { bytes: Uint8Array; mimeType: string; filename: string }
+  ): Promise<{ ok: true; url: string; path: string } | { ok: false; error: string }> {
+    if (!BEDROCK_RECEIPT_MIME_TYPES.has(params.mimeType)) {
+      return {
+        ok: false,
+        error: `refused: ${params.mimeType} is not an accepted receipt image type (${[...BEDROCK_RECEIPT_MIME_TYPES].join(', ')})`,
+      }
+    }
+    if (params.bytes.byteLength > BEDROCK_RECEIPT_MAX_BYTES) {
+      return {
+        ok: false,
+        error: `refused: receipt image is ${params.bytes.byteLength} bytes, over the ${BEDROCK_RECEIPT_MAX_BYTES}-byte bucket limit`,
+      }
+    }
+
+    // company_id in the path so one company's receipts can never collide
+    // with another's, even though the bucket itself is not company-scoped.
+    const path = `receipts/${companyId}/${params.filename}`
+    const { error } = await this.client.storage
+      .from(BEDROCK_DOCUMENTS_BUCKET)
+      .upload(path, params.bytes, { contentType: params.mimeType, upsert: false })
+
+    if (error) return { ok: false, error: `receipt image upload failed: ${error.message}` }
+
+    const { data } = this.client.storage.from(BEDROCK_DOCUMENTS_BUCKET).getPublicUrl(path)
+    if (!data?.publicUrl) {
+      return { ok: false, error: 'receipt image uploaded but no public URL could be resolved' }
+    }
+    return { ok: true, url: data.publicUrl, path }
+  }
+
+  /**
+   * Insert one `receipts` row and record a single `audit_logs` row
+   * describing the attempt.
+   *
+   * `status` is left to the column default (`'pending'`) rather than set
+   * here -- see `BedrockReceiptInsert`. `image_url` must already point at a
+   * stored object; get one from `uploadReceiptImage` and do not invent a
+   * value for it.
+   */
+  async insertReceipt(companyId: string, row: BedrockReceiptInsert): Promise<BedrockWriteResult> {
+    const scopedRow: BedrockReceiptInsert = {
+      image_url: row.image_url,
+      project_id: row.project_id,
+      submitted_by: row.submitted_by,
+      vendor: row.vendor,
+      receipt_date: row.receipt_date,
+      total_amount: row.total_amount,
+      notes: row.notes,
+      company_id: companyId,
+    }
+
+    return this.insertSingleRowAndAudit({
+      companyId,
+      table: 'receipts',
+      toolName: 'insertReceipt',
+      scopedRow,
+    })
+  }
+
+  /**
    * True only when an `invoices` row exists matching both `id` and
    * `company_id`. Any failure to confirm that -- not found, wrong company,
    * or a query error -- fails closed and returns false, so a payment is
@@ -368,9 +519,9 @@ export class BedrockWriteProvider {
 
   private async insertSingleRowAndAudit(params: {
     companyId: string
-    table: 'invoices' | 'payments'
-    toolName: 'insertInvoice' | 'insertPayment'
-    scopedRow: BedrockInvoiceInsert | BedrockPaymentInsert
+    table: 'invoices' | 'payments' | 'receipts'
+    toolName: 'insertInvoice' | 'insertPayment' | 'insertReceipt'
+    scopedRow: BedrockInvoiceInsert | BedrockPaymentInsert | BedrockReceiptInsert
   }): Promise<BedrockWriteResult> {
     const { companyId, table, toolName, scopedRow } = params
     const startedAt = Date.now()
