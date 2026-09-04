@@ -181,16 +181,63 @@ describe('executeApplication has exactly one founder-only production caller (pos
     expect(unsupportedProvider('generic').canSubmit).toBe(false)
   })
 
-  it('only the audited submission module contains a browser click', () => {
-    // The one consequential browser operation in the whole job-search subtree
-    // must live in exactly one file. If a click appears anywhere else, the
-    // "one deliberate submit action" guarantee is no longer structural.
-    const offenders: string[] = []
+  it('only the audited submission module can submit; the readiness module may only fill form state', () => {
+    // The one CONSEQUENTIAL browser operation (the click that can reach a
+    // real employer) must live in exactly one file. The unambiguous
+    // submission APIs — a keypress, form.submit(), requestSubmit() — have no
+    // legitimate non-submit use anywhere in this subtree, so they stay fully
+    // banned outside the audited module. Plain .click() is different: the
+    // readiness module (greenhouse-form-session.ts) legitimately clicks
+    // twice to open and select from a Greenhouse custom combobox, which is
+    // filling a field, not submitting a form — see its docstring. That file
+    // is allowed exactly one narrow exception; nowhere else may click at
+    // all. The companion test below independently proves the exception's
+    // clicks can never be submit-shaped.
+    const SUBMIT_FILE = 'lib/job-search/execution/providers/greenhouse-submit.ts'
+    const READINESS_FILE = 'lib/job-search/execution/providers/greenhouse-form-session.ts'
+    const submissionApiOffenders: string[] = []
+    const clickOffenders: string[] = []
     for (const file of listSourceFiles(JOB_SEARCH_DIR, (e) => e.endsWith('.ts') && !e.endsWith('.test.ts'))) {
+      const relative = path.relative(REPO_ROOT, file)
       const content = readFileSync(file, 'utf8')
-      if (/\.click\(|\.press\(|form\.submit\(|requestSubmit\(/.test(content)) offenders.push(path.relative(REPO_ROOT, file))
+      if (/\.press\(|form\.submit\(|requestSubmit\(/.test(content) && relative !== SUBMIT_FILE) {
+        submissionApiOffenders.push(relative)
+      }
+      if (/\.click\(/.test(content) && relative !== SUBMIT_FILE && relative !== READINESS_FILE) {
+        clickOffenders.push(relative)
+      }
     }
-    expect(offenders).toEqual(['lib/job-search/execution/providers/greenhouse-submit.ts'])
+    expect(submissionApiOffenders).toEqual([])
+    expect(clickOffenders).toEqual([])
+  })
+
+  it('the readiness module still has exactly the two combobox clicks it is allowed', () => {
+    // The file-level exception above says WHERE a non-submit click may live.
+    // This says HOW MANY. Without it the exception is blanket: that file could
+    // grow a click on a button labelled "Apply" -- no "submit" anywhere in the
+    // source -- and neither the allowlist nor the string check below would
+    // notice. Pinning the count means any new click there fails this test and
+    // has to be looked at by a person, which is the whole point of a
+    // structural invariant.
+    //
+    // If you are here because you legitimately added a third click: confirm it
+    // fills a field rather than submitting, then raise this number and say so
+    // in the PR.
+    const file = path.join(EXECUTION_DIR, 'providers', 'greenhouse-form-session.ts')
+    const clicks = readFileSync(file, 'utf8').match(/\.click\(/g) ?? []
+    expect(clicks).toHaveLength(2)
+  })
+
+  it("the readiness module's combobox clicks never touch anything submit-shaped", () => {
+    // Independent of the file-level allowlist above: strip this file's own
+    // comments (which discuss "submit" in prose, e.g. "no submit selector")
+    // and assert the executable code never references "submit" at all. If a
+    // future edit ever gave this file a submit selector or a submit-button
+    // click, this fails even though the click-count check above would not.
+    const file = path.join(EXECUTION_DIR, 'providers', 'greenhouse-form-session.ts')
+    const content = readFileSync(file, 'utf8')
+    const code = content.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')
+    expect(code).not.toMatch(/submit/i)
   })
 })
 

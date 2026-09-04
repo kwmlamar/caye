@@ -11,15 +11,19 @@ export type EscalationInput = {
   actionable?: boolean;
 };
 
-const fresh = (e: StrategicEvidence) => !e.stale;
+// Stale and contradicted evidence are not merely discounted — they are excluded from the
+// usable pool entirely. A flat confidence subtraction can be overwhelmed by a high base
+// confidence; exclusion cannot. This is what hard-gates strength (and therefore the
+// escalation level, since strength collapses to 0 when nothing usable remains) instead of
+// just nudging it down.
+const isUsable = (e: StrategicEvidence) => !e.stale && !e.contradicted;
 
 export function evidenceStrength(evidence: StrategicEvidence[]): number {
-  const usable = evidence.filter(fresh);
+  const usable = evidence.filter(isUsable);
   if (!usable.length) return 0;
   const independent = usable.reduce((n, e) => n + Math.max(0, e.independentSourceCount), 0);
   const avgConfidence = usable.reduce((n, e) => n + e.confidence, 0) / usable.length;
-  const contradictionPenalty = usable.some((e) => e.contradicted) ? 0.2 : 0;
-  return Math.max(0, Math.min(1, avgConfidence + Math.min(independent, 3) * 0.08 - contradictionPenalty));
+  return Math.max(0, Math.min(1, avgConfidence + Math.min(independent, 3) * 0.08));
 }
 
 export function classifyStrategicEscalation(input: EscalationInput): StrategicEscalationLevel {
