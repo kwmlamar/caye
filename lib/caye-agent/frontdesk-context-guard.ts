@@ -165,6 +165,34 @@ export function detectUnsupportedFutureActionCommitment(
   return null
 }
 
+/**
+ * Any sentence in an already-guard-passed body that commits a future actor
+ * (the business, "we", or a named person) to a send/share or follow-up
+ * action — independent of whether grounding was found for it.
+ *
+ * WHY THIS EXISTS (Delysia Weeks, Bimini, 2026-09) separate from the guard
+ * above: `detectUnsupportedFutureActionCommitment` only ever returns
+ * non-null for the UNGROUNDED case, which never reaches a customer — the
+ * guard blocks the send. But a GROUNDED promise ("Mrs. Max will send your
+ * invoice shortly") still ships, and shipping it does not make the promised
+ * work happen on its own. That reply went out, `groundingSupports` found a
+ * generic invoicing-policy fact and called it authorised, and nobody ever
+ * told Mrs. Max an invoice was now owed to this specific guest — the
+ * promise was true in principle and false in practice. The caller uses this
+ * to flag every such promise for a real, immediate operator ping once it
+ * ships, whether or not the wording was "supported" — see
+ * send-customer-reply.ts's requestsOwnerFollowup wiring.
+ */
+export function detectFutureActionCommitment(
+  body: string
+): { kind: FollowupKind; sentence: string } | null {
+  for (const sentence of sentences(body)) {
+    const kind = followupKind(sentence)
+    if (kind) return { kind, sentence }
+  }
+  return null
+}
+
 async function currentConversationChannelContext(
   db: Db,
   conversationId: string
