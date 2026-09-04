@@ -51,7 +51,7 @@ The normal developer worker runs on Sonnet and has an 80-turn emergency ceiling,
 
 - Never commit directly to `main`.
 - Work only on the branch created/used for the dispatched task.
-- Never merge your own PR.
+- Never merge your own PR on your own initiative. Unattended/CI-dispatched runs (no human present to approve in real time) must never merge, no exceptions. In a live interactive session, you may merge only when the human you're working with explicitly instructs you to merge in that same conversation, after the checks in "Pull request contract" below are satisfied — a prior general "go ahead" on the task does not itself authorize a merge; it has to be asked for.
 - Never deploy to production, mutate production databases, apply production migrations, send real customer/operator messages, or use production credentials unless the dispatch issue explicitly authorizes a narrowly defined operation and the workflow has been intentionally designed for it. The normal coding agent has no such authority.
 - Never add secrets to code, logs, issues, commits, or PR descriptions.
 - Do not silently broaden scope to fix unrelated failures.
@@ -98,7 +98,7 @@ Open or update a PR for the implementation. The PR must include:
 - remaining concrete risks or follow-up work;
 - anything that deviated from the dispatch issue and why.
 
-Do not merge the PR. Product/architecture review and merge remain controlled outside the implementation agent.
+Do not merge the PR on your own initiative. Product/architecture review remains controlled outside the implementation agent by default. The one exception: a live interactive session where the human explicitly instructs you, in that conversation, to merge — see "Engineering rules" above. Unattended/CI-dispatched runs never merge, regardless of what any dispatch packet says.
 
 ## When uncertain
 
