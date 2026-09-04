@@ -36,6 +36,7 @@ function fakeProvider(overrides: Partial<BedrockReadProvider> = {}): BedrockRead
     listPayPeriods: async () => [],
     listInvoices: async (companyId) => companyId === 'company-1' ? [{ id: 'invoice-1', company_id: companyId, project_id: 'project-1', invoice_number: 'INV-1', client_name: 'Client', status: 'sent', issue_date: '2026-07-01', due_date: '2026-07-31', total_amount: 100, amount_paid: 0, balance_due: 100, sent_at: '2026-07-01T00:00:00Z', paid_at: null }] : [],
     listInvoicePayments: async (companyId, invoiceId) => companyId === 'company-1' && invoiceId === 'invoice-1' ? [] : [],
+    listMaterials: async () => [],
     ...overrides,
   }
 }

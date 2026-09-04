@@ -20,6 +20,8 @@ const PHOTO = {
 function harness(over: Record<string, unknown> = {}) {
   const uploads: { filename: string; mimeType: string; byteLength: number }[] = []
   const inserts: Record<string, unknown>[] = []
+  const lineItemInserts: Record<string, unknown>[] = []
+  const materialInserts: Record<string, unknown>[] = []
 
   const provider = {
     async uploadReceiptImage(_companyId: string, p: { bytes: Uint8Array; mimeType: string; filename: string }) {
@@ -34,6 +36,24 @@ function harness(over: Record<string, unknown> = {}) {
         failedRows: [], auditLogWritten: true, auditLogError: null,
       }
     },
+    async insertReceiptLineItems(_companyId: string, entries: Array<{ row: Record<string, unknown>; matchReason: string | null }>) {
+      // Flattened for assertions: everything the real write-provider would
+      // put in receipt_line_items, plus match_reason the way it lands in
+      // audit_logs.input (never in the actual table row).
+      lineItemInserts.push(...entries.map(e => ({ ...e.row, match_reason: e.matchReason })))
+      return {
+        ok: true, attemptedCount: entries.length, insertedCount: entries.length,
+        insertedIds: entries.map((_, i) => `line-${i}`), failedRows: [], auditLogWritten: true, auditLogError: null,
+      }
+    },
+    async insertMaterial(_companyId: string, row: Record<string, unknown>) {
+      materialInserts.push(row)
+      const forced = over.materialResult as Record<string, unknown> | undefined
+      return forced ?? {
+        ok: true, attemptedCount: 1, insertedCount: 1, insertedIds: [row.id as string],
+        failedRows: [], auditLogWritten: true, auditLogError: null,
+      }
+    },
   }
 
   const deps = {
@@ -44,12 +64,13 @@ function harness(over: Record<string, unknown> = {}) {
     })) as never,
     getAdapter: (() => ({})) as never,
     downloadMedia: (async () => ({ base64: Buffer.from([0xff, 0xd8, 0xff, 0x01]).toString('base64'), mimeType: 'image/jpeg' })) as never,
-    findPhoto: (async () => (over.photo ?? PHOTO)) as never,
+    findReceiptMedia: (async () => (over.photo ?? PHOTO)) as never,
     resolveJobBy: (async () => (over.job ?? { match: 'one', count: 1, candidates: [{ id: 'project-sundancer', name: 'Sundancer' }] })) as never,
+    findMaterialBy: (async () => (over.material ?? { match: 'none', count: 0, candidates: [] })) as never,
     ...(over.deps as object ?? {}),
   }
 
-  return { tool: makeLogReceipt(deps), uploads, inserts }
+  return { tool: makeLogReceipt(deps), uploads, inserts, lineItemInserts, materialInserts }
 }
 
 describe('log_receipt — what reaches the ledger', () => {
@@ -99,6 +120,96 @@ describe('log_receipt — what reaches the ledger', () => {
   })
 })
 
+describe('log_receipt — PDFs', () => {
+  const PDF = { mediaId: 'wa-media-pdf-1', mimeType: 'application/pdf', waMessageId: 'wamid.PDF', arrivedAt: '2026-09-04T12:00:00Z' }
+
+  it('records a PDF receipt the same way as a photo', async () => {
+    const h = harness({
+      photo: PDF,
+      deps: { downloadMedia: (async () => ({ base64: Buffer.from('%PDF-1.4').toString('base64'), mimeType: 'application/pdf' })) as never },
+    })
+    const res = await h.tool.execute({ vendor: 'Bahamas Hardware', total_amount: 200 }, ctx)
+
+    expect(res.ok).toBe(true)
+    expect(h.uploads[0].filename).toBe('wa-media-pdf-1.pdf')
+    expect(h.uploads[0].mimeType).toBe('application/pdf')
+  })
+})
+
+describe('log_receipt — line items and materials', () => {
+  it('links a line item to a single confident existing-material match', async () => {
+    const h = harness({ material: { match: 'one', count: 1, candidates: [{ id: 'S193', name: 'Porcelain tile 18x18', category: 'Tile', unit: 'EA', unitCost: 6.63, supplier: 'Nassau' }] } })
+    const res = await h.tool.execute(
+      { vendor: 'X', total_amount: 50, line_items: [{ description: 'Porcelain tile 18x18', quantity: 5, unit_price: 6.63 }] },
+      ctx,
+    )
+
+    expect(res.ok).toBe(true)
+    expect(h.lineItemInserts).toHaveLength(1)
+    expect(h.lineItemInserts[0]).toMatchObject({ material_id: 'S193', match_confidence: 'high', receipt_name: 'Porcelain tile 18x18', qty: 5, unit_cost: 6.63, total_cost: 33.15 })
+    expect(String(h.lineItemInserts[0].match_reason)).toMatch(/Matched existing material S193/)
+    expect(h.materialInserts).toHaveLength(0)
+  })
+
+  it('creates a new R###-style materials row when nothing matches and a price is known', async () => {
+    const h = harness({ material: { match: 'none', count: 0, candidates: [] } })
+    const res = await h.tool.execute(
+      { vendor: 'Buywise Hardware', receipt_date: '2026-09-04', total_amount: 10, line_items: [{ description: 'TIN TABS', unit: 'EA', unit_price: 4.75, category: 'Metal Fasteners' }] },
+      ctx,
+    )
+
+    expect(res.ok).toBe(true)
+    expect(h.materialInserts).toHaveLength(1)
+    expect(h.materialInserts[0]).toMatchObject({
+      division_name: 'From Receipt',
+      division_code: '05', // metal fastener keyword match
+      category: 'Metal Fasteners',
+      name: 'TIN TABS',
+      unit: 'EA',
+      unit_cost: 4.75,
+      supplier: 'Buywise Hardware',
+      notes: 'Added from receipt 2026-09-04',
+    })
+    expect(String(h.materialInserts[0].id)).toMatch(/^R\d+_0$/)
+    expect(h.lineItemInserts[0].material_id).toBe(h.materialInserts[0].id)
+    expect(String(h.lineItemInserts[0].match_reason)).toMatch(/created new materials catalog row/)
+  })
+
+  it('leaves an ambiguous materials match unlinked rather than guessing', async () => {
+    const h = harness({
+      material: { match: 'many', count: 2, candidates: [{ id: 'S1', name: 'a', category: null, unit: null, unitCost: 1, supplier: null }, { id: 'S2', name: 'b', category: null, unit: null, unitCost: 1, supplier: null }] },
+    })
+    const res = await h.tool.execute({ vendor: 'X', total_amount: 10, line_items: [{ description: 'Generic pipe fitting', unit_price: 12 }] }, ctx)
+
+    expect(res.ok).toBe(true)
+    expect(h.materialInserts).toHaveLength(0)
+    expect(h.lineItemInserts[0].material_id).toBeNull()
+    expect(h.lineItemInserts[0].match_confidence).toBe('none')
+    expect(String(h.lineItemInserts[0].match_reason)).toMatch(/2 similar materials found/)
+    const outcome = (res.data as Record<string, unknown>).line_items as Array<Record<string, unknown>>
+    expect(String(outcome[0].reason)).toMatch(/2 similar materials found/)
+  })
+
+  it('records a line item with no legible price without creating a materials row', async () => {
+    const h = harness({ material: { match: 'none', count: 0, candidates: [] } })
+    const res = await h.tool.execute({ vendor: 'X', total_amount: 10, line_items: [{ description: 'Something illegible' }] }, ctx)
+
+    expect(res.ok).toBe(true)
+    expect(h.materialInserts).toHaveLength(0)
+    expect(h.lineItemInserts[0]).toMatchObject({ material_id: null, unit_cost: null, total_cost: null })
+    expect(String(h.lineItemInserts[0].match_reason)).toMatch(/No legible unit price/)
+    const outcome = (res.data as Record<string, unknown>).line_items as Array<Record<string, unknown>>
+    expect(String(outcome[0].reason)).toMatch(/No legible unit price/)
+  })
+
+  it('refuses a line item with no description', async () => {
+    const h = harness()
+    const res = await h.tool.execute({ vendor: 'X', total_amount: 10, line_items: [{ description: '  ' }] }, ctx)
+    expect(res.ok).toBe(false)
+    expect(h.inserts).toHaveLength(0)
+  })
+})
+
 describe('log_receipt — what it refuses', () => {
   it('writes nothing when the photo cannot be retrieved', async () => {
     // A receipt is not worth having without its image, and image_url is NOT
@@ -121,11 +232,11 @@ describe('log_receipt — what it refuses', () => {
   })
 
   it('asks for a photo instead of recording a receipt without one', async () => {
-    const h = harness({ deps: { findPhoto: (async () => ({ error: 'I do not have a recent photo to attach to this. Send the receipt photo and I will record it.' })) as never } })
+    const h = harness({ deps: { findReceiptMedia: (async () => ({ error: 'I do not have a recent photo or PDF to attach to this. Send the receipt and I will record it.' })) as never } })
     const res = await h.tool.execute({ vendor: 'X', total_amount: 10 }, ctx)
 
     expect(res.ok).toBe(false)
-    expect(res.error).toMatch(/Send the receipt photo/)
+    expect(res.error).toMatch(/Send the receipt/)
     expect(h.uploads).toHaveLength(0)
   })
 

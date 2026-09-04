@@ -84,6 +84,16 @@ export interface BedrockReadProvider {
    * their company-scoped parent is validated" rule in the adapter README.
    */
   listInvoicePayments(companyId: string, invoiceId: string): Promise<BedrockRow[]>
+  /**
+   * `materials` has no `company_id` column -- it is a single global cost
+   * catalog, not a per-tenant one (verified live). There is deliberately no
+   * `companyId` parameter here, unlike every other list method on this
+   * interface; that absence is the table's own schema, not a scoping bug.
+   * Used only by log_receipt's materials-matching step -- see
+   * `BedrockMaterialCandidate` in types.ts for why this stays out of the
+   * public read API.
+   */
+  listMaterials(options?: { limit?: number }): Promise<BedrockRow[]>
 }
 
 function throwOnError<T>(result: { data: T; error: { message: string } | null }): T {
@@ -354,5 +364,22 @@ export class SupabaseBedrockReadProvider implements BedrockReadProvider {
     throwOnError(invoice)
     if (!invoice.data) return []
     return throwOnError(await this.client.from('payments').select('*').eq('invoice_id', invoiceId).order('payment_date', { ascending: true })) ?? []
+  }
+
+  /**
+   * No `.eq('company_id', ...)` here -- see the interface doc comment, the
+   * table has no such column. Capped like every other list method; 236 rows
+   * live at time of writing, so a single page comfortably covers the whole
+   * catalog for client-side token matching (same approach `resolveJob` uses
+   * for projects).
+   */
+  async listMaterials(options: { limit?: number } = {}) {
+    return throwOnError(
+      await this.client
+        .from('materials')
+        .select('id,name,category,unit,unit_cost,supplier')
+        .order('name')
+        .limit(Math.min(options.limit ?? 500, 500)),
+    ) ?? []
   }
 }

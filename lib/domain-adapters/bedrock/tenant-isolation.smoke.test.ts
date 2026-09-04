@@ -41,6 +41,7 @@ function providerWith(overrides: Partial<BedrockReadProvider>): BedrockReadProvi
     listPayPeriods: async () => [],
     listInvoices: async () => [],
     listInvoicePayments: async () => [],
+    listMaterials: async () => [],
     ...overrides,
   }
 }
