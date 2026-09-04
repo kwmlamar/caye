@@ -10,42 +10,6 @@
       "schedule": "*/10 * * * *"
     },
     {
-      "path": "/api/caye/gmail-observation-discovery",
-      "schedule": "*/15 * * * *"
-    },
-    {
-      "path": "/api/caye/job-search-email-poll",
-      "schedule": "*/15 * * * *"
-    },
-    {
-      "path": "/api/caye/job-search-sourcing",
-      "schedule": "0 */4 * * *"
-    },
-    {
-      "path": "/api/caye/job-search-objective",
-      "schedule": "10 */4 * * *"
-    },
-    {
-      "path": "/api/caye/research-worker",
-      "schedule": "*/15 * * * *"
-    },
-    {
-      "path": "/api/caye/perception-awareness",
-      "schedule": "*/10 * * * *"
-    },
-    {
-      "path": "/api/caye/growth-ingest",
-      "schedule": "0 * * * *"
-    },
-    {
-      "path": "/api/caye/job-search-prepare",
-      "schedule": "20 */4 * * *"
-    },
-    {
-      "path": "/api/caye/job-search-apply",
-      "schedule": "*/30 * * * *"
-    },
-    {
       "path": "/api/caye/construction-ledger-sync",
       "schedule": "*/30 * * * *"
     }
