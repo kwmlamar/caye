@@ -67,6 +67,13 @@ export const OPERATOR_LOGGABLE_KINDS = new Set([
   'operator_reminder',
   'dropped_confirmation',
   'reply_review',
+  // Construction ledger attention. Logged for the same reason as
+  // operator_reminder: there is no approved Meta template for it, so a
+  // closed 24h window means it cannot go out over WhatsApp at all -- and an
+  // outstanding invoice silently failing to reach anyone is precisely the
+  // failure this whole path exists to end. Logged here, it lands in that
+  // operator's Caye Direct thread instead of disappearing.
+  'construction_attention',
 ])
 
 const CONCURRENCY = 10
@@ -792,6 +799,11 @@ function fallbackPingLogBody(kind: string, payload: Record<string, unknown>): st
       return `This week's business insights are ready — ask me and I'll walk you through them.`
     case 'reply_review':
       return `I sent ${str('contactName', 'a guest')} a reply and would like you to review it when you have a moment.`
+    // Reached only if composition produced nothing, which for this kind
+    // means the ledger row had no title -- it is NOT NULL, so in practice
+    // never. Say something true rather than naming a surface or a table.
+    case 'construction_attention':
+      return `Something on the job ledger needs a look — ask me and I'll walk you through it.`
     default:
       // NEVER echo the kind. An unmapped kind reaching an operator-facing
       // surface is a bug in this file, and the old `[${kind}]` turned that
@@ -1199,6 +1211,26 @@ function freeFormBodyForKind(kind: string, payload: Record<string, unknown>): st
   }
   if (kind === 'reply_review') {
     return typeof payload.body === 'string' && payload.body.trim() ? (payload.body as string) : null
+  }
+  // Construction ledger attention (lib/attention-delivery.ts). Both halves
+  // were composed at enqueue time by the producer, which is the only place
+  // that knows the domain vocabulary -- e.g. receivables-attention.ts's
+  // titleFor/nextActionFor: "Off the Reef: $17,575.75 outstanding, 63 days,
+  // no payment ever recorded" and "No payment is on record for this one.
+  // Check the bank and tell me either way."
+  //
+  // Joined here and nothing more. Deliberately does NOT mention the subject
+  // type, the routing reason, or anything else on the payload: those are
+  // internal bookkeeping carried for audit, and an operator-facing message
+  // is not where database language belongs. Note also what the producer's
+  // wording is careful about -- "no payment is on record" is a statement
+  // about the ledger, not a claim that nobody paid, and it asks rather than
+  // assumes. Do not "improve" that into a dunning notice.
+  if (kind === 'construction_attention') {
+    const title = typeof payload.title === 'string' ? payload.title.trim() : ''
+    const nextAction = typeof payload.next_action === 'string' ? payload.next_action.trim() : ''
+    if (!title) return null
+    return nextAction ? `${title}\n\n${nextAction}` : title
   }
   if (kind === 'ack') {
     return typeof payload.body === 'string' ? (payload.body as string) : null
