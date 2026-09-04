@@ -233,6 +233,25 @@ export interface BedrockListOptions {
   limit?: number
 }
 
+/**
+ * Deliberately NOT a `BedrockDomainEntity` — `materials` has no `company_id`
+ * column at all (verified live: it's a single global cost catalog, not a
+ * per-tenant one), so it has no `companyId` to put in the authority metadata
+ * every other entity here carries. This is also not a general read
+ * capability: it exists only so `log_receipt` can match a receipt line item
+ * against the existing catalog before deciding whether to create a new row.
+ * See `README.md`'s "Unsupported in v0" note on materials/cost catalog --
+ * this narrow candidate list is the one exception, not a reversal of that.
+ */
+export interface BedrockMaterialCandidate {
+  id: string
+  name: string
+  category: string | null
+  unit: string | null
+  unitCost: number
+  supplier: string | null
+}
+
 export interface BedrockConnectionResolver {
   resolve(workspaceId: string): Promise<BedrockConnection | null>
 }

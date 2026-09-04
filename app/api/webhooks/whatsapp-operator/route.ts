@@ -1559,7 +1559,7 @@ async function handleDocumentInbound(
   const filename = document.filename ?? null
   const placeholderBody = filename ? `[document: ${filename}]` : '[document]'
 
-  await supabase.from('caye_operator_messages').insert({
+  const { error: documentRowError } = await supabase.from('caye_operator_messages').insert({
     workspace_id: workspaceId,
     direction: 'inbound',
     wa_message_id: message.id,
@@ -1569,7 +1569,16 @@ async function handleDocumentInbound(
     operator_allowlist_id: operator.id,
     operator_name: operator.name,
     operator_role: operator.role,
+    // The media HANDLE, not the bytes — same reasoning as the image path
+    // (see handleImageInbound's comment on this same field). A PDF read
+    // inline below is gone by the time a staged write like log_receipt
+    // confirms on a later turn; persisting the id here is what lets that
+    // later turn re-fetch it from Meta.
+    inbound_media: { media_id: document.id, mime_type: document.mime_type },
   })
+  if (documentRowError) {
+    console.error('[whatsapp-operator] inbound document row not persisted:', documentRowError)
+  }
 
   if (!whatsappOutboundEnabled) {
     console.log(`[whatsapp-operator] flag off for ${workspaceId} — skipping document action`)

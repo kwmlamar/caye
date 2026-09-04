@@ -114,6 +114,16 @@ async function describePendingAction(
       const overflow = items.length > 10 ? ` and ${items.length - 10} more` : ''
       return `Send ${items.length} cold-outreach email${items.length === 1 ? '' : 's'}: ${list}${overflow}`
     }
+    case 'log_receipt': {
+      const vendor = typeof args.vendor === 'string' && args.vendor.trim() ? args.vendor : 'vendor not read'
+      const total = typeof args.total_amount === 'number' ? `$${args.total_amount.toFixed(2)}` : 'total not read'
+      const project = typeof args.project === 'string' && args.project.trim() ? ` for ${args.project}` : ' (no job attached)'
+      const lineItems = Array.isArray(args.line_items) ? (args.line_items as Record<string, unknown>[]) : []
+      const lineSummary = lineItems.length
+        ? `, ${lineItems.length} line item${lineItems.length === 1 ? '' : 's'}`
+        : ''
+      return `Log receipt: ${vendor}, ${total}${project}${lineSummary}`
+    }
     default:
       return `Run ${toolName}`
   }

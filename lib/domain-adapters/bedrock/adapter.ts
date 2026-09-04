@@ -15,6 +15,7 @@ import {
   type BedrockHealth,
   type BedrockInvoice,
   type BedrockListOptions,
+  type BedrockMaterialCandidate,
   type BedrockPayPeriod,
   type BedrockPayrollOwed,
   type BedrockPayrollSummary,
@@ -339,5 +340,25 @@ export class BedrockAdapter {
     const { connection, provider } = await this.context(workspaceId)
     if (!await provider.getProject(connection.companyId, projectId)) throw new BedrockNotFoundError('project', projectId)
     return Promise.all((await provider.listProjectReceipts(connection.companyId, projectId)).map(async row => ({ ...this.meta(workspaceId, connection.companyId, 'receipt', row.id), id: row.id, projectId: text(row.project_id), vendorNameSnapshot: text(row.vendor), receiptDate: text(row.receipt_date), totalAmount: number(row.total_amount), status: text(row.status), items: (await provider.getReceiptLineItems(row.id)).map(item => ({ id: item.id, materialId: text(item.material_id), name: text(item.receipt_name), quantity: number(item.qty), unit: text(item.unit), cost: number(item.total_cost) })) })))
+  }
+
+  /**
+   * Not `companyId`-scoped -- see `BedrockReadProvider.listMaterials`'s doc
+   * comment, the table itself has no tenant column. `context()` is still
+   * called so a workspace with no Bedrock connection at all fails the same
+   * way every other method here does, rather than materials being reachable
+   * without one.
+   */
+  async listMaterials(workspaceId: string, options: { limit?: number } = {}): Promise<BedrockMaterialCandidate[]> {
+    const { provider } = await this.context(workspaceId)
+    const rows = await provider.listMaterials(options)
+    return rows.map(row => ({
+      id: String(row.id),
+      name: String(row.name ?? ''),
+      category: text(row.category),
+      unit: text(row.unit),
+      unitCost: number(row.unit_cost),
+      supplier: text(row.supplier),
+    }))
   }
 }

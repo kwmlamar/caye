@@ -156,10 +156,61 @@ export interface BedrockReceiptInsert {
   company_id: string
 }
 
+/**
+ * Insertable shape of a `receipt_line_items` row, restricted to the columns
+ * this write path is allowed to set. Verified against the live table
+ * 2026-09-04: `receipt_id` and `receipt_name` are NOT NULL; `material_id`,
+ * `qty`, `unit`, `unit_cost`, `total_cost`, and `match_confidence` are all
+ * nullable, so a line item with an unreadable price or quantity is still
+ * insertable rather than blocked on a guess.
+ *
+ * `applied` is deliberately absent from this shape, the same way `status` is
+ * absent from `BedrockReceiptInsert` -- it is NOT NULL with a default of
+ * `false` on the live table, and whatever TropiTrack's own app uses it for
+ * (a review or sync step this adapter has no visibility into), Caye never
+ * asserts it. Every row this inserts leaves it at the default.
+ */
+export interface BedrockReceiptLineItemInsert {
+  receipt_id: string
+  material_id: string | null
+  receipt_name: string
+  qty: number | null
+  unit: string | null
+  unit_cost: number | null
+  total_cost: number | null
+  match_confidence: 'high' | 'medium' | 'low' | 'none' | null
+}
+
+/**
+ * Insertable shape of a `materials` row, restricted to the columns this
+ * write path is allowed to set. Verified against the live table 2026-09-04:
+ * `id, division_code, division_name, category, name, unit, unit_cost` are
+ * all NOT NULL with no default -- the table has no `company_id` column at
+ * all (it is a single global cost catalog, not a per-tenant one), so unlike
+ * every other insertable shape here there is no tenant column to force onto
+ * the row.
+ *
+ * This is an INSERT only, by design and by construction: nothing in this
+ * class ever updates an existing `materials` row, so a receipt can never
+ * silently overwrite a catalog price it happens to also mention. See
+ * `insertMaterial`.
+ */
+export interface BedrockMaterialInsert {
+  id: string
+  division_code: string
+  division_name: string
+  category: string
+  name: string
+  unit: string
+  unit_cost: number
+  supplier: string | null
+  notes: string | null
+}
+
 export interface BedrockWriteRowFailure {
-  /** Index into the `rows` array passed to `insertTimeEntries`; always 0 for the single-row insertInvoice/insertPayment/insertReceipt paths. */
+  /** Index into the `rows` array passed to `insertTimeEntries`/`insertReceiptLineItems`; always 0 for the single-row insertInvoice/insertPayment/insertReceipt/insertMaterial paths. */
   index: number
-  row: BedrockTimeEntryInsert | BedrockInvoiceInsert | BedrockPaymentInsert | BedrockReceiptInsert
+  row: BedrockTimeEntryInsert | BedrockInvoiceInsert | BedrockPaymentInsert | BedrockReceiptInsert | BedrockReceiptLineItemInsert | BedrockMaterialInsert
   error: string
 }
 
@@ -497,6 +548,128 @@ export class BedrockWriteProvider {
   }
 
   /**
+   * Insert one or more `receipt_line_items` rows and record a single
+   * `audit_logs` row describing the attempt -- mirrors `insertTimeEntries`
+   * exactly: rows are inserted one at a time so a failure on one line item
+   * never blocks the others, and an empty array is a no-op.
+   *
+   * `receipt_id` is trusted from the caller here (unlike `company_id`
+   * elsewhere in this class) because there is no tenant column on this table
+   * to re-derive it from -- the caller is expected to have just gotten this
+   * id back from a same-request `insertReceipt` call, not from user input.
+   */
+  async insertReceiptLineItems(companyId: string, rows: BedrockReceiptLineItemInsert[]): Promise<BedrockWriteResult> {
+    if (rows.length === 0) {
+      return {
+        ok: true,
+        attemptedCount: 0,
+        insertedCount: 0,
+        insertedIds: [],
+        failedRows: [],
+        auditLogWritten: false,
+        auditLogError: null,
+      }
+    }
+
+    const startedAt = Date.now()
+
+    const scopedRows: BedrockReceiptLineItemInsert[] = rows.map(row => ({
+      receipt_id: row.receipt_id,
+      material_id: row.material_id,
+      receipt_name: row.receipt_name,
+      qty: row.qty,
+      unit: row.unit,
+      unit_cost: row.unit_cost,
+      total_cost: row.total_cost,
+      match_confidence: row.match_confidence,
+    }))
+
+    const insertedIds: string[] = []
+    const failedRows: BedrockWriteRowFailure[] = []
+
+    for (let index = 0; index < scopedRows.length; index++) {
+      const row = scopedRows[index]
+      try {
+        const { data, error } = await this.client.from('receipt_line_items').insert(row).select('id').single()
+        if (error) {
+          failedRows.push({ index, row, error: error.message })
+        } else {
+          insertedIds.push((data as { id: string }).id)
+        }
+      } catch (err) {
+        failedRows.push({ index, row, error: err instanceof Error ? err.message : String(err) })
+      }
+    }
+
+    const durationMs = Date.now() - startedAt
+    const attemptedCount = scopedRows.length
+    const insertedCount = insertedIds.length
+    const insertOk = failedRows.length === 0
+    const errorMessage = insertOk
+      ? null
+      : `${failedRows.length} of ${attemptedCount} receipt line item insert(s) failed: ${failedRows
+          .map(f => `row ${f.index} (${f.error})`)
+          .join('; ')}`
+
+    const auditOutcome = await this.writeAuditLog({
+      companyId,
+      toolName: 'insertReceiptLineItems',
+      targetTable: 'receipt_line_items',
+      status: insertOk ? 'ok' : 'error',
+      input: { attemptedCount, rows: scopedRows },
+      result: { insertedCount, insertedIds, failedCount: failedRows.length, failedRows },
+      targetRowId: insertedIds.length === 1 ? insertedIds[0] : null,
+      errorMessage,
+      durationMs,
+    })
+
+    return {
+      ok: insertOk && auditOutcome.written,
+      attemptedCount,
+      insertedCount,
+      insertedIds,
+      failedRows,
+      auditLogWritten: auditOutcome.written,
+      auditLogError: auditOutcome.error,
+    }
+  }
+
+  /**
+   * Insert one new `materials` row and record a single `audit_logs` row
+   * describing the attempt. INSERT only -- there is no method on this class
+   * that updates an existing materials row, which is what makes "a receipt
+   * silently overwrote a catalog price" structurally impossible here rather
+   * than merely discouraged. Callers decide whether a new row is warranted
+   * (no confident existing match, and a price is actually known); this
+   * method does not make that judgment, it only writes what it is given.
+   *
+   * `companyId` is accepted for audit-log tagging only, the same way
+   * `insertPayment` accepts it despite `payments` also having no tenant
+   * column -- it is never part of the row itself, because `materials` has no
+   * `company_id` column to put it in.
+   */
+  async insertMaterial(companyId: string, row: BedrockMaterialInsert): Promise<BedrockWriteResult> {
+    const scopedRow: BedrockMaterialInsert = {
+      id: row.id,
+      division_code: row.division_code,
+      division_name: row.division_name,
+      category: row.category,
+      name: row.name,
+      unit: row.unit,
+      unit_cost: row.unit_cost,
+      supplier: row.supplier,
+      notes: row.notes,
+    }
+
+    return this.insertSingleRowAndAudit({
+      companyId,
+      table: 'materials',
+      toolName: 'insertMaterial',
+      scopedRow,
+    })
+  }
+
+  /**
    * True only when an `invoices` row exists matching both `id` and
    * `company_id`. Any failure to confirm that -- not found, wrong company,
    * or a query error -- fails closed and returns false, so a payment is
@@ -519,9 +692,9 @@ export class BedrockWriteProvider {
 
   private async insertSingleRowAndAudit(params: {
     companyId: string
-    table: 'invoices' | 'payments' | 'receipts'
-    toolName: 'insertInvoice' | 'insertPayment' | 'insertReceipt'
-    scopedRow: BedrockInvoiceInsert | BedrockPaymentInsert | BedrockReceiptInsert
+    table: 'invoices' | 'payments' | 'receipts' | 'materials'
+    toolName: 'insertInvoice' | 'insertPayment' | 'insertReceipt' | 'insertMaterial'
+    scopedRow: BedrockInvoiceInsert | BedrockPaymentInsert | BedrockReceiptInsert | BedrockMaterialInsert
   }): Promise<BedrockWriteResult> {
     const { companyId, table, toolName, scopedRow } = params
     const startedAt = Date.now()
