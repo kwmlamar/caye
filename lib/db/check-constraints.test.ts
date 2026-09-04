@@ -59,10 +59,10 @@ describe('parsing CHECK constraints out of the migrations', () => {
   })
 
   it('handles the value list spanning multiple lines', () => {
-    // 20260816c_add_operator_message_outbound_kind.sql (the latest
-    // drop+recreate of this constraint) writes its 16 values one per line —
-    // the previous 15 plus 'operator_message'.
-    expect(allowedValues(constraints, 'caye_outbound_queue', 'kind')!.size).toBe(16)
+    // 20260903_add_construction_attention_outbound_kind.sql (the latest
+    // drop+recreate of this constraint) writes its 17 values one per line —
+    // the previous 16 plus 'construction_attention'.
+    expect(allowedValues(constraints, 'caye_outbound_queue', 'kind')!.size).toBe(17)
   })
 
   it('handles both the IN (...) and = ANY (ARRAY[...]) forms', () => {
@@ -158,6 +158,18 @@ function scannableColumns(map: ConstraintMap): { column: string; values: Set<str
 const ROOTS = ['lib', 'app', 'components', 'scripts']
 const SKIP_DIRS = new Set(['node_modules', '.next', 'dist', '.git'])
 
+// Caye Bench v2 replay fixtures seed an in-memory fake table only
+// (lib/caye-bench/replay/attention-fake.ts) — see that file's own comment:
+// "There is no live mode for Supabase — real production data can never be
+// read or written by a replay run." A literal here can therefore never
+// reach a real CHECK constraint, and this directory deliberately reuses
+// real historical column values (down to the exact incident data) for
+// fidelity, which can collide with an unrelated table's constrained values
+// of the same column name — e.g. `subject_type: 'escalation'` mirrors
+// caye_owner_attention.subject_type (unconstrained) but matches the column
+// name of the sole CHECK-constrained `subject_type` owner, business_facts.
+const SKIP_PATH_SEGMENT = join('lib', 'caye-bench', 'replay', 'fixtures')
+
 function sourceFiles(dir: string, acc: string[] = []): string[] {
   let entries: string[]
   try {
@@ -168,6 +180,7 @@ function sourceFiles(dir: string, acc: string[] = []): string[] {
   for (const entry of entries) {
     if (SKIP_DIRS.has(entry)) continue
     const full = join(dir, entry)
+    if (full.includes(SKIP_PATH_SEGMENT)) continue
     if (statSync(full).isDirectory()) sourceFiles(full, acc)
     else if (/\.tsx?$/.test(entry) && !/\.test\.tsx?$/.test(entry)) acc.push(full)
   }

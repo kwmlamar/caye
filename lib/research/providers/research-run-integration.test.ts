@@ -21,6 +21,25 @@ const state = {
 function createServiceClientDouble() {
   return {
     from(table: string) {
+      if (table === 'research_questions') {
+        // None of these runs are an autonomous cross-check of a parent
+        // investigation, so priorCrossCheckSourceUrls must short-circuit to
+        // [] without excluding anything from the provider's search results.
+        return {
+          select() {
+            return {
+              eq() {
+                return {
+                  async maybeSingle() {
+                    return { data: { investigation_origin: null, parent_question_id: null }, error: null }
+                  },
+                }
+              },
+            }
+          },
+        }
+      }
+
       if (table === 'research_sources') {
         return {
           upsert(row: UpsertedSource) {

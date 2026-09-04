@@ -89,10 +89,12 @@ The credential payload is stored in a native private field so ordinary serializa
 - getWorker
 - getProjectWorkers / getProjectLabor
 - getPayrollSummary
+- listPayPeriods / getPayrollOwed
 - getEstimate / listProjectEstimates
 - getPurchaseOrder / listProjectPurchaseOrders
 - getVendor
 - listProjectReceipts
+- listInvoices / getInvoiceWithPayments
 
 Every returned domain entity carries `sourceSystem=bedrock`, `authority=external_authoritative`, source entity type/id, Caye workspace ID, and Bedrock company ID.
 
@@ -104,7 +106,9 @@ Some older Bedrock AI code is weaker than this adapter boundary: for example pro
 
 ## Unsupported in v0
 
-Invoices/payments, payment transactions, project milestones/documents, daily timesheets, worker skills, payroll adjustments, materials/cost catalog, equipment/equipment usage, goals, exports/company docs, estimate labor-role internals, and Bedrock write operations.
+Payment transactions (mutation), project milestones/documents, daily timesheets, worker skills, payroll adjustments, materials/cost catalog, equipment/equipment usage, goals, exports/company docs, estimate labor-role internals, and Bedrock write operations.
+
+Invoices and their payments are now read-supported (`listInvoices`, `getInvoiceWithPayments`), added for the ODS receivables loop (see `briefs/ods-receivables-loop.md`). `payments` has no `company_id` column of its own -- it only joins to an invoice -- so `listInvoicePayments` on the provider validates the invoice belongs to the caller's company before ever querying `payments`, per the child-table rule in the Security model section above. `BedrockInvoice` deliberately omits client contact fields and free-text notes/terms, matching the restraint `BedrockClient`/`BedrockVendor` already show.
 
 ## Agent 1 integration
 

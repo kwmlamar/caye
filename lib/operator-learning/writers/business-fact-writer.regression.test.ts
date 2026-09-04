@@ -242,7 +242,18 @@ describe('writeBusinessFact mature regression contracts', () => {
     expect(outcome.decision).toBe('written')
     expect(rpcParams).toMatchObject({
       p_supersede_id: null,
-      p_canonical_key: 'payment-method-online',
+      // This test predates canonicalPropertyKey()'s scope-prefixed, alias-collapsed
+      // identity model (added in "Make continuous business learning canonical and
+      // conflict-aware", 2ce44944, after this file's "restore writer regression
+      // coverage" commit 4225e127) and was never updated for it. There is no
+      // existing fact to inherit a key from here — matchId is null and no active
+      // row shares this canonical key — so the writer must compute a fresh one via
+      // canonicalPropertyKey(), which always returns a scope-prefixed, alias-form
+      // key (see canonical-key.migration.test.ts: 'workspace.meeting_point', not
+      // a raw suggested key). The literal, unprefixed 'payment-method-online' is
+      // not a value canonicalPropertyKey() can ever produce; 'workspace.payment_method'
+      // is the correct resolved identity for this fact.
+      p_canonical_key: 'workspace.payment_method',
     })
   })
 

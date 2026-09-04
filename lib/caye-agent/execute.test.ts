@@ -893,7 +893,18 @@ describe('runToolLoop — internal tool names never reach the operator (2026-08-
     )
     expect(result.replyText).not.toContain('send_reply')
     expect(result.replyText).not.toBe('')
-    expect(result.replyText).toContain('No operational action was taken')
+    // redactToolNameLeaks (execute.ts) deliberately redacts only the leaked
+    // internal identifier and preserves the rest of the reply verbatim —
+    // the docstring on redactToolNameLeaks explains this superseded an
+    // older guard that replaced the ENTIRE response with "No operational
+    // action was taken", which erased valid partial progress. This
+    // assertion was still pinned to that superseded behavior; the other
+    // two tests in this describe block already assert the current
+    // redact-in-place behavior.
+    expect(result.replyText).toContain('the relevant operation')
+    expect(result.replyText).toBe(
+      'Also — do you want this drafted into her Drafts folder, or should I stage it as a the relevant operation?'
+    )
   })
 
   it('leaves ordinary text alone when no tool name is mentioned', async () => {

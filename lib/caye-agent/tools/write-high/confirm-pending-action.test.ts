@@ -1,67 +1,47 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Tool, ToolContext } from '../types'
+import { createFakeSupabaseClient, type FakeSupabaseClient } from '@/lib/supabase-test-support/fake-supabase-client'
 
 vi.mock('server-only', () => ({}))
 
 type Row = Record<string, unknown>
-const rows: Row[] = []
 let conversationIsCurrent = true
 
+// SAFETY NOTE (repository audit, 2026-09-03): this file guards the
+// high-risk confirmation gate. Production's confirm-pending-action.ts also
+// calls resolveWorkspaceDecisionAuthority (lib/decision-authority.ts, added
+// by CAY-28 / commit 5633cca7), which queries operator_allowlist and
+// operator_authority_delegations — tables the old hand-rolled fake here
+// never modeled at all, since it predates that authority check. Any
+// unmodeled Supabase call silently produced `{ data: undefined, error:
+// undefined }` from that fake's plain object return, which is exactly the
+// kind of silent-pass gap that would let a broken authority gate read as
+// "working" in this suite. Migrated to the shared FakeSupabaseClient
+// (lib/supabase-test-support/fake-supabase-client.ts), which throws loudly
+// on any unseeded table instead. The two tests that reach the authority
+// check seed a real, verified, scoped operator_allowlist row so the
+// existing operator is authorized and the confirm path proceeds — the same
+// real authority-resolution code runs, not a bypass of it.
+let client: FakeSupabaseClient
+
 function makeFakeSupabase() {
-  return {
-    from(_table: string) {
-      return {
-        select(_cols: string) {
-          const filters: Array<(r: Row) => boolean> = []
-          const b = {
-            eq(col: string, val: unknown) {
-              filters.push((r) => r[col] === val)
-              return b
-            },
-            is(col: string, val: null) {
-              filters.push((r) => (r[col] ?? null) === val)
-              return b
-            },
-            async maybeSingle() {
-              return { data: rows.find((r) => filters.every((f) => f(r))) ?? null, error: null }
-            },
-          }
-          return b
-        },
-        update(patch: Row) {
-          return {
-            eq(col: string, val: unknown) {
-              const filters: Array<(r: Row) => boolean> = [(r) => r[col] === val]
-              const b = {
-                is(c: string, v: null) {
-                  filters.push((r) => (r[c] ?? null) === v)
-                  return b
-                },
-                select() {
-                  return b
-                },
-                async maybeSingle() {
-                  const row = rows.find((r) => filters.every((f) => f(r)))
-                  if (!row) return { data: null, error: null }
-                  Object.assign(row, patch)
-                  return { data: { id: row.id }, error: null }
-                },
-                then(resolve: (v: unknown) => unknown) {
-                  const row = rows.find((r) => filters.every((f) => f(r)))
-                  if (row) Object.assign(row, patch)
-                  return Promise.resolve({ data: row ?? null, error: null }).then(resolve)
-                },
-              }
-              return b
-            },
-          }
-        },
-      }
+  client = createFakeSupabaseClient()
+  client.seed('caye_pending_actions', [])
+  client.seed('operator_allowlist', [
+    {
+      id: 20,
+      workspace_id: 'ws-1',
+      name: 'Op',
+      role: 'owner',
+      verified_at: '2026-01-01T00:00:00.000Z',
+      decision_scopes: ['business.customer.communication'],
     },
-  }
+  ])
+  client.seed('operator_authority_delegations', [])
+  return client
 }
 
-vi.mock('@/lib/supabase-server', () => ({ createServiceClient: () => makeFakeSupabase() }))
+vi.mock('@/lib/supabase-server', () => ({ createServiceClient: () => client }))
 vi.mock('../write-low/_guards', () => ({
   assertConversationOwnedByWorkspace: vi.fn(async () =>
     conversationIsCurrent
@@ -95,6 +75,7 @@ import { confirmPendingAction } from './confirm-pending-action'
 const FUTURE = () => new Date(Date.now() + 10 * 60 * 1000).toISOString()
 
 function stage(overrides: Row = {}) {
+  const rows = client.rows('caye_pending_actions')
   const id = `pa-${rows.length + 1}`
   rows.push({
     id,
@@ -124,7 +105,7 @@ function ctx(overrides: Partial<ToolContext> = {}): ToolContext {
 }
 
 beforeEach(() => {
-  rows.length = 0
+  makeFakeSupabase()
   ran.length = 0
   conversationIsCurrent = true
 })
@@ -135,7 +116,7 @@ describe('confirm_pending_action', () => {
     const result = await confirmPendingAction.execute({ pending_action_id: id }, ctx())
     expect(result.ok).toBe(true)
     expect(ran).toEqual([{ body: 'Send this exact body', conversation_id: 'conv-1' }])
-    expect(rows[0].executed_at).toBeTruthy()
+    expect(client.rows('caye_pending_actions')[0].executed_at).toBeTruthy()
   })
 
   it('rejects stale conversation identity BEFORE claiming/executing the row', async () => {
@@ -145,7 +126,7 @@ describe('confirm_pending_action', () => {
     expect(result.ok).toBe(false)
     expect(result.ok === false ? result.error_code : null).toBe('STALE_CONVERSATION_IDENTITY')
     expect(ran).toHaveLength(0)
-    expect(rows[0].executed_at).toBeNull()
+    expect(client.rows('caye_pending_actions')[0].executed_at).toBeNull()
   })
 
   it('rejects a superseded draft', async () => {

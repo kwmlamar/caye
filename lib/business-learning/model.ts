@@ -66,16 +66,28 @@ function tokens(value: string): string[] {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(/\s+/).filter(Boolean)
 }
 
-function propertyAlias(propertyTokens: string[], valueText: string): string {
+// Deliberately narrow — see canonical-key.migration.test.ts. Guessing outside
+// this vocabulary is what caused the incident that test guards against.
+const KNOWN_ALIAS_PATTERNS: Array<[RegExp, string]> = [
+  [/meeting[_ ]?point|pick[_ -]?up[_ ]?(?:location|point)?|pickup[_ ]?(?:location|point)?/, 'meeting_point'],
+  [/payment[_ ]?method/, 'payment_method'],
+  [/cancel(?:lation)?[_ ]?policy/, 'cancellation_policy'],
+  [/refund[_ ]?policy/, 'refund_policy'],
+  [/invoice.*(?:upload|submit)|(?:upload|submit).*invoice/, 'invoice_submission_process'],
+  [/proposal.*sign|signature.*proposal/, 'proposal_signature_workflow'],
+]
+
+function matchKnownAlias(propertyTokens: string[], valueText: string): string | null {
   const joined = propertyTokens.join('_')
   const context = `${joined} ${valueText}`.toLowerCase()
-  if (/meeting[_ ]?point|pick[_ -]?up[_ ]?(?:location|point)?|pickup[_ ]?(?:location|point)?/.test(context)) return 'meeting_point'
-  if (/payment[_ ]?method/.test(context)) return 'payment_method'
-  if (/cancel(?:lation)?[_ ]?policy/.test(context)) return 'cancellation_policy'
-  if (/refund[_ ]?policy/.test(context)) return 'refund_policy'
-  if (/invoice.*(?:upload|submit)|(?:upload|submit).*invoice/.test(context)) return 'invoice_submission_process'
-  if (/proposal.*sign|signature.*proposal/.test(context)) return 'proposal_signature_workflow'
-  return joined || 'unknown_property'
+  for (const [pattern, alias] of KNOWN_ALIAS_PATTERNS) {
+    if (pattern.test(context)) return alias
+  }
+  return null
+}
+
+function propertyAlias(propertyTokens: string[], valueText: string): string {
+  return matchKnownAlias(propertyTokens, valueText) ?? (propertyTokens.join('_') || 'unknown_property')
 }
 
 /** Canonical identity names the business PROPERTY, never its current value. */
@@ -88,7 +100,14 @@ export function canonicalPropertyKey(args: {
   const valueTokens = new Set(tokens(args.valueText))
   const suggested = tokens(args.suggestedProperty)
   const withoutValue = suggested.filter((token) => !valueTokens.has(token))
-  const property = propertyAlias(withoutValue.length ? withoutValue : suggested, args.valueText)
+  // Try the vocabulary against the UNSTRIPPED suggested key first. A known
+  // alias matching here is the vocabulary doing its job, not a guess — and
+  // stripping value words can destroy adjacency the alias regex depends on
+  // when a word is legitimately part of both the property name and the value
+  // text (e.g. "payment" in both "payment-method-online" and "Online payment
+  // only."). Only fall back to the value-stripped form when nothing in the
+  // fixed vocabulary recognizes the property as suggested.
+  const property = matchKnownAlias(suggested, args.valueText) ?? propertyAlias(withoutValue.length ? withoutValue : suggested, args.valueText)
   if (args.scope.target === 'service') {
     const serviceScope = args.resolvedServiceId ? args.resolvedServiceId.toLowerCase() : tokens(args.scope.serviceName ?? 'unknown').join('_') || 'unknown'
     return `service.${serviceScope}.${property}`

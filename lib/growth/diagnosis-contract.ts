@@ -31,10 +31,11 @@ export function validateGrowthDiagnosis(draft: GrowthDiagnosisDraft): { ok: true
     return { ok: false, reason: 'confidence_out_of_range' }
   }
 
-  if (!draft.evidence.some((item) => item.state === 'observed' && item.value !== null)) {
-    return { ok: false, reason: 'no_observed_evidence' }
-  }
-
+  // Check each item's internal consistency before the aggregate "did we observe
+  // anything at all" check below. Otherwise a malformed unavailable item (e.g. a
+  // disconnected source reporting value: 0 instead of null) is masked by the
+  // generic no_observed_evidence violation instead of surfacing the more specific,
+  // more actionable problem: a source lying about having a value.
   for (const item of draft.evidence) {
     if (item.state === 'unavailable' && (item.value !== null || !item.unavailableReason)) {
       return { ok: false, reason: 'unavailable_evidence_must_be_null_and_explained' }
@@ -42,6 +43,10 @@ export function validateGrowthDiagnosis(draft: GrowthDiagnosisDraft): { ok: true
     if (item.state === 'observed' && item.value === null) {
       return { ok: false, reason: 'observed_evidence_requires_value' }
     }
+  }
+
+  if (!draft.evidence.some((item) => item.state === 'observed' && item.value !== null)) {
+    return { ok: false, reason: 'no_observed_evidence' }
   }
 
   return { ok: true }

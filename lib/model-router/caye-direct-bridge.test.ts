@@ -23,6 +23,7 @@ vi.mock('./tool-bridge/founder-tool-loop', () => ({
 }))
 
 import { runCayeDirectRouterTurn } from './caye-direct-bridge'
+import { selectFounderToolNames } from './tool-bridge/founder-tool-selector'
 
 const BASE_ARGS = {
   workspaceId: 'ws-1',
@@ -93,9 +94,16 @@ describe('runCayeDirectRouterTurn', () => {
     expect(firstCallArg().hints).toBeUndefined()
   })
 
-  it('does not set restrictToToolNames — real integration exposes the full back-office tool set, same as cayeAgent()', async () => {
+  it('sets restrictToToolNames from the deterministic founder tool selector, capped to what OpenAI-compatible backends accept', async () => {
+    // 7e5b73bb ("Fix Founder Direct tool routing and live activity status")
+    // made this explicit: Caye's back-office registry outgrew the 128-tool
+    // limit OpenAI-compatible backends accept per request, so the bridge now
+    // always passes a selection instead of leaving every tool unrestricted.
+    // Below the cap (as here) selectFounderToolNames still returns the FULL
+    // eligible back-office set, so behavior for this message is unchanged —
+    // only the shape (explicit list vs `undefined`) is different.
     await runCayeDirectRouterTurn(BASE_ARGS)
-    expect(firstCallArg().restrictToToolNames).toBeUndefined()
+    expect(firstCallArg().restrictToToolNames).toEqual(selectFounderToolNames(BASE_ARGS.message))
   })
 
   it('returns replyText/newTurns/linkedThreadIds/backend shaped like CayeAgentResult plus backend', async () => {

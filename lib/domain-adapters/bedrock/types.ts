@@ -12,6 +12,9 @@ export type BedrockEntityType =
   | 'payroll_summary'
   | 'project_labor'
   | 'health'
+  | 'invoice'
+  | 'pay_period'
+  | 'payroll_owed'
 
 export interface BedrockAuthorityMetadata {
   sourceSystem: typeof BEDROCK_SOURCE_SYSTEM
@@ -160,6 +163,61 @@ export interface BedrockReceipt extends BedrockDomainEntity {
     quantity: number
     unit: string | null
     cost: number
+  }>
+}
+
+/**
+ * Deliberately does not carry client_email, client_phone, client_address,
+ * notes, or terms — the same restraint BedrockClient/BedrockVendor show for
+ * contact and free-text fields the read adapter has no reason to surface.
+ */
+export interface BedrockInvoice extends BedrockDomainEntity {
+  sourceEntityType: 'invoice'
+  invoiceNumber: string | null
+  clientName: string | null
+  projectId: string | null
+  status: string | null
+  issueDate: string | null
+  dueDate: string | null
+  totalAmount: number
+  amountPaid: number
+  balanceDue: number
+  sentAt: string | null
+  paidAt: string | null
+}
+
+export interface BedrockPayPeriod extends BedrockDomainEntity {
+  sourceEntityType: 'pay_period'
+  startDate: string | null
+  endDate: string | null
+  status: string | null
+}
+
+/**
+ * What is genuinely owed to workers, aggregated across a date range of pay
+ * periods -- `net_pay - total_paid` per non-voided entry, never a raw
+ * net_pay sum. Partial payroll payments are normal at ODS
+ * (payroll_entries.payment_status is unpaid | partial | paid), so treating
+ * "unpaid" as all-or-nothing overstates the figure. See getPayrollOwed in
+ * adapter.ts for the computation and get-payroll-owed.ts for how this is
+ * surfaced to an owner.
+ *
+ * Deliberately omits deduction_details, NIB fields, and anything else the
+ * README's Security model section already excludes -- this is an aggregate
+ * over the same payroll_entries rows getPayrollSummary reads, and carries
+ * the same restraint.
+ */
+export interface BedrockPayrollOwed extends BedrockDomainEntity {
+  sourceEntityType: 'payroll_owed'
+  totalOwed: number
+  entryCount: number
+  periodCount: number
+  rangeStart: string | null
+  rangeEnd: string | null
+  workers: Array<{
+    workerId: string
+    workerName: string
+    owed: number
   }>
 }
 

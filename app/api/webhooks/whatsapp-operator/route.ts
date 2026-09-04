@@ -1386,7 +1386,7 @@ async function handleImageInbound(
     hasCaption: !!caption,
   })
 
-  await supabase.from('caye_operator_messages').insert({
+  const { error: imageRowError } = await supabase.from('caye_operator_messages').insert({
     workspace_id: workspaceId,
     direction: 'inbound',
     wa_message_id: message.id,
@@ -1396,7 +1396,25 @@ async function handleImageInbound(
     operator_allowlist_id: operator.id,
     operator_name: operator.name,
     operator_role: operator.role,
+    // The media HANDLE, not the bytes. claude_format above deliberately
+    // persists only a placeholder, so the image itself is readable on this
+    // turn and gone afterwards -- which is fine for "look at this photo" and
+    // fatal for anything staged for confirmation. A receipt is proposed now
+    // and written after a human agrees, on a later turn, and this is what
+    // lets that later turn still fetch the photo. Keeping the id rather than
+    // the bytes also keeps the better property: nothing is uploaded into the
+    // construction ledger until somebody has actually approved it.
+    inbound_media: { media_id: image.id, mime_type: image.mime_type },
   })
+  // This insert used to discard its result entirely. supabase-js returns an
+  // error rather than throwing, so a failure here was invisible: the photo
+  // would simply never appear in the conversation and nothing would say why.
+  // Worth surfacing on its own, and specifically worth it now that the row
+  // carries a column added in the same change as this line -- if the
+  // migration ever lags the deploy, this log is what says so.
+  if (imageRowError) {
+    console.error('[whatsapp-operator] inbound image row not persisted:', imageRowError)
+  }
 
   // Mid-burst: the row is persisted (so the next turn's context knows the
   // photos arrived) but Caye says nothing. Acknowledging each photo

@@ -5,14 +5,65 @@ type Db = ReturnType<typeof createServiceClient>
 type FollowupKind = 'send' | 'follow_up'
 
 const EMAIL_RE = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi
-const NEGATION_RE = /\b(?:do not|don't|does not|doesn't|cannot|can't|never|won't|will not)\b/i
+/**
+ * Negations that cancel a promise *in the reply body*: "we will not send that",
+ * "I can't email it". Deliberately narrow -- it only has to recognise a refusal
+ * to commit, and anything wider starts suppressing real promises that happen to
+ * sit in the same sentence as an unrelated negative clause.
+ */
+const COMMITMENT_NEGATION_RE = /\b(?:do not|don't|does not|doesn't|cannot|can't|never|won't|will not)\b/i
+
+/**
+ * Negations as they appear *in grounding*, which is a different job and needs a
+ * wider net: grounding states what has and has not happened, in the perfect and
+ * the passive, not in the language of refusal.
+ *
+ * Incident 2026-08-20 (Charissa). The grounding read "The invoice has not yet
+ * been sent." and the guard treated the word "sent" inside it as authorising
+ * "Mrs. Max will be sending your invoice shortly." A grounding saying a thing
+ * has NOT happened must never be read as backing a promise that it will.
+ *
+ * Asymmetry is the point. On the body side a negation makes the guard stay
+ * quiet, so widening it there would lose real promises. On the grounding side a
+ * negation withdraws support, so widening it here can only make the guard
+ * stricter.
+ */
+const GROUNDING_NEGATION_RE =
+  /\b(?:do not|don't|does not|doesn't|did not|didn't|cannot|can't|could not|couldn't|never|won't|will not|would not|wouldn't|is not|isn't|are not|aren't|was not|wasn't|were not|weren't|has not|hasn't|have not|haven't|had not|hadn't|not yet|no longer|unable to)\b/i
 const TRANSFERABLE_ARTIFACT_RE = /\b(?:photo|picture|image|file|document|details?|information|info|link|copy|receipt|invoice|attachment|confirmation|it|that)\b/i
 
+/**
+ * An abbreviation whose trailing period does NOT end a sentence.
+ *
+ * Without this, `sentences()` cut "Mrs. Max will be sending your invoice"
+ * into "Mrs." and "Max will be sending your invoice" -- and `hasFutureActor`
+ * matches an honorific followed by a name and `will`, so the half it was
+ * given no longer had the "Mrs. " it needed. The guard returned null on the
+ * exact string the 2026-08-20 incident is named after, which is the string
+ * `hasFutureActor` was widened to catch in the first place.
+ */
+const NON_TERMINAL_ABBREVIATION_RE = /\b(?:mr|mrs|ms|dr|prof|rev|hon|sr|jr|st)\.$/i
+
 function sentences(text: string): string[] {
-  return text
+  const parts = text
     .split(/(?<=[.!?])\s+|\n+/)
     .map((s) => s.trim())
     .filter(Boolean)
+
+  // Re-join anything the split tore off an honorific. Done as a repair pass
+  // rather than a cleverer split regex because titles chain -- "Mr. and Mrs.
+  // Christiansen will..." breaks twice -- and a loop handles that without the
+  // regex having to.
+  const joined: string[] = []
+  for (const part of parts) {
+    const previous = joined[joined.length - 1]
+    if (previous !== undefined && NON_TERMINAL_ABBREVIATION_RE.test(previous)) {
+      joined[joined.length - 1] = `${previous} ${part}`
+    } else {
+      joined.push(part)
+    }
+  }
+  return joined
 }
 
 function normalizeEmail(value: unknown): string | null {
@@ -22,8 +73,16 @@ function normalizeEmail(value: unknown): string | null {
     : null
 }
 
+/**
+ * Transfer verbs in every inflection a promise actually uses. The bare stems
+ * alone missed "will be sending", which is how the 2026-08-20 promise was
+ * phrased: `hasFutureActor` recognised "Mrs. Max will", and then this function
+ * failed to see that what she would be doing was sending.
+ */
+const TRANSFER_VERB_RE = /\b(?:sends?|sending|sent|forwards?|forwarding|forwarded|emails?|emailing|emailed)\b/i
+
 function sentencePromisesTransfer(sentence: string): boolean {
-  if (/\b(?:send|forward|email)\b/i.test(sentence)) return true
+  if (TRANSFER_VERB_RE.test(sentence)) return true
   if (
     /\bshare\b[^.!?]{0,80}\b(?:photo|picture|image|file|document|details?|information|info|link|copy|receipt|invoice|attachment|confirmation|it|that)\b/i.test(sentence)
   ) {
@@ -40,7 +99,7 @@ function hasFutureActor(sentence: string): boolean {
 }
 
 function followupKind(sentence: string): FollowupKind | null {
-  if (NEGATION_RE.test(sentence)) return null
+  if (COMMITMENT_NEGATION_RE.test(sentence)) return null
   if (!hasFutureActor(sentence)) return null
   if (sentencePromisesTransfer(sentence)) return 'send'
   if (/\b(?:follow\s*up|circle\s+back|reach\s+out|contact|be\s+in\s+touch|get\s+back\s+to\s+you)\b/i.test(sentence)) {
@@ -51,7 +110,7 @@ function followupKind(sentence: string): FollowupKind | null {
 
 function groundingSupports(kind: FollowupKind, groundingText: string): boolean {
   return sentences(groundingText).some((sentence) => {
-    if (NEGATION_RE.test(sentence)) return false
+    if (GROUNDING_NEGATION_RE.test(sentence)) return false
     if (kind === 'send') return sentencePromisesTransfer(sentence)
     return /\b(?:follow\s*up|followed\s*up|circle\s+back|reach\s+out|contact|be\s+in\s+touch|get\s+back\s+to\s+you)\b/i.test(sentence)
   })

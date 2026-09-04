@@ -104,8 +104,12 @@ describe('VoiceTurnTimeline', () => {
     const t = new VoiceTurnTimeline()
     t.begin()
     t.record('speech_end')
-    t.flush({ workspaceId: 'ws-1', sessionId: 'voice_1' })
-    t.flush({ workspaceId: 'ws-1', sessionId: 'voice_1' })
+    // Telemetry is founder-only (efdfd162, "Authenticate live voice
+    // telemetry"): flush() now resolves an access token before POSTing, so
+    // an explicit accessToken keeps the fetch on the synchronous path here
+    // instead of falling through to the async getSession() lookup.
+    t.flush({ workspaceId: 'ws-1', sessionId: 'voice_1', accessToken: 'test-token' })
+    t.flush({ workspaceId: 'ws-1', sessionId: 'voice_1', accessToken: 'test-token' })
     expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1)
   })
 
@@ -122,7 +126,7 @@ describe('VoiceTurnTimeline', () => {
     t.begin()
     t.record('speech_end')
     t.record('first_audible_audio')
-    t.flush({ workspaceId: 'ws-1', sessionId: 'voice_1', backend: 'openai_api' })
+    t.flush({ workspaceId: 'ws-1', sessionId: 'voice_1', backend: 'openai_api', accessToken: 'test-token' })
     const body = JSON.parse(vi.mocked(fetch).mock.calls[0][1]!.body as string)
     expect(Object.keys(body).sort()).toEqual(['backend', 'marks', 'metrics', 'sessionId', 'workspaceId'])
     expect(body.marks.every((m: Record<string, unknown>) => typeof m.atMs === 'number')).toBe(true)

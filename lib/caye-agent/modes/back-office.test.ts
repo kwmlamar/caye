@@ -65,7 +65,19 @@ describe('buildBackOfficeSystemPrompt — caller identity', () => {
     })
     expect(prompt).toContain('Lamar — the TropiTech founder')
     expect(prompt).toContain('Lamar is a different person')
-    expect(prompt).toContain('full operator powers on this workspace via founder role')
+    // CAY-28 (commit 5633cca7, PR #317, "route business decisions to
+    // authorized workspace owners") deliberately replaced the old "full
+    // operator powers on this workspace via founder role — same tool
+    // access as the owner" line with an explicit decision-routing
+    // boundary: the founder gets platform-side support/observability
+    // access but is NOT automatically the business decision owner for
+    // pricing, payment, booking/capacity, outreach policy, or other
+    // consequential decisions — those route to the authorized owner via
+    // the canonical decision-routing gates. This assertion was left
+    // pinned to the superseded, more permissive wording; updated to match
+    // the current (stricter, not looser) authority text.
+    expect(prompt).toContain('does NOT make them the business decision owner')
+    expect(prompt).toContain('use the canonical decision-routing tools/gates')
   })
 
   it('falls back to full_name for a nameless legacy owner row', () => {

@@ -84,7 +84,16 @@ vi.mock('@/lib/supabase-server', () => ({
           }),
         }
       }
-      return { insert: async () => ({ error: null }) }
+      // caye_effect_verifications (verifyAndPersistEffect, called from
+      // syncBookingToCalendar's real effect-verification wiring) only
+      // destructures `{ error }` off a bare `await ...upsert(...)`, with no
+      // further chaining — this fake predates that call and its default
+      // branch only ever implemented `insert`, so `.upsert` was missing
+      // entirely (TypeError, not a silent pass) until added here.
+      return {
+        insert: async () => ({ error: null }),
+        upsert: async () => ({ error: null }),
+      }
     },
   }),
 }))
@@ -93,15 +102,36 @@ const zoho = {
   create: vi.fn(),
   update: vi.fn(),
   del: vi.fn(),
+  // Real read-back path (calendar-effect-verification.ts's verifyCalendarUpsert
+  // calls listZohoCalendarEvents to observe what Zoho actually has before
+  // trusting a create/update as VERIFIED). This test file predates that
+  // effect-verification wiring and never mocked list at all — undefined
+  // when destructured from the module mock below, so every observation
+  // attempt threw and verification could never report VERIFIED. Modeled
+  // here as a read-back of the same in-memory booking state.upsert/update
+  // already mutated, at call time.
+  list: vi.fn(async (..._args: unknown[]) => {
+    const b = state.booking
+    if (!b?.zoho_event_id) return []
+    return [
+      {
+        uid: b.zoho_event_id,
+        startDate: b.booking_date,
+        startTime: b.booking_time,
+        durationMinutes: b.duration_minutes ?? b.service?.[0]?.duration_minutes ?? 120,
+      },
+    ]
+  }),
 }
 
 vi.mock('../zoho-calendar', () => ({
   createZohoCalendarEvent: (...a: unknown[]) => zoho.create(...a),
   updateZohoCalendarEvent: (...a: unknown[]) => zoho.update(...a),
   deleteZohoCalendarEvent: (...a: unknown[]) => zoho.del(...a),
+  listZohoCalendarEvents: (...a: unknown[]) => zoho.list(...a),
 }))
 
-const { syncBookingToCalendar, calendarIdempotencyKey } = await import('../calendar-sync')
+const { syncBookingToCalendar } = await import('../calendar-sync')
 const { runToolWithRecovery, guidanceFor } = await import('./orchestrator')
 const { stripForModel } = await import('./tools/result')
 
@@ -136,31 +166,43 @@ beforeEach(() => {
 // ── Zoho Calendar failure ───────────────────────────────────────────────────
 
 describe('scenario: Zoho Calendar is down when a booking is created', () => {
-  it('keeps the booking, queues the mirror, and reports it as deferred', async () => {
+  // Repository audit, 2026-09-03: this scenario's contract changed under two
+  // reviewed, merged PRs neither of which touched this test file — c05fe9c8
+  // (#310, "Verify external effects from independent runtime evidence") and
+  // adcfe14d1 ("fix: make effect verification runtime truth canonical",
+  // whose own message says "ambiguity-safe calendar create recovery").
+  // Before them, a create exception on a fresh booking (no zoho_event_id yet)
+  // was assumed safe to retry and got queued. Now calendar-sync.ts (see its
+  // `if (createAttemptedAt)` branch) treats ANY exception during a CREATE
+  // attempt as ambiguous — the provider may have accepted the request before
+  // the response was lost — and deliberately never auto-queues a retry,
+  // because retrying an ambiguous create is exactly how a customer ends up
+  // with two calendar events for one booking. It persists the ambiguity
+  // (verification_status: 'INDETERMINATE', calendar_sync_status: 'failed')
+  // and stops, leaving reconciliation to the independent read-back path
+  // instead of a blind retry.
+  it('keeps the booking, marks the outcome ambiguous, and does not queue a blind retry', async () => {
     zoho.create.mockRejectedValue(new Error('Zoho Calendar create failed (503): upstream'))
 
     const result = await syncBookingToCalendar(WORKSPACE, 'bk-1', 'upsert')
 
-    expect(result).toMatchObject({ synced: false, deferred: true })
+    expect(result).toMatchObject({ synced: false, verification_status: 'INDETERMINATE' })
     // The booking is untouched and real. This is the whole point of
     // local-first: Zoho being down is not the booking failing.
     expect(state.booking!.id).toBe('bk-1')
-    expect(state.booking!.calendar_sync_status).toBe('pending')
-    expect(state.queued).toHaveLength(1)
-    expect(state.queued[0]).toMatchObject({
-      operation: 'zoho_calendar_upsert',
-      idempotency_key: calendarIdempotencyKey('bk-1', 'upsert'),
-    })
+    expect(state.booking!.calendar_sync_status).toBe('failed')
+    expect(state.queued).toHaveLength(0)
   })
 
-  it('does not queue a second copy when the same sync fails twice', async () => {
-    // Duplicate calendar events are the exact hazard retries introduce.
+  it('does not queue a retry even after the same ambiguous create fails twice', async () => {
+    // Duplicate calendar events are the exact hazard a blind retry introduces
+    // — so an ambiguous create is never queued, not even once.
     zoho.create.mockRejectedValue(new Error('Zoho Calendar create failed (503): upstream'))
 
     await syncBookingToCalendar(WORKSPACE, 'bk-1', 'upsert')
     await syncBookingToCalendar(WORKSPACE, 'bk-1', 'upsert')
 
-    expect(state.queued).toHaveLength(1)
+    expect(state.queued).toHaveLength(0)
   })
 
   it('does not queue a permanent failure, and records why', async () => {
@@ -263,7 +305,11 @@ describe('scenario: add_internal_note fails (the 2026-08-11 Mrs. Max exchange)',
     payload.how_to_report_this = guidanceFor(result.status, result.deferred === true)
 
     const guidance = String(payload.how_to_report_this)
-    expect(guidance).toMatch(/never ask the operator to do it themselves/i)
+    // Wording only — same prohibition as orchestrator.test.ts's matching
+    // assertion, phrased in the current guidance text as "never ask the
+    // operator to do the failed work themselves" rather than "...do it
+    // themselves".
+    expect(guidance).toMatch(/never ask the operator to do the failed work themselves/i)
     expect(guidance).toMatch(/did not go through/i)
     expect(guidance).toMatch(/you are on it/i)
   })
