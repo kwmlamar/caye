@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { authorityScopeMatches, resolveDecisionAuthorityFromPrincipals, type DecisionPrincipal } from './decision-authority'
+import { authorityScopeMatches, classifyHighRiskDecision, requiredAuthorityForDomain, resolveDecisionAuthorityFromPrincipals, type DecisionPrincipal } from './decision-authority'
 
 const verified = '2026-08-30T00:00:00.000Z'
 function principal(overrides: Partial<DecisionPrincipal> & Pick<DecisionPrincipal, 'id' | 'role'>): DecisionPrincipal {
@@ -13,6 +13,21 @@ function principal(overrides: Partial<DecisionPrincipal> & Pick<DecisionPrincipa
     preferredDelegation: overrides.preferredDelegation ?? false,
   }
 }
+
+describe('classifyHighRiskDecision', () => {
+  // A null domain does not disable the confirmation round trip, but it does skip authority
+  // resolution entirely -- so an actor who is not authorized is never routed to the operator
+  // who can approve. send_freight_document emails an external forwarder an attachment built
+  // from this workspace's purchase evidence, the same shape as send_reply/draft_in_inbox.
+  it('classifies sending a freight document as customer communication', () => {
+    expect(classifyHighRiskDecision('send_freight_document')).toBe('customer_communication')
+    expect(requiredAuthorityForDomain('customer_communication')).toBe('business.customer.communication')
+  })
+
+  it('returns null for a tool that is not high-risk mapped', () => {
+    expect(classifyHighRiskDecision('get_freight_workflows')).toBeNull()
+  })
+})
 
 describe('authorityScopeMatches', () => {
   it('supports exact and hierarchical explicit scopes without prefix accidents', () => {

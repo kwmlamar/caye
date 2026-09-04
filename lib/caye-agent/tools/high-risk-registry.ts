@@ -12,6 +12,7 @@ import { sendOutreachBatch } from './write-high/send-outreach-batch'
 import { draftInInbox } from './write-high/draft-in-inbox'
 import { createCustomerBooking } from './write-high/create-customer-booking'
 import { expandOutreachTarget } from './write-high/expand-outreach-target'
+import { sendFreightDocumentTool } from './write-high/send-freight-document'
 import { logCrewDay } from './write-high/log-crew-day'
 import { logInvoiceSent } from './write-high/log-invoice-sent'
 import { recordPayment } from './write-high/record-payment'
@@ -48,6 +49,7 @@ export const HIGH_RISK_TOOLS: AnyTool[] = [
   removePricingTier as AnyTool,
   removeBlackoutDate as AnyTool,
   removeTeamMember as AnyTool,
+  sendFreightDocumentTool as AnyTool,
   // Batch-approved first-touch outreach sends (2026-08-01) — step 3 of the
   // 2026-07-21 staged-autonomy roadmap. Step 4 (fully autonomous, no review)
   // stays permanently off; this only ever sends threads the operator already

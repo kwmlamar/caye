@@ -64,9 +64,23 @@ describe('production tool surface', () => {
     // excludedByRoleCounts and both excludedToolSchemaBytes are unchanged.
     // A new tool that moved an excluded number would mean it was hidden from
     // somebody, and would be worth a second look.
-    expect(owner).toMatchObject({ exposedToolCount: 88, excludedByRoleCount: 53, excludedToolSchemaBytes: 34528 })
-    expect(founder).toMatchObject({ exposedToolCount: 141, excludedByRoleCount: 0, excludedToolSchemaBytes: 0 })
-    expect(staff).toMatchObject({ exposedToolCount: 22, excludedByRoleCount: 119, excludedToolSchemaBytes: 114516 })
+    //
+    // Refreshed again 2026-09-04 for the three freight tools, and here an
+    // excluded number DOES move — deliberately, unlike log_receipt above.
+    // get_freight_workflows (read) and prepare_freight_document (write-low)
+    // are roles ['owner','staff','founder']; send_freight_document is
+    // roles ['owner','founder'], because actually emailing a forwarder an
+    // attachment built from this workspace's purchase evidence is an owner
+    // decision. So:
+    //   owner   88->91  (+3, all three visible), excluded 53 unchanged
+    //   founder 141->144 (+3, sees everything), still 0/0
+    //   staff   22->24  (+2 only), excludedByRoleCount 119->120 and
+    //                   excludedToolSchemaBytes 114516->115784
+    // That single +1 on staff's excluded count IS send_freight_document being
+    // hidden from staff. It is the intended authority boundary, not drift.
+    expect(owner).toMatchObject({ exposedToolCount: 91, excludedByRoleCount: 53, excludedToolSchemaBytes: 34528 })
+    expect(founder).toMatchObject({ exposedToolCount: 144, excludedByRoleCount: 0, excludedToolSchemaBytes: 0 })
+    expect(staff).toMatchObject({ exposedToolCount: 24, excludedByRoleCount: 120, excludedToolSchemaBytes: 115784 })
   })
 
   it.each(['owner', 'staff', 'founder', 'driver'] as const)('only exposes schemas executable by %s', (callerRole) => {
