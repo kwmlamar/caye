@@ -54,10 +54,15 @@ import type { AttentionPriority } from '@/lib/owner-attention'
  */
 
 /** Extend deliberately, one domain at a time. See SCOPE above. */
-const DELIVERABLE_SUBJECT_TYPES = [SUBJECT_RECEIVABLE] as const
+const DELIVERABLE_SUBJECT_TYPES: string[] = [SUBJECT_RECEIVABLE]
 
-/** Items whose status means a human has not finished with them. */
-const OPEN_STATUSES = ['open', 'acknowledged'] as const
+/**
+ * Statuses that mean a human has not finished with the item.
+ * `caye_owner_attention.status` also allows 'decided', 'resolved' and
+ * 'dismissed' (20260812c) — all three mean someone has already dealt with it,
+ * so delivering them would be telling a person something they closed.
+ */
+const OPEN_STATUSES: string[] = ['open', 'acknowledged']
 
 export interface ConstructionAttentionDeliveryDeps extends AttentionDeliveryDeps {
   loadUndelivered: (workspaceId: string) => Promise<DeliverableAttentionItem[]>
@@ -111,8 +116,8 @@ async function loadUndeliveredFromDb(workspaceId: string): Promise<DeliverableAt
     .from('caye_owner_attention')
     .select('subject_type, subject_id, title, priority, next_action, state_fingerprint, notified_fingerprint')
     .eq('workspace_id', workspaceId)
-    .in('subject_type', DELIVERABLE_SUBJECT_TYPES as unknown as string[])
-    .in('status', OPEN_STATUSES as unknown as string[])
+    .in('subject_type', DELIVERABLE_SUBJECT_TYPES)
+    .in('status', OPEN_STATUSES)
     .is('pending_notification_queue_id', null)
 
   if (error) throw new Error(`could not read the attention ledger — ${error.message}`)
