@@ -59,10 +59,10 @@ describe('parsing CHECK constraints out of the migrations', () => {
   })
 
   it('handles the value list spanning multiple lines', () => {
-    // 20260816c_add_operator_message_outbound_kind.sql (the latest
-    // drop+recreate of this constraint) writes its 16 values one per line —
-    // the previous 15 plus 'operator_message'.
-    expect(allowedValues(constraints, 'caye_outbound_queue', 'kind')!.size).toBe(16)
+    // 20260903_add_construction_attention_outbound_kind.sql (the latest
+    // drop+recreate of this constraint) writes its 17 values one per line —
+    // the previous 16 plus 'construction_attention'.
+    expect(allowedValues(constraints, 'caye_outbound_queue', 'kind')!.size).toBe(17)
   })
 
   it('handles both the IN (...) and = ANY (ARRAY[...]) forms', () => {

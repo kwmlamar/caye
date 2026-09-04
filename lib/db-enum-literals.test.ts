@@ -153,6 +153,10 @@ describe('enum literals written to the database', () => {
  * call site, by design: that tool inserts the row itself synchronously
  * rather than going through enqueueOutbound (see the OutboundKind union's
  * comment for why), so its absence from the call-site scan is expected too.
+ * 'construction_attention' added 2026-09-03 (20260903_add_construction_
+ * attention_outbound_kind.sql) for the construction ledger's delivery hop.
+ * This one DOES have an enqueueOutbound call site — lib/attention-delivery.ts
+ * — so unlike the two above it is expected to appear in the call-site scan.
  */
 describe('enqueueOutbound kind matches caye_outbound_queue_kind_check', () => {
   const OUTBOUND_KIND_VALUES = new Set([
@@ -160,7 +164,7 @@ describe('enqueueOutbound kind matches caye_outbound_queue_kind_check', () => {
     'welcome', 'otp', 'ack', 'escalation', 'escalation_followup',
     'opportunity_scan', 'business_insights', 'operator_reminder',
     'dropped_confirmation', 'reply_review', 'payment_setup_needed',
-    'operator_message',
+    'operator_message', 'construction_attention',
   ])
 
   it('only calls enqueueOutbound with a kind the database accepts', () => {
