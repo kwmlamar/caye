@@ -211,6 +211,23 @@ describe('executeApplication has exactly one founder-only production caller (pos
     expect(clickOffenders).toEqual([])
   })
 
+  it('the readiness module still has exactly the two combobox clicks it is allowed', () => {
+    // The file-level exception above says WHERE a non-submit click may live.
+    // This says HOW MANY. Without it the exception is blanket: that file could
+    // grow a click on a button labelled "Apply" -- no "submit" anywhere in the
+    // source -- and neither the allowlist nor the string check below would
+    // notice. Pinning the count means any new click there fails this test and
+    // has to be looked at by a person, which is the whole point of a
+    // structural invariant.
+    //
+    // If you are here because you legitimately added a third click: confirm it
+    // fills a field rather than submitting, then raise this number and say so
+    // in the PR.
+    const file = path.join(EXECUTION_DIR, 'providers', 'greenhouse-form-session.ts')
+    const clicks = readFileSync(file, 'utf8').match(/\.click\(/g) ?? []
+    expect(clicks).toHaveLength(2)
+  })
+
   it("the readiness module's combobox clicks never touch anything submit-shaped", () => {
     // Independent of the file-level allowlist above: strip this file's own
     // comments (which discuss "submit" in prose, e.g. "no submit selector")
