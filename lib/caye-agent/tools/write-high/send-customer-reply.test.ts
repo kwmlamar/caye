@@ -28,13 +28,24 @@ vi.mock('@/lib/whatsapp/channel-dispatch', () => ({
 }))
 
 // Channel-context behavior is covered by frontdesk-context-guard.test.ts;
-// this boundary suite isolates evidence and dispatch behavior.
+// this boundary suite isolates evidence and dispatch behavior. Real
+// detection logic for the future-action-commitment flag is covered there
+// too — this default (no commitment detected) matches every existing test
+// body below, none of which promise a future send/follow-up.
+const detectFutureActionCommitmentMock = vi.fn((_body: string) => null as { kind: string; sentence: string } | null)
 vi.mock('../../frontdesk-context-guard', () => ({
   validateFrontDeskContext: vi.fn(async () => null),
+  detectFutureActionCommitment: (body: string) => detectFutureActionCommitmentMock(body),
+}))
+
+const enqueueReplyReviewPingMock = vi.fn(async (_input: unknown) => {})
+vi.mock('@/lib/whatsapp/triggers', () => ({
+  enqueueReplyReviewPing: (input: unknown) => enqueueReplyReviewPingMock(input),
 }))
 
 const conversationUpdateCalls: unknown[] = []
 let threadRowsMock: Array<{ content: string; sender_type?: string }> = []
+let customerNameMock: string | null = null
 // Sonja-style booking time on the fake conversation-linked booking, so the
 // new UNGROUNDED_BOOKING_TIME check (validateAuthoritativeBookingTimeClaims)
 // has something to check the front-desk draft against.
@@ -86,6 +97,11 @@ vi.mock('@/lib/supabase-server', () => ({
               return Promise.resolve({ error: null })
             },
           }),
+          select: () => ({
+            eq: () => ({
+              maybeSingle: () => Promise.resolve({ data: { customer_name: customerNameMock }, error: null }),
+            }),
+          }),
         }
       }
       throw new Error(`unexpected table: ${table}`)
@@ -113,6 +129,9 @@ describe('sendCustomerReply', () => {
     conversationUpdateCalls.length = 0
     threadRowsMock = []
     fakeBookingTimeMock = null
+    customerNameMock = null
+    detectFutureActionCommitmentMock.mockReset().mockReturnValue(null)
+    enqueueReplyReviewPingMock.mockClear()
   })
 
   it('sends autonomously (no send-blocking claim) when the draft makes no price/availability claim', async () => {
@@ -300,6 +319,46 @@ describe('sendCustomerReply', () => {
       )
       expect(result.ok).toBe(true)
       expect(dispatchOperatorReplyMock).toHaveBeenCalled()
+    })
+  })
+
+  describe('Delysia Weeks incident (Bimini, 2026-09) — a grounded operator-transfer promise pings the operator in real time', () => {
+    it('flags the send and pings the operator now when the reply promises the operator will send something', async () => {
+      customerNameMock = 'Delysia Weeks'
+      detectFutureActionCommitmentMock.mockReturnValue({
+        kind: 'send',
+        sentence: 'Mrs. Max will send your invoice shortly to secure your spot.',
+      })
+      const result = await sendCustomerReply.execute(
+        {
+          conversation_id: 'c1',
+          body: 'Payment is collected by invoice. Mrs. Max will send your invoice shortly to secure your spot.',
+        },
+        ctx()
+      )
+      expect(result.ok).toBe(true)
+      expect((result.data as { flagged_for_review?: boolean } | undefined)?.flagged_for_review).toBe(true)
+      expect(conversationUpdateCalls).toContainEqual(
+        expect.objectContaining({ patch: expect.objectContaining({ human_agent_enabled: true }) })
+      )
+      expect(enqueueReplyReviewPingMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          workspaceId: 'ws1',
+          conversationId: 'c1',
+          contactName: 'Delysia Weeks',
+          note: expect.stringContaining('Mrs. Max will send your invoice shortly to secure your spot.'),
+        })
+      )
+    })
+
+    it('does not flag or ping when the reply makes no future-action commitment', async () => {
+      const result = await sendCustomerReply.execute(
+        { conversation_id: 'c1', body: 'Thanks for reaching out — happy to help with anything else.' },
+        ctx()
+      )
+      expect(result.ok).toBe(true)
+      expect((result.data as { flagged_for_review?: boolean } | undefined)?.flagged_for_review).toBe(false)
+      expect(enqueueReplyReviewPingMock).not.toHaveBeenCalled()
     })
   })
 })

@@ -21,9 +21,11 @@ import {
   validateAuthoritativeBookingStatusClaims,
   validateAuthoritativeBookingTimeClaims,
 } from '../../consequential-claim-grounding'
-import { validateFrontDeskContext } from '../../frontdesk-context-guard'
+import { validateFrontDeskContext, detectFutureActionCommitment } from '../../frontdesk-context-guard'
 import { staleDateOverrideConflict } from '../../date-override-revalidation'
 import { completeConversationExecution, resolveConversationExecutionAfterFailure, validateConversationExecution } from '@/lib/conversation-execution'
+import { enqueueReplyReviewPing } from '@/lib/whatsapp/triggers'
+import { displayContactName } from '@/lib/whatsapp/contact-display'
 
 interface SendCustomerReplyInput {
   conversation_id: string
@@ -227,7 +229,19 @@ Front-desk replies are evidence-gated rather than separately operator-gated. If 
     const evidence: EvidenceSet = new Set(ctx.evidenceCollected ?? [])
     const quotesPrice = extractDollarAmounts(body).length > 0
     const claimsAvailability = assertsAvailability(body)
-    const disposition = decideDisposition({ evidence, quotesPrice, claimsAvailability })
+    // Delysia Weeks incident (Bimini, 2026-09): the draft can pass every
+    // guard above — including the future-action-commitment guard, because a
+    // generic business fact about invoicing "grounds" it — and still commit
+    // Mrs. Max to a real task nothing ever tells her about. Any such
+    // promise, grounded or not, earns a flag so it actually pings the
+    // operator below rather than shipping silently.
+    const followupCommitment = detectFutureActionCommitment(body)
+    const disposition = decideDisposition({
+      evidence,
+      quotesPrice,
+      claimsAvailability,
+      requestsOwnerFollowup: !!followupCommitment,
+    })
 
     if (disposition.disposition === 'hold') {
       return {
@@ -317,6 +331,32 @@ Front-desk replies are evidence-gated rather than separately operator-gated. If 
               'Caye sent this autonomously but flagged it for a check — see reply for why.',
           })
           .eq('id', args.conversation_id)
+
+        // Setting the DB flag alone is not enough to be told — it only
+        // resurfaces later via the morning/EOD digest sync, which has been
+        // separately confirmed to break for days at a time (see
+        // lib/whatsapp/triggers.ts's enqueueHoldPing doc comment on the
+        // Karenda incident: silence read as Caye "going quiet"). A reply
+        // that already went out gets the SAME real-time treatment the
+        // legacy runtime's reviewOnly path already gives it
+        // (lib/whatsapp/escalation.ts's applyEscalation) — ping now.
+        const { data: conversationRow } = await supabase
+          .from('unified_conversations')
+          .select('customer_name')
+          .eq('id', args.conversation_id)
+          .maybeSingle()
+        const contactName = displayContactName(
+          (conversationRow as { customer_name?: string | null } | null)?.customer_name
+        )
+        const note = followupCommitment
+          ? `Heads up — I told ${contactName} this: "${followupCommitment.sentence}" Make sure that actually happens.`
+          : ownerNoteFor(disposition)
+        await enqueueReplyReviewPing({
+          workspaceId: ctx.workspaceId,
+          conversationId: args.conversation_id,
+          contactName,
+          note,
+        }).catch((err) => console.error('[send-customer-reply] enqueueReplyReviewPing failed:', err))
       }
 
       return {

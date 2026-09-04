@@ -5,6 +5,7 @@ vi.mock('server-only', () => ({}))
 import {
   detectRedundantCurrentChannelInstruction,
   detectUnsupportedFutureActionCommitment,
+  detectFutureActionCommitment,
 } from './frontdesk-context-guard'
 
 describe('CAY-110 current-channel awareness', () => {
@@ -171,5 +172,37 @@ describe('CAY-110 future-action commitment grounding', () => {
         ''
       )
     ).toBeNull()
+  })
+})
+
+describe('detectFutureActionCommitment — flags a GROUNDED promise too, for operator follow-through', () => {
+  it('still reports the promise even when grounding fully authorizes it (Delysia Weeks incident, Bimini, 2026-09)', () => {
+    // Same body/grounding shape as "still allows a grounding that says the
+    // send is authorised" above — detectUnsupportedFutureActionCommitment
+    // correctly returns null (the guard lets it ship), but someone still
+    // has to actually send the invoice. This is what send-customer-reply.ts
+    // uses to turn a shipped promise into a real, immediate operator ping
+    // instead of a promise nobody but the customer ever heard.
+    expect(
+      detectUnsupportedFutureActionCommitment(
+        'Mrs. Max will be sending your invoice shortly.',
+        'Owner instruction: Max is sending Charissa the invoice for the $450 booking.'
+      )
+    ).toBeNull()
+    expect(
+      detectFutureActionCommitment('Mrs. Max will be sending your invoice shortly.')
+    ).toEqual({ kind: 'send', sentence: 'Mrs. Max will be sending your invoice shortly.' })
+  })
+
+  it('returns null for a reply with no future-action commitment at all', () => {
+    expect(
+      detectFutureActionCommitment('Thanks for reaching out — happy to help with anything else.')
+    ).toBeNull()
+  })
+
+  it('reports a follow-up (not send) commitment distinctly', () => {
+    expect(
+      detectFutureActionCommitment('We will be in touch tomorrow with the details.')
+    ).toEqual({ kind: 'follow_up', sentence: 'We will be in touch tomorrow with the details.' })
   })
 })
