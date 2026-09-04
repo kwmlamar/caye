@@ -122,6 +122,48 @@ describe('CAY-110 future-action commitment grounding', () => {
     ).toBeNull()
   })
 
+  it('reads an inflected transfer verb as a promise, not just the bare stem', () => {
+    expect(
+      detectUnsupportedFutureActionCommitment(
+        'We will be forwarding the signed contract to you this afternoon.',
+        'Customer asked when the contract would arrive.'
+      )
+    ).toMatch(/unsupported future send/i)
+  })
+
+  it('refuses to treat a grounding that says a thing has NOT happened as authorisation', () => {
+    expect(
+      detectUnsupportedFutureActionCommitment(
+        'We will send your invoice today.',
+        'The invoice has not yet been sent.'
+      )
+    ).toMatch(/unsupported future send/i)
+    expect(
+      detectUnsupportedFutureActionCommitment(
+        'We will send your invoice today.',
+        'The invoice was not sent.'
+      )
+    ).toMatch(/unsupported future send/i)
+  })
+
+  it('still allows a grounding that says the send is authorised', () => {
+    expect(
+      detectUnsupportedFutureActionCommitment(
+        'Mrs. Max will be sending your invoice shortly.',
+        'Owner instruction: Max is sending Charissa the invoice for the $450 booking.'
+      )
+    ).toBeNull()
+  })
+
+  it('does not flag a reply that declines to commit', () => {
+    expect(
+      detectUnsupportedFutureActionCommitment(
+        'We will not be sending an invoice for this one.',
+        'Booking total is $450.'
+      )
+    ).toBeNull()
+  })
+
   it('does not mistake experiential sharing for a promised file transfer', () => {
     expect(
       detectUnsupportedFutureActionCommitment(
