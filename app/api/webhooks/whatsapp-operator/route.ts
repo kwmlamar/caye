@@ -1386,7 +1386,7 @@ async function handleImageInbound(
     hasCaption: !!caption,
   })
 
-  await supabase.from('caye_operator_messages').insert({
+  const { error: imageRowError } = await supabase.from('caye_operator_messages').insert({
     workspace_id: workspaceId,
     direction: 'inbound',
     wa_message_id: message.id,
@@ -1406,6 +1406,15 @@ async function handleImageInbound(
     // construction ledger until somebody has actually approved it.
     inbound_media: { media_id: image.id, mime_type: image.mime_type },
   })
+  // This insert used to discard its result entirely. supabase-js returns an
+  // error rather than throwing, so a failure here was invisible: the photo
+  // would simply never appear in the conversation and nothing would say why.
+  // Worth surfacing on its own, and specifically worth it now that the row
+  // carries a column added in the same change as this line -- if the
+  // migration ever lags the deploy, this log is what says so.
+  if (imageRowError) {
+    console.error('[whatsapp-operator] inbound image row not persisted:', imageRowError)
+  }
 
   // Mid-burst: the row is persisted (so the next turn's context knows the
   // photos arrived) but Caye says nothing. Acknowledging each photo
