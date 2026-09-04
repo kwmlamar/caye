@@ -553,13 +553,30 @@ export class BedrockWriteProvider {
    * exactly: rows are inserted one at a time so a failure on one line item
    * never blocks the others, and an empty array is a no-op.
    *
-   * `receipt_id` is trusted from the caller here (unlike `company_id`
-   * elsewhere in this class) because there is no tenant column on this table
-   * to re-derive it from -- the caller is expected to have just gotten this
-   * id back from a same-request `insertReceipt` call, not from user input.
+   * `receipt_id` is NOT trusted blindly, despite `receipt_line_items` having
+   * no `company_id` column of its own to check it against directly: every
+   * distinct `receipt_id` in the batch is verified to belong to `companyId`
+   * (via `receiptBelongsToCompany`, mirroring `insertPayment`'s
+   * `invoiceBelongsToCompany` check on `payments`) BEFORE anything is
+   * written. Any unowned or nonexistent receipt id refuses the WHOLE batch
+   * -- not just the offending rows -- the same fail-closed, all-or-nothing
+   * shape `insertPayment` uses, because partially trusting a batch that
+   * named a foreign receipt is exactly the kind of "safe by coincidence of
+   * today's only caller" gap that stops being safe the moment a second
+   * caller exists.
+   *
+   * Each entry also carries a `matchReason` -- why this line item did or
+   * did not link to an existing `materials` row -- that is written into the
+   * `audit_logs` row's `input` but never into `receipt_line_items` itself
+   * (the table has no such column). This is what makes "why didn't this
+   * line item link" queryable from `audit_logs` after the fact, instead of
+   * visible only in the one WhatsApp turn that proposed it.
    */
-  async insertReceiptLineItems(companyId: string, rows: BedrockReceiptLineItemInsert[]): Promise<BedrockWriteResult> {
-    if (rows.length === 0) {
+  async insertReceiptLineItems(
+    companyId: string,
+    entries: Array<{ row: BedrockReceiptLineItemInsert; matchReason: string | null }>
+  ): Promise<BedrockWriteResult> {
+    if (entries.length === 0) {
       return {
         ok: true,
         attemptedCount: 0,
@@ -573,7 +590,7 @@ export class BedrockWriteProvider {
 
     const startedAt = Date.now()
 
-    const scopedRows: BedrockReceiptLineItemInsert[] = rows.map(row => ({
+    const scopedRows: BedrockReceiptLineItemInsert[] = entries.map(({ row }) => ({
       receipt_id: row.receipt_id,
       material_id: row.material_id,
       receipt_name: row.receipt_name,
@@ -583,6 +600,43 @@ export class BedrockWriteProvider {
       total_cost: row.total_cost,
       match_confidence: row.match_confidence,
     }))
+    // Audit-only view of the same rows -- match_reason rides along here and
+    // nowhere near the actual insert below.
+    const auditRows = scopedRows.map((row, index) => ({ ...row, match_reason: entries[index].matchReason }))
+
+    const receiptIds = [...new Set(scopedRows.map(r => r.receipt_id))]
+    const unownedReceiptIds: string[] = []
+    for (const receiptId of receiptIds) {
+      if (!(await this.receiptBelongsToCompany(companyId, receiptId))) unownedReceiptIds.push(receiptId)
+    }
+
+    if (unownedReceiptIds.length > 0) {
+      const durationMs = Date.now() - startedAt
+      const errorMessage = `refused: receipt id(s) ${unownedReceiptIds.join(', ')} not found for company ${companyId} (nonexistent, or belong to a different company)`
+      const failedRows: BedrockWriteRowFailure[] = scopedRows.map((row, index) => ({ index, row, error: errorMessage }))
+
+      const auditOutcome = await this.writeAuditLog({
+        companyId,
+        toolName: 'insertReceiptLineItems',
+        targetTable: 'receipt_line_items',
+        status: 'denied',
+        input: { attemptedCount: scopedRows.length, rows: auditRows },
+        result: null,
+        targetRowId: null,
+        errorMessage,
+        durationMs,
+      })
+
+      return {
+        ok: false,
+        attemptedCount: scopedRows.length,
+        insertedCount: 0,
+        insertedIds: [],
+        failedRows,
+        auditLogWritten: auditOutcome.written,
+        auditLogError: auditOutcome.error,
+      }
+    }
 
     const insertedIds: string[] = []
     const failedRows: BedrockWriteRowFailure[] = []
@@ -616,7 +670,7 @@ export class BedrockWriteProvider {
       toolName: 'insertReceiptLineItems',
       targetTable: 'receipt_line_items',
       status: insertOk ? 'ok' : 'error',
-      input: { attemptedCount, rows: scopedRows },
+      input: { attemptedCount, rows: auditRows },
       result: { insertedCount, insertedIds, failedCount: failedRows.length, failedRows },
       targetRowId: insertedIds.length === 1 ? insertedIds[0] : null,
       errorMessage,
@@ -681,6 +735,28 @@ export class BedrockWriteProvider {
         .from('invoices')
         .select('id')
         .eq('id', invoiceId)
+        .eq('company_id', companyId)
+        .maybeSingle()
+      if (error) return false
+      return data != null
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * True only when a `receipts` row exists matching both `id` and
+   * `company_id` -- the same shape as `invoiceBelongsToCompany`, used by
+   * `insertReceiptLineItems` since `receipt_line_items` has no `company_id`
+   * of its own to check directly. Any failure to confirm that -- not found,
+   * wrong company, or a query error -- fails closed and returns false.
+   */
+  private async receiptBelongsToCompany(companyId: string, receiptId: string): Promise<boolean> {
+    try {
+      const { data, error } = await this.client
+        .from('receipts')
+        .select('id')
+        .eq('id', receiptId)
         .eq('company_id', companyId)
         .maybeSingle()
       if (error) return false

@@ -381,7 +381,12 @@ export function makeLogReceipt(deps: Partial<LogReceiptDeps> = {}): Tool<LogRece
     if (receiptId) {
       const vendor = args.vendor?.trim() || null
       const receiptDateForNotes = args.receipt_date ?? new Date().toISOString().slice(0, 10)
-      const rows: Parameters<typeof write.provider.insertReceiptLineItems>[1] = []
+      // Each entry carries `matchReason` alongside the insertable row --
+      // insertReceiptLineItems writes that into audit_logs (never into
+      // receipt_line_items itself, which has no such column) so *why* a
+      // line item did or didn't link is queryable afterward, not only
+      // visible in this one WhatsApp turn.
+      const entries: Parameters<typeof write.provider.insertReceiptLineItems>[1] = []
 
       for (let index = 0; index < lineItems.length; index++) {
         const item = lineItems[index]
@@ -400,6 +405,7 @@ export function makeLogReceipt(deps: Partial<LogReceiptDeps> = {}): Tool<LogRece
         if (resolution.match === 'one') {
           materialId = resolution.candidates[0].id
           matchConfidence = 'high'
+          reason = `Matched existing material ${materialId} ("${resolution.candidates[0].name}").`
         } else if (resolution.match === 'many') {
           reason = `${resolution.count} similar materials found — not linked to any of them.`
         } else if (item.unit_price === undefined) {
@@ -421,6 +427,7 @@ export function makeLogReceipt(deps: Partial<LogReceiptDeps> = {}): Tool<LogRece
           if (materialResult.ok) {
             materialId = newId
             createdMaterialId = newId
+            reason = `No existing match — created new materials catalog row ${newId}.`
           } else {
             reason = `Could not add this to the materials catalog (${materialResult.failedRows[0]?.error ?? 'unknown error'}), so it is recorded on the receipt only.`
           }
@@ -434,20 +441,23 @@ export function makeLogReceipt(deps: Partial<LogReceiptDeps> = {}): Tool<LogRece
           reason,
         })
 
-        rows.push({
-          receipt_id: receiptId,
-          material_id: materialId,
-          receipt_name: item.description.trim(),
-          qty: item.quantity ?? null,
-          unit: item.unit?.trim() || null,
-          unit_cost: item.unit_price ?? null,
-          total_cost: item.quantity !== undefined && item.unit_price !== undefined ? round2(item.quantity * item.unit_price) : null,
-          match_confidence: matchConfidence,
+        entries.push({
+          row: {
+            receipt_id: receiptId,
+            material_id: materialId,
+            receipt_name: item.description.trim(),
+            qty: item.quantity ?? null,
+            unit: item.unit?.trim() || null,
+            unit_cost: item.unit_price ?? null,
+            total_cost: item.quantity !== undefined && item.unit_price !== undefined ? round2(item.quantity * item.unit_price) : null,
+            match_confidence: matchConfidence,
+          },
+          matchReason: reason,
         })
       }
 
-      if (rows.length > 0) {
-        await write.provider.insertReceiptLineItems(write.companyId, rows)
+      if (entries.length > 0) {
+        await write.provider.insertReceiptLineItems(write.companyId, entries)
       }
     }
 

@@ -36,11 +36,14 @@ function harness(over: Record<string, unknown> = {}) {
         failedRows: [], auditLogWritten: true, auditLogError: null,
       }
     },
-    async insertReceiptLineItems(_companyId: string, rows: Record<string, unknown>[]) {
-      lineItemInserts.push(...rows)
+    async insertReceiptLineItems(_companyId: string, entries: Array<{ row: Record<string, unknown>; matchReason: string | null }>) {
+      // Flattened for assertions: everything the real write-provider would
+      // put in receipt_line_items, plus match_reason the way it lands in
+      // audit_logs.input (never in the actual table row).
+      lineItemInserts.push(...entries.map(e => ({ ...e.row, match_reason: e.matchReason })))
       return {
-        ok: true, attemptedCount: rows.length, insertedCount: rows.length,
-        insertedIds: rows.map((_, i) => `line-${i}`), failedRows: [], auditLogWritten: true, auditLogError: null,
+        ok: true, attemptedCount: entries.length, insertedCount: entries.length,
+        insertedIds: entries.map((_, i) => `line-${i}`), failedRows: [], auditLogWritten: true, auditLogError: null,
       }
     },
     async insertMaterial(_companyId: string, row: Record<string, unknown>) {
@@ -144,6 +147,7 @@ describe('log_receipt — line items and materials', () => {
     expect(res.ok).toBe(true)
     expect(h.lineItemInserts).toHaveLength(1)
     expect(h.lineItemInserts[0]).toMatchObject({ material_id: 'S193', match_confidence: 'high', receipt_name: 'Porcelain tile 18x18', qty: 5, unit_cost: 6.63, total_cost: 33.15 })
+    expect(String(h.lineItemInserts[0].match_reason)).toMatch(/Matched existing material S193/)
     expect(h.materialInserts).toHaveLength(0)
   })
 
@@ -168,6 +172,7 @@ describe('log_receipt — line items and materials', () => {
     })
     expect(String(h.materialInserts[0].id)).toMatch(/^R\d+_0$/)
     expect(h.lineItemInserts[0].material_id).toBe(h.materialInserts[0].id)
+    expect(String(h.lineItemInserts[0].match_reason)).toMatch(/created new materials catalog row/)
   })
 
   it('leaves an ambiguous materials match unlinked rather than guessing', async () => {
@@ -180,6 +185,7 @@ describe('log_receipt — line items and materials', () => {
     expect(h.materialInserts).toHaveLength(0)
     expect(h.lineItemInserts[0].material_id).toBeNull()
     expect(h.lineItemInserts[0].match_confidence).toBe('none')
+    expect(String(h.lineItemInserts[0].match_reason)).toMatch(/2 similar materials found/)
     const outcome = (res.data as Record<string, unknown>).line_items as Array<Record<string, unknown>>
     expect(String(outcome[0].reason)).toMatch(/2 similar materials found/)
   })
@@ -191,6 +197,7 @@ describe('log_receipt — line items and materials', () => {
     expect(res.ok).toBe(true)
     expect(h.materialInserts).toHaveLength(0)
     expect(h.lineItemInserts[0]).toMatchObject({ material_id: null, unit_cost: null, total_cost: null })
+    expect(String(h.lineItemInserts[0].match_reason)).toMatch(/No legible unit price/)
     const outcome = (res.data as Record<string, unknown>).line_items as Array<Record<string, unknown>>
     expect(String(outcome[0].reason)).toMatch(/No legible unit price/)
   })
