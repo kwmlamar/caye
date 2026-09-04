@@ -15,6 +15,7 @@ import { expandOutreachTarget } from './write-high/expand-outreach-target'
 import { logCrewDay } from './write-high/log-crew-day'
 import { logInvoiceSent } from './write-high/log-invoice-sent'
 import { recordPayment } from './write-high/record-payment'
+import { logReceipt } from './write-high/log-receipt'
 
 /**
  * The UNGATED high-risk tools, in one place.
@@ -37,6 +38,7 @@ export const HIGH_RISK_TOOLS: AnyTool[] = [
   logCrewDay as AnyTool,
   logInvoiceSent as AnyTool,
   recordPayment as AnyTool,
+  logReceipt as AnyTool,
   sendReply as AnyTool,
   sendPaymentLink as AnyTool,
   confirmBooking as AnyTool,

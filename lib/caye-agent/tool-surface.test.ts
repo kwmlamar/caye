@@ -57,9 +57,16 @@ describe('production tool surface', () => {
     // total grows, and it is visible to an owner, so owner's excluded total
     // does not. That asymmetry is the detector working — it is what makes
     // the number diagnostic instead of just noisy.
-    expect(owner).toMatchObject({ exposedToolCount: 87, excludedByRoleCount: 53, excludedToolSchemaBytes: 34528 })
-    expect(founder).toMatchObject({ exposedToolCount: 140, excludedByRoleCount: 0, excludedToolSchemaBytes: 0 })
-    expect(staff).toMatchObject({ exposedToolCount: 21, excludedByRoleCount: 119, excludedToolSchemaBytes: 114516 })
+    // Refreshed 2026-09-03 for log_receipt: every exposedToolCount +1
+    // (owner 87->88, founder 140->141, staff 21->22) and NOTHING else moves.
+    // The tool is roles ['owner','staff','founder'], so it is visible to all
+    // three and becomes invisible to none — which is exactly why both
+    // excludedByRoleCounts and both excludedToolSchemaBytes are unchanged.
+    // A new tool that moved an excluded number would mean it was hidden from
+    // somebody, and would be worth a second look.
+    expect(owner).toMatchObject({ exposedToolCount: 88, excludedByRoleCount: 53, excludedToolSchemaBytes: 34528 })
+    expect(founder).toMatchObject({ exposedToolCount: 141, excludedByRoleCount: 0, excludedToolSchemaBytes: 0 })
+    expect(staff).toMatchObject({ exposedToolCount: 22, excludedByRoleCount: 119, excludedToolSchemaBytes: 114516 })
   })
 
   it.each(['owner', 'staff', 'founder', 'driver'] as const)('only exposes schemas executable by %s', (callerRole) => {
