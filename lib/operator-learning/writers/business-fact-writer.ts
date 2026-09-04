@@ -47,7 +47,7 @@ export async function writeBusinessFact(args: {
   // The model proposes a topic label, but identity is finalized here. Value
   // words are stripped and wording aliases collapse to a stable PROPERTY key.
   // "Casino Tram Stop" is a value; meeting_point is the property.
-  const effectiveCanonicalKey = canonicalPropertyKey({
+  let effectiveCanonicalKey = canonicalPropertyKey({
     suggestedProperty: classifierCanonicalKey,
     valueText: payload.text,
     scope: {
@@ -121,6 +121,16 @@ export async function writeBusinessFact(args: {
     { workspaceId: args.workspaceId, source: 'operator-learning/writers/business-fact-writer.ts:dedup' }
   )
   const semanticMatchRow = semanticMatchId ? active.find((r) => r.id === semanticMatchId) : undefined
+
+  // A fuzzy same-topic match still names an already-established canonical
+  // identity. Unless this write already resolved deterministically to that
+  // identity (canonicalCurrent), inherit it rather than minting a fresh,
+  // disconnected key for what the matcher says is the same tracked property —
+  // otherwise every paraphrase of an existing fact fragments its lineage.
+  if (!canonicalCurrent && semanticMatchRow?.canonical_key) {
+    effectiveCanonicalKey = semanticMatchRow.canonical_key
+  }
+
   const supersedeId = (conflictingRow && conflictResolution === 'supersede' ? conflictingRow.id : null) ?? (semanticMatchRow ? semanticMatchRow.id : null)
 
   const memoryType = isCorrection ? 'correction' : payload.category === 'policy' ? 'policy' : 'fact'
