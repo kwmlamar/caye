@@ -62,6 +62,12 @@ const HIGH_RISK_DOMAIN: Record<string, DecisionDomain> = {
   send_outreach_batch: 'outreach_control',
   expand_outreach_target: 'outreach_control',
   draft_in_inbox: 'customer_communication',
+  // Sending a freight document emails an external forwarder an attachment built from this
+  // workspace's purchase evidence -- the same outbound-to-a-third-party shape as send_reply
+  // and draft_in_inbox. Without this entry classifyHighRiskDecision returns null, so the
+  // confirmation round trip still runs but authority is never resolved and an unauthorized
+  // actor is never routed to the operator who can actually approve it.
+  send_freight_document: 'customer_communication',
 }
 
 export function requiredAuthorityForDomain(domain: DecisionDomain): string {

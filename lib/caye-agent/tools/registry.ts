@@ -40,6 +40,7 @@ import { getOutreachTargeting } from './read/get-outreach-targeting'
 import { getPendingBusinessDecisions } from './read/get-pending-business-decisions'
 import { getArtifact } from './read/get-artifact'
 import { searchArtifacts } from './read/search-artifacts'
+import { getFreightWorkflows } from './read/get-freight-workflows'
 import { cayeCapabilitiesTool } from './read/caye-capabilities'
 import { listPropertiesTool } from './read/list-properties'
 import { getPropertySnapshotTool } from './read/get-property-snapshot'
@@ -84,6 +85,7 @@ import { notifyDriver } from './write-low/notify-driver'
 import { relateToDirectThread } from './write-low/relate-to-direct-thread'
 import { annotateArtifactTool } from './write-low/annotate-artifact'
 import { retrieveArtifactForOperator } from './write-low/retrieve-artifact-for-operator'
+import { prepareFreightDocument } from './write-low/prepare-freight-document'
 import { createPropertyTool } from './write-low/create-property'
 import { addPropertyStructureTool } from './write-low/add-property-structure'
 import { addPropertySystemTool } from './write-low/add-property-system'
@@ -218,6 +220,7 @@ export const TOOL_REGISTRY: AnyTool[] = [
   getPendingBusinessDecisions as AnyTool,
   getArtifact as AnyTool,
   searchArtifacts as AnyTool,
+  getFreightWorkflows as AnyTool,
   cayeCapabilitiesTool as AnyTool,
   listPropertiesTool as AnyTool,
   getPropertySnapshotTool as AnyTool,
@@ -265,6 +268,7 @@ export const TOOL_REGISTRY: AnyTool[] = [
   relateToDirectThread as AnyTool,
   annotateArtifactTool as AnyTool,
   retrieveArtifactForOperator as AnyTool,
+  prepareFreightDocument as AnyTool,
   createPropertyTool as AnyTool,
   addPropertyStructureTool as AnyTool,
   addPropertySystemTool as AnyTool,
