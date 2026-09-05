@@ -6,6 +6,7 @@ import { HIGH_RISK_TOOLS } from './high-risk-registry'
 import { cancelPendingExternalDraftsForConversation, EXTERNAL_DRAFT_INTENT_REQUIRED, verifyExternalDraftIntent } from './external-draft-intent'
 import { updateActiveWork } from '@/lib/whatsapp/active-work'
 import { confirmPendingAction } from './write-high/confirm-pending-action'
+import { rejectPendingAction } from './write-low/reject-pending-action'
 import { getCalendar } from './read/get-calendar'
 import { getZohoCalendar } from './read/get-zoho-calendar'
 import { getHeldQueue } from './read/get-held-queue'
@@ -288,6 +289,7 @@ export const TOOL_REGISTRY: AnyTool[] = [
   rerunStaticStructuralAnalysis as AnyTool,
   ...HIGH_RISK_TOOLS.map((t) => registeredHighRiskTool(t as AnyTool)),
   confirmPendingAction as AnyTool,
+  rejectPendingAction as AnyTool,
   getMyAssignments as AnyTool,
   getLogisticsFacts as AnyTool,
   escalateDriverQuestion as AnyTool,

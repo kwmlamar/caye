@@ -3,6 +3,8 @@ import 'server-only'
 import { createServiceClient } from '@/lib/supabase-server'
 import { inQuietHours, loadScheduleConfig } from '@/lib/whatsapp/schedule'
 import { SUBJECT_RECEIVABLE } from '@/lib/receivables-attention'
+import { SUBJECT_PAYMENT_SIGNAL } from '@/lib/payment-watcher/propose'
+import { SUBJECT_PAYMENT_WATCHER_WEEKLY_DIGEST } from '@/lib/payment-watcher/weekly-aging-nudge'
 import {
   deliverAttentionItems,
   type AttentionDeliveryDeps,
@@ -54,7 +56,14 @@ import type { AttentionPriority } from '@/lib/owner-attention'
  */
 
 /** Extend deliberately, one domain at a time. See SCOPE above. */
-const DELIVERABLE_SUBJECT_TYPES: string[] = [SUBJECT_RECEIVABLE]
+const DELIVERABLE_SUBJECT_TYPES: string[] = [
+  SUBJECT_RECEIVABLE,
+  SUBJECT_PAYMENT_SIGNAL,
+  // Wired but inert while the weekly nudge ships disabled by default (see
+  // lib/payment-watcher/weekly-aging-nudge.ts) — nothing raises this subject
+  // type until PAYMENT_WATCHER_WEEKLY_NUDGE_ENABLED is turned on.
+  SUBJECT_PAYMENT_WATCHER_WEEKLY_DIGEST,
+]
 
 /**
  * Statuses that mean a human has not finished with the item.
