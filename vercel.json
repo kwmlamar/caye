@@ -48,6 +48,10 @@
     {
       "path": "/api/caye/construction-ledger-sync",
       "schedule": "*/30 * * * *"
+    },
+    {
+      "path": "/api/caye/payment-watcher/weekly-nudge/cron",
+      "schedule": "0 13 * * 5"
     }
   ]
 }

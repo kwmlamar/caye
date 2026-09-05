@@ -105,6 +105,15 @@ async function describePendingAction(
       return `Remove closure matching "${args.match}"`
     case 'remove_team_member':
       return `Remove teammate "${args.phone_or_name}"`
+    case 'record_payment': {
+      // Deliberately no live invoice lookup here — describePendingAction has
+      // no workspaceId to scope one with, and record_payment's own notes
+      // field (set by whoever staged it, e.g. the payment watcher) already
+      // carries the human-readable context: sender, confidence, source.
+      const amount = typeof args.amount === 'number' ? args.amount.toFixed(2) : String(args.amount ?? '?')
+      const notes = typeof args.notes === 'string' && args.notes ? ` — ${args.notes}` : ''
+      return `Record a $${amount} payment${notes}. Nothing recorded until you confirm.`
+    }
     case 'send_outreach_batch': {
       const items = Array.isArray(args.items) ? (args.items as Record<string, unknown>[]) : []
       const list = items

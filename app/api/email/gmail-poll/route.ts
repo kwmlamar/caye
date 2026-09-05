@@ -223,6 +223,29 @@ export async function processGmailMessage(
     return 'skipped'
   }
 
+  // Payment-watcher hook (propose-only; see lib/payment-watcher/propose.ts).
+  // Isolated in its own try/catch because this sits on the single path every
+  // inbound message already takes — a throw here must never be the reason
+  // Gmail polling (dedup, reply/hold branching, everything below) stops.
+  // Deliberately not gated on isHistorical: detection has no external side
+  // effect (it only stages an internal proposal), unlike auto-reply.
+  // Dynamic import so a module-initialization failure is also caught here,
+  // not just a throw from the call itself.
+  try {
+    const { proposePaymentMatch } = await import('@/lib/payment-watcher/propose')
+    await proposePaymentMatch({
+      workspaceId,
+      subject,
+      body,
+      from: fromRaw,
+      messageId,
+      threadId,
+      receivedAt: receivedTime,
+    })
+  } catch (err) {
+    console.error(`[gmail-poll] payment-watcher hook failed for ${messageId}:`, err)
+  }
+
   // Historical-message guard: only auto-reply to mail received after connect
   const accountConnectedAt = String(account.updated_at || account.created_at || '')
   const isHistorical = accountConnectedAt

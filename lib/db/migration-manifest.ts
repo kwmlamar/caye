@@ -227,4 +227,7 @@ export const REPO_MIGRATIONS: readonly string[] = [
   '20260902043000_domain_integration_review_fixes',
   '20260902120000_fix_recommendation_digest_resolution',
   '20260902140000_applied_migration_ledger_rpc',
+  '20260903_add_construction_attention_outbound_kind',
+  '20260903b_operator_message_inbound_media',
+  '20260905_caye_pending_actions_cancellation_reason',
 ]
